@@ -38,6 +38,7 @@ if str(BACKEND_DIR) not in sys.path:
 from agents_runtime import CANONICAL_SVL_AGENTS, SVLAgentOrchestrator, normalize_agent_canonical_name
 from antivirus_scanner import SVLAntivirusScanner
 from hyperspace_engine import BinaryHyperspaceKernel, WithoutNlpHarmonicEngine
+from infrastructure_probe import build_infrastructure_report
 from image_generation import (
     CPU_IMAGE_ENGINE,
     ImageEngineUnavailableError,
@@ -1396,6 +1397,11 @@ async def handle_api_request(
             return 200, res
         except ValueError as exc:
             return 400, {"ok": False, "error": str(exc)}
+
+    if method == "GET" and path == "/api/py/infrastructure":
+        # Hosty (ssh config + TCP), systemd, Docker, porty, dyski, zadania agentów — tylko prawdziwe źródła.
+        report = await asyncio.to_thread(build_infrastructure_report, runtime.kernel)
+        return 200, {**report, "serverRevision": runtime.kernel.get_server_revision()}
 
     if method == "GET" and path == "/api/py/svl364/telemetry":
         # Prawdziwe pomiary: /proc, nvidia-smi, ufw, OpenSSH, czasy odpowiedzi usług.

@@ -399,7 +399,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         timeoutMs: 15000,
         body: JSON.stringify({
           emitToIris: false,
-          title: 'Pełny Raport Operacyjny SVL_System, Statku SVL-364 Ebon Apex i Infrastruktury Floty',
+          title: 'Pełny Raport Operacyjny SVL_System (host, moduły, pamięć)',
           category: 'svl_system',
           origin: tabOrigin,
         }),
@@ -1271,7 +1271,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 onClick={() => onNavigateTab('infrastructure')}
                 className="px-2 py-1 rounded bg-slate-800 text-emerald-300 text-[11px]"
               >
-                Infrastruktura Floty &amp; Botanika
+                Infrastruktura
               </button>
               <button
                 type="button"

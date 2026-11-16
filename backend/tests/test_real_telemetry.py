@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,10 @@ class ParserTests(unittest.TestCase):
             "  eth0: 1000 10 0 0 0 0 0 0 2000 20 0 0 0 0 0 0\n"
         )
         self.assertEqual(net, {"eth0": {"rx_bytes": 1000, "tx_bytes": 2000}})
+
+    def test_disk_percent_matches_df_semantics(self) -> None:
+        usage = shutil._ntuple_diskusage(total=252, used=9, free=30)
+        self.assertEqual(real_telemetry.disk_used_percent(usage), 23.1)
 
     def test_nvidia_smi_output(self) -> None:
         self.assertEqual(

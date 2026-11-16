@@ -188,6 +188,12 @@ def parse_nvidia_smi(text: str) -> list[dict[str, Any]]:
     return devices
 
 
+def disk_used_percent(usage: Any) -> Optional[float]:
+    """Zajętość jak w `df`: zajęte / (zajęte + dostępne), bo bloki zarezerwowane nie są dostępne."""
+    denominator = usage.used + usage.free
+    return round(usage.used * 100.0 / denominator, 1) if denominator else None
+
+
 def _read(path: str) -> Optional[str]:
     try:
         return Path(path).read_text(encoding="utf-8", errors="replace")
@@ -286,7 +292,7 @@ class RealTelemetryCollector:
             "total_gb": round(usage.total / 1024**3, 2),
             "used_gb": round(usage.used / 1024**3, 2),
             "free_gb": round(usage.free / 1024**3, 2),
-            "percent": round(usage.used * 100.0 / usage.total, 1) if usage.total else None,
+            "percent": disk_used_percent(usage),
         }
 
     def gpu(self) -> dict[str, Any]:

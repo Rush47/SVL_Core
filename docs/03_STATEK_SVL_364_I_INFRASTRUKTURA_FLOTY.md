@@ -38,3 +38,20 @@ Usunięto fikcyjny stan statku (sektor, orbita, reaktor, tarcze, DEFCON), mapę 
 `svl364_fleet_botany_control` oraz fałszywe programy `ssh`/`ufw`/`sudo`, które wcześniejsze wersje
 instalowały w `/usr/local/bin` (`ssh` wykonywał polecenia lokalnie, `ufw` zawsze zgłaszał aktywną zaporę).
 Backend przy starcie usuwa ich stare kopie — tylko pliki o dokładnie tej treści.
+
+## Zakładka Infrastruktura — źródła danych
+
+Fikcyjne dane (flota statków, placówki planetarne, botanika, badania z ETA) zostały usunięte.
+Endpoint `GET /api/py/infrastructure` (wymaga `SVL_OPERATOR_TOKEN`, `backend/infrastructure_probe.py`):
+
+| Sekcja | Źródło |
+| :--- | :--- |
+| Hosty z SSH | konkretne aliasy z `~/.ssh/config` użytkownika backendu + pomiar połączenia TCP |
+| Hosty monitorowane | moduły z `config.category = "infrastructure"` i `config.address = "host:port"` (formularz w zakładce) |
+| Usługi | `systemctl show` dla `svl-python-os`, `svl-comfyui`, `svl-codex-mcp`, `ollama`, `ssh` |
+| Kontenery | `docker ps -a` |
+| Porty | stan LISTEN z `/proc/net/tcp` i `/proc/net/tcp6` (nazwa usługi = typowa dla numeru portu) |
+| Dyski | `/proc/mounts` + zajętość liczona jak w `df` |
+| Zadania | tabela SQLite `agent_tasks` (status, czasy, błąd) |
+
+Wpisy dodane wcześniej starym formularzem (z „lokalizacją” i „ETA”) są pokazywane jako hosty bez adresu — nie są mierzone.
