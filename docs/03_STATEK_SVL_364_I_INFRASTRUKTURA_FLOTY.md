@@ -55,3 +55,15 @@ Endpoint `GET /api/py/infrastructure` (wymaga `SVL_OPERATOR_TOKEN`, `backend/inf
 | Zadania | tabela SQLite `agent_tasks` (status, czasy, błąd) |
 
 Wpisy dodane wcześniej starym formularzem (z „lokalizacją” i „ETA”) są pokazywane jako hosty bez adresu — nie są mierzone.
+
+### Automatyczne wykrywanie hostów (`backend/host_discovery.py`)
+
+Hosty pojawiają się same w sekcji „Wykryte automatycznie”. Aplikacja **nie skanuje sieci** — czyta tylko to, co system już wie:
+
+- sąsiedzi z tablicy ARP/NDP jądra (`ip -j neigh show`, a bez iproute2 `/proc/net/arp`), łączeni po adresie MAC,
+- `~/.ssh/known_hosts` użytkownika backendu (wpisy zahaszowane — `HashKnownHosts yes` — są nieczytelne i pomijane),
+- `/etc/hosts`; nazwy uzupełnia odwrotny DNS (limit 1,5 s).
+
+Połączenie TCP sprawdzane jest tylko dla hostów ze znanym portem SSH (z known_hosts). Wykryte hosty są pamiętane
+24 h w pamięci procesu (restart backendu czyści listę). Przycisk „Monitoruj” zapisuje host jako moduł z `config.address`.
+Urządzenie pojawi się w tablicy ARP, gdy host backendu się z nim komunikuje (np. brama, NAS, drukarka w użyciu).

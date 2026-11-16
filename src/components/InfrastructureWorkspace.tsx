@@ -46,6 +46,26 @@ interface InfrastructureReport {
     probe: TcpProbe | null;
     note: string | null;
   }>;
+  discovered: {
+    hosts: Array<{
+      key: string;
+      addresses: string[];
+      names: string[];
+      mac: string | null;
+      interface: string | null;
+      neighbor_state: string | null;
+      sources: string[];
+      ssh_port: number | null;
+      probe: TcpProbe | null;
+      first_seen: string;
+      last_seen: string;
+      seen_now: boolean;
+      tracked: boolean;
+    }>;
+    sources: { neighbors: string; known_hosts: string; etc_hosts: string };
+    hashed_known_hosts: number;
+    retention_hours: number;
+  };
   systemd: {
     available: boolean;
     reason: string | null;
@@ -86,6 +106,12 @@ interface InfrastructureReport {
 }
 
 const REFRESH_INTERVAL_MS = 30000;
+const SOURCE_LABEL: Record<string, string> = {
+  arp: 'sąsiad w sieci (ARP/NDP)',
+  known_hosts: 'known_hosts',
+  etc_hosts: '/etc/hosts',
+  dns: 'odwrotny DNS',
+};
 const ADDRESS_RE = /^(?:\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._-]{1,253}):\d{1,5}$/;
 
 const fmtTime = (iso: string | null | undefined) =>
@@ -161,8 +187,26 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
 
   const handleAddHost = async (e: React.FormEvent) => {
     e.preventDefault();
-    const name = newHostName.trim();
-    const address = newHostAddress.trim();
+    await addMonitoredHost(newHostName.trim(), newHostAddress.trim(), true);
+  };
+
+  const handleMonitorDiscovered = async (host: InfrastructureReport['discovered']['hosts'][number]) => {
+    const target = host.addresses[0] || host.names[0];
+    const portText = window.prompt(
+      `Który port TCP sprawdzać dla ${host.names[0] || target}? (np. 22 SSH, 80 HTTP, 445 SMB)`,
+      String(host.ssh_port || 22),
+    );
+    if (!portText) return;
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setStatusMsg(`Nieprawidłowy port: ${portText}`);
+      return;
+    }
+    const address = target.includes(':') ? `[${target}]:${port}` : `${target}:${port}`;
+    await addMonitoredHost(host.names[0] || target, address, false);
+  };
+
+  const addMonitoredHost = async (name: string, address: string, fromForm: boolean) => {
     if (!name || isSavingHost) return;
     if (!ADDRESS_RE.test(address)) {
       setStatusMsg('Podaj adres w formacie host:port, np. nas.local:445 albo 192.168.1.10:22.');
@@ -182,8 +226,10 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
         config: { category: 'infrastructure', address },
       });
       if (res.ok) {
-        setNewHostName('');
-        setNewHostAddress('');
+        if (fromForm) {
+          setNewHostName('');
+          setNewHostAddress('');
+        }
         setStatusMsg(`Dodano host „${name}” (${address}) do monitorowania.`);
         await loadReport();
       } else {
@@ -335,6 +381,64 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          <div className="space-y-2 pt-1">
+            <p className="text-[11px] font-mono text-slate-400">
+              Wykryte automatycznie (bez skanowania sieci — {report?.discovered.sources.neighbors || 'tablica sąsiadów'}, known_hosts,
+              /etc/hosts; pamiętane {report?.discovered.retention_hours ?? 24} h):
+            </p>
+            {report && report.discovered.hosts.length === 0 && (
+              <Unavailable reason="Jądro nie zna jeszcze żadnych sąsiadów w sieci, a known_hosts i /etc/hosts nie zawierają innych hostów." />
+            )}
+            <div className="grid gap-2 md:grid-cols-2">
+              {report?.discovered.hosts.map((h) => (
+                <div
+                  key={h.key}
+                  className={`rounded-lg border px-3 py-2 text-xs font-mono space-y-0.5 ${
+                    h.seen_now ? 'border-slate-800 bg-[#070C16]' : 'border-slate-800/60 bg-[#070C16]/60 opacity-70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-slate-100 truncate">{h.names[0] || h.addresses[0]}</span>
+                    {h.tracked ? (
+                      <span className="text-[11px] text-emerald-300 shrink-0">śledzony</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleMonitorDiscovered(h)}
+                        disabled={isSavingHost}
+                        className="shrink-0 rounded border border-emerald-500/40 bg-emerald-950/40 px-2 py-0.5 text-[11px] text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-40"
+                      >
+                        Monitoruj
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-slate-400 break-all">
+                    {[...h.addresses, ...h.names.slice(1)].join(' · ')}
+                    {h.mac ? ` · MAC ${h.mac}` : ''}
+                    {h.interface ? ` · ${h.interface}` : ''}
+                  </p>
+                  <p className="text-slate-500">
+                    Źródło: {h.sources.map((src) => SOURCE_LABEL[src] || src).join(', ')}
+                    {h.neighbor_state ? ` · stan: ${h.neighbor_state}` : ''}
+                  </p>
+                  {h.probe && (
+                    <p>
+                      SSH :{h.ssh_port} <ProbeBadge probe={h.probe} />
+                    </p>
+                  )}
+                  <p className="text-slate-500">
+                    {h.seen_now ? 'widoczny teraz' : `ostatnio widziany ${fmtTime(h.last_seen)}`} · pierwszy raz {fmtTime(h.first_seen)}
+                  </p>
+                </div>
+              ))}
+            </div>
+            {report && report.discovered.hashed_known_hosts > 0 && (
+              <p className="text-[11px] text-slate-500">
+                Pominięto {report.discovered.hashed_known_hosts} zahaszowanych wpisów known_hosts (HashKnownHosts) — ich nazw nie da się odczytać.
+              </p>
             )}
           </div>
 

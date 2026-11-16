@@ -160,6 +160,8 @@ class ProbeTests(unittest.TestCase):
         self.assertIsInstance(report["tasks"], list)
         self.assertTrue(any(p["port"] for p in report["listening_ports"]) or report["listening_ports"] == [])
         self.assertTrue(report["mounts"])
+        self.assertIn("hosts", report["discovered"])
+        self.assertIn("neighbors", report["discovered"]["sources"])
 
 
 if __name__ == "__main__":

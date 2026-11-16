@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
+    from host_discovery import HostDiscovery
     from real_telemetry import disk_used_percent, find_real_binary
 except ImportError:  # uruchomienie jako pakiet backend.*
+    from backend.host_discovery import HostDiscovery
     from backend.real_telemetry import disk_used_percent, find_real_binary
 
 SVL_SYSTEMD_UNITS = ("svl-python-os", "svl-comfyui", "svl-codex-mcp", "ollama", "ssh")
@@ -305,18 +307,29 @@ def recent_agent_tasks(kernel: Any, limit: int = 20) -> list[dict[str, Any]]:
     return kernel.run_db(_read_tasks, write=False)
 
 
-def build_infrastructure_report(kernel: Any) -> dict[str, Any]:
+# Jedna instancja na proces: pamięta wykryte hosty między odświeżeniami.
+DEFAULT_DISCOVERY = HostDiscovery()
+
+
+def build_infrastructure_report(kernel: Any, discovery: Optional[HostDiscovery] = None) -> dict[str, Any]:
     with ThreadPoolExecutor(max_workers=4) as pool:
         ssh_future = pool.submit(ssh_config_hosts)
         systemd_future = pool.submit(systemd_units)
         docker_future = pool.submit(docker_containers)
         monitored_future = pool.submit(monitored_hosts, kernel)
+        ssh_hosts, monitored = ssh_future.result(), monitored_future.result()
+        tracked = {h["alias"] for h in ssh_hosts["hosts"]} | {h["hostname"] for h in ssh_hosts["hosts"]}
+        for item in monitored:
+            parsed = parse_address(item["address"]) if item["address"] else None
+            if parsed:
+                tracked.add(parsed[0])
         return {
             "ok": True,
             "collected_at": _now(),
             "hostname": socket.gethostname(),
-            "ssh_hosts": ssh_future.result(),
-            "monitored": monitored_future.result(),
+            "ssh_hosts": ssh_hosts,
+            "monitored": monitored,
+            "discovered": (discovery or DEFAULT_DISCOVERY).discover(tracked_addresses=tracked),
             "systemd": systemd_future.result(),
             "docker": docker_future.result(),
             "listening_ports": parse_listening_ports(_read("/proc/net/tcp"), _read("/proc/net/tcp6")),
