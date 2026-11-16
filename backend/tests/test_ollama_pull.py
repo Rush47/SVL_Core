@@ -115,6 +115,25 @@ class OllamaPullTests(unittest.TestCase):
                 daemon.ensure_cli_binary()
             self.assertEqual(bin_path.read_bytes(), elf_payload)
 
+    def test_no_stand_in_server_and_legacy_fake_cli_is_removed(self) -> None:
+        import socket
+        import tempfile
+        import ollama_daemon
+
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            free_port = sock.getsockname()[1]
+        daemon = ollama_daemon.SVLLocalOllamaDaemon(port=free_port)
+        with patch("ollama_daemon.find_real_ollama_binary", return_value=None):
+            self.assertFalse(daemon.start_if_needed())
+        with socket.socket() as sock:
+            self.assertNotEqual(sock.connect_ex(("127.0.0.1", free_port)), 0)  # nic nie udaje Ollamy
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake = Path(tmpdir) / "ollama"
+            fake.write_text('print("ollama version is 0.6.4-svl-364-apex")', encoding="utf-8")
+            self.assertTrue(ollama_daemon.is_legacy_fake_ollama_cli(fake))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,18 +1,18 @@
 import base64
+import json
 import socket
+import threading
 import tempfile
 import unittest
 from pathlib import Path
 import sys
-from unittest.mock import patch
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from ollama_daemon import SVLLocalOllamaDaemon
 from real_vision_engine import (
-    PREFERRED_VISION_MODEL,
     SVLRealVisionEngine,
     analyze_image_binary,
     generate_svl364_sensor_png_bytes,
@@ -35,48 +35,84 @@ class TestSVLRealVisionSuite(unittest.TestCase):
         self.assertEqual(len(metrics["sha256"]), 64)
         self.assertGreater(metrics["colorStats"]["luminance"], 10.0)
 
-    def test_end_to_end_ollama_32_vision_analysis_and_sqlite_module(self) -> None:
+    def _free_port(self) -> int:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def _kernel(self, tmpdir: str) -> SVLSystemKernel:
+        return SVLSystemKernel(
+            db_path=str(Path(tmpdir) / "test_real_vision.sqlite3"),
+            operator_token="test_operator_token_with_more_than_32_chars_abcdef",
+        )
+
+    def test_without_a_real_model_there_is_no_invented_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_file = str(Path(tmpdir) / "test_real_vision.sqlite3")
-            with socket.socket() as sock:
-                sock.bind(("127.0.0.1", 0))
-                ollama_port = sock.getsockname()[1]
-            ollama_host = f"http://127.0.0.1:{ollama_port}"
-            kernel = SVLSystemKernel(
-                db_path=db_file,
-                operator_token="test_operator_token_with_more_than_32_chars_abcdef",
-            )
-            daemon = SVLLocalOllamaDaemon(kernel_Getter=lambda: kernel, port=ollama_port)
-            with patch.object(daemon, "ensure_cli_binary"):
-                daemon.start_if_needed()
+            kernel = self._kernel(tmpdir)
+            ollama_host = f"http://127.0.0.1:{self._free_port()}"  # nic tu nie nasłuchuje
+            engine = SVLRealVisionEngine(kernel, None)
+            result = engine.analyze_image(preset_id="operator_vault_portrait", prompt="Co widać?", ollama_host=ollama_host)
 
-            engine = SVLRealVisionEngine(kernel, daemon)
-            status = engine.get_status(ollama_host=ollama_host)
-            self.assertTrue(status["ok"])
-            self.assertEqual(status["configuredModel"], PREFERRED_VISION_MODEL)
-            self.assertIn("llama3.2-vision:11b", status["modelAliases"])
-
-            result = engine.analyze_image(
-                preset_id="svl364_l2_horizon",
-                prompt="Przetestuj Real Vision na modelu llama3.2-vision:11b.",
-                ollama_host=ollama_host,
-                emit_to_chat=True,
-                emit_to_iris=True,
-            )
-            self.assertTrue(result["ok"])
+            self.assertFalse(result["ok"])
             record = result["record"]
-            self.assertEqual(record["model"], "llama3.2-vision:11b")
-            self.assertEqual(record["ollamaHttpStatus"], 200)
-            self.assertEqual(record["binaryMetrics"]["format"], "PNG")
-            self.assertEqual(record["binaryMetrics"]["width"], 320)
-            self.assertEqual(record["binaryMetrics"]["height"], 180)
-            self.assertIn("llama3.2-vision:11b", record["reportMarkdown"])
-
+            self.assertFalse(record["analysed"])
+            self.assertEqual(record["ollamaReply"], "")
+            self.assertIn("Analiza obrazu niedostępna", record["reportMarkdown"])
+            self.assertNotIn("zweryfikowany", record["reportMarkdown"])
+            self.assertEqual(record["binaryMetrics"]["format"], "JPEG")
             mods = {m["id"]: m for m in kernel.list_system_modules()}
-            self.assertIn("svl-real-vision", mods)
-            self.assertEqual(mods["svl-real-vision"]["status"], "ACTIVE")
-            self.assertEqual(mods["svl-real-vision"]["config"]["ollama_model"], "llama3.2-vision:11b")
-            self.assertEqual(mods["svl-real-vision"]["config"]["last_test_status"], "PASSED")
+            self.assertEqual(mods["svl-real-vision"]["config"]["last_test_status"], "FAILED")
+
+    def test_generated_sensor_presets_are_gone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            engine = SVLRealVisionEngine(self._kernel(tmpdir), None)
+            self.assertIsNone(engine.load_preset_frame("svl364_l2_horizon"))
+            self.assertIsNone(engine.load_preset_frame("botany_demeter"))
+            result = engine.analyze_image(preset_id="botany_demeter", ollama_host="http://127.0.0.1:1")
+            self.assertFalse(result["ok"])
+            self.assertIn("Załącz obraz", result["error"])
+            self.assertEqual([p["id"] for p in engine.get_status()["presets"]], ["operator_vault_portrait"])
+
+    def test_model_gets_only_the_image_and_question_and_its_answer_is_reported(self) -> None:
+        captured: list[dict] = []
+
+        class StubOllama(BaseHTTPRequestHandler):
+            def log_message(self, *_args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                captured.append(body)
+                raw = json.dumps({"message": {"role": "assistant", "content": "Na zdjęciu jest osoba."}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), StubOllama)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                kernel = self._kernel(tmpdir)
+                engine = SVLRealVisionEngine(kernel, None)
+                png = base64.b64encode(generate_svl364_sensor_png_bytes(32, 16)).decode()
+                result = engine.analyze_image(
+                    image_base64=f"data:image/png;base64,{png}",
+                    prompt="Co widać?",
+                    ollama_host=f"http://127.0.0.1:{server.server_address[1]}",
+                    emit_to_chat=True,
+                )
+                self.assertTrue(result["ok"])
+                self.assertIn("Na zdjęciu jest osoba.", result["record"]["reportMarkdown"])
+                messages = captured[0]["messages"]
+                self.assertEqual([m["role"] for m in messages], ["user"])
+                self.assertEqual(messages[0]["content"], "Co widać?")
+                self.assertEqual(len(messages[0]["images"]), 1)
+                mods = {m["id"]: m for m in kernel.list_system_modules()}
+                self.assertEqual(mods["svl-real-vision"]["config"]["last_test_status"], "PASSED")
+        finally:
+            server.shutdown()
 
     def test_antivirus_scanner_purges_rogue_modules_and_virus_chat_payloads(self) -> None:
         from antivirus_scanner import SVLAntivirusScanner
@@ -109,7 +145,10 @@ class TestSVLRealVisionSuite(unittest.TestCase):
             av = SVLAntivirusScanner(kernel)
             scan = av.scan_and_purge(emit_to_chat=False, emit_to_iris=False, origin="unit-test")
             self.assertTrue(scan["ok"])
-            self.assertEqual(scan["status"], "CLEAN_VERIFIED")
+            self.assertIn(scan["status"], ("CLEAN", "THREATS_DETECTED"))
+            self.assertNotIn("potwierdzona", scan["reportMarkdown"])
+            # skaner niczego nie kasuje w plikach projektu
+            self.assertTrue((BACKEND_DIR.parent / "deploy" / "systemd" / "svl-codex-mcp.service").exists())
             self.assertGreaterEqual(scan["threatsFoundAndPurged"], 2)
             self.assertGreaterEqual(len(scan["neutralizedThreats"]), 2)
             mods = {m["id"]: m for m in kernel.list_system_modules()}

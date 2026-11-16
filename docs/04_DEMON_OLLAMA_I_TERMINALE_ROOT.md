@@ -1,14 +1,15 @@
-# 04. Lokalny Demon Ollama (11434) i Terminale ROOT (`SVL-364`)
+# 04. Ollama i Terminale ROOT (`SVL-364`)
 
-## 1. Wbudowany Demon Ollama (`backend/ollama_daemon.py`)
+## 1. Ollama (`backend/ollama_daemon.py`)
 
-System automatycznie uruchamia lokalny serwer HTTP na `127.0.0.1:11434` (`SVLLocalOllamaDaemon`), jeśli w środowisku nie działa zewnętrzny proces Ollama, oraz instaluje wykonywalny skrypt CLI `ollama` w `/usr/local/bin/ollama` i `backend/bin/ollama`.
+Aplikacja korzysta wyłącznie z **prawdziwej Ollamy**. Jeśli na `127.0.0.1:11434` nic nie nasłuchuje, a w systemie jest
+zainstalowany program `ollama` (plik ELF), backend uruchamia `ollama serve`. W przeciwnym razie nic nie udaje Ollamy —
+czat, Real Vision i zadania agentów zgłaszają wtedy błąd z powodem.
 
-Obsługiwane endpointy:
-- `GET /api/tags` — lista 4 zainstalowanych modeli lokalnych (`llama3.2-vision:11b`, `qwen2.5-coder:14b`, `dolphin-llama3:8b`, `bielik-11b-v2.3-instruct:q5_k_m`).
-- `GET /api/ps` — lista modeli aktywnych w pamięci VRAM/RAM.
-- `POST /api/pull` — natychmiastowa rejestracja/aktualizacja modelu.
-- `POST /api/chat` oraz `POST /api/generate` — lokalne wnioskowanie zintegrowane z telemetrią `SVLSystemKernel`.
+Wcześniejsze wersje uruchamiały zastępczy serwer HTTP (wersja `0.6.4-svl-364-apex`) z wymyśloną listą modeli
+i gotowymi odpowiedziami oraz fałszywe polecenie `ollama`. Zostały usunięte; stare kopie polecenia są sprzątane przy starcie.
+
+Instalacja: https://ollama.com, następnie `ollama pull llama3.2-vision:11b`.
 
 ## 2. Terminale Systemowe i Zdalny SSH
 

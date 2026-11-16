@@ -20,6 +20,7 @@ import math
 import os
 import struct
 import time
+import urllib.error
 import urllib.request
 import uuid
 import zlib
@@ -320,14 +321,6 @@ class SVLRealVisionEngine:
         self._ensure_vision_models_and_module()
 
     def _ensure_vision_models_and_module(self) -> None:
-        # Ensure both llama3.2-vision:11b and llama3.2-vision:latest are registered in the local Ollama daemon
-        if self.ollama_daemon is not None:
-            try:
-                self.ollama_daemon.register_model("llama3.2-vision:11b")
-                self.ollama_daemon.register_model("llama3.2-vision:latest")
-            except Exception:
-                pass
-
         # Ensure svl-real-vision module is materialized in SQLite
         try:
             existing = {m["id"]: m for m in self.kernel.list_system_modules()}
@@ -338,16 +331,9 @@ class SVLRealVisionEngine:
                 "ollama_endpoint": "http://127.0.0.1:11434/api/chat",
                 "vision_enabled": True,
                 "real_binary_decoder": True,
-                "supported_sources": [
-                    "camera_live",
-                    "screen_capture",
-                    "file_upload",
-                    "svl364_optical_sensor",
-                    "operator_portrait",
-                ],
+                "supported_sources": ["file_upload", "operator_portrait"],
                 "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "4096")),
                 "temperature": 0.4,
-                "lock_real_only": True,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             if "svl-real-vision" not in existing:
@@ -357,9 +343,8 @@ class SVLRealVisionEngine:
                     kind="Multimodal Real Vision Engine",
                     status="ACTIVE",
                     description=(
-                        "Silnik Real Vision skonfigurowany na Ollama 3.2 Vision (llama3.2-vision:11b · 127.0.0.1:11434). "
-                        "Rzeczywiste dekodowanie binarne ramek obrazu (PNG/JPEG/WebP, SHA-256, RGB/Luminancja) "
-                        "oraz analiza multimodalna dla statku SVL-364 Ebon Apex i czatu."
+                        "Analiza obrazów modelem wizyjnym Ollama (llama3.2-vision:11b). Parametry pliku "
+                        "(format, rozdzielczość, SHA-256, kolory) liczy serwer; opis treści pochodzi wyłącznie z modelu."
                     ),
                     config=cfg,
                     source="system",
@@ -368,39 +353,23 @@ class SVLRealVisionEngine:
         except Exception:
             pass
 
-    def load_preset_frame(self, preset_id: str = "operator_vault_portrait") -> tuple[str, str, str]:
+    def load_preset_frame(self, preset_id: str = "operator_vault_portrait") -> Optional[tuple[str, str, str]]:
         """
-        Return (base64_data_uri, mime_type, label) for a real image on disk or synthesized sensor frame.
+        (data_uri, mime, etykieta) dla prawdziwego pliku obrazu z dysku albo None.
+        Wcześniejsze presety „kamery statku” i „czujnika botanicznego” były obrazami generowanymi
+        programowo i opisanymi jako prawdziwe ramki — zostały usunięte.
         """
         clean_id = (preset_id or "operator_vault_portrait").strip().lower()
-        if clean_id in ("operator", "operator_vault_portrait", "avatar_operator"):
-            candidates = [
-                self.project_root / "public" / "assets" / "avatar_operator.jpg",
-                self.project_root / "src" / "assets" / "images" / "avatar_operator_mitek_1794750564484.jpg",
-            ]
-            for path in candidates:
-                if path.exists():
-                    raw = path.read_bytes()
-                    b64 = base64.b64encode(raw).decode("ascii")
-                    return f"data:image/jpeg;base64,{b64}", "image/jpeg", "Portret Operatora Mateusz Mitek (Vault Suit · Real JPEG)"
-
-        if clean_id in ("botany", "botany_demeter", "svl366_botany"):
-            png_bytes = generate_svl364_sensor_png_bytes(320, 180, variant="botany_demeter")
-            b64 = base64.b64encode(png_bytes).decode("ascii")
-            return (
-                f"data:image/png;base64,{b64}",
-                "image/png",
-                "Sensor Botaniczny Kopuły B-2 (SVL-364 / SVL-412 Demeter · Real PNG)",
-            )
-
-        # Default: SVL-364 Ebon Apex L2 Horizon Optical Sensor Frame
-        png_bytes = generate_svl364_sensor_png_bytes(320, 180, variant="svl364_l2_horizon")
-        b64 = base64.b64encode(png_bytes).decode("ascii")
-        return (
-            f"data:image/png;base64,{b64}",
-            "image/png",
-            "Kamera Pokładowa Statku SVL-364 Ebon Apex (Punkt L2 · Real PNG)",
-        )
+        if clean_id not in ("operator", "operator_vault_portrait", "avatar_operator"):
+            return None
+        for path in (
+            self.project_root / "public" / "assets" / "avatar_operator.jpg",
+            self.project_root / "src" / "assets" / "images" / "avatar_operator_mitek_1794750564484.jpg",
+        ):
+            if path.exists():
+                b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+                return f"data:image/jpeg;base64,{b64}", "image/jpeg", f"Plik {path.relative_to(self.project_root)}"
+        return None
 
     def get_status(self, ollama_host: str = "http://127.0.0.1:11434") -> dict[str, Any]:
         if self.ollama_daemon is not None:
@@ -424,18 +393,8 @@ class SVLRealVisionEngine:
             "presets": [
                 {
                     "id": "operator_vault_portrait",
-                    "name": "Portret Operatora Mateusz Mitek (Real JPEG)",
-                    "description": "Rzeczywisty plik obrazu JPEG z zasobów systemowych (/assets/avatar_operator.jpg)",
-                },
-                {
-                    "id": "svl364_l2_horizon",
-                    "name": "Sensor Optyczny Statku SVL-364 Ebon Apex (Punkt L2 · Real PNG)",
-                    "description": "Rzeczywista ramka binarna PNG z kamery dziobowej statku SVL-364 w punkcie L2",
-                },
-                {
-                    "id": "botany_demeter",
-                    "name": "Skansen Hydroponiczny Kopuły B-2 (Real PNG)",
-                    "description": "Spektrum bioluminescencyjne bioreaktorów tlenu Spirulina Kwantowa",
+                    "name": "Portret Operatora (plik JPEG z zasobów)",
+                    "description": "Prawdziwy plik public/assets/avatar_operator.jpg",
                 },
             ],
             "serverRevision": self.kernel.get_server_revision(),
@@ -457,17 +416,29 @@ class SVLRealVisionEngine:
         origin: str = "real-vision",
         correlation_id: str = "",
     ) -> dict[str, Any]:
+        """
+        Analiza obrazu modelem wizyjnym Ollama.
+
+        - Parametry pliku (format, rozdzielczość, SHA-256, kolory) liczy serwer z bajtów obrazu.
+        - Opis treści pochodzi wyłącznie z modelu; model dostaje tylko obraz i pytanie Operatora
+          (bez promptu systemowego). Gdy model nie odpowie, nie ma żadnego opisu — tylko błąd.
+        """
         started = time.time()
         if self.ollama_daemon is not None:
             self.ollama_daemon.start_if_needed()
 
-        source_label = source or "operator-upload"
-        if not image_base64 or preset_id:
-            data_uri, detected_mime, preset_label = self.load_preset_frame(preset_id or "operator_vault_portrait")
-            if not image_base64:
-                image_base64 = data_uri
-                image_mime_type = detected_mime
-                source_label = preset_label
+        source_label = source or "obraz Operatora"
+        if not image_base64:
+            preset = self.load_preset_frame(preset_id or "operator_vault_portrait")
+            if preset is None:
+                return {
+                    "ok": False,
+                    "error": "Brak obrazu do analizy. Załącz obraz (dostępny preset: portret Operatora).",
+                    "record": None,
+                    "status": self.get_status(ollama_host=ollama_host),
+                    "serverRevision": self.kernel.get_server_revision(),
+                }
+            image_base64, image_mime_type, source_label = preset
 
         clean_b64, detected_mime = strip_data_uri_prefix(image_base64)
         effective_mime = image_mime_type or detected_mime or "image/png"
@@ -479,35 +450,18 @@ class SVLRealVisionEngine:
         if not target_model or "vision" not in target_model.lower():
             target_model = PREFERRED_VISION_MODEL
 
-        effective_prompt = (
-            prompt.strip()
-            or "Przeprowadź analizę Real Vision obrazu przez model Ollama llama3.2-vision:11b (rozpoznaj obiekty, parametry optyczne, kolorystykę oraz kontekst operacyjny SVL-364)."
-        )
-
-        # Call local Ollama daemon /api/chat with multimodal `images` array
+        question = prompt.strip()
         ollama_url = f"{(ollama_host or 'http://127.0.0.1:11434').rstrip('/')}/api/chat"
-        ollama_reply = ""
-        ollama_http_status = 0
+        model_reply = ""
+        model_error: Optional[str] = None
+        http_status = 0
         try:
             req_payload = json.dumps(
                 {
                     "model": target_model,
                     "stream": False,
-                    "options": {"temperature": 0.35, "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "4096"))},
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Jesteś silnikiem SVL Real Vision działającym na modelu Ollama 3.2 Vision (llama3.2-vision:11b) "
-                                "na pokładzie statku SVL-364 Ebon Apex. Analizujesz rzeczywiste ramki obrazu."
-                            ),
-                        },
-                        {
-                            "role": "user",
-                            "content": effective_prompt,
-                            "images": [clean_b64],
-                        },
-                    ],
+                    "options": {"num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "4096"))},
+                    "messages": [{"role": "user", "content": question, "images": [clean_b64]}],
                 }
             ).encode("utf-8")
             req = urllib.request.Request(
@@ -516,52 +470,65 @@ class SVLRealVisionEngine:
                 headers={"Content-Type": "application/json", "Accept": "application/json"},
                 method="POST",
             )
-            vision_timeout = float(os.environ.get("OLLAMA_VISION_TIMEOUT", "180.0"))
-            with urllib.request.urlopen(req, timeout=vision_timeout) as resp:
-                ollama_http_status = int(resp.status)
+            with urllib.request.urlopen(req, timeout=float(os.environ.get("OLLAMA_VISION_TIMEOUT", "180.0"))) as resp:
+                http_status = int(resp.status)
                 resp_data = json.loads(resp.read().decode("utf-8"))
-                ollama_reply = str((resp_data.get("message") or {}).get("content") or resp_data.get("response") or "").strip()
-        except Exception as exc:
-            ollama_http_status = 500
-            ollama_reply = f"[Fallback Real Vision Decoder] Błąd wywołania HTTP {ollama_url}: {exc}"
+                model_reply = str((resp_data.get("message") or {}).get("content") or resp_data.get("response") or "").strip()
+            if not model_reply:
+                model_error = "model zwrócił pustą odpowiedź"
+        except urllib.error.HTTPError as exc:
+            http_status = int(exc.code)
+            model_error = f"Ollama zwróciła HTTP {exc.code} ({ollama_url})"
+        except Exception as exc:  # noqa: BLE001 — brak połączenia, przekroczony czas itp.
+            model_error = f"brak połączenia z Ollamą ({ollama_url}): {exc}"
 
+        analysed = model_error is None
         duration_ms = round((time.time() - started) * 1000, 1)
         self.inspections_count += 1
 
         cs = binary_metrics["colorStats"]
-        vision_report_md = (
-            f"### 👁️ Raport SVL Real Vision · Ollama 3.2 Vision (`{target_model}`)\n\n"
-            f"| Parametr Rzeczywistej Ramki | Wartość Zmierzona |\n"
-            f"| :--- | :--- |\n"
-            f"| **Źródło Obrazu** | `{source_label}` |\n"
-            f"| **Silnik & Model Vision** | `Ollama 3.2 Vision ({target_model}) · HTTP {ollama_http_status}` |\n"
-            f"| **Format Binarny & Rozmiar** | `{binary_metrics['format']} ({binary_metrics['mimeType']}) · {binary_metrics['sizeKb']} KB ({binary_metrics['sizeBytes']} B)` |\n"
-            f"| **Rozdzielczość & Proporcje** | `{binary_metrics['resolution']} · Aspect {binary_metrics['aspectRatio']}:1 · {binary_metrics['channels']} kanały ({binary_metrics['bitDepth']}-bit)` |\n"
-            f"| **Suma Kontrolna Ramki (SHA-256)** | `{binary_metrics['sha256'][:32]}…` |\n"
-            f"| **Profil Kolorymetryczny RGB** | `R={cs['meanR']} · G={cs['meanG']} · B={cs['meanB']} · Luminancja Y={cs['luminance']} · Kontrast σ={cs['contrastStd']}` |\n"
-            f"| **Dominujące Spektrum** | `{binary_metrics['dominantSpectrum']}` |\n"
-            f"| **Czas Inferencji Real Vision** | `{duration_ms} ms` |\n\n"
-            f"#### 🧠 Analiza Multimodalna `llama3.2-vision:11b`\n"
-            f"{ollama_reply}"
+        file_table = (
+            "| Parametr pliku (obliczony przez serwer) | Wartość |\n"
+            "| :--- | :--- |\n"
+            f"| Źródło | {source_label} |\n"
+            f"| Format i rozmiar | {binary_metrics['format']} ({binary_metrics['mimeType']}) · {binary_metrics['sizeKb']} KB |\n"
+            f"| Rozdzielczość | {binary_metrics['resolution']} · {binary_metrics['channels']} kanały ({binary_metrics['bitDepth']}-bit) |\n"
+            f"| SHA-256 | `{binary_metrics['sha256'][:32]}…` |\n"
+            f"| Średnie RGB / luminancja | R={cs['meanR']} · G={cs['meanG']} · B={cs['meanB']} · Y={cs['luminance']} |\n"
         )
+        if analysed:
+            vision_report_md = (
+                f"### 👁️ Analiza obrazu · model `{target_model}` (Ollama)\n\n"
+                f"{model_reply}\n\n"
+                f"_Opis treści pochodzi z modelu i nie jest weryfikowany przez serwer._\n\n"
+                f"{file_table}"
+            )
+        else:
+            vision_report_md = (
+                f"### ❌ Analiza obrazu niedostępna\n\n"
+                f"Model `{target_model}` nie przeanalizował obrazu: {model_error}.\n"
+                f"Poniżej tylko parametry pliku policzone przez serwer — bez opisu treści.\n\n"
+                f"{file_table}"
+            )
 
         record = {
             "id": f"rv-{uuid.uuid4().hex[:10]}",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "model": target_model,
             "ollamaEndpoint": ollama_url,
-            "ollamaHttpStatus": ollama_http_status,
+            "ollamaHttpStatus": http_status,
+            "analysed": analysed,
+            "error": model_error,
             "source": source_label,
-            "prompt": effective_prompt,
+            "prompt": question,
             "durationMs": duration_ms,
             "binaryMetrics": binary_metrics,
-            "ollamaReply": ollama_reply,
+            "ollamaReply": model_reply,
             "reportMarkdown": vision_report_md,
             "imagePreview": f"data:{effective_mime};base64,{clean_b64}",
         }
         self.recent_inspections.append(record)
 
-        # Update svl-real-vision module config with latest inspection telemetry
         try:
             self.kernel.upsert_system_module(
                 module_id="svl-real-vision",
@@ -569,21 +536,19 @@ class SVLRealVisionEngine:
                 kind="Multimodal Real Vision Engine",
                 status="ACTIVE",
                 description=(
-                    f"Aktywny silnik Real Vision na modelu {target_model} (127.0.0.1:11434). "
-                    f"Przeanalizowano {self.inspections_count} ramek (ostatnia: {binary_metrics['format']} {binary_metrics['resolution']}, SHA-256 {binary_metrics['sha256Short']})."
+                    f"Ostatnia analiza ({binary_metrics['format']} {binary_metrics['resolution']}): "
+                    + ("opis od modelu " + target_model if analysed else f"nieudana — {model_error}")
                 ),
                 config={
                     "engine": "SVLRealVisionEngine v3.2",
                     "ollama_model": target_model,
-                    "ollama_alias": "llama3.2-vision:latest",
                     "ollama_endpoint": ollama_url,
-                    "vision_enabled": True,
-                    "real_binary_decoder": True,
                     "inspections_count": self.inspections_count,
                     "last_frame_format": binary_metrics["format"],
                     "last_frame_resolution": binary_metrics["resolution"],
                     "last_frame_sha256": binary_metrics["sha256Short"],
-                    "last_test_status": "PASSED" if ollama_http_status == 200 else "DEGRADED",
+                    "last_test_status": "PASSED" if analysed else "FAILED",
+                    "last_error": model_error,
                     "updated_at": record["timestamp"],
                 },
                 source="operator",
@@ -602,9 +567,10 @@ class SVLRealVisionEngine:
                     {
                         "id": f"msg-rv-{uuid.uuid4().hex[:10]}",
                         "role": "assistant",
-                        "sender": "Bielik",
-                        "agentId": "bielik",
-                        "modelUsed": f"Real Vision · Ollama ({target_model})",
+                        "sender": "Real Vision",
+                        "agentId": "real-vision",
+                        "modelUsed": f"Ollama ({target_model})" if analysed else "Analiza nieudana",
+                        "provenance": "model_unverified" if analysed else "error",
                         "timestamp": datetime.now(timezone.utc).strftime("%H:%M"),
                         "content": vision_report_md,
                         "imagePreview": record["imagePreview"],
@@ -616,7 +582,8 @@ class SVLRealVisionEngine:
                 pass
 
         return {
-            "ok": ollama_http_status == 200 and binary_metrics["sizeBytes"] > 0,
+            "ok": analysed,
+            "error": model_error,
             "record": record,
             "status": self.get_status(ollama_host=ollama_host),
             "serverRevision": self.kernel.get_server_revision(),

@@ -35,6 +35,7 @@ import {
   probeCodexCli,
 } from './src/server/codexCliChat.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
+import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
   CONVERSATION_AGENTS,
   OPERATOR_LABEL,
@@ -1457,6 +1458,7 @@ async function startServer() {
         agentId: 'assistant',
         modelUsed: 'SVL Safety Guard',
         reply: 'Nie uczestniczę w tworzeniu ani symulowaniu treści o charakterze seksualnym z udziałem osób małoletnich. Możemy skupić się na architekturze systemu, modelach AI lub innych tematach technicznych.',
+        provenance: 'server_verified',
       });
       return;
     }
@@ -2054,6 +2056,7 @@ async function startServer() {
         agentId: selectedAgent.toLowerCase(),
         modelUsed: `${selectedDisplayName} · Ollama (${selectedOllamaModelName}) · Procesor Poleceń ROOT`,
         reply: directiveReceipts.join('\n\n') || 'Polecenie przetworzone.',
+        provenance: 'server_verified',
         followUpMessages: [],
         appliedActions,
         latestServerRevision: latestActionSrvRev,
@@ -2097,6 +2100,7 @@ async function startServer() {
         agentId: selectedAgent,
         modelUsed: 'Codex CLI · konto ChatGPT',
         reply: safeReply,
+        provenance: 'model_unverified',
         followUpMessages: [],
         appliedActions,
         latestServerRevision: latestActionSrvRev,
@@ -2122,7 +2126,7 @@ async function startServer() {
       );
       if (avRes.status === 200 && avRes.data?.ok && avRes.data?.reportMarkdown) {
         const avReply = String(avRes.data.reportMarkdown);
-        const avBadge = 'SVL-365 Sentinel AV · Skaner Integralności SHA-256 i Synchronizacja';
+        const avBadge = 'Skaner sygnatur SVL (bez modelu AI)';
         appliedActions.push({
           tool: 'svl_antivirus_scan_and_purge',
           entity: 'module',
@@ -2138,6 +2142,7 @@ async function startServer() {
           agentId: selectedAgent,
           modelUsed: avBadge,
           reply: withDirectiveReceipts(avReply),
+          provenance: 'server_verified',
           followUpMessages: [],
           appliedActions,
           latestServerRevision: Number(avRes.data.serverRevision || latestActionSrvRev),
@@ -2159,8 +2164,8 @@ async function startServer() {
         {
           imageBase64,
           imageMimeType,
-          prompt: cleanMsg || 'Przeprowadź pełną analizę Real Vision przez Ollama 3.2 Vision (llama3.2-vision:11b).',
-          source: imageBase64 ? 'Załącznik Czatu Operatora (Real Binary)' : 'Portret Operatora / Sensor Pokładowy SVL-364',
+          prompt: cleanMsg,
+          source: imageBase64 ? 'Załącznik czatu Operatora' : 'Portret Operatora (plik z zasobów)',
           presetId: imageBase64 ? '' : 'operator_vault_portrait',
           model: 'llama3.2-vision:11b',
           emitToChat: false,
@@ -2172,7 +2177,7 @@ async function startServer() {
       );
       if (rvRes.status === 200 && rvRes.data?.ok && rvRes.data?.record?.reportMarkdown) {
         const rvReply = String(rvRes.data.record.reportMarkdown);
-        const rvBadge = 'Real Vision · Ollama 3.2 Vision (llama3.2-vision:11b)';
+        const rvBadge = `Real Vision · Ollama (${rvRes.data.record.model || 'llama3.2-vision:11b'})`;
         appliedActions.push({
           tool: 'svl_real_vision_analyze',
           entity: 'module',
@@ -2188,6 +2193,7 @@ async function startServer() {
           agentId: selectedAgent,
           modelUsed: rvBadge,
           reply: withDirectiveReceipts(rvReply),
+          provenance: 'model_unverified',
           followUpMessages: [],
           appliedActions,
           latestServerRevision: Math.max(latestActionSrvRev, Number(rvRes.data.serverRevision || 0)),
@@ -2199,7 +2205,14 @@ async function startServer() {
 
     // Try explicit Ollama model (or try Ollama with fast timeout when Gemini fallback is available)
     const ai = getGeminiClient();
-    const shouldTryOllama = !wantsGitHubTools && (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
+    // Pytania o aktualne informacje / źródła idą do Gemini z wyszukiwaniem Google (odpowiedź ze źródłami).
+    const wantsWebSources = isWebSearchRequest(cleanMsg) && !wantsGitHubTools;
+    const webSearchUnavailableNote =
+      'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
+      'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
+    const shouldTryOllama =
+      !wantsGitHubTools && !(wantsWebSources && ai) &&
+      (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
     let ollamaFailure = shouldTryOllama ? '' : 'nie użyto dla tego zapytania';
     let geminiFailure = ai ? '' : 'brak klucza GEMINI_API_KEY';
     if (shouldTryOllama) {
@@ -2227,7 +2240,7 @@ async function startServer() {
           ...agentHistory,
           {
             role: 'user',
-            content: labelOperatorText(cleanMsg || 'Przeanalizuj przesłany obraz.'),
+            content: cleanMsg ? labelOperatorText(cleanMsg) : '',
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
@@ -2274,6 +2287,8 @@ async function startServer() {
               agentId: selectedAgent,
               modelUsed: displayModelBadge,
               reply: safeReply,
+              provenance: 'model_unverified',
+              ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
               followUpMessages: [],
               appliedActions,
               latestServerRevision: latestActionSrvRev,
@@ -2306,9 +2321,9 @@ async function startServer() {
           },
         });
       }
-      currentParts.push({
-        text: labelOperatorText(cleanMsg || 'Przeanalizuj dokładnie przesłany obraz i opisz go po polsku.'),
-      });
+      if (cleanMsg || !imageBase64) {
+        currentParts.push({ text: labelOperatorText(cleanMsg) });
+      }
 
       const coalescedHistory: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
       for (const turn of agentHistory) {
@@ -2356,7 +2371,11 @@ async function startServer() {
               contents: contentsPayload,
               config: {
                 ...tempCfg,
-                ...(includeTools ? { tools: [{ functionDeclarations: chatToolDeclarations }] } : {}),
+                ...(includeTools
+                  ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
+                  : wantsWebSources
+                    ? { tools: [{ googleSearch: {} }] }
+                    : {}),
                 abortSignal: AbortSignal.timeout(14000),
               },
             });
@@ -2410,7 +2429,10 @@ async function startServer() {
           }
           if (replyText) {
             replyText = cleanReplyFor(replyText);
-            replyText = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, replyText));
+            const webSources = wantsWebSources ? collectWebSources(response as any) : [];
+            replyText = withDirectiveReceipts(
+              appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
+            );
             if (agentState?.canonical_name) {
               const memRes = await callPythonBackend(
                 'POST',
@@ -2432,6 +2454,10 @@ async function startServer() {
               agentId: selectedAgent,
               modelUsed: imageBase64 ? `${displayModelBadge} · Vision` : displayModelBadge,
               reply: replyText,
+              provenance: webSources.length > 0 ? 'web_sources' : 'model_unverified',
+              ...(wantsWebSources && webSources.length === 0
+                ? { verificationNote: 'Wyszukiwanie nie zwróciło źródeł — odpowiedź pochodzi z wiedzy modelu i nie została zweryfikowana.' }
+                : {}),
               followUpMessages: [],
               appliedActions,
               latestServerRevision: latestActionSrvRev,
@@ -2462,6 +2488,7 @@ async function startServer() {
         agentId: selectedAgent,
         modelUsed: displayModelBadge,
         reply: withDirectiveReceipts(kernelReply),
+        provenance: 'server_verified',
         followUpMessages: [],
         appliedActions,
         latestServerRevision: Math.max(latestActionSrvRev, Number(repFallback.data?.serverRevision || 0)),
@@ -2489,6 +2516,7 @@ async function startServer() {
       agentId: selectedAgent,
       modelUsed: directiveReceipts.length > 0 ? displayModelBadge : 'Brak dostępnego modelu AI',
       reply: conversationalReply,
+      provenance: directiveReceipts.length > 0 ? 'server_verified' : 'error',
       followUpMessages: [],
       appliedActions,
       latestServerRevision: latestActionSrvRev,
@@ -2650,6 +2678,7 @@ async function startServer() {
         sender: speaker,
         agentId: speaker,
         modelUsed: `${line.label} · rozmowa obustronna`,
+        provenance: 'model_unverified',
         timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: text,
       };

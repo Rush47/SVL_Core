@@ -504,6 +504,9 @@ export interface SyncableMessage {
   fileName?: string;
   connectionReport?: any;
   appliedActions?: ChatAppliedAction[];
+  /** Skąd pochodzi treść: wiedza modelu (niezweryfikowana), źródła z internetu, wynik serwera, błąd. */
+  provenance?: 'model_unverified' | 'web_sources' | 'server_verified' | 'error';
+  verificationNote?: string;
   sourceOrigin?: string;
   correlationId?: string;
   metadata?: Record<string, any>;

@@ -50,6 +50,34 @@ import { renderFormattedContent, renderFormattedLine } from './ChatContentRender
 export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
 
+/** Oznaczenie pochodzenia treści odpowiedzi AI (widoczne pod wiadomością). */
+const PROVENANCE_STYLE: Record<NonNullable<ChatMessage['provenance']>, { label: string; hint: string; icon: string; className: string }> = {
+  model_unverified: {
+    label: 'Wiedza modelu — niezweryfikowana',
+    hint: 'Treść wygenerował model językowy z własnej wiedzy; może zawierać błędy. Sprawdź ważne informacje.',
+    icon: '⚠️',
+    className: 'border-amber-500/30 bg-amber-950/20 text-amber-200',
+  },
+  web_sources: {
+    label: 'Ze źródłami z internetu',
+    hint: 'Model korzystał z wyszukiwarki; źródła są podane pod odpowiedzią. Zweryfikuj je przed użyciem.',
+    icon: '🔗',
+    className: 'border-cyan-500/30 bg-cyan-950/20 text-cyan-200',
+  },
+  server_verified: {
+    label: 'Wynik serwera',
+    hint: 'Treść pochodzi z danych systemu lub wykonanego polecenia, nie z modelu językowego.',
+    icon: '✅',
+    className: 'border-emerald-500/30 bg-emerald-950/20 text-emerald-200',
+  },
+  error: {
+    label: 'Brak odpowiedzi modelu',
+    hint: 'Żaden model nie odpowiedział — powód podano w treści.',
+    icon: '❌',
+    className: 'border-rose-500/30 bg-rose-950/20 text-rose-200',
+  },
+};
+
 interface ChatWorkspaceProps {
   onNavigateTab: (tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
@@ -632,6 +660,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         content: data.reply || 'Brak odpowiedzi z serwera.',
         connectionReport: data.connectionReport,
         appliedActions,
+        provenance: data.provenance,
+        verificationNote: data.verificationNote,
       };
       const replyPersist = await appendAndPersistChatMessage(targetConvId, targetTitle, selectedModel, replyMsg);
       if (!replyPersist.ok && replyPersist.error) {
@@ -1166,7 +1196,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             </span>
             <span aria-hidden="true" className="text-slate-600 hidden sm:inline">·</span>
             <span className={`${ollamaReachable ? 'text-cyan-300' : 'text-amber-300'} hidden sm:inline`}>
-              Demon Ollama: {ollamaReachable ? `ONLINE 11434 (${ollamaModels.length} modeli)` : 'Offline (host)'}
+              Ollama: {ollamaReachable
+                ? `ONLINE ${String(healthData?.ollama?.ollama_host || '').replace(/^https?:\/\//, '')} (${ollamaModels.length} modeli)`
+                : `niedostępna (${String(healthData?.ollama?.ollama_host || '127.0.0.1:11434').replace(/^https?:\/\//, '')})`}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -1546,6 +1578,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                             Przejdź do Panelu Agentów
                           </button>
                         </div>
+                      </div>
+                    )}
+
+                    {msg.role === 'assistant' && msg.provenance && (
+                      <div
+                        className={`mt-3 flex items-start gap-1.5 rounded-md border px-2 py-1 text-[11px] ${
+                          PROVENANCE_STYLE[msg.provenance].className
+                        }`}
+                        title={PROVENANCE_STYLE[msg.provenance].hint}
+                      >
+                        <span aria-hidden="true">{PROVENANCE_STYLE[msg.provenance].icon}</span>
+                        <span>
+                          <strong>{PROVENANCE_STYLE[msg.provenance].label}</strong>
+                          {msg.verificationNote ? ` — ${msg.verificationNote}` : ` — ${PROVENANCE_STYLE[msg.provenance].hint}`}
+                        </span>
                       </div>
                     )}
 

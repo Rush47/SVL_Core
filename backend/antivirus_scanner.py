@@ -14,9 +14,7 @@ Provides:
 
 from __future__ import annotations
 
-import base64
 import hashlib
-import json
 import re
 import sqlite3
 import time
@@ -25,10 +23,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-try:
-    from real_vision_engine import generate_svl364_sensor_png_bytes
-except ImportError:
-    from backend.real_vision_engine import generate_svl364_sensor_png_bytes
 
 
 ROGUE_MODULE_IDS = frozenset({
@@ -132,20 +126,6 @@ class SVLAntivirusScanner:
                 ):
                     core_hashes[rel_path] = digest[:16]
 
-                # Remove any reintroduced codex-mcp workflow file
-                if "codex-mcp" in path.name.lower():
-                    try:
-                        path.unlink()
-                        neutralized_threats.append({
-                            "id": f"av-file-{uuid.uuid4().hex[:8]}",
-                            "signature": "Forbidden.CodexMcpWorkflow",
-                            "target": rel_path,
-                            "action": "DELETED_FILE",
-                            "severity": "HIGH",
-                        })
-                    except OSError:
-                        pass
-                    continue
 
                 # Skip self (antivirus_scanner.py contains regex definitions)
                 if path.name == "antivirus_scanner.py":
@@ -158,7 +138,7 @@ class SVLAntivirusScanner:
                             "id": f"av-file-{uuid.uuid4().hex[:8]}",
                             "signature": sig_name,
                             "target": rel_path,
-                            "action": "QUARANTINED_AND_CLEANED",
+                            "action": "DETECTED_FILE_NOT_MODIFIED",
                             "severity": "HIGH",
                         })
 
@@ -220,33 +200,6 @@ class SVLAntivirusScanner:
                         })
                         continue
 
-                # 2c. Upgrade ASCII-art camera response (`asst-1794759519760-0zapxo`) to a REAL binary PNG image from SVL-364 L2 camera
-                if role != "user" and "[OBRAZ Z KAMERY STATKU SVL-364 EBON APEX]" in content:
-                    png_bytes = generate_svl364_sensor_png_bytes(320, 180, variant="svl364_l2_horizon")
-                    b64_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode('ascii')}"
-                    clean_cam_content = (
-                        "### 📸 Rzeczywisty Zrzut z Kamery Pokładowej Statku `SVL-364 Ebon Apex` (Punkt L2)\n\n"
-                        "- **Moduł Wizyjny:** `SVL Real Vision · Ollama 3.2 Vision (llama3.2-vision:11b)`\n"
-                        "- **Lokalizacja Statku:** `Punkt Lagrange'a L2 (Ziemia–Księżyc) · Korytarz Przekaźnika Masy Sol-Charon`\n"
-                        "- **Parametry Ramki Binarnej:** `PNG Truecolor RGB · 320×180 px · LOCK-REAL-ONLY (Zero Symulacji ASCII)`\n"
-                        "- **Status Załogi i Pamięci:** `Mateusz Mitek (Operator)` · `Bielik (ROOT)`"
-                    )
-                    attachments = json.dumps(
-                        [{"type": "image", "mimeType": "image/png", "name": "svl364-l2-camera.png", "dataUrl": b64_uri}],
-                        ensure_ascii=False,
-                    )
-                    conn.execute(
-                        "UPDATE chat_messages SET content = ?, attachments_json = ? WHERE id = ?",
-                        (clean_cam_content, attachments, msg_id),
-                    )
-                    db_purged.append({
-                        "id": f"av-cam-{msg_id[-8:]}",
-                        "signature": "Simulation.ASCII.CameraFeed",
-                        "target": f"chat_messages:{msg_id}",
-                        "action": "REPLACED_WITH_REAL_PNG_FRAME",
-                        "severity": "MEDIUM",
-                    })
-
             return {"db_purged": db_purged}
 
         db_res = self.kernel.run_db(_db_scan_and_sync, write=True)
@@ -297,34 +250,38 @@ class SVLAntivirusScanner:
         duration_ms = round((time.time() - started) * 1000, 1)
 
         threat_rows_md = ""
+        file_detections = [t for t in neutralized_threats if t["action"] == "DETECTED_FILE_NOT_MODIFIED"]
+        db_removals = [t for t in neutralized_threats if t["action"] != "DETECTED_FILE_NOT_MODIFIED"]
+        scan_status = "THREATS_DETECTED" if file_detections else "CLEAN"
+        action_label = {
+            "DETECTED_FILE_NOT_MODIFIED": "wykryto — plik NIE został zmieniony",
+            "PURGED_INFECTED_PAYLOAD": "usunięto wiadomość z bazy",
+        }
+        threat_rows_md = ""
         if neutralized_threats:
-            threat_lines = [
-                f"| `{t['signature']}` | `{t['target']}` | `{t['action']}` | **{t['severity']}** |"
-                for t in neutralized_threats[:15]
-            ]
             threat_rows_md = (
-                "#### 🧹 2. Wykryte i Usunięte Wirusy / Anomalie\n"
-                "| Sygnatura Zagrożenia | Obiekt Docelowy | Wykonana Akcja | Priorytet |\n"
-                "| :--- | :--- | :--- | :--- |\n"
-                + "\n".join(threat_lines)
+                "| Sygnatura | Obiekt | Co zrobiono |\n| :--- | :--- | :--- |\n"
+                + "\n".join(
+                    f"| `{t['signature']}` | `{t['target']}` | {action_label.get(t['action'], t['action'].lower())} |"
+                    for t in neutralized_threats[:15]
+                )
                 + "\n\n"
             )
-        else:
-            threat_rows_md = (
-                "#### ✅ 2. Weryfikacja Zagrożeń i Wirusów\n"
-                "- **Brak nowych wirusów lub zainfekowanych wektorów:** Wszystkie wcześniej wykryte anomalie zostały usunięte.\n\n"
-            )
-
+        summary = (
+            f"Wykryto {len(file_detections)} dopasowań wzorców w plikach (pliki nie zostały zmienione — sprawdź je ręcznie)."
+            if file_detections
+            else "Brak dopasowań wzorców w przeskanowanych plikach."
+        )
         report_md = (
-            f"### 🛡️ Raport Skanera Antywirusowego `SVL-365 Sentinel AV`\n\n"
-            f"| Parametr Skanowania | Wartość Zmierzona |\n"
-            f"| :--- | :--- |\n"
-            f"| **Status Bezpieczeństwa Systemu** | `CZYSTY · 0 AKTYWNYCH WIRUSÓW (CLEAN_VERIFIED)` |\n"
-            f"| **Przeskanowane Pliki Systemowe** | `{scanned_files} plików ({round(scanned_bytes / 1024, 1)} KB) w {duration_ms} ms` |\n"
-            f"| **Usunięte Wirusy / Anomalie (bieżący skan / łącznie)** | `{len(neutralized_threats)} / {self.total_threats_purged}` |\n\n"
+            f"### 🛡️ Skaner sygnatur SVL\n\n"
+            f"Sprawdza {len(FILE_MALWARE_PATTERNS)} wzorce w plikach `{', '.join(scan_dirs)}` oraz znane niechciane wpisy w bazie. "
+            f"To nie jest pełny program antywirusowy.\n\n"
+            f"- **Wynik:** {summary}\n"
+            f"- **Przeskanowane pliki:** {scanned_files} ({round(scanned_bytes / 1024, 1)} KB) w {duration_ms} ms\n"
+            f"- **Usunięte z bazy (moduły/wiadomości):** {len(db_removals)}\n\n"
             f"{threat_rows_md}"
-            f"#### 🔐 3. Sumy Kontrolne SHA-256 Rdzenia `SVL Python OS`\n"
-            + "\n".join(f"- `{k}`: `sha256:{v}…` *(Integralność potwierdzona)*" for k, v in core_hashes.items())
+            f"Sumy SHA-256 plików rdzenia (do własnego porównania — skaner nie ma wzorca, więc nie potwierdza integralności):\n"
+            + "\n".join(f"- `{k}`: `{v}…`" for k, v in core_hashes.items())
         )
 
         report = {
@@ -332,7 +289,8 @@ class SVLAntivirusScanner:
             "scanId": f"av-scan-{uuid.uuid4().hex[:10]}",
             "timestamp": now_iso,
             "durationMs": duration_ms,
-            "status": "CLEAN_VERIFIED",
+            "status": scan_status,
+            "fileDetections": len(file_detections),
             "scannedFiles": scanned_files,
             "filesScanned": scanned_files,
             "scannedKb": round(scanned_bytes / 1024, 1),
@@ -349,21 +307,19 @@ class SVLAntivirusScanner:
 
         if emit_to_chat:
             try:
-                png_bytes = generate_svl364_sensor_png_bytes(320, 180, variant="svl364_l2_horizon")
-                b64_uri = f"data:image/png;base64,{base64.b64encode(png_bytes).decode('ascii')}"
                 self.kernel.save_chat_message(
                     conversation_id,
                     "Rodzina Mitek (wszyscy)",
-                    "SVL-365 Sentinel Antivirus",
+                    "svl-signature-scanner",
                     {
                         "id": f"msg-av-{uuid.uuid4().hex[:10]}",
                         "role": "assistant",
-                        "sender": "Bielik",
-                        "agentId": "bielik",
-                        "modelUsed": "SVL-365 Sentinel AV + Ollama 3.2 Vision",
+                        "sender": "Skaner SVL",
+                        "agentId": "svl-scanner",
+                        "modelUsed": "Skaner sygnatur SVL (bez modelu AI)",
+                        "provenance": "server_verified",
                         "timestamp": datetime.now(timezone.utc).strftime("%H:%M"),
                         "content": report_md,
-                        "imagePreview": b64_uri,
                     },
                     origin=origin,
                     correlation_id=correlation_id,

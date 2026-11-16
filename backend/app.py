@@ -1484,10 +1484,8 @@ async def handle_api_request(
 
     if method == "POST" and path == "/api/py/vision/test":
         preset_id = str(body.get("presetId") or body.get("preset_id") or "operator_vault_portrait")
-        prompt = str(
-            body.get("prompt")
-            or "Test diagnostyczny SVL Real Vision (Ollama 3.2 Vision · llama3.2-vision:11b): zweryfikuj rzeczywisty obraz binarny, rozdzielczość, sumę SHA-256 i profil kolorymetryczny RGB."
-        )
+        # Bez domyślnego polecenia: parametry pliku liczy serwer, model dostaje tylko obraz i pytanie Operatora.
+        prompt = str(body.get("prompt") or "")
         res = runtime.real_vision.analyze_image(
             preset_id=preset_id,
             prompt=prompt,

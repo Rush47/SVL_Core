@@ -30,6 +30,7 @@ from typing import Any, Callable, Optional, TypeVar
 
 _T = TypeVar("_T")
 
+MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verified", "error"})
 SYNC_SCHEMA_VERSION = "2026.11.sync.v1"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1864,6 +1865,8 @@ class SVLSystemKernel:
                 "imagePreview": attachments[0] if attachments else None,
                 "connectionReport": meta.get("connectionReport"),
                 "appliedActions": meta.get("appliedActions"),
+                "provenance": meta.get("provenance"),
+                "verificationNote": meta.get("verificationNote"),
                 "sourceOrigin": meta.get("sourceOrigin"),
                 "correlationId": meta.get("correlationId"),
             }
@@ -1928,6 +1931,9 @@ class SVLSystemKernel:
             "fileName": msg.get("fileName"),
             "connectionReport": msg.get("connectionReport"),
             "appliedActions": msg.get("appliedActions"),
+            # Skąd pochodzi treść: model (niezweryfikowane), źródła z internetu, wynik serwera, błąd.
+            "provenance": msg.get("provenance") if msg.get("provenance") in MESSAGE_PROVENANCE else None,
+            "verificationNote": str(msg.get("verificationNote") or "")[:300] or None,
             # Diagnostic origin indicates the submitting client/agent session;
             # it is not an authenticated proof of a human author.
             "sourceOrigin": str(origin or "unknown")[:120],

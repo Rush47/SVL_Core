@@ -86,7 +86,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
     setStreamError(null);
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setStreamError('Przeglądarka nie udostępnia API kamery (getUserMedia). Użyj obrazu pokładowego lub wgraj plik.');
+        setStreamError('Przeglądarka nie udostępnia API kamery (getUserMedia). Użyj portretu z zasobów lub wgraj plik.');
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -100,7 +100,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
       }
       setStreamActive(true);
     } catch (err: any) {
-      setStreamError(`Brak dostępu do kamery: ${err?.message || String(err)}. Możesz użyć sensora pokładowego SVL-364 lub wgrać plik.`);
+      setStreamError(`Brak dostępu do kamery: ${err?.message || String(err)}. Możesz użyć portretu z zasobów lub wgrać plik.`);
     }
   };
 
@@ -184,7 +184,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
           presetId: useCustom ? '' : targetPreset,
           source: useCustom
             ? `Obraz Operatora (${customImage?.name || selectedSourceTab})`
-            : `Preset Real Vision (${targetPreset})`,
+            : `Plik z zasobów (${targetPreset})`,
           prompt: promptInput,
           model: 'llama3.2-vision:11b',
           emitToChat,
@@ -204,9 +204,11 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
         await refreshDomainModules(['modules', 'health', ...(emitToChat ? ['chat' as const] : [])]);
         setStatusFeedback({
           ok: true,
-          text: `Test Real Vision (llama3.2-vision:11b) zakończony sukcesem: zdekodowano ${rec.binaryMetrics?.format} ${rec.binaryMetrics?.resolution} (${rec.durationMs} ms, SHA-256 ${rec.binaryMetrics?.sha256Short}…).`,
+          text: `Model ${rec.model} opisał obraz ${rec.binaryMetrics?.format} ${rec.binaryMetrics?.resolution} (${rec.durationMs} ms). Opis pochodzi z modelu i nie jest weryfikowany.`,
         });
       } else {
+        // Przy błędzie modelu pokazujemy uczciwy raport (tylko parametry pliku, bez opisu treści).
+        if (res.data?.record) setLastRecord(res.data.record);
         setStatusFeedback({
           ok: false,
           text: res.error || res.data?.error || 'Błąd wykonania analizy Real Vision.',
@@ -238,9 +240,6 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
               <h3 className="text-sm md:text-base font-bold text-white tracking-tight">
                 SVL Real Vision · Ollama 3.2 Vision (llama3.2-vision:11b)
               </h3>
-              <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/40 text-[10px] font-mono font-semibold text-emerald-300">
-                ACTIVE · LOCK-REAL-ONLY
-              </span>
               <span className="px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/40 text-[10px] font-mono text-violet-200">
                 mllama 10.7B · 127.0.0.1:11434
               </span>
@@ -342,7 +341,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
                   : 'bg-[#090D16] border-slate-800 text-slate-400 hover:text-slate-200'
               }`}
             >
-              🛰️ Sensory &amp; Portret
+              🖼️ Plik z zasobów
             </button>
             <button
               type="button"
@@ -394,7 +393,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
           {selectedSourceTab === 'preset' && (
             <div className="space-y-2 rounded-xl bg-[#090D16] border border-slate-800 p-3">
               <label htmlFor="rv-preset-select" className="block text-xs font-semibold text-slate-300">
-                Wybierz rzeczywistą ramkę obrazu do analizy:
+                Obraz z zasobów (prawdziwy plik) — własny obraz dodasz w zakładce wgrywania lub z kamery:
               </label>
               <select
                 id="rv-preset-select"
@@ -402,15 +401,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
                 onChange={(e) => setSelectedPresetId(e.target.value)}
                 className="w-full rounded-lg bg-[#111520] border border-slate-700 px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-violet-500"
               >
-                <option value="operator_vault_portrait">
-                  Portret Operatora Mateusz Mitek (/assets/avatar_operator.jpg · Real JPEG)
-                </option>
-                <option value="svl364_l2_horizon">
-                  Kamera Dziobowa Statku SVL-364 Ebon Apex (Punkt L2 · Real PNG)
-                </option>
-                <option value="botany_demeter">
-                  Skansen Hydroponiczny Kopuły B-2 (Spirulina Kwantowa · Real PNG)
-                </option>
+                <option value="operator_vault_portrait">Portret Operatora (public/assets/avatar_operator.jpg)</option>
               </select>
               <div className="flex flex-wrap gap-1.5 pt-1">
                 <button
@@ -423,28 +414,6 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
                   className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-violet-300 font-mono cursor-pointer"
                 >
                   Skanuj Portret Operatora
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPresetId('svl364_l2_horizon');
-                    void handleRunVisionAnalysis(false, 'svl364_l2_horizon');
-                  }}
-                  disabled={isAnalyzing}
-                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-cyan-300 font-mono cursor-pointer"
-                >
-                  Skanuj Sensor L2 SVL-364
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedPresetId('botany_demeter');
-                    void handleRunVisionAnalysis(false, 'botany_demeter');
-                  }}
-                  disabled={isAnalyzing}
-                  className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-emerald-300 font-mono cursor-pointer"
-                >
-                  Skanuj Bioreaktor B-2
                 </button>
               </div>
             </div>

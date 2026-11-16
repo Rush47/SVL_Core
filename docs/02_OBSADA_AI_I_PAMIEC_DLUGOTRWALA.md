@@ -32,3 +32,21 @@ Logika: `src/server/conversation.ts`, endpoint `POST /api/chat/proactive`.
 - **Polecenia czatu** („Zapisz w pamięci…”, `/exec`, `/modul` …) rozpoznaje i wykonuje serwer, bez udziału modelu.
   Model nie dostaje już protokołu `[[SVL_ACTION]]`, więc sam akcji nie wykonuje.
 - Persona i pamięć z zakładki Agenci nie są wysyłane do modelu w czacie (wciąż służą zadaniom workerów).
+
+## Skąd AI biorą informacje i jak to jest oznaczone
+
+Każda odpowiedź w czacie ma oznaczenie pochodzenia (`provenance`, widoczne pod wiadomością):
+
+| Oznaczenie | Skąd treść | Czy zweryfikowana |
+| :--- | :--- | :--- |
+| ⚠️ **Wiedza modelu — niezweryfikowana** | model językowy (Ollama / Gemini / Codex) z własnej wiedzy | **nie** — model może się mylić |
+| 🔗 **Ze źródłami z internetu** | Gemini z wyszukiwaniem Google; linki pod odpowiedzią | częściowo — sprawdź źródła |
+| ✅ **Wynik serwera** | dane systemu lub wykonane polecenie (np. `/moduly`, „Zapisz w pamięci…”, skaner) | tak — bez udziału modelu |
+| ❌ **Brak odpowiedzi modelu** | żaden model nie odpowiedział; powód w treści | — |
+
+- Pytania o aktualne informacje („najnowsza wersja…”, „podaj źródła”, „sprawdź w internecie”) idą do Gemini
+  z wyszukiwaniem Google. Bez `GEMINI_API_KEY` odpowiedź modelu dostaje ostrzeżenie, że nie mogła zostać sprawdzona w sieci.
+- Model nie dostaje żadnych danych o systemie — jeśli „podaje” pomiary, stany usług czy wyniki poleceń, to je zmyśla.
+  Prawdziwe dane są w zakładkach SVL-364 i Infrastruktura oraz w poleceniach czatu (`/status`, `/moduly`).
+- Real Vision: parametry pliku (format, rozdzielczość, SHA-256, kolory) liczy serwer; opis treści obrazu pochodzi z modelu.
+  Bez modelu nie ma opisu — tylko błąd.
