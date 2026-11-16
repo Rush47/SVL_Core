@@ -415,15 +415,17 @@ export function validateOllamaHostUrl(raw: string): {
 }
 
 export function buildChatHistoryPayload(
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: string; sender?: string }>,
   limit = 48,
-): Array<{ role: 'user' | 'assistant'; content: string }> {
+): Array<{ role: 'user' | 'assistant'; content: string; sender?: string }> {
   return (messages || [])
     .filter((m) => (m.role === 'user' || m.role === 'assistant') && Boolean(m.content?.trim()))
     .slice(-limit)
     .map((m) => ({
       role: m.role === 'user' ? 'user' : 'assistant',
       content: m.content.trim().slice(0, 12000),
+      // Nadawca jest potrzebny, by każdy agent wiedział, które wypowiedzi są jego, a które cudze.
+      ...(typeof m.sender === 'string' && m.sender.trim() ? { sender: m.sender.trim().slice(0, 80) } : {}),
     }));
 }
 

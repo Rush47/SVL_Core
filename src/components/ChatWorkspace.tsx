@@ -128,6 +128,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
   const [duplexActive, setDuplexActive] = useState(false);
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
+  // Dlaczego rozmowa obustronna stoi (powód z serwera) — pokazywane zamiast cichego zatrzymania.
+  const [duplexStatus, setDuplexStatus] = useState<{ reason: string; text: string } | null>(null);
   const lastInteractionTimeRef = useRef<number>(Date.now());
   const autoTurnsRef = useRef<number>(0);
   const prevDuplexActiveRef = useRef<boolean>(duplexActive);
@@ -209,6 +211,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         modelUsed?: string;
         serverRevision?: number;
         error?: string;
+        skipped?: boolean;
+        reason?: string;
       }>('/api/chat/proactive', {
         method: 'POST',
         timeoutMs: 30000,
@@ -223,13 +227,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         }),
       });
 
-      if (res.ok && res.data?.ok && res.data.message) {
+      if (res.data?.ok && res.data.message) {
         if (autonomous) {
           autoTurnsRef.current += 1;
         }
+        setDuplexStatus(null);
         await refreshDomainModules(['chat']);
         notifyLocalMutation('chat', activeConv.id, res.data.serverRevision);
-      } else if (!res.ok && !autonomous) {
+      } else if (res.data?.skipped && res.data.reason) {
+        // 'busy' = inna karta właśnie pisze; jej wiadomość przyjdzie przez synchronizację.
+        if (res.data.reason !== 'busy') {
+          setDuplexStatus({ reason: res.data.reason, text: res.data.error || res.data.reason });
+          // Przy ręcznym wywołaniu pasek trybu obustronnego może być ukryty — pokaż powód wprost.
+          if (!autonomous) setChatActionError(res.data.error || res.data.reason);
+        }
+      } else if (!autonomous) {
         setChatActionError(`Błąd inicjacji rozmowy: ${res.error || res.data?.error || 'brak odpowiedzi'}`);
       }
     } finally {
@@ -250,12 +262,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     if (!duplexActive || !activeConv || isSending || isProactiveLoading || !hasSvlOperatorAccessToken()) {
       return;
     }
-    const MAX_AUTO_TURNS = 4;
-    if (autoTurnsRef.current >= MAX_AUTO_TURNS) {
+    // Limit tur AI pilnuje serwer (powód pauzy wraca w odpowiedzi); tu tylko bezpiecznik.
+    const CLIENT_SAFETY_MAX_AUTO_TURNS = 12;
+    if (autoTurnsRef.current >= CLIENT_SAFETY_MAX_AUTO_TURNS) {
+      return;
+    }
+    if (duplexStatus && !justEnabled) {
       return;
     }
 
-    const delayMs = justEnabled ? 4000 : autoTurnsRef.current === 0 ? 6000 : 12000;
+    const delayMs = justEnabled ? 2500 : autoTurnsRef.current === 0 ? 4000 : 7000;
     const timer = setTimeout(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       if (sendingRef.current || inputValueRef.current.trim().length > 0) return;
@@ -264,7 +280,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     }, delayMs);
 
     return () => clearTimeout(timer);
-  }, [duplexActive, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
+  }, [duplexActive, duplexStatus, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
+
+  // Nowa wiadomość (od Operatora lub z innej karty) albo zmiana kanału odblokowuje rozmowę.
+  useEffect(() => {
+    setDuplexStatus(null);
+  }, [activeConv?.id, activeConv?.messages.length, duplexActive]);
 
   useEffect(() => {
     setSvlCodexAccessToken(codexAccessInput);
@@ -1321,6 +1342,35 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         )}
 
+        {duplexActive && duplexStatus && (
+          <div role="status" aria-live="polite" className="shrink-0 border-b border-violet-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
+            <div
+              className={`mx-auto flex max-w-5xl items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+                duplexStatus.reason === 'no_model'
+                  ? 'border-amber-500/40 bg-amber-950/30 text-amber-200'
+                  : 'border-violet-500/35 bg-violet-950/30 text-violet-200'
+              }`}
+            >
+              <Radio className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <strong className="font-semibold">Czat obustronny:</strong> {duplexStatus.text}
+              </span>
+              {duplexStatus.reason !== 'no_model' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDuplexStatus(null);
+                    void handleProactiveRef.current(undefined, false);
+                  }}
+                  className="shrink-0 rounded border border-violet-400/40 px-2 py-0.5 text-[11px] hover:bg-violet-500/20"
+                >
+                  Niech AI mówi dalej
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {chatActionError && (
           <div role="alert" aria-live="assertive" className="shrink-0 border-b border-rose-500/20 bg-[#0B0D13]/95 px-3 py-2.5 md:px-5">
             <div className="mx-auto flex max-w-5xl items-start gap-3 rounded-xl border border-rose-500/35 bg-gradient-to-r from-rose-950/70 via-[#17131d] to-[#111520] p-3 shadow-lg shadow-rose-950/20">
@@ -1637,7 +1687,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
             <div className="hidden md:flex items-center gap-1.5 text-[11px] text-slate-400 font-mono shrink-0 self-start pt-1.5">
               <span className={`w-2 h-2 rounded-full ${duplexActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-              <span>{duplexActive ? '2-Way czuwa' : 'Ręczny'}</span>
+              <span>{duplexActive ? (isProactiveLoading ? 'AI pisze…' : '2-Way czuwa') : 'Ręczny'}</span>
             </div>
           </div>
 

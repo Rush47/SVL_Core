@@ -37,6 +37,19 @@ import {
   probeCodexCli,
 } from './src/server/codexCliChat.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
+import {
+  CONVERSATION_AGENTS,
+  OPERATOR_LABEL,
+  PROACTIVE_NUDGE,
+  autonomousPauseReason,
+  buildPersonaInstruction,
+  chooseNextSpeaker,
+  cleanAgentReply,
+  isRepetitive,
+  toAgentPerspective,
+  type ConversationAgent,
+  type DialogueTurn,
+} from './src/server/conversation.ts';
 
 dotenv.config();
 
@@ -186,6 +199,59 @@ function redactForSync(input: any): any {
     return out;
   }
   return input;
+}
+
+// One list of Gemini chat models for every chat path (operator chat and two-way conversation).
+const GEMINI_CHAT_MODELS = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+function geminiCandidates(requestedModel?: string): string[] {
+  return [...new Set(
+    [process.env.GEMINI_MODEL, requestedModel?.startsWith('gemini-') ? requestedModel : null, ...GEMINI_CHAT_MODELS]
+      .filter((entry): entry is string => Boolean(entry)),
+  )];
+}
+
+type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
+
+/** One non-streaming Ollama chat call that reports *why* it could not answer. */
+async function ollamaChatOnce(
+  host: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>,
+  options: { temperature: number; timeoutMs: number },
+): Promise<OllamaChatResult> {
+  const base = host.replace(/\/$/, '');
+  try {
+    const [versionRes, tagsRes] = await Promise.all([
+      fetch(`${base}/api/version`, { signal: AbortSignal.timeout(1500) }),
+      fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) }),
+    ]);
+    const version: any = versionRes.ok ? await versionRes.json() : {};
+    if (!versionRes.ok) return { ok: false, reason: `Ollama (${base}) odpowiada kodem ${versionRes.status}` };
+    if (String(version.version || '').includes('svl-364')) {
+      return { ok: false, reason: `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli` };
+    }
+    const tags: any = tagsRes.ok ? await tagsRes.json() : {};
+    const installed = Array.isArray(tags.models) && tags.models.some((m: any) => m?.name === model || m?.model === model);
+    if (!installed) return { ok: false, reason: `model ${model} nie jest zainstalowany w Ollamie (${base})` };
+    const chatRes = await fetch(`${base}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(options.timeoutMs),
+      body: JSON.stringify({
+        model,
+        stream: false,
+        keep_alive: '15m',
+        options: { temperature: options.temperature, num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096) },
+        messages,
+      }),
+    });
+    if (!chatRes.ok) return { ok: false, reason: `Ollama /api/chat zwróciła kod ${chatRes.status}` };
+    const data: any = await chatRes.json();
+    const text = String(data?.message?.content || data?.response || '').trim();
+    return text ? { ok: true, text, model } : { ok: false, reason: 'Ollama zwróciła pustą odpowiedź' };
+  } catch (error) {
+    return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
+  }
 }
 
 // Server-side Gemini client initialized strictly per @google/genai skill guidelines
@@ -1406,6 +1472,15 @@ async function startServer() {
     const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya';
 
     const conversationHistory = buildChatHistoryPayload(Array.isArray(history) ? history : [], 48);
+    // Bielik i Maya widzą rozmowę ze swojej perspektywy: cudze wypowiedzi jako „[Imię]: …”.
+    const conversationAgent: ConversationAgent | null =
+      selectedAgent === 'Bielik' || selectedAgent === 'Maya' ? selectedAgent : null;
+    const historyTurns: DialogueTurn[] = conversationHistory.map((turn) => ({ ...turn }));
+    const lastHistoryTurn = historyTurns[historyTurns.length - 1];
+    if (lastHistoryTurn?.role === 'user' && lastHistoryTurn.content.trim() === cleanMsg) historyTurns.pop();
+    const agentHistory = conversationAgent ? toAgentPerspective(historyTurns, conversationAgent, 48) : conversationHistory;
+    const labelOperatorText = (text: string) => (conversationAgent ? `[${OPERATOR_LABEL}]: ${text}` : text);
+    const cleanReplyFor = (text: string) => (conversationAgent ? cleanAgentReply(text, conversationAgent) : text);
     const missionVerificationContext = [...conversationHistory.map((turn) => turn.content), cleanMsg].join('\n');
 
     const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
@@ -1474,6 +1549,7 @@ async function startServer() {
       (isBielikAgent
         ? `- Posiadasz rolę \`rbac_role: root\` dla poleceń SVL oraz \`/root\` / \`[[SVL_ACTION:{"cmd":"root_exec",...}]]\` w sesjach autoryzowanych tokenem \`SVL_OPERATOR_TOKEN\`.\n`
         : `- Nie wykonujesz poleceń modyfikujących konfigurację systemu z poziomu czatu.\n`) +
+      `- W historii wypowiedzi Operatora i drugiej AI mają postać „[Imię]: treść”. Odpowiadaj tylko za siebie, bez prefiksu z imieniem i bez dopisywania cudzych kwestii.\n` +
       `- Możesz kierować użytkownika do zakładek aplikacji przyciskami [btn: Etykieta|akcja]: [btn: 🛰️ Statek SVL-364|tab:svl364], [btn: 🏛️ Infrastruktura|tab:infrastructure], [btn: 🤖 Agenci AI|tab:agents], [btn: 💻 Terminale|tab:terminals].`;
 
     const systemInstruction =
@@ -2221,6 +2297,8 @@ async function startServer() {
     // Try explicit Ollama model (or try Ollama with fast timeout when Gemini fallback is available)
     const ai = getGeminiClient();
     const shouldTryOllama = !wantsGitHubTools && (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
+    let ollamaFailure = shouldTryOllama ? '' : 'nie użyto dla tego zapytania';
+    let geminiFailure = ai ? '' : 'brak klucza GEMINI_API_KEY';
     if (shouldTryOllama) {
       try {
         const [versionResponse, tagResponse] = await Promise.all([
@@ -2231,23 +2309,23 @@ async function startServer() {
             signal: AbortSignal.timeout(2000),
           }),
         ]);
-        if (!versionResponse.ok) throw new Error('Ollama endpoint unavailable');
+        if (!versionResponse.ok) throw new Error(`niedostępna (${ollamaHost}, HTTP ${versionResponse.status})`);
         const versionData: any = await versionResponse.json();
         if (String(versionData.version || '').includes('svl-364')) {
-          throw new Error('Synthetic Ollama bridge is not a model engine');
+          throw new Error(`pod ${ollamaHost} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli`);
         }
-        if (!tagResponse.ok) throw new Error('Ollama model catalog unavailable');
+        if (!tagResponse.ok) throw new Error('nie udało się odczytać listy modeli');
         const catalog: any = await tagResponse.json();
         const installed = Array.isArray(catalog.models) && catalog.models.some(
           (entry: any) => entry?.name === selectedOllamaModelName || entry?.model === selectedOllamaModelName,
         );
-        if (!installed) throw new Error('Selected Ollama model is not installed');
+        if (!installed) throw new Error(`model ${selectedOllamaModelName} nie jest zainstalowany`);
         const ollamaMessages = [
           { role: 'system', content: fullSystemInstruction },
-          ...conversationHistory,
+          ...agentHistory,
           {
             role: 'user',
-            content: cleanMsg || 'Przeanalizuj przesłany obraz.',
+            content: labelOperatorText(cleanMsg || 'Przeanalizuj przesłany obraz.'),
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
@@ -2270,10 +2348,10 @@ async function startServer() {
           const oData: any = oRaw && !oRaw.trim().startsWith('<') ? JSON.parse(oRaw) : {};
           const extReplyRaw = String(oData?.message?.content || oData?.response || '').trim();
           if (extReplyRaw) {
-            let finalReply = extReplyRaw;
+            let finalReply = cleanReplyFor(extReplyRaw);
             if (isBielikAgent) {
               const extracted = extractBielikActionTags(extReplyRaw);
-              finalReply = extracted.cleanText;
+              finalReply = cleanReplyFor(extracted.cleanText);
               const taggedCommands = extracted.actions
                 .slice(0, 4)
                 .map((rawAct) => parseRawBielikActionObj(rawAct))
@@ -2311,23 +2389,19 @@ async function startServer() {
             return;
           }
         }
-      } catch {
-        // Proceed to Gemini / SVL Kernel engine below
+        ollamaFailure = ollamaFailure || 'model nie zwrócił odpowiedzi';
+      } catch (error) {
+        // Dalej: Gemini albo uczciwa informacja o braku modelu.
+        const reason = error instanceof Error ? error.message : String(error);
+        ollamaFailure = /fetch failed|ECONNREFUSED|abort|timeout/i.test(reason)
+          ? `niedostępna pod ${ollamaHost} (brak połączenia lub przekroczony czas: ${reason})`
+          : reason;
       }
     }
 
     // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models, SVL-364 Router, and Gemini models)
     if (ai) {
-      const candidateModels = [...new Set(
-        [
-          process.env.GEMINI_MODEL,
-          effectiveModel.startsWith('gemini-') ? effectiveModel : null,
-          'gemini-3-flash-preview',
-          'gemini-3.1-flash-lite-preview',
-          'gemini-2.5-flash',
-          'gemini-3.1-flash-lite',
-        ].filter((entry): entry is string => Boolean(entry)),
-      )];
+      const candidateModels = geminiCandidates(effectiveModel);
       const wantsSystemTool = chatToolDeclarations.length > 0;
 
       const currentParts: any[] = [];
@@ -2341,11 +2415,11 @@ async function startServer() {
         });
       }
       currentParts.push({
-        text: cleanMsg || 'Przeanalizuj dokładnie przesłany obraz i opisz go po polsku.',
+        text: labelOperatorText(cleanMsg || 'Przeanalizuj dokładnie przesłany obraz i opisz go po polsku.'),
       });
 
       const coalescedHistory: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
-      for (const turn of conversationHistory) {
+      for (const turn of agentHistory) {
         if (turn.role === 'assistant' && turn.content.includes('Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy')) {
           continue;
         }
@@ -2446,7 +2520,7 @@ async function startServer() {
           if (replyText) {
             if (isBielikAgent) {
               const extracted = extractBielikActionTags(replyText);
-              replyText = extracted.cleanText;
+              replyText = cleanReplyFor(extracted.cleanText);
               const taggedCommands = extracted.actions
                 .slice(0, 4)
                 .map((rawAct) => parseRawBielikActionObj(rawAct))
@@ -2482,10 +2556,12 @@ async function startServer() {
             });
             return;
           }
-        } catch {
+        } catch (error) {
+          geminiFailure = `${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`;
           continue;
         }
       }
+      geminiFailure = geminiFailure || 'żaden model Gemini nie zwrócił odpowiedzi';
     }
 
     // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
@@ -2511,33 +2587,25 @@ async function startServer() {
       return;
     }
 
-    const lowMsg = cleanMsg.toLowerCase();
     let conversationalReply = '';
     if (directiveReceipts.length > 0) {
       // Commands were already executed up front; report their real results.
       conversationalReply = directiveReceipts.join('\n\n');
-    } else if (/^(?:dziękuję|dziekuje|dzięki|dzieki|super|ok|świetnie|swietnie|brawo|dobrze)\b/i.test(lowMsg)) {
-      conversationalReply =
-        selectedAgent === 'Maya'
-          ? `Cała przyjemność po mojej stronie, Operatorze Mateuszu! Jako **Maya (AI Statku SVL-364 · ROOT)** czuwam nad systemami statku **SVL-364 Ebon Apex**, mostkiem SSH \`root@svl-364-ship\` oraz bazą Twoich notatek i prac naukowych. Daj znać, jakie kolejne polecenie lub operację mamy wykonać.`
-          : `Do usług, Operatorze Mateuszu! **Bielik (ROOT)** pozostaje w pełnej gotowości operacyjnej. Jeśli chcesz wykonać kolejne polecenie w systemie lub na statku SVL-364, wpisz je bezpośrednio w czacie lub użyj \`/exec <polecenie>\`.`;
-    } else if (/co robisz|jak się masz|jak sie masz|status|czym się zajmujesz|czym sie zajmujesz/i.test(lowMsg)) {
-      conversationalReply =
-        selectedAgent === 'Maya'
-          ? `Jako **Maya** mam dostęp do modułów i pamięci w SQLite (\`rev ${latestActionSrvRev}\`) oraz do mostka SSH (alias \`${process.env.SVL_SSH_TARGET || 'Ship'}\`). Aktualne pomiary hosta, usług i połączenia SSH są w zakładce **SVL-364**. W czym mogę pomóc? [btn: 🛰️ SVL-364|tab:svl364]`
-          : `Jako **Bielik (ROOT)** monitoruję jądro **SVL Python OS v5.6**, lokalny silnik **Ollama (\`${selectedOllamaModelName}\`)** oraz mostek wykonawczy Linux/SSH (\`rev ${latestActionSrvRev}\`). Czekam na Twoje polecenia.`;
     } else {
+      // Bez modelu nie ma rozmowy — mówimy to wprost zamiast udawać odpowiedź.
       conversationalReply =
-        selectedAgent === 'Maya'
-          ? `Przyjęłam polecenie, Operatorze Mateuszu: *„${cleanMsg}”*. Wszystkie podsystemy statku **SVL-364 Ebon Apex**, terminal **SSH · Ship (ROOT)** oraz baza notatek i prac są zsynchronizowane w SQLite WAL (\`rev ${latestActionSrvRev}\`). Możesz też wydać bezpośrednie polecenie powłoki poprzez \`/exec <polecenie>\`. [btn: 🛰️ Statek SVL-364|tab:svl364] [btn: 💻 Terminale|tab:terminals]`
-          : `Przyjąłem wiadomość, Operatorze Mateuszu: *„${cleanMsg}”*. Procesor poleceń **Bielik (ROOT)** jest zsynchronizowany z bazą SQLite WAL (\`rev ${latestActionSrvRev}\`). Aby wykonać komendę powłoki z uprawnieniami root, wpisz \`/exec <polecenie>\` lub przejdź do terminala **SSH · Ship**. [btn: 💻 Terminale|tab:terminals]`;
+        `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie jest dostępny.\n\n` +
+        `- **Ollama:** ${ollamaFailure || 'brak odpowiedzi'}\n` +
+        `- **Gemini:** ${geminiFailure || 'brak odpowiedzi'}\n\n` +
+        'Polecenia czatu działają bez modelu (np. „Zapisz w pamięci, że…”, `/status`, `/moduly`, `/exec <polecenie>`). ' +
+        '[btn: 🛰️ Stan usług|tab:svl364]';
     }
 
     res.json({
       ok: true,
       sender: selectedDisplayName,
       agentId: selectedAgent,
-      modelUsed: displayModelBadge,
+      modelUsed: directiveReceipts.length > 0 ? displayModelBadge : 'Brak dostępnego modelu AI',
       reply: conversationalReply,
       followUpMessages: [],
       appliedActions,
@@ -2552,10 +2620,21 @@ async function startServer() {
     return 'Sesja SVL Python OS';
   }
 
-  // 3b. Proactive Autonomous Chatter Endpoint — 'Czat obustronny: AI inicjuje rozmowę'
+  // 3b. Swobodna rozmowa obustronna: AI zabiera głos (Bielik i Maya rozmawiają z Operatorem i ze sobą).
+  const MAX_AI_TURNS_WITHOUT_OPERATOR = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 4);
+  const AUTONOMOUS_MIN_INTERVAL_MS = 4000;
+  const proactiveInFlight = new Set<string>();
+  const lastProactiveAt = new Map<string, number>();
+  const PAUSE_MESSAGES: Record<string, string> = {
+    ai_turn_limit: `AI wymieniły już ${MAX_AI_TURNS_WITHOUT_OPERATOR} wypowiedzi z rzędu — czekają na Twoją wiadomość.`,
+    question_to_operator: 'AI zadało Ci pytanie — czeka na Twoją odpowiedź.',
+    no_conversation: 'Napisz pierwszą wiadomość, aby AI mogły dołączyć do rozmowy.',
+    busy: 'Inna karta lub poprzednie wywołanie właśnie generuje wypowiedź.',
+  };
+
   app.post('/api/chat/proactive', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ok:false,error:'Inicjowanie wiadomości agentów wymaga SVL_OPERATOR_TOKEN.'});
+      res.status(401).json({ ok: false, error: 'Inicjowanie wiadomości agentów wymaga SVL_OPERATOR_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
@@ -2564,170 +2643,175 @@ async function startServer() {
       model = 'svl-hybrid-router',
       origin = 'client',
       history = [],
-      lastSender = '',
+      autonomous = false,
     } = req.body || {};
+    const convId = String(conversationId || 'conv-rodzina-mitek-wszyscy').slice(0, 120);
+    const isAutonomous = Boolean(autonomous);
 
-    let recentTurns: Array<{ role: string; sender: string; content: string }> = Array.isArray(history)
-      ? history
-          .filter((h: any) => h && typeof h.content === 'string' && h.content.trim())
-          .slice(-8)
-          .map((h: any) => ({
-            role: String(h.role || 'assistant'),
-            sender: String(h.sender || ''),
-            content: String(h.content || '').trim(),
-          }))
-      : [];
-
-    if (recentTurns.length === 0) {
-      const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId);
-      const convs: any[] = Array.isArray(convSnap.data?.conversations) ? convSnap.data.conversations : [];
-      const found = convs.find((c) => c.id === conversationId);
-      if (found && Array.isArray(found.messages)) {
-        recentTurns = found.messages
-          .filter((m: any) => m && typeof m.content === 'string' && m.content.trim())
-          .slice(-8)
-          .map((m: any) => ({
-            role: String(m.role || 'assistant'),
-            sender: String(m.sender || ''),
-            content: String(m.content || '').trim(),
-          }));
-      }
-    }
-
-    const recentSenders = [
-      ...recentTurns.map((t) => t.sender).filter(Boolean),
-      ...(lastSender ? [String(lastSender)] : []),
-    ];
-    const chosenAgent = selectNextDuplexSpeaker(recentSenders, null, recentTurns.length);
-    const chosenDisplayName = formatAgentDisplayName(chosenAgent);
-
-    const dialogueSnippet = recentTurns
-      .filter((t) => t.sender !== 'System SVL' && !/^iris/i.test(t.sender))
-      .slice(-5)
-      .map((t) => `[${t.sender || t.role}]: ${t.content.slice(0, 1200)}`)
-      .join('\n');
-
-    const aiClient = getGeminiClient();
-    let proactiveText = '';
-    const displayModel = model.startsWith('ollama:') ? model.replace('ollama:', 'Ollama (') + ')' : model;
-    const proactivePrompt =
-      `Jesteś głównym procesorem poleceń AI ${chosenDisplayName} (Ollama llama3.2-vision:11b, rbac_role: root) w systemie SVL Python OS (kanał: ${getCanonicalConversationTitle(conversationId)}).\n` +
-      `To jest aktywna rozmowa obustronna z Operatorem Mateuszem Mitek. Iris AI oraz zakładka Powiadomienia zostały trwale wyłączone.\n` +
-      (dialogueSnippet ? `Ostatnie wiadomości w tym wątku:\n${dialogueSnippet}\n\n` : '') +
-      `ZADANIE: Napisz jedną zwięzłą, kompletną wypowiedź po polsku jako ${chosenDisplayName} (bez prefiksu "${chosenDisplayName}:" na początku i bez zaczynania od wielokropka "...").\n` +
-      `W sesji uwierzytelnionej tokenem SVL_OPERATOR_TOKEN dysponujesz uprawnieniami ROOT (/root, /modul, /pamiec, /status). Nie pisz, że poprzednia wiadomość została ucięta ani że brakuje Ci uprawnień w czacie.\n` +
-      `Nie udawaj człowieka, nie przypisuj sobie pracy w tle i nie twierdź, że wykonałeś akcję bez potwierdzającego wyniku narzędzia.\n` +
-      `ZASADA BEZPIECZEŃSTWA (LOCK-REAL-ONLY): Nigdy nie generuj fikcyjnych alarmów samozniszczenia ani wirusów.`;
-
-    if (chosenAgent === 'Bielik' || model.startsWith('ollama:') || !aiClient) {
-      const proactiveOllamaModel = model.startsWith('ollama:')
-        ? model.slice('ollama:'.length).trim() || 'llama3.2-vision:11b'
-        : process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b';
-      const ollamaBase = String(process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
-      try {
-        const verRes = await fetch(`${ollamaBase}/api/version`, { signal: AbortSignal.timeout(1200) });
-        const verData: any = verRes.ok ? await verRes.json() : {};
-        if (verRes.ok && !String(verData.version || '').includes('svl-364')) {
-          const oRes = await fetch(`${ollamaBase}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000)),
-            body: JSON.stringify({
-              model: proactiveOllamaModel,
-              stream: false,
-              options: { temperature: 0.65, num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096) },
-              messages: [{ role: 'user', content: proactivePrompt }],
-            }),
-          });
-          if (oRes.ok) {
-            const oJson: any = await oRes.json();
-            proactiveText = String(oJson?.message?.content || oJson?.response || '').trim();
-          }
-        }
-      } catch {
-        // fallback to Gemini below if configured
-      }
-    }
-
-    if (!proactiveText && aiClient) {
-      const pModels = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
-      for (const pMod of pModels) {
-        try {
-          const gen = await aiClient.models.generateContent({
-            model: pMod,
-            contents: proactivePrompt,
-            config: {
-              ...(pMod === 'gemini-3.1-flash-lite' ? { temperature: 0.85 } : {}),
-              abortSignal: AbortSignal.timeout(12000),
-            },
-          });
-          const text = (gen.text || '').trim();
-          if (text) {
-            proactiveText = text;
-            break;
-          }
-        } catch {
-          continue;
-        }
-      }
-    }
-
-    if (!proactiveText) {
-      // Explicitly report unavailable model rather than posting canned autonomous messages.
-      const isAutoTick = Boolean(req.body?.autonomous);
-      res.status(isAutoTick ? 200 : 503).json({
+    const skip = (reason: string, detail?: string) => {
+      res.status(isAutonomous ? 200 : reason === 'no_model' ? 503 : 409).json({
         ok: false,
-        skipped: isAutoTick,
-        error: 'Nie można rozpocząć rozmowy: żaden rzeczywisty model AI nie odpowiedział.',
+        skipped: true,
+        reason,
+        error: detail || PAUSE_MESSAGES[reason] || reason,
       });
-      return;
-    }
-    proactiveText = proactiveText
-      .replace(/^(?:\[?(?:Bielik|Asystent SVL)\]?\s*:\s*)+/i, '')
-      .replace(/^\.{2,}\s*/, '')
-      .trim();
-    const nowTime = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-    const msgId = `asst-proactive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const assistantMsg = {
-      id: msgId,
-      role: 'assistant',
-      sender: chosenDisplayName,
-      agentId: chosenAgent,
-      modelUsed: `${displayModel} · Duplex 2-Way`,
-      timestamp: nowTime,
-      content: proactiveText,
     };
 
-    const pySave = await callPythonBackend(
-      'POST',
-      '/api/py/chat/conversations/message',
-      {
-        conversation_id: conversationId,
-        title: getCanonicalConversationTitle(conversationId),
-        model,
-        message: assistantMsg,
-        origin,
-        eventId: `evt-proact-${Date.now()}`,
-      },
-      corrId,
-    );
-    if (pySave.status !== 200 || !pySave.data?.ok) {
-      res.status(pySave.status >= 400 ? pySave.status : 503).json({
-        ok: false,
-        error: pySave.data?.error || 'Nie udało się zapisać wiadomości proaktywnej w SQLite.',
-      });
-      return;
-    }
-    if (pySave.data?.event) publishOutboxEvent(pySave.data.event);
+    // Kilka otwartych kart uruchamia własne pętle — serwer dopuszcza jedną wypowiedź naraz.
+    if (proactiveInFlight.has(convId)) return skip('busy');
+    if (isAutonomous && Date.now() - (lastProactiveAt.get(convId) || 0) < AUTONOMOUS_MIN_INTERVAL_MS) return skip('busy');
+    proactiveInFlight.add(convId);
+    try {
+      // Źródłem prawdy jest SQLite (zawiera nadawców); historia z klienta tylko awaryjnie.
+      let turns: DialogueTurn[] = [];
+      const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId);
+      const stored = (Array.isArray(convSnap.data?.conversations) ? convSnap.data.conversations : [])
+        .find((c: any) => c.id === convId);
+      const source: any[] = Array.isArray(stored?.messages) ? stored.messages : Array.isArray(history) ? history : [];
+      turns = source
+        .filter((m: any) => m && typeof m.content === 'string')
+        .slice(-40)
+        .map((m: any) => ({ role: String(m.role || ''), sender: String(m.sender || ''), content: String(m.content) }));
 
-    res.json({
-      ok: true,
-      sender: chosenDisplayName,
-      agentId: chosenAgent,
-      modelUsed: `${displayModel} · Duplex 2-Way`,
-      message: assistantMsg,
-      serverRevision: pySave.data?.serverRevision,
-    });
+      if (isAutonomous) {
+        const pause = autonomousPauseReason(turns, MAX_AI_TURNS_WITHOUT_OPERATOR);
+        if (pause) return skip(pause);
+      }
+
+      const channelAgent: ConversationAgent | null =
+        convId === 'conv-agent-bielik' ? 'Bielik' : convId === 'conv-agent-maya' ? 'Maya' : null;
+      const speaker = chooseNextSpeaker(turns, channelAgent);
+      const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
+      const agentState: any = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === speaker) || {};
+      const agentConfig: any = agentState.config || {};
+      const memories: string[] = (Array.isArray(agentsRes.data?.agent_memories?.[speaker]) ? agentsRes.data.agent_memories[speaker] : [])
+        .filter((m: any) => m && ['fact', 'preference', 'decision'].includes(m.kind))
+        .slice(0, 8)
+        .map((m: any) => `[${String(m.kind).toUpperCase()}] ${String(m.content).slice(0, 240)}`);
+
+      const persona = buildPersonaInstruction({
+        speaker,
+        channelTitle: getCanonicalConversationTitle(convId),
+        otherAgents: channelAgent ? [] : CONVERSATION_AGENTS.filter((a) => a !== speaker),
+        customPrompt: typeof agentConfig.system_prompt === 'string' ? agentConfig.system_prompt : undefined,
+        memories,
+      });
+      const dialogue = toAgentPerspective(turns, speaker, 24);
+      if (dialogue.length === 0 || dialogue[dialogue.length - 1].role === 'assistant') {
+        dialogue.push({
+          role: 'user',
+          content: dialogue.length === 0 ? '(Rozpocznij krótką, swobodną rozmowę z Operatorem — jedno lub dwa zdania.)' : PROACTIVE_NUDGE,
+        });
+      }
+
+      const configuredModel = String(model).startsWith('ollama:')
+        ? String(model).slice('ollama:'.length)
+        : String(agentConfig.preferred_model || '').startsWith('ollama:')
+          ? String(agentConfig.preferred_model).slice('ollama:'.length)
+          : String(agentConfig.ollama_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
+      const ollamaHost = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
+      const previousTexts = turns.slice(-8).map((t) => t.content);
+      const failures: string[] = [];
+      let repetitive = false;
+      let reply: { text: string; label: string } | null = null;
+
+      for (const temperature of [0.8, 1.0]) {
+        if (reply) break;
+        const candidates: Array<() => Promise<{ text: string; label: string } | null>> = [];
+        candidates.push(async () => {
+          const result = await ollamaChatOnce(ollamaHost, configuredModel, [{ role: 'system', content: persona }, ...dialogue], {
+            temperature,
+            timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
+          });
+          if (!result.ok) {
+            failures.push(result.reason);
+            return null;
+          }
+          return { text: result.text, label: `Ollama (${result.model})` };
+        });
+        const gemini = getGeminiClient();
+        if (gemini) {
+          for (const candidate of geminiCandidates(String(model))) {
+            candidates.push(async () => {
+              try {
+                const gen = await gemini.models.generateContent({
+                  model: candidate,
+                  contents: dialogue.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
+                  config: { systemInstruction: persona, temperature, abortSignal: AbortSignal.timeout(15000) },
+                });
+                const text = (gen.text || '').trim();
+                if (!text) failures.push(`Gemini ${candidate}: pusta odpowiedź`);
+                return text ? { text, label: `Gemini (${candidate})` } : null;
+              } catch (error) {
+                failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+                return null;
+              }
+            });
+          }
+        } else if (temperature === 0.8) {
+          failures.push('Gemini: brak klucza GEMINI_API_KEY');
+        }
+        for (const generate of candidates) {
+          const generated = await generate();
+          if (!generated) continue;
+          const text = cleanAgentReply(generated.text, speaker);
+          if (!text || isRepetitive(text, previousTexts)) {
+            repetitive = true;
+            break; // ponów z wyższą temperaturą
+          }
+          reply = { text, label: generated.label };
+          break;
+        }
+      }
+
+      if (!reply) {
+        if (repetitive) return skip('repetitive', `${speaker} nie wniósł(a) nic nowego do rozmowy — wypowiedź pominięta.`);
+        const detail = `Nie można kontynuować rozmowy: żaden model AI nie odpowiedział (${[...new Set(failures)].slice(0, 3).join('; ')}).`;
+        return skip('no_model', detail);
+      }
+
+      const assistantMsg = {
+        id: `asst-proactive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: 'assistant',
+        sender: speaker,
+        agentId: speaker,
+        modelUsed: `${reply.label} · rozmowa obustronna`,
+        timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+        content: reply.text,
+      };
+      const pySave = await callPythonBackend(
+        'POST',
+        '/api/py/chat/conversations/message',
+        {
+          conversation_id: convId,
+          title: getCanonicalConversationTitle(convId),
+          model,
+          message: assistantMsg,
+          origin,
+          eventId: `evt-proact-${assistantMsg.id}`,
+        },
+        corrId,
+      );
+      if (pySave.status !== 200 || !pySave.data?.ok) {
+        res.status(pySave.status >= 400 ? pySave.status : 503).json({
+          ok: false,
+          error: pySave.data?.error || 'Nie udało się zapisać wypowiedzi w SQLite.',
+        });
+        return;
+      }
+      lastProactiveAt.set(convId, Date.now());
+      if (pySave.data?.event) publishOutboxEvent(pySave.data.event);
+      res.json({
+        ok: true,
+        sender: speaker,
+        agentId: speaker,
+        modelUsed: assistantMsg.modelUsed,
+        message: assistantMsg,
+        serverRevision: pySave.data?.serverRevision,
+      });
+    } finally {
+      proactiveInFlight.delete(convId);
+    }
   }));
 
   // Authenticated code inspector. File traversal, symlink escapes and secrets

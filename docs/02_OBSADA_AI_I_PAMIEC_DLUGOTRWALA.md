@@ -14,3 +14,20 @@ Dawne profile pomocnicze (`Alex`, `Aria`/`si_1`, `Astyria`, `Aurelius`) oraz zew
 - **Okno kontekstu rozmowy**: rozszerzone do **64 tur** (`max_context_turns: 64`) oraz **16 384 tokenów** (`ollama_num_ctx: 16384`).
 - **Wyszukiwanie semantyczne**: przed każdą odpowiedzią `recall_agent_memories()` wyszukuje 18 najbardziej dopasowanych wspomnień w 128-wymiarowej przestrzeni binarnej `BinaryHyperspaceKernel` z priorytetem dla typów `preference`, `decision`, `fact` oraz `task`.
 - **Automatyczna deduplikacja i zapis**: każda rozmowa oraz polecenie `/exec` są automatycznie indeksowane w tabeli `agent_memory` bez blokowania głównego wątku odpowiedzi.
+
+## Swobodna rozmowa obustronna (Operator ↔ Bielik ↔ Maya)
+
+Przycisk **„Czat obustronny: WŁ”** pozwala agentom zabierać głos samodzielnie (`POST /api/chat/proactive`).
+Logika: `src/server/conversation.ts`.
+
+- **Kto co powiedział:** każdy agent widzi rozmowę ze swojej perspektywy — własne wypowiedzi jako `assistant`,
+  wypowiedzi Operatora i drugiej AI jako `[Imię]: treść`. Historia pochodzi z SQLite (z nadawcami).
+- **Kto mówi:** w kanałach `conv-agent-bielik` / `conv-agent-maya` tylko ich agent; w pozostałych naprzemiennie,
+  a gdy Operator zwróci się po imieniu (np. „Maya, …”) — wywołany agent.
+- **Persona i pamięć:** opis roli z konfiguracji agenta (zakładka Agenci) + do 8 wpisów pamięci (fakty, preferencje, decyzje).
+- **Pauza:** po `SVL_DUPLEX_MAX_AI_TURNS` (domyślnie 4) wypowiedziach AI z rzędu albo gdy AI zada pytanie Operatorowi.
+  Pasek nad czatem pokazuje powód; „Niech AI mówi dalej” wymusza kolejną wypowiedź.
+- **Jakość:** odpowiedzi powtarzające wcześniejsze wypowiedzi są odrzucane (ponowienie z wyższą temperaturą),
+  a dopisane przez model kwestie innych osób („[Maya]: …”) — ucinane.
+- **Wiele kart:** serwer dopuszcza jedną wypowiedź naraz na rozmowę (pozostałe karty dostają „busy”).
+- **Bez modelu:** zamiast udawanej odpowiedzi czat pokazuje, dlaczego Ollama i Gemini nie odpowiedziały.
