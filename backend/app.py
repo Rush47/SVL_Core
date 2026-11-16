@@ -16,7 +16,6 @@ import io
 import json
 import math
 import os
-import re
 import platform
 import shutil
 import subprocess
@@ -39,13 +38,20 @@ if str(BACKEND_DIR) not in sys.path:
 from agents_runtime import CANONICAL_SVL_AGENTS, SVLAgentOrchestrator, normalize_agent_canonical_name
 from antivirus_scanner import SVLAntivirusScanner
 from hyperspace_engine import BinaryHyperspaceKernel, WithoutNlpHarmonicEngine
-from image_generation import ComfyUIError, generate_qwen_image, probe_comfyui
+from image_generation import (
+    CPU_IMAGE_ENGINE,
+    ImageEngineUnavailableError,
+    ImageGenerationError,
+    configured_image_engine,
+    generate_image,
+    image_engine_model,
+    probe_image_engine,
+)
 from ollama_daemon import SVLLocalOllamaDaemon
 from real_vision_engine import SVLRealVisionEngine
 from spherical_bus import SphericalEventBus
 from svl364_ssh_mcp import SVL364SshMcpController
 from svl_core import (
-    SYNC_SCHEMA_VERSION,
     RevisionConflictError,
     SVLProtectedVariable,
     SVLSystemKernel,
@@ -632,7 +638,7 @@ async def handle_api_request(
             "host": runtime.probe_host_environment(),
             "ollama": runtime.probe_ollama_status(),
             "svl364_ssh_mcp": runtime.svl364_ssh_mcp.get_status(),
-            "image_engine": probe_comfyui(
+            "image_engine": probe_image_engine(
                 os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188")
             ),
             "security": {

@@ -14,8 +14,6 @@ import json
 import os
 import re
 import shlex
-import re
-import shlex
 import shutil
 import subprocess
 import time
@@ -627,9 +625,9 @@ except Exception as exc:
                     pass
 
             natural_summary_lines = [
-                f"[SSH Ship AI & ROOT Executor · Maya & Bielik · root@svl-364-ship]",
+                "[SSH Ship AI & ROOT Executor · Maya & Bielik · root@svl-364-ship]",
                 f"• Przetworzono polecenie naturalne: {natural_directive}",
-                f"• Uprawnienia wykonawcze: uid=0(root) gid=0(root) · RBAC: root (ROOT_AUTHORIZED)",
+                "• Uprawnienia wykonawcze: uid=0(root) gid=0(root) · RBAC: root (ROOT_AUTHORIZED)",
                 f"• Status Statku SVL-364: Sektor {cfg.get('ship_sector')} | Reaktor {cfg.get('ship_reactor_gw')} GW | Tarcze {cfg.get('ship_shields_percent')}% ({cfg.get('defense_posture')})",
             ]
 

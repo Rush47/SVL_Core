@@ -9,7 +9,6 @@ Implements an asynchronous, polymorphic, asymmetric, and spherical event bus whe
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import uuid
 from dataclasses import dataclass, field

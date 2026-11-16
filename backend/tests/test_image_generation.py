@@ -143,5 +143,55 @@ class ImageGenerationTests(unittest.TestCase):
                 generate_image("http://comfyui:8188", "A test image")
 
 
+class ImageGenerationRouteTests(unittest.TestCase):
+    """Regression: the /api/py/images/generate route must resolve all image engine helpers."""
+
+    def _call_route(self, body: dict) -> tuple[int, dict]:
+        import asyncio
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"SVL_SQLITE_PATH": str(Path(tmpdir) / "app.sqlite3")}):
+                import app as backend_app
+
+        class FakeRuntime:
+            _image_generation_lock = threading.Lock()
+
+        with patch.object(backend_app, "runtime", FakeRuntime()):
+            return asyncio.run(
+                backend_app.handle_api_request("POST", "/api/py/images/generate", {}, body)
+            )
+
+    def test_route_generates_image_with_configured_engine(self) -> None:
+        fake_image = {"image": "data:image/png;base64,AAAA", "filename": "result.png"}
+        with (
+            patch.dict(os.environ, {"SVL_IMAGE_ENGINE": CPU_IMAGE_ENGINE}),
+            patch("app.generate_image", return_value=fake_image) as generate,
+        ):
+            status, response = self._call_route({"prompt": "A test image"})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["model"], image_generation.SD_TURBO_MODEL_NAME)
+        self.assertEqual(generate.call_args.kwargs, {"width": 512, "height": 512})
+
+    def test_route_maps_unavailable_engine_to_503(self) -> None:
+        with (
+            patch.dict(os.environ, {"SVL_IMAGE_ENGINE": CPU_IMAGE_ENGINE}),
+            patch("app.generate_image", side_effect=ImageEngineUnavailableError("brak sd-cli")),
+        ):
+            status, response = self._call_route({"prompt": "A test image"})
+
+        self.assertEqual(status, 503)
+        self.assertFalse(response["ok"])
+
+    def test_route_rejects_unknown_engine(self) -> None:
+        with patch.dict(os.environ, {"SVL_IMAGE_ENGINE": "bogus"}):
+            status, response = self._call_route({"prompt": "A test image"})
+
+        self.assertEqual(status, 503)
+        self.assertIn("bogus", response["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

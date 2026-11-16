@@ -2694,8 +2694,8 @@ class SVLSystemKernel:
                 category="svl_system_report",
                 title=f"Pełny Raport Operacyjny SVL_System — {directive_context[:120]}",
                 message=(
-                    f"Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, statku `SVL-364 Ebon Apex` (Mostek SSH + Serwer MCP Linux), "
-                    f"trybu `LOCK-REAL-ONLY (Zero Symulacji)`, stacji `Wenchang ACK-200`, demona lokalnego Ollama (`127.0.0.1:11434`), pamięci długotrwałej 128D oraz infrastruktury floty."
+                    "Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, statku `SVL-364 Ebon Apex` (Mostek SSH + Serwer MCP Linux), "
+                    "trybu `LOCK-REAL-ONLY (Zero Symulacji)`, stacji `Wenchang ACK-200`, demona lokalnego Ollama (`127.0.0.1:11434`), pamięci długotrwałej 128D oraz infrastruktury floty."
                 ),
                 details={
                     "directive": directive_context,
