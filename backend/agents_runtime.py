@@ -1252,6 +1252,14 @@ class SVLAgentOrchestrator:
 
         return self.kernel.run_db(_read, write=False)
 
+    # Wpisy dziennika rozmów są zdarzeniami, więc powtórzenia są w nich zamierzone.
+    _NON_DEDUPLICATED_MEMORY_KINDS = frozenset({"episode"})
+
+    @staticmethod
+    def _normalize_memory_content(content: str) -> str:
+        collapsed = " ".join(str(content or "").split()).casefold()
+        return collapsed.rstrip(" .!").strip()
+
     def add_agent_memory(
         self,
         canonical_name: str,
@@ -1269,7 +1277,19 @@ class SVLAgentOrchestrator:
         agent_id = CANONICAL_SVL_AGENTS.get(canonical_name, {}).get("id", canonical_name)
         safe_content = content.replace(self.kernel.operator_token, "[REDACTED_OPERATOR_TOKEN]")
 
+        dedupe = kind not in self._NON_DEDUPLICATED_MEMORY_KINDS
+        normalized = self._normalize_memory_content(safe_content)
+
         def _write(conn: Any) -> dict[str, Any]:
+            if dedupe:
+                # Sprawdzenie w tej samej transakcji zapisu: równoległe zapisy nie utworzą duplikatu.
+                for row in conn.execute(
+                    "SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory "
+                    "WHERE scope = ? AND kind = ?",
+                    (target_scope, kind),
+                ).fetchall():
+                    if self._normalize_memory_content(row["content"]) == normalized:
+                        return {"duplicate": dict(row)}
             conn.execute(
                 "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (mem_id, agent_id, target_scope, kind, safe_content, source, now_iso),
@@ -1297,9 +1317,18 @@ class SVLAgentOrchestrator:
             )
 
         sync_res = self.kernel.run_db(_write, write=True)
+        if "duplicate" in sync_res:
+            return {
+                **sync_res["duplicate"],
+                "deduplicated": True,
+                "revision": None,
+                "serverRevision": self.kernel.get_server_revision(),
+                "event": None,
+            }
         if canonical_name in self.agent_states:
             self.agent_states[canonical_name]["memory_entries_count"] = self._count_memories(canonical_name)
         return {
+            "deduplicated": False,
             "id": mem_id,
             "agent_id": agent_id,
             "scope": target_scope,

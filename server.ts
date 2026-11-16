@@ -1846,16 +1846,23 @@ async function startServer() {
         if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(memRes.data?.serverRevision || 0));
         const ok = memRes.status === 200 && Boolean(memRes.data?.ok);
+        const duplicate = ok && Boolean(memRes.data?.memory?.deduplicated);
         appliedActions.push({
           tool: 'bielik_memory_save',
           entity: 'agent_memory',
           entityId: 'Bielik',
           serverRevision: latestActionSrvRev,
-          summary: ok ? `Zapisano w pamięci Bielik: "${cmd.content.slice(0, 60)}"` : String(memRes.data?.error || 'Błąd zapisu'),
+          summary: !ok
+            ? String(memRes.data?.error || 'Błąd zapisu')
+            : duplicate
+              ? `Wpis już istnieje w pamięci Bielik: "${cmd.content.slice(0, 60)}"`
+              : `Zapisano w pamięci Bielik: "${cmd.content.slice(0, 60)}"`,
           ok,
         });
         return {
-          text: ok
+          text: duplicate
+            ? `ℹ️ Ten wpis jest już w pamięci długotrwałej **Bielika** — nie dodano duplikatu: „${cmd.content}”`
+            : ok
             ? `✅ Zapisano wpis w pamięci długotrwałej **Bielika** (\`agent:Bielik\`, rev \`${latestActionSrvRev}\`): „${cmd.content}”`
             : `❌ Nie udało się zapisać pamięci: ${memRes.data?.error || 'błąd backendu'}`,
         };
