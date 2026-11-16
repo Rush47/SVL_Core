@@ -220,6 +220,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
   const seenSignalOrderRef = useRef<string[]>([]);
   const inflightRefreshRef = useRef<Promise<RefreshExecutionReport> | null>(null);
+  // A refresh requested while another is running gets exactly one follow-up run,
+  // because the running one may have read server state from before the change.
+  const followUpRefreshRef = useRef<Promise<RefreshExecutionReport> | null>(null);
+  const refreshAllDomainsRef = useRef<((reason?: string) => Promise<RefreshExecutionReport>) | null>(null);
+  // Parallel refreshes can resolve out of order; only the newest response may write a state slot.
+  const refreshSeqRef = useRef(0);
+  const appliedSeqRef = useRef<Record<string, number>>({});
   const inflightCatchupRef = useRef<Promise<void> | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const wsReconnectNowRef = useRef<(() => void) | null>(null);
@@ -310,6 +317,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN (lub Dostęp SVL dla Codex CLI w czacie).',
         };
       }
+      const requestSeq = ++refreshSeqRef.current;
+      /** True when this response is newer than the last one applied to `slot`. */
+      const isFresh = (slot: string) => {
+        if ((appliedSeqRef.current[slot] || 0) > requestSeq) return false;
+        appliedSeqRef.current[slot] = requestSeq;
+        return true;
+      };
       const tasks: Promise<void>[] = [];
       const taskDomains: string[] = [];
       let refreshedConversationIds: Set<string> | null = null;
@@ -330,7 +344,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data?.ok || !r.data.avatars || typeof r.data.avatars !== 'object') {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            setAvatars(r.data.avatars);
+            if (isFresh('avatars')) setAvatars(r.data.avatars);
             advanceServerRevision(r.data.serverRevision);
           }),
         );
@@ -342,9 +356,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data || r.data.ok === false) {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            setHealthData(r.data);
+            if (isFresh('health')) setHealthData(r.data);
             if (typeof r.data.schemaVersion === 'string') setSchemaVersion(r.data.schemaVersion);
-            if (Array.isArray(r.data.system_modules)) {
+            if (Array.isArray(r.data.system_modules) && isFresh('systemModules')) {
               setSystemModules(r.data.system_modules);
             }
             advanceServerRevision(r.data.serverRevision);
@@ -357,8 +371,8 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data || r.data.ok === false) {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            setKernelData(r.data);
-            if (Array.isArray(r.data.system_modules)) {
+            if (isFresh('kernel')) setKernelData(r.data);
+            if (Array.isArray(r.data.system_modules) && isFresh('systemModules')) {
               setSystemModules(r.data.system_modules);
             }
             advanceServerRevision(r.data.serverRevision);
@@ -373,7 +387,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data?.ok || !Array.isArray(r.data.modules)) {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            setSystemModules(r.data.modules);
+            if (isFresh('systemModules')) setSystemModules(r.data.modules);
             advanceServerRevision(r.data.serverRevision);
           }),
         );
@@ -384,7 +398,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data || r.data.ok === false) {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            setAgentsData(r.data);
+            if (isFresh('agents')) setAgentsData(r.data);
             advanceServerRevision(r.data.serverRevision);
           }),
         );
@@ -414,7 +428,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
             advanceServerRevision(r.data.serverRevision);
-            setTerminalLogsByTab((prev) => ({ ...prev, ...r.data.terminalLogs }));
+            if (isFresh('terminals')) setTerminalLogsByTab((prev) => ({ ...prev, ...r.data.terminalLogs }));
           }),
         );
       }
@@ -475,7 +489,17 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const refreshAllDomains = useCallback(
     async (reason = 'operator_refresh'): Promise<RefreshExecutionReport> => {
-      if (inflightRefreshRef.current) return inflightRefreshRef.current;
+      if (inflightRefreshRef.current) {
+        if (!followUpRefreshRef.current) {
+          followUpRefreshRef.current = inflightRefreshRef.current
+            .catch(() => undefined)
+            .then(() => {
+              followUpRefreshRef.current = null;
+              return refreshAllDomainsRef.current!(reason);
+            });
+        }
+        return followUpRefreshRef.current;
+      }
 
       const task = (async (): Promise<RefreshExecutionReport> => {
         const startedAt = performance.now();
@@ -526,6 +550,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     },
     [emitCrossTabSignal, refreshDomainModules, tabOrigin],
   );
+  refreshAllDomainsRef.current = refreshAllDomains;
 
   // Coalesced domain refresh queue for incoming outbox events
   const queuedDomainsRef = useRef<Set<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>>(new Set());

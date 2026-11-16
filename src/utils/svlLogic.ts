@@ -140,7 +140,17 @@ export type BielikSlashCommand =
   | { kind: 'status' }
   | { kind: 'ollama' }
   | { kind: 'modules_list' }
-  | { kind: 'module_upsert'; id: string; status: 'ACTIVE' | 'CONFIGURED' | 'STANDBY'; name: string; description: string }
+  | {
+      kind: 'module_upsert';
+      id: string;
+      status: 'ACTIVE' | 'CONFIGURED' | 'STANDBY';
+      name: string;
+      description: string;
+      /** Existing module kind to keep when only the status changes. */
+      moduleKind?: string;
+      /** Status change of an existing module: keep its metadata and configuration untouched. */
+      preserveExisting?: boolean;
+    }
   | { kind: 'memory_list' }
   | { kind: 'memory_save'; memoryKind: 'fact' | 'decision' | 'task' | 'episode'; content: string }
   | { kind: 'root_exec'; command: string }

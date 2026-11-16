@@ -18,3 +18,22 @@
   6. `TerminalsWorkspace.tsx` — 4 Terminale Systemowe (`SVL-364 ROOT CLI`, `Python 3 Console`, `System Logs`, `Ollama Local AI`).
   7. `KernelSphereView.tsx` — Jądro SVL & Sfera 128D.
   8. `LinuxDeployDashboard.tsx` — Diagnostyka Hosta Linux, Demona Ollama i synchronizacji GitHub.
+
+## 2. Polecenia z czatu i globalna synchronizacja
+
+Polecenia Operatora wpisane w czacie są wykonywane **przed** wywołaniem modelu AI
+(`POST /api/chat` w `server.ts`), dzięki czemu zmiana trafia do SQLite i do wszystkich
+klientów (`/ws/svl`) w ciągu kilkudziesięciu milisekund, niezależnie od czasu odpowiedzi modelu.
+
+1. `src/server/chatDirectives.ts` → `parseChatDirectives()` deterministycznie rozpoznaje polecenia:
+   - komendy `/…` (`/modul`, `/pamiec`, `/exec`, `/zadanie`, …) — bez zmian składni;
+   - zdania naturalne, np. *„Zapisz w pamięci że …”*, *„Zapamiętaj: …”*, *„Ustaw moduł svl-364 na standby”*,
+     *„Aktywuj / Wyłącz moduł <id>”*, *„Utwórz moduł <id> <opis>”*, *„Pokaż moduły”*, *„Co pamiętasz?”*,
+     *„Sprawdź status Ollama”*, *„Podłącz workera”*, *„Zleć zadanie: tytuł | opis”*, *„Wykonaj polecenie \`uptime\`”*.
+   - Zmiana statusu dotyczy wyłącznie **istniejącego** modułu i zachowuje jego nazwę, typ, opis i konfigurację.
+2. Polecenia są wykonywane raz na turę (deduplikacja), a `flushChatSync()` rozsyła `svl.resync_required`
+   oraz zdarzenia outboxa do wszystkich kart.
+3. Model AI dostaje wyniki wykonanych poleceń w kontekście; znaczniki `[[SVL_ACTION:…]]` z jego odpowiedzi
+   wykonywane są dodatkowo (bez powtórzeń). Rzeczywiste potwierdzenia serwera są dopisywane do odpowiedzi.
+4. Klient (`svlSyncStore.tsx`): odświeżenie zażądane w trakcie innego odświeżenia uruchamia jedno dodatkowe
+   pobranie stanu, a starsze odpowiedzi nie nadpisują nowszych (numerowanie żądań).

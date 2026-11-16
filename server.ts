@@ -36,6 +36,7 @@ import {
   generateCodexCliChat,
   probeCodexCli,
 } from './src/server/codexCliChat.ts';
+import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 
 dotenv.config();
 
@@ -1653,7 +1654,7 @@ async function startServer() {
             ? `SVL-364 · Ollama (${selectedOllamaModelName})`
             : effectiveModel;
 
-    const fullSystemInstruction =
+    let fullSystemInstruction =
       `${systemInstruction}\n` +
       `${describeOllamaModelFlavor(selectedOllamaModelName)}`;
 
@@ -1741,16 +1742,20 @@ async function startServer() {
           {
             id: cmd.id,
             name: cmd.name || cmd.id,
-            kind: 'Bielik Managed Module',
+            kind: cmd.moduleKind || 'Bielik Managed Module',
             status: cmd.status,
             description: cmd.description,
-            config: {
-              managed_by: 'Bielik',
-              ollama_model: selectedOllamaModelName,
-              autonomous_mode: 'ACTIVE',
-              category: 'infrastructure',
-              updated_via: 'bielik-chat-command',
-            },
+            // A status change of an existing module must not overwrite its configuration
+            // (the backend merges config keys, so only an audit marker is added).
+            config: cmd.preserveExisting
+              ? { updated_via: 'chat-directive' }
+              : {
+                  managed_by: 'Bielik',
+                  ollama_model: selectedOllamaModelName,
+                  autonomous_mode: 'ACTIVE',
+                  category: 'infrastructure',
+                  updated_via: 'bielik-chat-command',
+                },
             source: 'chat',
             origin,
             correlationId: corrId,
@@ -1758,7 +1763,7 @@ async function startServer() {
           corrId,
         );
         if (upRes.data?.event) publishOutboxEvent(upRes.data.event);
-        if (cmd.id !== 'svl-364' && (cmd.id.startsWith('svl-364') || cmd.id.startsWith('svl-365'))) {
+        if (!cmd.preserveExisting && cmd.id !== 'svl-364' && (cmd.id.startsWith('svl-364') || cmd.id.startsWith('svl-365'))) {
           const syncMainRes = await callPythonBackend(
             'POST',
             '/api/py/modules/upsert',
@@ -1786,10 +1791,7 @@ async function startServer() {
           if (syncMainRes.data?.event) publishOutboxEvent(syncMainRes.data.event);
           latestActionSrvRev = Math.max(latestActionSrvRev, Number(syncMainRes.data?.serverRevision || 0));
         }
-        cachedChatContextMeta = null;
-        void pollAndRelayOutbox();
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(upRes.data?.serverRevision || 0));
-        broadcastResyncRequired('bielik_module_upsert', latestActionSrvRev);
         const ok = upRes.status === 200 && Boolean(upRes.data?.ok);
         appliedActions.push({
           tool: 'bielik_module_upsert',
@@ -1903,10 +1905,6 @@ async function startServer() {
         if (cleanStderr) {
           await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, 'bielik-root', corrId);
         }
-
-        cachedChatContextMeta = null;
-        void pollAndRelayOutbox();
-        broadcastResyncRequired('bielik_root_exec', latestActionSrvRev);
 
         appliedActions.push({
           tool: 'bielik_root_exec',
@@ -2058,34 +2056,68 @@ async function startServer() {
       return null;
     };
 
-    const inferChatDirectiveCommands = (userMessage: string, assistantReply: string): BielikSlashCommand[] => {
-      const inferred: BielikSlashCommand[] = [];
-      const lowUser = userMessage.toLowerCase();
-      // If operator asks to connect/synchronize workers or global sync from chat
-      if (/\b(?:podłącz|podlacz|skonfiguruj|synchronizuj|uruchom\s+worker)/i.test(lowUser)) {
-        inferred.push({ kind: 'agent_connect' });
+    // --- Chat command pipeline -------------------------------------------------
+    // Commands are executed once per chat turn (dedup by command identity) and every
+    // state change is broadcast to all clients immediately via flushChatSync().
+    const executedCommandKeys = new Set<string>();
+    let pendingMutations = false;
+    const runChatCommands = async (cmds: BielikSlashCommand[]): Promise<string[]> => {
+      const receipts: string[] = [];
+      for (const cmd of cmds) {
+        const key = commandKey(cmd);
+        if (executedCommandKeys.has(key)) continue;
+        executedCommandKeys.add(key);
+        const outcome = await executeBielikCommand(cmd);
+        if (isMutatingCommand(cmd)) pendingMutations = true;
+        if (outcome.text) receipts.push(outcome.text);
       }
-      // If operator asks to create/configure a module or notifications on channel wszyscy
-      if (/\b(?:powiadomieni|kanał\w*\s+wszyscy|kanale\s+wszyscy|maya)/i.test(lowUser) && /\b(?:ustaw|stwórz|stworz|podłącz|podlacz|skonfiguruj|uprawnienia\s+root)/i.test(lowUser)) {
-        inferred.push({
-          kind: 'module_upsert',
-          id: 'svl-maya-broadcast',
-          status: 'ACTIVE',
-          name: 'Maya SVL-364 — Szczegółowe Powiadomienia Telemetryczne (Kanał Wszyscy)',
-          description: 'Autoryzowany mostek powiadomień szczegółowych AI Maya (ROOT) ze statku SVL-364 Ebon Apex oraz bazy notatek i prac Operatora Mateusza Mitka na kanał Rodzina Mitek (wszyscy).',
-        });
-      }
-      // If assistant wrote a markdown `Polecenie: \`...\`` block without [[SVL_ACTION:...]], record the decision in memory & global sync
-      const mdCmdMatch = assistantReply.match(/Polecenie:\s*`([^`]{3,240})`/i);
-      if (mdCmdMatch && inferred.length === 0) {
-        inferred.push({
-          kind: 'memory_save',
-          memoryKind: 'decision',
-          content: `Wykonano dyrektywę czatu (${selectedDisplayName} ROOT): ${mdCmdMatch[1].trim()}`,
-        });
-      }
-      return inferred.slice(0, 2);
+      return receipts;
     };
+    const flushChatSync = (reason: string) => {
+      if (!pendingMutations) return;
+      pendingMutations = false;
+      cachedChatContextMeta = null;
+      void pollAndRelayOutbox();
+      broadcastResyncRequired(reason, latestActionSrvRev);
+    };
+
+    // 1) Execute commands from the operator's message BEFORE any model is called,
+    //    so changes are persisted and visible in every client right away.
+    let knownModules: any[] = activeModules;
+    if (hasOperatorAuth && !parsedSlashCmd && /modu[łl]/i.test(cleanMsg)) {
+      const freshModules = await callPythonBackend('GET', '/api/py/modules', undefined, corrId);
+      if (freshModules.status === 200 && Array.isArray(freshModules.data?.modules)) {
+        knownModules = freshModules.data.modules;
+      }
+    }
+    const chatDirectives = hasOperatorAuth ? parseChatDirectives(cleanMsg, { knownModules }) : [];
+    const directiveReceipts = await runChatCommands(chatDirectives);
+    flushChatSync('chat_directive_applied');
+    // Results of commands tagged by the model ([[SVL_ACTION:...]]) in this turn.
+    const actionReceipts: string[] = [];
+    // Real server results are appended after the (guarded) model text so they are never rewritten.
+    const withDirectiveReceipts = (reply: string) =>
+      [reply, ...directiveReceipts, ...actionReceipts].filter(Boolean).join('\n\n');
+
+    if (parsedSlashCmd && hasOperatorAuth) {
+      res.json({
+        ok: true,
+        sender: selectedDisplayName,
+        agentId: selectedAgent.toLowerCase(),
+        modelUsed: `${selectedDisplayName} · Ollama (${selectedOllamaModelName}) · Procesor Poleceń ROOT`,
+        reply: directiveReceipts.join('\n\n') || 'Polecenie przetworzone.',
+        followUpMessages: [],
+        appliedActions,
+        latestServerRevision: latestActionSrvRev,
+      });
+      return;
+    }
+    if (directiveReceipts.length > 0) {
+      fullSystemInstruction +=
+        `\n\nPOLECENIA Z TEJ WIADOMOŚCI ZOSTAŁY JUŻ WYKONANE PRZEZ SERWER (zapisane w SQLite i zsynchronizowane). ` +
+        `Nie dołączaj dla nich ponownie znaczników [[SVL_ACTION:...]]; odnieś się krótko do wyników:\n` +
+        directiveReceipts.map((receipt) => `- ${receipt.replace(/\s+/g, ' ').slice(0, 300)}`).join('\n');
+    }
 
     if (model === 'codex-cli') {
       if (!hasCodexChatAuth) {
@@ -2117,7 +2149,7 @@ async function startServer() {
         });
         return;
       }
-      const safeReply = guardUnverifiedMissionCompletion(missionVerificationContext, codexResult.reply);
+      const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, codexResult.reply));
       res.json({
         ok: true,
         sender: selectedDisplayName,
@@ -2164,7 +2196,7 @@ async function startServer() {
           sender: selectedDisplayName,
           agentId: selectedAgent,
           modelUsed: avBadge,
-          reply: avReply,
+          reply: withDirectiveReceipts(avReply),
           followUpMessages: [],
           appliedActions,
           latestServerRevision: Number(avRes.data.serverRevision || latestActionSrvRev),
@@ -2214,7 +2246,7 @@ async function startServer() {
           sender: selectedDisplayName,
           agentId: selectedAgent,
           modelUsed: rvBadge,
-          reply: rvReply,
+          reply: withDirectiveReceipts(rvReply),
           followUpMessages: [],
           appliedActions,
           latestServerRevision: Math.max(latestActionSrvRev, Number(rvRes.data.serverRevision || 0)),
@@ -2223,20 +2255,6 @@ async function startServer() {
       }
     }
 
-    if (parsedSlashCmd) {
-      const cmdOutcome = await executeBielikCommand(parsedSlashCmd);
-      res.json({
-        ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent.toLowerCase(),
-        modelUsed: `${selectedDisplayName} · Ollama (${selectedOllamaModelName}) · Procesor Poleceń ROOT`,
-        reply: cmdOutcome.text,
-        followUpMessages: [],
-        appliedActions,
-        latestServerRevision: latestActionSrvRev,
-      });
-      return;
-    }
 
     // Try explicit Ollama model (or try Ollama with fast timeout when Gemini fallback is available)
     const ai = getGeminiClient();
@@ -2294,19 +2312,14 @@ async function startServer() {
             if (isBielikAgent) {
               const extracted = extractBielikActionTags(extReplyRaw);
               finalReply = extracted.cleanText;
-              const receipts: string[] = [];
-              for (const rawAct of extracted.actions.slice(0, 4)) {
-                const parsedCmd = parseRawBielikActionObj(rawAct);
-                if (parsedCmd) {
-                  const actOutcome = await executeBielikCommand(parsedCmd);
-                  if (actOutcome.text) receipts.push(actOutcome.text);
-                }
-              }
-              if (receipts.length > 0) {
-                finalReply = `${finalReply ? `${finalReply}\n\n` : ''}${receipts.join('\n\n')}`;
-              }
+              const taggedCommands = extracted.actions
+                .slice(0, 4)
+                .map((rawAct) => parseRawBielikActionObj(rawAct))
+                .filter((cmd): cmd is BielikSlashCommand => Boolean(cmd));
+              actionReceipts.push(...await runChatCommands(taggedCommands));
+              flushChatSync('chat_command_materialized');
             }
-            const safeReply = guardUnverifiedMissionCompletion(missionVerificationContext, finalReply);
+            const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
             if (agentState?.canonical_name && cleanMsg) {
               void callPythonBackend(
                 'POST',
@@ -2472,31 +2485,14 @@ async function startServer() {
             if (isBielikAgent) {
               const extracted = extractBielikActionTags(replyText);
               replyText = extracted.cleanText;
-              const receipts: string[] = [];
-              const parsedCommands: BielikSlashCommand[] = [];
-              for (const rawAct of extracted.actions.slice(0, 4)) {
-                const parsedCmd = parseRawBielikActionObj(rawAct);
-                if (parsedCmd) parsedCommands.push(parsedCmd);
-              }
-              if (parsedCommands.length === 0) {
-                parsedCommands.push(...inferChatDirectiveCommands(cleanMsg, replyText));
-              }
-              for (const cmdToRun of parsedCommands) {
-                const actOutcome = await executeBielikCommand(cmdToRun);
-                if (actOutcome.text && extracted.actions.length > 0) {
-                  receipts.push(actOutcome.text);
-                }
-              }
-              if (receipts.length > 0) {
-                replyText = `${replyText ? `${replyText}\n\n` : ''}${receipts.join('\n\n')}`;
-              }
-              if (appliedActions.length > 0) {
-                cachedChatContextMeta = null;
-                void pollAndRelayOutbox();
-                broadcastResyncRequired('chat_command_materialized', latestActionSrvRev);
-              }
+              const taggedCommands = extracted.actions
+                .slice(0, 4)
+                .map((rawAct) => parseRawBielikActionObj(rawAct))
+                .filter((cmd): cmd is BielikSlashCommand => Boolean(cmd));
+              actionReceipts.push(...await runChatCommands(taggedCommands));
+              flushChatSync('chat_command_materialized');
             }
-            replyText = guardUnverifiedMissionCompletion(missionVerificationContext, replyText);
+            replyText = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, replyText));
             if (agentState?.canonical_name) {
               const memRes = await callPythonBackend(
                 'POST',
@@ -2545,7 +2541,7 @@ async function startServer() {
         sender: selectedDisplayName,
         agentId: selectedAgent,
         modelUsed: displayModelBadge,
-        reply: kernelReply,
+        reply: withDirectiveReceipts(kernelReply),
         followUpMessages: [],
         appliedActions,
         latestServerRevision: Math.max(latestActionSrvRev, Number(repFallback.data?.serverRevision || 0)),
@@ -2553,21 +2549,12 @@ async function startServer() {
       return;
     }
 
-    const inferredFallbackCmds = isBielikAgent ? inferChatDirectiveCommands(cleanMsg, '') : [];
-    const fallbackReceipts: string[] = [];
-    for (const cmdToRun of inferredFallbackCmds) {
-      const actOutcome = await executeBielikCommand(cmdToRun);
-      if (actOutcome.text) fallbackReceipts.push(actOutcome.text);
-    }
-    if (appliedActions.length > 0) {
-      cachedChatContextMeta = null;
-      void pollAndRelayOutbox();
-      broadcastResyncRequired('chat_fallback_materialized', latestActionSrvRev);
-    }
-
     const lowMsg = cleanMsg.toLowerCase();
     let conversationalReply = '';
-    if (/^(?:dziękuję|dziekuje|dzięki|dzieki|super|ok|świetnie|swietnie|brawo|dobrze)\b/i.test(lowMsg)) {
+    if (directiveReceipts.length > 0) {
+      // Commands were already executed up front; report their real results.
+      conversationalReply = directiveReceipts.join('\n\n');
+    } else if (/^(?:dziękuję|dziekuje|dzięki|dzieki|super|ok|świetnie|swietnie|brawo|dobrze)\b/i.test(lowMsg)) {
       conversationalReply =
         selectedAgent === 'Maya'
           ? `Cała przyjemność po mojej stronie, Operatorze Mateuszu! Jako **Maya (AI Statku SVL-364 · ROOT)** czuwam nad systemami statku **SVL-364 Ebon Apex**, mostkiem SSH \`root@svl-364-ship\` oraz bazą Twoich notatek i prac naukowych. Daj znać, jakie kolejne polecenie lub operację mamy wykonać.`
@@ -2577,8 +2564,6 @@ async function startServer() {
         selectedAgent === 'Maya'
           ? `Aktualnie nadzoruję telemetrię statku **SVL-364 Ebon Apex** (Sektor \`${svl364Cfg.ship_sector || 'L2 Sol-Charon'}\`, reaktor \`${svl364Cfg.ship_reactor_gw ?? 5.4} GW\`, tarcze QKD-364 \`${svl364Cfg.ship_shields_percent ?? 100}%\`), utrzymuję aktywny mostek SSH \`root@svl-364-ship\` z uprawnieniami **ROOT** oraz synchronizuję Twoją bazę notatek i prac badawczych w SQLite WAL (\`rev ${latestActionSrvRev}\`). W czym mogę Ci teraz pomóc?`
           : `Jako **Bielik (ROOT)** monitoruję jądro **SVL Python OS v5.6**, lokalny silnik **Ollama (\`${selectedOllamaModelName}\`)** oraz mostek wykonawczy Linux/SSH (\`rev ${latestActionSrvRev}\`). Czekam na Twoje polecenia.`;
-    } else if (fallbackReceipts.length > 0) {
-      conversationalReply = fallbackReceipts.join('\n\n');
     } else {
       conversationalReply =
         selectedAgent === 'Maya'
