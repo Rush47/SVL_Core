@@ -21,7 +21,6 @@ import {
   parseChatInteractiveToken,
   resolveAvatarProfileKey,
   safeParseJsonResponse,
-  selectNextDuplexSpeaker,
   selectOllamaModelName,
   setSvlCodexAccessToken,
   setSvlOperatorAccessToken,
@@ -130,9 +129,6 @@ test('CANONICAL_AGENTS configures Bielik and Maya on llama3.2-vision:11b while k
   assert.equal(formatAgentDisplayName('Iris AI'), 'Asystent SVL');
   assert.equal(formatAgentDisplayName('bielik ai'), 'Bielik');
   assert.equal(formatAgentDisplayName('maya ai'), 'Maya');
-  assert.equal(selectNextDuplexSpeaker(['Mateusz Mitek']), 'Bielik');
-  assert.equal(selectNextDuplexSpeaker(['Bielik']), 'Maya');
-  assert.equal(selectNextDuplexSpeaker(['Maya']), 'Bielik');
   assert.equal(resolveAvatarProfileKey('Agata Mitek', 'Agata'), null);
   assert.equal(resolveAvatarProfileKey('Bielik', 'bielik'), 'Bielik');
   assert.equal(resolveAvatarProfileKey('Maya', 'maya'), 'Maya');

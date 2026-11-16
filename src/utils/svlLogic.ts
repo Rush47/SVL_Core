@@ -898,19 +898,6 @@ export function createUniqueId(prefix = 'id'): string {
 
 export type CanonicalAgentShort = string;
 
-export function selectNextDuplexSpeaker(
-  recentSenders: string[],
-  channelBoundAgent?: CanonicalAgentShort | null,
-  preferredRotationIndex = 0,
-): CanonicalAgentShort {
-  const bound = normalizeAgentCanonicalName(channelBoundAgent);
-  if (bound) return bound;
-  const lastSender = recentSenders.length > 0 ? normalizeAgentCanonicalName(recentSenders[recentSenders.length - 1]) : null;
-  if (lastSender === 'Bielik') return 'Maya';
-  if (lastSender === 'Maya') return 'Bielik';
-  return preferredRotationIndex % 2 === 1 ? 'Maya' : 'Bielik';
-}
-
 export function resolveAvatarProfileKey(
   sender?: string | null,
   agentId?: string | null,

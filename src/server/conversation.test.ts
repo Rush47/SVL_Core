@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  autonomousPauseReason,
-  buildPersonaInstruction,
-  chooseNextSpeaker,
+  buildTranscript,
   cleanAgentReply,
+  consecutiveAiTurns,
   isRepetitive,
+  parsePredictedSpeaker,
   toAgentPerspective,
   type DialogueTurn,
 } from './conversation.ts';
@@ -40,24 +40,29 @@ test('perspective drops system turns, starts with user and keeps old sender-less
   ]);
 });
 
-test('next speaker: bound channel, alternation, operator addressing', () => {
-  assert.equal(chooseNextSpeaker([op('hej'), maya('cześć')], 'Bielik'), 'Bielik');
-  assert.equal(chooseNextSpeaker([op('hej'), bielik('cześć')]), 'Maya');
-  assert.equal(chooseNextSpeaker([op('hej'), maya('cześć')]), 'Bielik');
-  assert.equal(chooseNextSpeaker([op('Maya, co o tym sądzisz?')]), 'Maya');
-  assert.equal(chooseNextSpeaker([bielik('a'), maya('b'), op('i co dalej?')]), 'Bielik');
-  assert.equal(chooseNextSpeaker([]), 'Bielik');
+test('transcript is only the conversation — no instructions', () => {
+  const transcript = buildTranscript([
+    op('Cześć'),
+    { role: 'system', sender: 'SVL System', content: 'raport' },
+    bielik('Hej'),
+    maya('Dzień dobry\nco słychać?'),
+  ]);
+  assert.equal(transcript, '[Mateusz (Operator)]: Cześć\n[Bielik]: Hej\n[Maya]: Dzień dobry\nco słychać?');
 });
 
-test('autonomous turns pause after the AI limit or when the operator was asked a question', () => {
-  assert.equal(autonomousPauseReason([op('hej'), bielik('a'), maya('b')], 4), null);
-  assert.equal(
-    autonomousPauseReason([op('hej'), bielik('a'), maya('b'), bielik('c'), maya('d')], 4),
-    'ai_turn_limit',
-  );
-  assert.equal(autonomousPauseReason([op('hej'), bielik('Mateusz, który wariant wybierasz?')], 4), 'question_to_operator');
-  assert.equal(autonomousPauseReason([op('hej'), bielik('Maya, a Ty jak uważasz?')], 4), null);
-  assert.equal(autonomousPauseReason([], 4), 'no_conversation');
+test('predicted next speaker is read from the model continuation', () => {
+  assert.equal(parsePredictedSpeaker('Maya'), 'Maya');
+  assert.equal(parsePredictedSpeaker(' bielik]: hej'), 'Bielik');
+  assert.equal(parsePredictedSpeaker('Mateusz (Operator)'), 'operator');
+  assert.equal(parsePredictedSpeaker('Operator]'), 'operator');
+  assert.equal(parsePredictedSpeaker('Ktoś inny'), null);
+  assert.equal(parsePredictedSpeaker(''), null);
+});
+
+test('consecutive AI turns are counted since the last operator message', () => {
+  assert.equal(consecutiveAiTurns([op('a'), bielik('b'), maya('c')]), 2);
+  assert.equal(consecutiveAiTurns([bielik('b'), op('a')]), 0);
+  assert.equal(consecutiveAiTurns([]), 0);
 });
 
 test('repetition detection ignores case, punctuation and small edits', () => {
@@ -70,35 +75,6 @@ test('repetition detection ignores case, punctuation and small edits', () => {
 test('reply cleanup strips own name prefix and cuts lines written for other speakers', () => {
   assert.equal(cleanAgentReply('Bielik: Jasne, zróbmy to.', 'Bielik'), 'Jasne, zróbmy to.');
   assert.equal(cleanAgentReply('[Maya]: ... Dobrze.', 'Maya'), 'Dobrze.');
-  assert.equal(
-    cleanAgentReply('Myślę, że warto.\n[Maya]: Zgadzam się!\nMateusz: OK', 'Bielik'),
-    'Myślę, że warto.',
-  );
+  assert.equal(cleanAgentReply('Myślę, że warto.\n[Maya]: Zgadzam się!\nMateusz: OK', 'Bielik'), 'Myślę, że warto.');
   assert.equal(cleanAgentReply('Pierwsze zdanie.\n\nMateusz Mitek (Operator): dopisek', 'Maya'), 'Pierwsze zdanie.');
-});
-
-test('persona instruction names the other participants and includes memories', () => {
-  const text = buildPersonaInstruction({
-    speaker: 'Maya',
-    channelTitle: 'Rodzina Mitek (wszyscy)',
-    otherAgents: ['Bielik'],
-    memories: ['[FACT] Operator lubi kawę'],
-  });
-  assert.match(text, /Jesteś Maya/);
-  assert.match(text, /z Bielikiem \(druga AI\)/);
-  assert.match(text, /Operator lubi kawę/);
-  assert.match(text, /\[Imię\]:/);
-  assert.doesNotMatch(text, /ROOT|LOCK-REAL-ONLY/);
-});
-
-test('configured persona is used once, as role description, below the conversation rules', () => {
-  const text = buildPersonaInstruction({
-    speaker: 'Maya',
-    channelTitle: 'Kanał',
-    otherAgents: [],
-    customPrompt: 'Jesteś Maya — AI statku. Wysyłasz powiadomienia telemetryczne i wykonujesz polecenia ROOT.',
-  });
-  assert.equal(text.match(/Jesteś Maya/g)?.length, 1);
-  assert.match(text, /Opis Twojej roli/);
-  assert.match(text, /nie wysyłasz raportów ani telemetrii/);
 });

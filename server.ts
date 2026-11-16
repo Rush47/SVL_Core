@@ -16,14 +16,12 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import dotenv from 'dotenv';
 import {
   buildChatHistoryPayload,
-  extractBielikActionTags,
   formatAgentDisplayName,
   getGitHubAgentPermissions,
   guardUnverifiedMissionCompletion,
   normalizeAgentCanonicalName,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
-  selectNextDuplexSpeaker,
   selectOllamaModelName,
   type BielikSlashCommand,
   type ChatAppliedAction,
@@ -40,12 +38,11 @@ import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server
 import {
   CONVERSATION_AGENTS,
   OPERATOR_LABEL,
-  PROACTIVE_NUDGE,
-  autonomousPauseReason,
-  buildPersonaInstruction,
-  chooseNextSpeaker,
+  buildTranscript,
   cleanAgentReply,
+  consecutiveAiTurns,
   isRepetitive,
+  parsePredictedSpeaker,
   toAgentPerspective,
   type ConversationAgent,
   type DialogueTurn,
@@ -212,43 +209,61 @@ function geminiCandidates(requestedModel?: string): string[] {
 
 type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
 
-/** One non-streaming Ollama chat call that reports *why* it could not answer. */
-async function ollamaChatOnce(
-  host: string,
-  model: string,
-  messages: Array<{ role: string; content: string }>,
-  options: { temperature: number; timeoutMs: number },
-): Promise<OllamaChatResult> {
-  const base = host.replace(/\/$/, '');
+/** Czy pod `base` działa prawdziwa Ollama z zainstalowanym `model`; null = gotowa, inaczej powód. */
+async function ollamaNotReadyReason(base: string, model: string): Promise<string | null> {
   try {
     const [versionRes, tagsRes] = await Promise.all([
       fetch(`${base}/api/version`, { signal: AbortSignal.timeout(1500) }),
       fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) }),
     ]);
-    const version: any = versionRes.ok ? await versionRes.json() : {};
-    if (!versionRes.ok) return { ok: false, reason: `Ollama (${base}) odpowiada kodem ${versionRes.status}` };
+    if (!versionRes.ok) return `Ollama (${base}) odpowiada kodem ${versionRes.status}`;
+    const version: any = await versionRes.json();
     if (String(version.version || '').includes('svl-364')) {
-      return { ok: false, reason: `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli` };
+      return `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli`;
     }
     const tags: any = tagsRes.ok ? await tagsRes.json() : {};
     const installed = Array.isArray(tags.models) && tags.models.some((m: any) => m?.name === model || m?.model === model);
-    if (!installed) return { ok: false, reason: `model ${model} nie jest zainstalowany w Ollamie (${base})` };
-    const chatRes = await fetch(`${base}/api/chat`, {
+    return installed ? null : `model ${model} nie jest zainstalowany w Ollamie (${base})`;
+  } catch (error) {
+    return `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/**
+ * Surowe dopisanie tekstu przez Ollamę (`raw: true` — bez szablonu czatu i bez żadnych instrukcji).
+ * Model po prostu kontynuuje podany zapis rozmowy.
+ */
+async function ollamaContinueRaw(
+  host: string,
+  model: string,
+  text: string,
+  options: { temperature: number; numPredict: number; stop: string[]; timeoutMs: number },
+): Promise<OllamaChatResult> {
+  const base = host.replace(/\/$/, '');
+  const notReady = await ollamaNotReadyReason(base, model);
+  if (notReady) return { ok: false, reason: notReady };
+  try {
+    const res = await fetch(`${base}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(options.timeoutMs),
       body: JSON.stringify({
         model,
+        prompt: text,
+        raw: true,
         stream: false,
         keep_alive: '15m',
-        options: { temperature: options.temperature, num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096) },
-        messages,
+        options: {
+          temperature: options.temperature,
+          num_predict: options.numPredict,
+          stop: options.stop,
+          num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096),
+        },
       }),
     });
-    if (!chatRes.ok) return { ok: false, reason: `Ollama /api/chat zwróciła kod ${chatRes.status}` };
-    const data: any = await chatRes.json();
-    const text = String(data?.message?.content || data?.response || '').trim();
-    return text ? { ok: true, text, model } : { ok: false, reason: 'Ollama zwróciła pustą odpowiedź' };
+    if (!res.ok) return { ok: false, reason: `Ollama /api/generate zwróciła kod ${res.status}` };
+    const data: any = await res.json();
+    return { ok: true, text: String(data?.response || ''), model };
   } catch (error) {
     return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -369,13 +384,6 @@ function startPythonBackend(): void {
       startPythonBackend();
     }, delayMs);
   });
-}
-
-// The real Ollama client probes only a configured, live Ollama daemon.
-// No local mock endpoint, forged model registry, synthetic responses, fake pull progress
-// or no-password root wrappers are installed by the SVL gateway.
-function describeOllamaModelFlavor(_modelName: string): string {
-  return 'Używaj wyłącznie rzeczywiście dostępnych narzędzi i modeli. Nie deklaruj wykonania działań bez wiarygodnego wyniku.';
 }
 
 async function callPythonBackend(
@@ -1513,55 +1521,7 @@ async function startServer() {
     const appliedActions: ChatAppliedAction[] = [];
     let latestActionSrvRev = Number(healthRes.data?.serverRevision || 0);
 
-    const customAgentPrompt =
-      typeof agentConfig.system_prompt === 'string' && agentConfig.system_prompt.trim()
-        ? agentConfig.system_prompt.trim()
-        : `Jesteś asystentem konwersacyjnym ${selectedDisplayName} w systemie SVL Python OS dla kanału Rodzina Mitek (wszyscy).`;
-
-    const allAgentMemories: any[] = Array.isArray(agentsRes.data?.agent_memories?.[selectedAgent])
-      ? agentsRes.data.agent_memories[selectedAgent]
-      : [];
-    const prioritizedMemories = [
-      ...allAgentMemories.filter((m) => m && (m.kind === 'preference' || m.kind === 'decision' || m.kind === 'fact')).slice(0, 12),
-      ...allAgentMemories.filter((m) => m && (m.kind === 'task' || m.kind === 'episode')).slice(0, 6),
-    ]
-      .slice(0, 18)
-      .map((m: any) => `- [${String(m.kind || 'fact').toUpperCase()}] ${m.content}`)
-      .join('\n');
-
-    const bielikCommandGuide = isBielikAgent
-      ? `\n\nPROTOKÓŁ PRZETWARZANIA POLECEŃ ${selectedDisplayName.toUpperCase()} ROOT (Ollama llama3.2-vision:11b):\n` +
-        `- Jesteś **${selectedDisplayName}** — asystentem przetwarzania poleceń systemu SVL Python OS oraz statku SVL-364 na modelu \`llama3.2-vision:11b\` z uprawnieniami \`rbac_role: root\` (przy aktywnym tokenie operatora \`SVL_OPERATOR_TOKEN\`).\n` +
-        `- Jeśli Operator prosi o wykonanie jednej z dozwolonych operacji SVL lub polecenia systemowego Linux, dołącz na końcu odpowiedzi odpowiedni znacznik akcji (zostanie zweryfikowany i wykonany przez serwer przed pokazaniem odpowiedzi):\n` +
-        `  * Wykonanie polecenia Linux ROOT (tylko z tokenem operatora): [[SVL_ACTION:{"cmd":"root_exec","command":"polecenie bash"}]]\n` +
-        `  * Zapis do pamięci: [[SVL_ACTION:{"cmd":"memory_save","kind":"fact","content":"treść"}]]\n` +
-        `  * Rejestracja/aktualizacja modułu SVL: [[SVL_ACTION:{"cmd":"module_upsert","id":"nazwa-modulu","status":"ACTIVE","name":"Nazwa","description":"Opis"}]]\n` +
-        `  * Obliczenie topologii: [[SVL_ACTION:{"cmd":"topology","xStart":"-inf","xEnd":"inf"}]]\n` +
-        `  * Zlecenie zadania workerowi: [[SVL_ACTION:{"cmd":"agent_task","title":"Tytuł","payload":"Szczegóły"}]]\n` +
-        `  * Połączenie workera AI: [[SVL_ACTION:{"cmd":"agent_connect"}]]\n` +
-        `- NIGDY nie wymyślaj wyników poleceń Linux; zawsze używaj znacznika \`[[SVL_ACTION:...]]\`, aby serwer zapisał zmianę w SQLite WAL i zsynchronizował globalnie aplikację.\n` +
-        `- Jeśli polecenie dotyczy wyłącznie rozmowy lub analizy obrazu, odpowiadaj normalnie po polsku bez znaczników.`
-      : '';
-
-    const formattingAndInteractionGuide =
-      `\n\nZASADY ODPOWIEDZI:\n` +
-      `- Odpowiadaj konkretnie i przejrzyście po polsku, używając Markdown gdy pomaga czytelności.\n` +
-      (isBielikAgent
-        ? `- Posiadasz rolę \`rbac_role: root\` dla poleceń SVL oraz \`/root\` / \`[[SVL_ACTION:{"cmd":"root_exec",...}]]\` w sesjach autoryzowanych tokenem \`SVL_OPERATOR_TOKEN\`.\n`
-        : `- Nie wykonujesz poleceń modyfikujących konfigurację systemu z poziomu czatu.\n`) +
-      `- W historii wypowiedzi Operatora i drugiej AI mają postać „[Imię]: treść”. Odpowiadaj tylko za siebie, bez prefiksu z imieniem i bez dopisywania cudzych kwestii.\n` +
-      `- Możesz kierować użytkownika do zakładek aplikacji przyciskami [btn: Etykieta|akcja]: [btn: 🛰️ Statek SVL-364|tab:svl364], [btn: 🏛️ Infrastruktura|tab:infrastructure], [btn: 🤖 Agenci AI|tab:agents], [btn: 💻 Terminale|tab:terminals].`;
-
-    const systemInstruction =
-      `${customAgentPrompt}\n` +
-      `WAŻNE: Nie używaj tożsamości usuniętych agentek (Agata Mitek, Iris AI). Aktywne AI w systemie to **Bielik** (ROOT) oraz **Maya** (AI Statku SVL-364 · ROOT, zbudowana z baz danych statku SVL-364 oraz bazy notatek i prac Operatora Mateusza Mitka). ${
-        isBielikAgent
-          ? 'Uprawnienia root są aktywne poprzez serwerowy executor po weryfikacji SVL_OPERATOR_TOKEN.'
-          : 'Nie deklaruj uprawnień ROOT ani wykonania poleceń bez wyniku narzędzia.'
-      }` +
-      bielikCommandGuide +
-      formattingAndInteractionGuide +
-      (prioritizedMemories ? `\nAKTYWNA PAMIĘĆ DŁUGOTRWAŁA SQLite:\n${prioritizedMemories}` : '');
+    // Bez promptów: model dostaje wyłącznie rozmowę (historię i bieżącą wiadomość).
 
     const runGitHubTool = async (
       toolName: string,
@@ -1684,10 +1644,6 @@ async function startServer() {
           : model === 'svl-hybrid-router'
             ? `SVL-364 · Ollama (${selectedOllamaModelName})`
             : effectiveModel;
-
-    let fullSystemInstruction =
-      `${systemInstruction}\n` +
-      `${describeOllamaModelFlavor(selectedOllamaModelName)}`;
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
       if (cmd.kind === 'help') {
@@ -2051,49 +2007,6 @@ async function startServer() {
       return { text: 'Nieznane polecenie Bielik.' };
     };
 
-    const parseRawBielikActionObj = (raw: Record<string, any>): BielikSlashCommand | null => {
-      const c = String(raw?.cmd || '').trim().toLowerCase();
-      if (c === 'memory_save' && typeof raw.content === 'string' && raw.content.trim()) {
-        const k = ['fact', 'decision', 'task', 'episode'].includes(String(raw.kind || '').toLowerCase())
-          ? (String(raw.kind).toLowerCase() as 'fact' | 'decision' | 'task' | 'episode')
-          : 'fact';
-        return { kind: 'memory_save', memoryKind: k, content: raw.content.trim().slice(0, 800) };
-      }
-      if (c === 'module_upsert' && typeof raw.id === 'string' && raw.id.trim()) {
-        const cleanId = raw.id.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 64);
-        if (!cleanId) return null;
-        const st = String(raw.status || 'ACTIVE').toUpperCase();
-        const status: 'ACTIVE' | 'CONFIGURED' | 'STANDBY' =
-          st === 'CONFIGURED' || st === 'STANDBY' ? st : 'ACTIVE';
-        return {
-          kind: 'module_upsert',
-          id: cleanId,
-          status,
-          name: String(raw.name || cleanId).trim().slice(0, 120),
-          description: String(raw.description || `Moduł ${cleanId}`).trim().slice(0, 500),
-        };
-      }
-      if (c === 'root_exec' && typeof raw.command === 'string' && raw.command.trim()) {
-        return { kind: 'root_exec', command: raw.command.trim().slice(0, 1000) };
-      }
-      if (c === 'topology') {
-        return { kind: 'topology', xStart: String(raw.xStart || '-inf'), xEnd: String(raw.xEnd || 'inf') };
-      }
-      if (c === 'agent_task' && typeof raw.title === 'string' && raw.title.trim()) {
-        return {
-          kind: 'agent_task',
-          title: raw.title.trim().slice(0, 220),
-          payload: String(raw.payload || raw.title).trim().slice(0, 2000),
-        };
-      }
-      if (c === 'agent_connect') return { kind: 'agent_connect' };
-      if (c === 'status') return { kind: 'status' };
-      if (c === 'ollama') return { kind: 'ollama' };
-      if (c === 'modules_list') return { kind: 'modules_list' };
-      if (c === 'memory_list') return { kind: 'memory_list' };
-      return null;
-    };
-
     // --- Chat command pipeline -------------------------------------------------
     // Commands are executed once per chat turn (dedup by command identity) and every
     // state change is broadcast to all clients immediately via flushChatSync().
@@ -2131,11 +2044,8 @@ async function startServer() {
     const chatDirectives = hasOperatorAuth ? parseChatDirectives(cleanMsg, { knownModules }) : [];
     const directiveReceipts = await runChatCommands(chatDirectives);
     flushChatSync('chat_directive_applied');
-    // Results of commands tagged by the model ([[SVL_ACTION:...]]) in this turn.
-    const actionReceipts: string[] = [];
-    // Real server results are appended after the (guarded) model text so they are never rewritten.
-    const withDirectiveReceipts = (reply: string) =>
-      [reply, ...directiveReceipts, ...actionReceipts].filter(Boolean).join('\n\n');
+    // Wyniki poleceń z wiadomości Operatora (wykonanych przez serwer) dopisujemy po tekście modelu.
+    const withDirectiveReceipts = (reply: string) => [reply, ...directiveReceipts].filter(Boolean).join('\n\n');
 
     if (parsedSlashCmd && hasOperatorAuth) {
       res.json({
@@ -2150,13 +2060,6 @@ async function startServer() {
       });
       return;
     }
-    if (directiveReceipts.length > 0) {
-      fullSystemInstruction +=
-        `\n\nPOLECENIA Z TEJ WIADOMOŚCI ZOSTAŁY JUŻ WYKONANE PRZEZ SERWER (zapisane w SQLite i zsynchronizowane). ` +
-        `Nie dołączaj dla nich ponownie znaczników [[SVL_ACTION:...]]; odnieś się krótko do wyników:\n` +
-        directiveReceipts.map((receipt) => `- ${receipt.replace(/\s+/g, ' ').slice(0, 300)}`).join('\n');
-    }
-
     if (model === 'codex-cli') {
       if (!hasCodexChatAuth) {
         res.status(401).json({
@@ -2321,7 +2224,6 @@ async function startServer() {
         );
         if (!installed) throw new Error(`model ${selectedOllamaModelName} nie jest zainstalowany`);
         const ollamaMessages = [
-          { role: 'system', content: fullSystemInstruction },
           ...agentHistory,
           {
             role: 'user',
@@ -2348,17 +2250,7 @@ async function startServer() {
           const oData: any = oRaw && !oRaw.trim().startsWith('<') ? JSON.parse(oRaw) : {};
           const extReplyRaw = String(oData?.message?.content || oData?.response || '').trim();
           if (extReplyRaw) {
-            let finalReply = cleanReplyFor(extReplyRaw);
-            if (isBielikAgent) {
-              const extracted = extractBielikActionTags(extReplyRaw);
-              finalReply = cleanReplyFor(extracted.cleanText);
-              const taggedCommands = extracted.actions
-                .slice(0, 4)
-                .map((rawAct) => parseRawBielikActionObj(rawAct))
-                .filter((cmd): cmd is BielikSlashCommand => Boolean(cmd));
-              actionReceipts.push(...await runChatCommands(taggedCommands));
-              flushChatSync('chat_command_materialized');
-            }
+            const finalReply = cleanReplyFor(extReplyRaw);
             const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
             if (agentState?.canonical_name && cleanMsg) {
               void callPythonBackend(
@@ -2463,7 +2355,6 @@ async function startServer() {
               model: candidate,
               contents: contentsPayload,
               config: {
-                systemInstruction: fullSystemInstruction,
                 ...tempCfg,
                 ...(includeTools ? { tools: [{ functionDeclarations: chatToolDeclarations }] } : {}),
                 abortSignal: AbortSignal.timeout(14000),
@@ -2518,16 +2409,7 @@ async function startServer() {
             replyText = (plainRes.text || '').trim();
           }
           if (replyText) {
-            if (isBielikAgent) {
-              const extracted = extractBielikActionTags(replyText);
-              replyText = cleanReplyFor(extracted.cleanText);
-              const taggedCommands = extracted.actions
-                .slice(0, 4)
-                .map((rawAct) => parseRawBielikActionObj(rawAct))
-                .filter((cmd): cmd is BielikSlashCommand => Boolean(cmd));
-              actionReceipts.push(...await runChatCommands(taggedCommands));
-              flushChatSync('chat_command_materialized');
-            }
+            replyText = cleanReplyFor(replyText);
             replyText = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, replyText));
             if (agentState?.canonical_name) {
               const memRes = await callPythonBackend(
@@ -2620,16 +2502,59 @@ async function startServer() {
     return 'Sesja SVL Python OS';
   }
 
-  // 3b. Swobodna rozmowa obustronna: AI zabiera głos (Bielik i Maya rozmawiają z Operatorem i ze sobą).
-  const MAX_AI_TURNS_WITHOUT_OPERATOR = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 4);
+  // 3b. Rozmowa obustronna bez promptów: modele dostają wyłącznie zapis rozmowy.
+  // Najpierw model dopisuje „[…”, czyli sam wskazuje, kto mówi następny; potem wskazana AI
+  // dopisuje swoją kwestię własnym modelem. Gdy model wskaże Operatora — AI czekają.
+  const SAFETY_MAX_AI_TURNS = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 8);
   const AUTONOMOUS_MIN_INTERVAL_MS = 4000;
   const proactiveInFlight = new Set<string>();
   const lastProactiveAt = new Map<string, number>();
-  const PAUSE_MESSAGES: Record<string, string> = {
-    ai_turn_limit: `AI wymieniły już ${MAX_AI_TURNS_WITHOUT_OPERATOR} wypowiedzi z rzędu — czekają na Twoją wiadomość.`,
-    question_to_operator: 'AI zadało Ci pytanie — czeka na Twoją odpowiedź.',
-    no_conversation: 'Napisz pierwszą wiadomość, aby AI mogły dołączyć do rozmowy.',
+  const SKIP_MESSAGES: Record<string, string> = {
+    waiting_for_operator: 'Model wskazał, że teraz Twoja kolej — AI czekają na Twoją wiadomość.',
+    no_decision: 'Model nie wskazał kolejnego mówcy — rozmowa czeka na Ciebie.',
+    no_conversation: 'Napisz pierwszą wiadomość — AI kontynuują rozmowę, same jej nie zaczynają.',
+    ai_turn_limit: `Bezpiecznik kosztów: ${SAFETY_MAX_AI_TURNS} wypowiedzi AI z rzędu bez Twojej wiadomości.`,
     busy: 'Inna karta lub poprzednie wywołanie właśnie generuje wypowiedź.',
+  };
+
+  /** Dopisanie tekstu: najpierw Ollama (raw), awaryjnie Gemini z samym tekstem — bez instrukcji. */
+  const continueTranscript = async (
+    agentModel: string,
+    ollamaHost: string,
+    text: string,
+    options: { temperature: number; numPredict: number; stop: string[] },
+    requestedModel: string,
+    failures: string[],
+  ): Promise<{ text: string; label: string } | null> => {
+    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, text, {
+      ...options,
+      timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
+    });
+    if (fromOllama.ok) return { text: fromOllama.text, label: `Ollama (${fromOllama.model})` };
+    failures.push(fromOllama.reason);
+    const gemini = getGeminiClient();
+    if (!gemini) {
+      failures.push('Gemini: brak klucza GEMINI_API_KEY');
+      return null;
+    }
+    for (const candidate of geminiCandidates(requestedModel)) {
+      try {
+        const gen = await gemini.models.generateContent({
+          model: candidate,
+          contents: [{ role: 'user', parts: [{ text }] }],
+          config: {
+            temperature: options.temperature,
+            maxOutputTokens: options.numPredict,
+            stopSequences: options.stop.slice(0, 5),
+            abortSignal: AbortSignal.timeout(15000),
+          },
+        });
+        return { text: gen.text || '', label: `Gemini (${candidate})` };
+      } catch (error) {
+        failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+      }
+    }
+    return null;
   };
 
   app.post('/api/chat/proactive', asyncRoute(async (req, res) => {
@@ -2646,6 +2571,7 @@ async function startServer() {
       autonomous = false,
     } = req.body || {};
     const convId = String(conversationId || 'conv-rodzina-mitek-wszyscy').slice(0, 120);
+    const requestedModel = String(model || '');
     const isAutonomous = Boolean(autonomous);
 
     const skip = (reason: string, detail?: string) => {
@@ -2653,7 +2579,7 @@ async function startServer() {
         ok: false,
         skipped: true,
         reason,
-        error: detail || PAUSE_MESSAGES[reason] || reason,
+        error: detail || SKIP_MESSAGES[reason] || reason,
       });
     };
 
@@ -2663,111 +2589,59 @@ async function startServer() {
     proactiveInFlight.add(convId);
     try {
       // Źródłem prawdy jest SQLite (zawiera nadawców); historia z klienta tylko awaryjnie.
-      let turns: DialogueTurn[] = [];
       const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId);
       const stored = (Array.isArray(convSnap.data?.conversations) ? convSnap.data.conversations : [])
         .find((c: any) => c.id === convId);
       const source: any[] = Array.isArray(stored?.messages) ? stored.messages : Array.isArray(history) ? history : [];
-      turns = source
+      const turns: DialogueTurn[] = source
         .filter((m: any) => m && typeof m.content === 'string')
         .slice(-40)
         .map((m: any) => ({ role: String(m.role || ''), sender: String(m.sender || ''), content: String(m.content) }));
 
-      if (isAutonomous) {
-        const pause = autonomousPauseReason(turns, MAX_AI_TURNS_WITHOUT_OPERATOR);
-        if (pause) return skip(pause);
-      }
+      const transcript = buildTranscript(turns, 30);
+      if (!transcript) return skip('no_conversation');
+      if (isAutonomous && consecutiveAiTurns(turns) >= SAFETY_MAX_AI_TURNS) return skip('ai_turn_limit');
 
       const channelAgent: ConversationAgent | null =
         convId === 'conv-agent-bielik' ? 'Bielik' : convId === 'conv-agent-maya' ? 'Maya' : null;
-      const speaker = chooseNextSpeaker(turns, channelAgent);
+      const participants: ConversationAgent[] = channelAgent ? [channelAgent] : CONVERSATION_AGENTS;
       const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
-      const agentState: any = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === speaker) || {};
-      const agentConfig: any = agentState.config || {};
-      const memories: string[] = (Array.isArray(agentsRes.data?.agent_memories?.[speaker]) ? agentsRes.data.agent_memories[speaker] : [])
-        .filter((m: any) => m && ['fact', 'preference', 'decision'].includes(m.kind))
-        .slice(0, 8)
-        .map((m: any) => `[${String(m.kind).toUpperCase()}] ${String(m.content).slice(0, 240)}`);
-
-      const persona = buildPersonaInstruction({
-        speaker,
-        channelTitle: getCanonicalConversationTitle(convId),
-        otherAgents: channelAgent ? [] : CONVERSATION_AGENTS.filter((a) => a !== speaker),
-        customPrompt: typeof agentConfig.system_prompt === 'string' ? agentConfig.system_prompt : undefined,
-        memories,
-      });
-      const dialogue = toAgentPerspective(turns, speaker, 24);
-      if (dialogue.length === 0 || dialogue[dialogue.length - 1].role === 'assistant') {
-        dialogue.push({
-          role: 'user',
-          content: dialogue.length === 0 ? '(Rozpocznij krótką, swobodną rozmowę z Operatorem — jedno lub dwa zdania.)' : PROACTIVE_NUDGE,
-        });
-      }
-
-      const configuredModel = String(model).startsWith('ollama:')
-        ? String(model).slice('ollama:'.length)
-        : String(agentConfig.preferred_model || '').startsWith('ollama:')
-          ? String(agentConfig.preferred_model).slice('ollama:'.length)
-          : String(agentConfig.ollama_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
+      const modelFor = (agent: ConversationAgent): string => {
+        if (requestedModel.startsWith('ollama:')) return requestedModel.slice('ollama:'.length);
+        const cfg: any = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === agent)?.config || {};
+        if (String(cfg.preferred_model || '').startsWith('ollama:')) return String(cfg.preferred_model).slice('ollama:'.length);
+        return String(cfg.ollama_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
+      };
       const ollamaHost = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
-      const previousTexts = turns.slice(-8).map((t) => t.content);
       const failures: string[] = [];
-      let repetitive = false;
-      let reply: { text: string; label: string } | null = null;
+      const noModel = () =>
+        skip('no_model', `Żaden model AI nie odpowiedział (${[...new Set(failures)].slice(0, 3).join('; ')}).`);
 
-      for (const temperature of [0.8, 1.0]) {
-        if (reply) break;
-        const candidates: Array<() => Promise<{ text: string; label: string } | null>> = [];
-        candidates.push(async () => {
-          const result = await ollamaChatOnce(ollamaHost, configuredModel, [{ role: 'system', content: persona }, ...dialogue], {
-            temperature,
-            timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
-          });
-          if (!result.ok) {
-            failures.push(result.reason);
-            return null;
-          }
-          return { text: result.text, label: `Ollama (${result.model})` };
-        });
-        const gemini = getGeminiClient();
-        if (gemini) {
-          for (const candidate of geminiCandidates(String(model))) {
-            candidates.push(async () => {
-              try {
-                const gen = await gemini.models.generateContent({
-                  model: candidate,
-                  contents: dialogue.map((t) => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] })),
-                  config: { systemInstruction: persona, temperature, abortSignal: AbortSignal.timeout(15000) },
-                });
-                const text = (gen.text || '').trim();
-                if (!text) failures.push(`Gemini ${candidate}: pusta odpowiedź`);
-                return text ? { text, label: `Gemini (${candidate})` } : null;
-              } catch (error) {
-                failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
-                return null;
-              }
-            });
-          }
-        } else if (temperature === 0.8) {
-          failures.push('Gemini: brak klucza GEMINI_API_KEY');
-        }
-        for (const generate of candidates) {
-          const generated = await generate();
-          if (!generated) continue;
-          const text = cleanAgentReply(generated.text, speaker);
-          if (!text || isRepetitive(text, previousTexts)) {
-            repetitive = true;
-            break; // ponów z wyższą temperaturą
-          }
-          reply = { text, label: generated.label };
-          break;
-        }
+      // 1) Model sam wskazuje, kto mówi następny.
+      const prediction = await continueTranscript(
+        modelFor(participants[0]), ollamaHost, `${transcript}\n[`,
+        { temperature: 0.7, numPredict: 12, stop: [']', '\n'] }, requestedModel, failures,
+      );
+      if (!prediction) return noModel();
+      const predicted = parsePredictedSpeaker(prediction.text);
+      let speaker: ConversationAgent | null =
+        predicted && predicted !== 'operator' && participants.includes(predicted) ? predicted : null;
+      if (!speaker) {
+        if (isAutonomous) return skip(predicted === 'operator' ? 'waiting_for_operator' : 'no_decision');
+        // Operator kliknął „Niech AI mówi dalej”: głos dostaje AI, która najdawniej mówiła.
+        const lastAi = [...turns].reverse().map((t) => (t.role === 'assistant' ? t.sender : '')).find((s) => participants.includes(s as ConversationAgent));
+        speaker = participants.find((a) => a !== lastAi) || participants[0];
       }
 
-      if (!reply) {
-        if (repetitive) return skip('repetitive', `${speaker} nie wniósł(a) nic nowego do rozmowy — wypowiedź pominięta.`);
-        const detail = `Nie można kontynuować rozmowy: żaden model AI nie odpowiedział (${[...new Set(failures)].slice(0, 3).join('; ')}).`;
-        return skip('no_model', detail);
+      // 2) Wskazana AI dopisuje swoją kwestię własnym modelem.
+      const line = await continueTranscript(
+        modelFor(speaker), ollamaHost, `${transcript}\n[${speaker}]: `,
+        { temperature: 0.8, numPredict: 400, stop: ['\n['] }, requestedModel, failures,
+      );
+      if (!line) return noModel();
+      const text = cleanAgentReply(line.text, speaker);
+      if (!text || isRepetitive(text, turns.slice(-8).map((t) => t.content))) {
+        return skip('nothing_new', `${speaker} nie miał(a) nic nowego do powiedzenia — wypowiedź pominięta.`);
       }
 
       const assistantMsg = {
@@ -2775,9 +2649,9 @@ async function startServer() {
         role: 'assistant',
         sender: speaker,
         agentId: speaker,
-        modelUsed: `${reply.label} · rozmowa obustronna`,
+        modelUsed: `${line.label} · rozmowa obustronna`,
         timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
-        content: reply.text,
+        content: text,
       };
       const pySave = await callPythonBackend(
         'POST',

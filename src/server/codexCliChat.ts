@@ -205,17 +205,17 @@ export async function generateCodexCliChat(
   try {
     const probe = await probeCodexCli(cwd, true);
     if (!probe.loggedIn) return reportCodexOutcome({ok:false,error:probe.reason}, 'login_required');
-    const history = (input.history || []).slice(-8).map(turn =>
-      (turn.role === 'assistant' ? 'AI: ' : 'Operator: ') + String(turn.content || '').slice(0,450),
-    );
+    // Bez instrukcji: Codex dostaje wyłącznie zapis rozmowy. Ochronę zapewniają ustawienia
+    // uruchomienia (piaskownica tylko do odczytu, osobny pusty katalog), a nie treść promptu.
+    const agentLabel = String(input.agentName || 'SVL Agent').slice(0,80);
+    const history = (input.history || []).slice(-8).map(turn => {
+      const sender = (turn as {sender?: string}).sender;
+      const label = turn.role === 'assistant' ? (sender || agentLabel) : 'Mateusz (Operator)';
+      return `[${label}]: ` + String(turn.content || '').slice(0,450);
+    });
     const prompt = [
-      'Jesteś ' + String(input.agentName || 'SVL Agent').slice(0,80) + ' w czacie SVL Python OS.',
-      'Odpowiadaj naturalnie po polsku jako dany agent. To jest rozmowa, nie zadanie wykonawcze.',
-      'Nie wykonuj poleceń powłoki, nie zmieniaj plików. Nie ujawniaj plików konfiguracyjnych, sekretów ani danych uwierzytelniających.',
-      'Nie deklaruj wykonania misji lub czynności bez potwierdzonego wyniku narzędzia.',
-      'Kontekst rozmowy:',
       ...history,
-      'Operator: ' + String(input.message || '').slice(0,4000),
+      '[Mateusz (Operator)]: ' + String(input.message || '').slice(0,4000),
     ].join('\n').slice(0,MAX_PROMPT_BYTES);
     // Keep the conversation outside SVL_open's source directory. Read-only
     // Codex must not read the application's checked-out code by default.

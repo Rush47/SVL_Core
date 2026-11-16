@@ -15,19 +15,20 @@ Dawne profile pomocnicze (`Alex`, `Aria`/`si_1`, `Astyria`, `Aurelius`) oraz zew
 - **Wyszukiwanie semantyczne**: przed każdą odpowiedzią `recall_agent_memories()` wyszukuje 18 najbardziej dopasowanych wspomnień w 128-wymiarowej przestrzeni binarnej `BinaryHyperspaceKernel` z priorytetem dla typów `preference`, `decision`, `fact` oraz `task`.
 - **Automatyczna deduplikacja i zapis**: każda rozmowa oraz polecenie `/exec` są automatycznie indeksowane w tabeli `agent_memory` bez blokowania głównego wątku odpowiedzi.
 
-## Swobodna rozmowa obustronna (Operator ↔ Bielik ↔ Maya)
+## Swobodna rozmowa obustronna (Operator ↔ Bielik ↔ Maya) — bez promptów
 
-Przycisk **„Czat obustronny: WŁ”** pozwala agentom zabierać głos samodzielnie (`POST /api/chat/proactive`).
-Logika: `src/server/conversation.ts`.
+Modele **nie dostają żadnych instrukcji** — ani w zwykłym czacie, ani w rozmowie obustronnej, ani w trybie Codex CLI.
+Widzą wyłącznie zapis rozmowy, w którym każda wypowiedź ma postać `[Imię]: treść`.
+Logika: `src/server/conversation.ts`, endpoint `POST /api/chat/proactive`.
 
-- **Kto co powiedział:** każdy agent widzi rozmowę ze swojej perspektywy — własne wypowiedzi jako `assistant`,
-  wypowiedzi Operatora i drugiej AI jako `[Imię]: treść`. Historia pochodzi z SQLite (z nadawcami).
-- **Kto mówi:** w kanałach `conv-agent-bielik` / `conv-agent-maya` tylko ich agent; w pozostałych naprzemiennie,
-  a gdy Operator zwróci się po imieniu (np. „Maya, …”) — wywołany agent.
-- **Persona i pamięć:** opis roli z konfiguracji agenta (zakładka Agenci) + do 8 wpisów pamięci (fakty, preferencje, decyzje).
-- **Pauza:** po `SVL_DUPLEX_MAX_AI_TURNS` (domyślnie 4) wypowiedziach AI z rzędu albo gdy AI zada pytanie Operatorowi.
-  Pasek nad czatem pokazuje powód; „Niech AI mówi dalej” wymusza kolejną wypowiedź.
-- **Jakość:** odpowiedzi powtarzające wcześniejsze wypowiedzi są odrzucane (ponowienie z wyższą temperaturą),
-  a dopisane przez model kwestie innych osób („[Maya]: …”) — ucinane.
-- **Wiele kart:** serwer dopuszcza jedną wypowiedź naraz na rozmowę (pozostałe karty dostają „busy”).
-- **Bez modelu:** zamiast udawanej odpowiedzi czat pokazuje, dlaczego Ollama i Gemini nie odpowiedziały.
+- **AI same decydują, kto mówi.** Serwer dopisuje do zapisu rozmowy znak `[` i model sam uzupełnia imię
+  następnego mówcy (Ollama `/api/generate` z `raw: true`, czyli bez szablonu i bez promptu).
+  - wskazany Bielik lub Maya → ta AI dopisuje swoją kwestię po `[Imię]: ` własnym modelem z konfiguracji,
+  - wskazany Operator → AI milkną i czekają na Twoją wiadomość,
+  - wskazany ktoś spoza rozmowy → AI czekają.
+- **„Niech AI mówi dalej”** (przycisk nad czatem) daje głos AI, która najdawniej mówiła.
+- **Bezpiecznik kosztów:** po `SVL_DUPLEX_MAX_AI_TURNS` (domyślnie 8) wypowiedziach AI z rzędu bez Twojej wiadomości.
+- **Bez wpływu na treść:** serwer odrzuca jedynie powtórzenia i ucina kwestie, które model dopisał za innych uczestników.
+- **Polecenia czatu** („Zapisz w pamięci…”, `/exec`, `/modul` …) rozpoznaje i wykonuje serwer, bez udziału modelu.
+  Model nie dostaje już protokołu `[[SVL_ACTION]]`, więc sam akcji nie wykonuje.
+- Persona i pamięć z zakładki Agenci nie są wysyłane do modelu w czacie (wciąż służą zadaniom workerów).
