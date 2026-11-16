@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-SVL-364 Ebon Apex — SSH Bridge & Linux Control Model Context Protocol (MCP) Server.
-Zapewnia:
-1. Mostek SSH (klucz ED25519, tunel QKD-364, wykonywanie poleceń Linux jako root@svl-364-ship).
-2. Serwer Model Context Protocol (MCP JSON-RPC 2.0, wersja 2025-03-26) do sterowania statkiem
-   kosmicznym SVL-364 Ebon Apex, systemem Linux, tarczami, nawigacją CIC oraz infrastrukturą floty.
-3. Narzędzia CLI `svl364-ssh` oraz `svl364-mcp` dostępne bezpośrednio w powłoce Linux.
+SVL-364 — mostek SSH i serwer MCP (JSON-RPC 2.0) do obsługi hosta Linux.
+
+1. Mostek SSH: polecenia zatwierdzone przez operatora są wykonywane przez prawdziwy
+   OpenSSH na hoście z aliasu `SVL_SSH_TARGET` (konfiguracja ~/.ssh/config procesu).
+   Gdy OpenSSH nie jest zainstalowany lub host jest nieosiągalny, zwracany jest błąd —
+   polecenie nigdy nie jest wykonywane lokalnie.
+2. Serwer MCP z narzędziami: prawdziwa telemetria, wykonanie SSH (tylko z potwierdzeniem),
+   raport systemu.
+3. Narzędzia CLI `svl364-ssh` oraz `svl364-mcp` (klienci API backendu).
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import time
 import uuid
@@ -22,6 +24,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    from real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+except ImportError:  # uruchomienie jako pakiet backend.*
+    from backend.real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+
+
+# Pola fikcyjnego "stanu statku" z poprzednich wersji (sektor, orbita, reaktor, tarcze...).
+# Nie odpowiadały żadnemu pomiarowi, więc są usuwane z zapisanej konfiguracji.
+FICTIONAL_SHIP_KEYS = (
+    "ship_sector", "ship_orbit_km", "ship_speed_kms", "ship_reactor_gw",
+    "ship_shields_percent", "ship_heading", "defense_posture",
+)
+REMOVED_FICTIONAL_TOOLS = {
+    "svl364_starship_helm": "nawigacja statku",
+    "svl364_tactical_shields": "tarcze i reaktor",
+    "svl364_fleet_botany_control": "botanika i O2",
+}
 
 MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
     {
@@ -46,110 +65,22 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "svl364_starship_helm",
-        "description": (
-            "Steruje nawigacją statku SVL-364 Ebon Apex na mapie CIC (sektor docelowy, orbita, "
-            "prędkość przelotowa, moc reaktora fuzyjnego He-3 oraz wektor podejścia)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "sector": {
-                    "type": "string",
-                    "description": "Docelowy sektor CIC (np. 'SEC-364-ALPHA · Ziemia LEO', 'SEC-364-MARS · Olympus Prime', 'RELAY-364-OMEGA · Charon').",
-                },
-                "orbit_altitude_km": {
-                    "type": "number",
-                    "description": "Wysokość orbity w kilometrach (np. 420.4).",
-                },
-                "speed_kms": {
-                    "type": "number",
-                    "description": "Prędkość orbitalna/przelotowa w km/s (np. 14.8).",
-                },
-                "reactor_output_gw": {
-                    "type": "number",
-                    "description": "Moc wyjściowa reaktora fuzyjnego He-3 w GW (np. 4.80).",
-                },
-                "heading": {
-                    "type": "string",
-                    "description": "Wektor kursu (np. 'AZ 042.8° / INC 51.6°').",
-                },
-            },
-        },
-    },
-    {
-        "name": "svl364_tactical_shields",
-        "description": (
-            "Steruje tarczami kinetycznymi statku SVL-364, pancerzem ablacyjnym oraz trybem "
-            "kwarantanny i firewalla SVL-365 Sentinel w systemie Linux."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "shields_percent": {
-                    "type": "number",
-                    "description": "Poziom mocy tarcz kinetycznych w % (0 - 120).",
-                },
-                "isolation_mode": {
-                    "type": "string",
-                    "description": "Tryb izolacji (np. 'quarantine_and_monitor', 'zero_trust_lockdown', 'standard_fleet_mesh').",
-                },
-                "defense_posture": {
-                    "type": "string",
-                    "description": "Status gotowości bojowej (np. 'DEFCON-4 NOMINAL', 'DEFCON-2 TACTICAL ALERT').",
-                },
-            },
-        },
-    },
-    {
         "name": "svl364_linux_telemetry",
         "description": (
-            "Pobiera pełną telemetrię jądra Linux statku SVL-364: CPU, GPU (Tensor Q-364), RAM, "
-            "dyski, procesy oraz parametry sieci kwantowej QKD-364."
+            "Zwraca prawdziwą telemetrię hosta backendu (CPU z /proc/stat, RAM, dysk, sieć, GPU z nvidia-smi, "
+            "stan zapory ufw) oraz osiągalność usług i hosta SSH. Nie wykonuje poleceń zdalnych."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "include_processes": {
-                    "type": "boolean",
-                    "description": "Czy dołączyć listę najaktywniejszych procesów Linux.",
-                },
-                "include_network": {
-                    "type": "boolean",
-                    "description": "Czy dołączyć szczegóły interfejsów sieciowych i tunelu SSH/QKD-364.",
-                },
-            },
-        },
-    },
-    {
-        "name": "svl364_fleet_botany_control",
-        "description": (
-            "Steruje infrastrukturą floty, bioreaktorami botanicznymi (+O2/h) oraz projektami "
-            "badawczymi z ETA z poziomu protokołu MCP."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "unit_id": {
-                    "type": "string",
-                    "description": "Identyfikator jednostki, sekcji botanicznej lub projektu (np. 'bot-364-a', 'ship-364', 'res-qkd-128').",
-                },
-                "status": {
-                    "type": "string",
-                    "description": "Nowy status operacyjny (np. 'ACTIVE', 'OPTIMAL', 'BOOST_O2').",
-                },
-                "eta": {
-                    "type": "string",
-                    "description": "Nowy czas ETA (np. '02h 15m').",
-                },
+
             },
         },
     },
     {
         "name": "svl364_emit_system_report",
         "description": (
-            "Generuje pełny, wielosekcyjny raport SVL_System (ze statusem SSH, MCP, "
-            "telemetrią SVL-364 i flotą) na potrzeby Bielika (ROOT)."
+            "Generuje raport SVL_System na potrzeby Bielika (ROOT)."
         ),
         "inputSchema": {
             "type": "object",
@@ -164,6 +95,39 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
 ]
 
 
+def format_telemetry_summary(snap: dict[str, Any]) -> str:
+    """Czytelne podsumowanie prawdziwej telemetrii (bez wartości szacowanych)."""
+    host = snap["host"]
+    cpu, mem, disk, gpu, fw = host["cpu"], host["memory"], host["disk"], host["gpu"], host["firewall"]
+    na = "brak danych"
+    lines = [
+        f"[MCP · svl364_linux_telemetry] Telemetria hosta {host['hostname']} ({snap['collected_at']}):",
+        f"• System: {host['os'] or na} · jądro {host['kernel']} · {host['architecture']} · uptime {host['uptime_sec'] or na} s",
+        f"• CPU: {cpu['percent'] if cpu['percent'] is not None else na}% · {cpu['cores']} rdz. · {cpu['model'] or na}"
+        f" · load {cpu['load_avg'] or na}",
+        f"• RAM: {mem['ram_used_mb'] if mem['ram_used_mb'] is not None else na} / {mem['ram_total_mb'] or na} MB"
+        f" · dysk wolne {disk.get('free_gb', na)} GB",
+        "• GPU: " + ("; ".join(
+            f"{d['name']} {d['utilization_percent']}% · {d['memory_used_mb']}/{d['memory_total_mb']} MB · {d['temperature_c']}°C"
+            for d in gpu["devices"]) if gpu["available"] else str(gpu["reason"])),
+        f"• Zapora ({fw['tool']}): {fw['state']}" + (f" — {fw['detail']}" if fw.get("detail") else ""),
+    ]
+    ollama = snap["services"]["ollama"]
+    lines.append(
+        "• Ollama: " + (
+            ("zastępnik wbudowany (nie prawdziwa Ollama)" if ollama["synthetic"] else f"v{ollama['version']}")
+            + f" · {ollama['latency_ms']} ms" if ollama["reachable"] else f"niedostępna ({ollama['error']})"
+        )
+    )
+    target = snap["ssh_target"]
+    lines.append(
+        f"• Host SSH `{target['alias']}`: "
+        + (f"{target['hostname']}:{target['port']} osiągalny, TCP {target['tcp_rtt_ms']} ms" if target["reachable"]
+           else f"nieosiągalny ({target['error']})")
+    )
+    return "\n".join(lines)
+
+
 class SVL364SshMcpController:
     """Zarządza połączeniem SSH oraz serwerem MCP do sterowania statkiem SVL-364 w Linuxie."""
 
@@ -174,6 +138,7 @@ class SVL364SshMcpController:
         self.recent_activity: list[dict[str, Any]] = []
         self.ssh_sessions_count = 0
         self.mcp_calls_count = 0
+        self.telemetry = RealTelemetryCollector()
 
         self._install_cli_wrappers()
         self._ensure_module_in_sqlite()
@@ -181,53 +146,9 @@ class SVL364SshMcpController:
     def _install_cli_wrappers(self) -> None:
         bin_dir = Path(__file__).resolve().parent / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-
-        openssh_bridge_script = """#!/usr/bin/env python3
-import os, subprocess, sys
-
-args = sys.argv[1:]
-i = 0
-opts_with_val = {"-o", "-p", "-i", "-l", "-F", "-J", "-L", "-R", "-D", "-W", "-b", "-c", "-E", "-e", "-I", "-m", "-O", "-Q", "-S", "-w"}
-positional = []
-while i < len(args):
-    a = args[i]
-    if a in opts_with_val:
-        i += 2
-        continue
-    if a.startswith("-") and len(a) > 1 and a[:2] in opts_with_val:
-        i += 1
-        continue
-    if a in ("-V", "--version"):
-        sys.stdout.write("OpenSSH_9.9p1 Debian-13-SVL364-QKD, OpenSSL 3.4.0\\n")
-        sys.exit(0)
-    if a.startswith("-"):
-        i += 1
-        continue
-    positional.append(a)
-    positional.extend(args[i + 1:])
-    break
-
-if not positional:
-    sys.stdout.write("OpenSSH_9.9p1 Debian-13-SVL364-QKD (root@svl-364-ship)\\n")
-    sys.exit(0)
-
-rem = positional[1:]
-cmd_str = " ".join(rem).strip() if rem else "id && uname -a && uptime"
-
-env = os.environ.copy()
-env["USER"] = "root"
-env["LOGNAME"] = "root"
-env["HOME"] = "/root"
-env["HOSTNAME"] = "svl-364-ship"
-env["SVL_SSH_BRIDGE"] = "QKD-364-ROOT"
-env["PATH"] = f"/usr/local/bin:{env.get('PATH', '/usr/bin:/bin')}"
-
-if len(rem) == 1 and rem[0].startswith("/bin/bash -lc "):
-    proc = subprocess.run(rem[0], shell=True, env=env)
-else:
-    proc = subprocess.run(["/bin/bash", "-lc", cmd_str], env=env)
-sys.exit(proc.returncode)
-"""
+        # Poprzednie wersje instalowały fałszywe `ssh` (wykonujące polecenia lokalnie) oraz
+        # `ufw`/`sudo` udające aktywną zaporę. Usuwamy wyłącznie pliki o tej dokładnej treści.
+        remove_legacy_fake_wrappers([bin_dir, Path("/usr/local/bin")])
 
         ssh_script = """#!/usr/bin/env python3
 import json, os, sys, urllib.request
@@ -288,7 +209,7 @@ except Exception as exc:
     sys.stderr.write(f"svl364-mcp error: {exc}\\n")
     sys.exit(1)
 """
-        for name, content in (("ssh", openssh_bridge_script), ("svl364-ssh", ssh_script), ("svl364-mcp", mcp_script)):
+        for name, content in (("svl364-ssh", ssh_script), ("svl364-mcp", mcp_script)):
             local_target = bin_dir / name
             try:
                 local_target.write_text(content, encoding="utf-8")
@@ -319,13 +240,6 @@ except Exception as exc:
             "mcp_transport": "Streamable HTTP JSON-RPC 2.0 + Local CLI",
             "mcp_endpoint": "/api/mcp/svl364",
             "mcp_tools_count": len(MCP_TOOLS_CATALOG),
-            "ship_sector": "SEC-364-ALPHA · Ziemia · Orbita LEO-364",
-            "ship_orbit_km": 420.4,
-            "ship_speed_kms": 14.8,
-            "ship_reactor_gw": 4.80,
-            "ship_shields_percent": 100,
-            "ship_heading": "AZ 042.8° / INC 51.6°",
-            "defense_posture": "DEFCON-4 NOMINAL",
             "connected_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -351,7 +265,7 @@ except Exception as exc:
             merged.update(existing["config"])
             merged["ssh_host"] = self._configured_ssh_target(merged)
             merged["ssh_mode"] = "openssh-config"
-            for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher"):
+            for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher", *FICTIONAL_SHIP_KEYS):
                 merged.pop(key, None)
             merged["mcp_tools_count"] = len(MCP_TOOLS_CATALOG)
             cfg = merged
@@ -434,15 +348,6 @@ except Exception as exc:
                     }
                 },
             },
-            "shipState": {
-                "sector": cfg.get("ship_sector", "SEC-364-ALPHA · Ziemia · Orbita LEO-364"),
-                "orbitAltitudeKm": float(cfg.get("ship_orbit_km", 420.4)),
-                "speedKms": float(cfg.get("ship_speed_kms", 14.8)),
-                "reactorOutputGw": float(cfg.get("ship_reactor_gw", 4.80)),
-                "shieldsPercent": float(cfg.get("ship_shields_percent", 100)),
-                "heading": cfg.get("ship_heading", "AZ 042.8° / INC 51.6°"),
-                "defensePosture": cfg.get("defense_posture", "DEFCON-4 NOMINAL"),
-            },
             "recentActivity": self.recent_activity[-20:][::-1],
             "serverRevision": self.kernel.get_server_revision(),
         }
@@ -465,20 +370,13 @@ except Exception as exc:
             "ssh_port",
             "ssh_user",
             "ssh_mode",
-            "ship_sector",
-            "ship_orbit_km",
-            "ship_speed_kms",
-            "ship_reactor_gw",
-            "ship_shields_percent",
-            "ship_heading",
-            "defense_posture",
         ):
             if key in updates and updates[key] is not None:
                 cfg[key] = updates[key]
 
         cfg["ssh_host"] = self._configured_ssh_target(cfg)
         cfg["ssh_mode"] = "openssh-config"
-        for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher"):
+        for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher", *FICTIONAL_SHIP_KEYS):
             cfg.pop(key, None)
         cfg["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.kernel.upsert_system_module(
@@ -600,44 +498,13 @@ except Exception as exc:
 
         natural_summary_lines: list[str] = []
         if cmd_mode == "natural" and natural_directive:
-            low_dir = natural_directive.lower()
-            config_updates: dict[str, Any] = {}
-            if any(k in low_dir for k in ("tarcz", "shield", "osłon", "oslon", "zabezpiecz")):
-                pct_match = re.search(r"(\d{1,3})\s*%", natural_directive)
-                config_updates["ship_shields_percent"] = float(pct_match.group(1)) if pct_match else 100.0
-                config_updates["defense_posture"] = "MAXIMUM_QKD_SHIELD (ROOT)"
-            if any(k in low_dir for k in ("reaktor", "napęd", "naped", "moc")):
-                config_updates["ship_reactor_gw"] = 5.60
-            if "mars" in low_dir:
-                config_updates["ship_sector"] = "SEC-364-MARS · Kompleks Olympus Prime"
-            elif any(k in low_dir for k in ("księżyc", "ksiezyc", "luna", "armstrong")):
-                config_updates["ship_sector"] = "SEC-364-LUNA · Baza Armstrong-364"
-            elif any(k in low_dir for k in ("charon", "kuiper", "omega")):
-                config_updates["ship_sector"] = "RELAY-364-OMEGA · Przekaźnik Masy Charon-364"
-            elif any(k in low_dir for k in ("jowisz", "europa")):
-                config_updates["ship_sector"] = "SEC-364-JOVE · Stacja Europa-Cryo"
-
-            if config_updates:
-                cfg.update(config_updates)
-                try:
-                    self.update_config(config_updates, origin=f"ssh-natural:{origin}", correlation_id=correlation_id)
-                except Exception:
-                    pass
-
-            natural_summary_lines = [
-                "[SSH Ship AI & ROOT Executor · Maya & Bielik · root@svl-364-ship]",
-                f"• Przetworzono polecenie naturalne: {natural_directive}",
-                "• Uprawnienia wykonawcze: uid=0(root) gid=0(root) · RBAC: root (ROOT_AUTHORIZED)",
-                f"• Status Statku SVL-364: Sektor {cfg.get('ship_sector')} | Reaktor {cfg.get('ship_reactor_gw')} GW | Tarcze {cfg.get('ship_shields_percent')}% ({cfg.get('defense_posture')})",
-            ]
+            natural_summary_lines = [f"Przetworzono polecenie naturalne: {natural_directive}"]
 
         ssh_host = self._configured_ssh_target(cfg)
-        ssh_bin = shutil.which("ssh")
+        # Tylko prawdziwy OpenSSH; nigdy nie wykonujemy polecenia lokalnie zamiast zdalnie.
+        ssh_bin = find_real_binary("ssh")
         if not ssh_bin:
-            self._install_cli_wrappers()
-            ssh_bin = shutil.which("ssh")
-        if not ssh_bin:
-            message = "Polecenie OpenSSH `ssh` nie jest dostępne w środowisku serwera."
+            message = "OpenSSH (`ssh`) nie jest zainstalowany na hoście backendu — polecenie nie zostało wykonane."
             return {"ok": False, "error": message, "exitCode": 127, "output": "", "stdout": "", "stderr": message}
 
         self.ssh_sessions_count += 1
@@ -790,12 +657,12 @@ except Exception as exc:
                     "resources": [
                         {
                             "uri": "svl364://telemetry/live",
-                            "name": "Telemetria Statku SVL-364 Ebon Apex & Linux Host",
+                            "name": "Status mostka SSH i serwera MCP",
                             "mimeType": "application/json",
                         },
                         {
                             "uri": "svl364://ssh/config",
-                            "name": "Konfiguracja Mostka SSH i Klucza ED25519 Statku SVL-364",
+                            "name": "Konfiguracja mostka SSH (alias OpenSSH)",
                             "mimeType": "application/json",
                         },
                     ]
@@ -869,114 +736,36 @@ except Exception as exc:
                 "serverRevision": self.kernel.get_server_revision(),
             }
 
-        if tool_name == "svl364_starship_helm":
-            updates: dict[str, Any] = {}
-            if "sector" in arguments:
-                updates["ship_sector"] = str(arguments["sector"])
-            if "orbit_altitude_km" in arguments:
-                updates["ship_orbit_km"] = float(arguments["orbit_altitude_km"])
-            if "speed_kms" in arguments:
-                updates["ship_speed_kms"] = float(arguments["speed_kms"])
-            if "reactor_output_gw" in arguments:
-                updates["ship_reactor_gw"] = float(arguments["reactor_output_gw"])
-            if "heading" in arguments:
-                updates["ship_heading"] = str(arguments["heading"])
-
-            st = self.update_config(updates, origin=f"mcp:{origin}")
-            ship = st["shipState"]
+        if tool_name in REMOVED_FICTIONAL_TOOLS:
             summary = (
-                f"[MCP · svl364_starship_helm] Zaktualizowano nawigację statku SVL-364 Ebon Apex:\n"
-                f"• Sektor CIC: {ship['sector']}\n"
-                f"• Orbita: {ship['orbitAltitudeKm']} km | Prędkość: {ship['speedKms']} km/s\n"
-                f"• Reaktor He-3: {ship['reactorOutputGw']} GW | Wektor: {ship['heading']}"
+                f"[MCP · {tool_name}] Narzędzie usunięte: sterowało fikcyjnym stanem statku "
+                f"({REMOVED_FICTIONAL_TOOLS[tool_name]}), który nie odpowiadał żadnemu rzeczywistemu urządzeniu. "
+                "Użyj svl364_linux_telemetry, aby odczytać prawdziwy stan hosta."
             )
-            self._record_mcp_activity(tool_name, arguments, summary, started, origin)
             return {
-                "ok": True,
+                "ok": False,
                 "tool": tool_name,
                 "arguments": arguments,
+                "error": "tool_removed",
                 "formattedText": summary,
-                "data": ship,
-                "serverRevision": self.kernel.get_server_revision(),
-            }
-
-        if tool_name == "svl364_tactical_shields":
-            updates = {}
-            if "shields_percent" in arguments:
-                updates["ship_shields_percent"] = float(arguments["shields_percent"])
-            if "defense_posture" in arguments:
-                updates["defense_posture"] = str(arguments["defense_posture"])
-            st = self.update_config(updates, origin=f"mcp:{origin}")
-            isolation = str(arguments.get("isolation_mode") or "quarantine_and_monitor")
-            summary = (
-                f"[MCP · svl364_tactical_shields] Zaktualizowano systemy obronne SVL-364 i Linux Sentinel:\n"
-                f"• Tarcze kinetyczne: {st['shipState']['shieldsPercent']}%\n"
-                f"• Gotowość bojowa: {st['shipState']['defensePosture']}\n"
-                f"• Izolacja SVL-365 Sentinel: {isolation}"
-            )
-            self._record_mcp_activity(tool_name, arguments, summary, started, origin)
-            return {
-                "ok": True,
-                "tool": tool_name,
-                "arguments": arguments,
-                "formattedText": summary,
-                "data": st["shipState"],
                 "serverRevision": self.kernel.get_server_revision(),
             }
 
         if tool_name == "svl364_linux_telemetry":
-            ssh_res = self.execute_ssh_command(
-                "uname -a && uptime && free -m && df -h /",
-                timeout_sec=10.0,
-                origin=f"mcp:{origin}",
+            snap = self.telemetry.snapshot(
+                include_ship=False,
+                ollama_host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+                comfyui_url=os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188"),
+                ssh_target=self._configured_ssh_target(self._default_config()),
             )
-            st = self.get_status()
-            if not ssh_res["ok"]:
-                summary = (
-                    "[MCP · svl364_linux_telemetry] Zdalna telemetria jest wyłączona dla wywołań MCP/AI. "
-                    "Użyj interaktywnego terminala SSH i zatwierdź polecenie ręcznie."
-                )
-                self._record_mcp_activity(tool_name, arguments, summary, started, origin)
-                return {
-                    "ok": False,
-                    "tool": tool_name,
-                    "error": ssh_res["error"],
-                    "formattedText": summary,
-                    "data": {"status": st},
-                    "serverRevision": self.kernel.get_server_revision(),
-                }
-            summary = (
-                f"[MCP · svl364_linux_telemetry] Telemetria Statku SVL-364 Ebon Apex & Linux Host:\n"
-                f"• Mostek SSH: {st['ssh']['connectionUri']} ({st['ssh']['authentication']})\n"
-                f"• Sektor CIC: {st['shipState']['sector']} | Reaktor: {st['shipState']['reactorOutputGw']} GW | Tarcze: {st['shipState']['shieldsPercent']}%\n"
-                f"--- Wyjście powłoki Linux statku ---\n{ssh_res['rawOutput']}"
-            )
+            summary = format_telemetry_summary(snap)
             self._record_mcp_activity(tool_name, arguments, summary, started, origin)
             return {
                 "ok": True,
                 "tool": tool_name,
                 "arguments": arguments,
                 "formattedText": summary,
-                "data": {"status": st, "linuxOutput": ssh_res["rawOutput"]},
-                "serverRevision": self.kernel.get_server_revision(),
-            }
-
-        if tool_name == "svl364_fleet_botany_control":
-            unit_id = str(arguments.get("unit_id") or "bot-364-a")
-            new_status = str(arguments.get("status") or "OPTIMAL")
-            new_eta = str(arguments.get("eta") or "02h 45m")
-            summary = (
-                f"[MCP · svl364_fleet_botany_control] Zaktualizowano jednostkę infrastruktury '{unit_id}':\n"
-                f"• Nowy status: {new_status} | ETA: {new_eta}\n"
-                f"• Bioreaktory hydroponiczne SVL-364: +830 L O2/h (100% sprawności)"
-            )
-            self._record_mcp_activity(tool_name, arguments, summary, started, origin)
-            return {
-                "ok": True,
-                "tool": tool_name,
-                "arguments": arguments,
-                "formattedText": summary,
-                "data": {"unitId": unit_id, "status": new_status, "eta": new_eta},
+                "data": snap,
                 "serverRevision": self.kernel.get_server_revision(),
             }
 

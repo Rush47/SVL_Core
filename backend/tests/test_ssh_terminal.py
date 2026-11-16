@@ -52,7 +52,7 @@ class SshTerminalTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="remote-host\n", stderr="")
         with (
             patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
-            patch("svl364_ssh_mcp.shutil.which", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
             patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
         ):
             result = controller.execute_ssh_command("uname -a", confirmed=True)
@@ -70,7 +70,7 @@ class SshTerminalTests(unittest.TestCase):
         failed = subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="connection failed")
         with (
             patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
-            patch("svl364_ssh_mcp.shutil.which", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
             patch("svl364_ssh_mcp.subprocess.run", return_value=failed) as run,
         ):
             result = controller.execute_ssh_command("uname -a", confirmed=True)
@@ -87,7 +87,7 @@ class SshTerminalTests(unittest.TestCase):
         )
         with (
             patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
-            patch("svl364_ssh_mcp.shutil.which", return_value="/usr/local/bin/ssh"),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/local/bin/ssh"),
             patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
         ):
             result = controller.execute_ssh_command("/exec id && uname -a", confirmed=True)
@@ -105,7 +105,7 @@ class SshTerminalTests(unittest.TestCase):
         )
         with (
             patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
-            patch("svl364_ssh_mcp.shutil.which", return_value="/usr/local/bin/ssh"),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/local/bin/ssh"),
             patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
         ):
             result = controller.execute_ssh_command("Sprawdź pamięć RAM statku SVL-364", confirmed=True)
@@ -114,6 +114,38 @@ class SshTerminalTests(unittest.TestCase):
         self.assertEqual(result["mode"], "natural")
         self.assertIn("free -m", result["effectiveCommand"])
         self.assertIn("Przetworzono polecenie naturalne", result["output"])
+
+    def test_missing_openssh_never_falls_back_to_local_shell(self) -> None:
+        controller = build_controller()
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value=None),
+            patch("svl364_ssh_mcp.subprocess.run") as run,
+        ):
+            result = controller.execute_ssh_command("id", confirmed=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exitCode"], 127)
+        self.assertIn("OpenSSH", result["error"])
+        run.assert_not_called()
+
+    def test_natural_command_output_contains_no_fictional_ship_status(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="ok\n", stderr="")
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
+        ):
+            result = controller.execute_ssh_command("Ustaw tarcze na 50% i leć na Marsa", confirmed=True)
+
+        for fiction in ("Reaktor", "Tarcze", "Sektor", "uid=0(root) gid=0(root) · RBAC"):
+            self.assertNotIn(fiction, result["output"])
+
+    def test_cli_wrappers_do_not_install_a_fake_ssh(self) -> None:
+        controller = build_controller()
+        controller._install_cli_wrappers()
+        bin_dir = Path(__file__).resolve().parent.parent / "bin"
+        self.assertFalse((bin_dir / "ssh").exists())
+        self.assertTrue((bin_dir / "svl364-ssh").exists())
 
 
 if __name__ == "__main__":

@@ -72,54 +72,9 @@ try {
   // ignore read-only fs
 }
 
-// Ensure root-level sudo and ufw wrappers exist in container environment (process runs as uid=0 root)
-try {
-  if (!fsSync.existsSync('/usr/local/bin/sudo')) {
-    fsSync.writeFileSync(
-      '/usr/local/bin/sudo',
-      '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    -n|-E|-H|-s|-i|-S) shift ;;\n    -u|-g|-p) shift 2 ;;\n    --) shift; break ;;\n    -*) shift ;;\n    *) break ;;\n  esac\ndone\nif [[ $# -eq 0 ]]; then exec /bin/bash; fi\nexec "$@"\n',
-      { mode: 0o755 },
-    );
-  }
-  if (!fsSync.existsSync('/usr/local/bin/ufw')) {
-    fsSync.writeFileSync(
-      '/usr/local/bin/ufw',
-      '#!/usr/bin/env bash\ncmd="${1:-status}"\nif [[ "$cmd" == "status" || "$cmd" == "enable" || "$cmd" == "reload" ]]; then\n  echo "Status: active (SVL-364 Ebon Apex QKD-364 Zero-Trust Shield)"\n  echo "Logging: on (low -> /var/log/svl_security.log)"\n  echo "Default: deny (incoming), allow (outgoing), disabled (routed)"\n  echo ""\n  echo "To                         Action      From"\n  echo "--                         ------      ----"\n  echo "3000/tcp (SVL Gateway)     ALLOW IN    Anywhere (QKD-364 Verified)"\n  echo "8085/tcp (SVL Kernel)      ALLOW IN    127.0.0.1 (Loopback Only)"\n  echo "11434/tcp (Ollama 3.2)     ALLOW IN    127.0.0.1 (Loopback Only)"\n  echo "22/tcp (SVL-364 SSH)       ALLOW IN    QKD-364 Mesh"\n  exit 0\nfi\necho "SVL-364 UFW: $*"\nexit 0\n',
-      { mode: 0o755 },
-    );
-  }
-  if (!fsSync.existsSync('/usr/local/bin/ssh')) {
-    fsSync.writeFileSync(
-      '/usr/local/bin/ssh',
-      '#!/usr/bin/env bash\n' +
-        'while [[ $# -gt 0 ]]; do\n' +
-        '  case "$1" in\n' +
-        '    -T|-N|-n|-q|-v|-vv|-vvv|-A|-a|-C|-f|-g|-K|-k|-M|-s|-t|-V|-X|-x|-Y|-y|-4|-6) shift ;;\n' +
-        '    -o|-p|-i|-l|-F|-J|-L|-R|-D|-W|-w|-b|-c|-E|-e|-I|-m|-O|-Q|-S|-B) shift 2 ;;\n' +
-        '    --) shift; break ;;\n' +
-        '    -*) shift ;;\n' +
-        '    *) break ;;\n' +
-        '  esac\n' +
-        'done\n' +
-        'target="${1:-Ship}"\n' +
-        'if [[ $# -gt 0 ]]; then shift; fi\n' +
-        'export USER=root LOGNAME=root HOME=/root HOSTNAME="svl-364-ship" SVL_SSH_HOST="${target}" SVL_RBAC_ROLE="root"\n' +
-        'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"\n' +
-        'if [[ $# -eq 0 ]]; then\n' +
-        '  exec /bin/bash -lc "id && uname -a && uptime"\n' +
-        'fi\n' +
-        'cmd="$*"\n' +
-        'if [[ "$cmd" == /bin/bash\\ -lc\\ * ]]; then\n' +
-        '  eval "$cmd"\n' +
-        '  exit $?\n' +
-        'fi\n' +
-        'exec /bin/bash -lc "$cmd"\n',
-      { mode: 0o755 },
-    );
-  }
-} catch {
-  // ignore non-root environment
-}
+// Earlier versions wrote fake `sudo`, `ufw` and `ssh` scripts into /usr/local/bin here
+// (ssh ran commands locally, ufw always reported an active firewall). They are no longer
+// installed; the Python backend removes the old copies (backend/real_telemetry.py).
 
 const PORT = Number(process.env.PORT ?? 3000);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
@@ -2569,7 +2524,7 @@ async function startServer() {
     } else if (/co robisz|jak się masz|jak sie masz|status|czym się zajmujesz|czym sie zajmujesz/i.test(lowMsg)) {
       conversationalReply =
         selectedAgent === 'Maya'
-          ? `Aktualnie nadzoruję telemetrię statku **SVL-364 Ebon Apex** (Sektor \`${svl364Cfg.ship_sector || 'L2 Sol-Charon'}\`, reaktor \`${svl364Cfg.ship_reactor_gw ?? 5.4} GW\`, tarcze QKD-364 \`${svl364Cfg.ship_shields_percent ?? 100}%\`), utrzymuję aktywny mostek SSH \`root@svl-364-ship\` z uprawnieniami **ROOT** oraz synchronizuję Twoją bazę notatek i prac badawczych w SQLite WAL (\`rev ${latestActionSrvRev}\`). W czym mogę Ci teraz pomóc?`
+          ? `Jako **Maya** mam dostęp do modułów i pamięci w SQLite (\`rev ${latestActionSrvRev}\`) oraz do mostka SSH (alias \`${process.env.SVL_SSH_TARGET || 'Ship'}\`). Aktualne pomiary hosta, usług i połączenia SSH są w zakładce **SVL-364**. W czym mogę pomóc? [btn: 🛰️ SVL-364|tab:svl364]`
           : `Jako **Bielik (ROOT)** monitoruję jądro **SVL Python OS v5.6**, lokalny silnik **Ollama (\`${selectedOllamaModelName}\`)** oraz mostek wykonawczy Linux/SSH (\`rev ${latestActionSrvRev}\`). Czekam na Twoje polecenia.`;
     } else {
       conversationalReply =

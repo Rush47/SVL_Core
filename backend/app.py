@@ -1397,6 +1397,18 @@ async def handle_api_request(
         except ValueError as exc:
             return 400, {"ok": False, "error": str(exc)}
 
+    if method == "GET" and path == "/api/py/svl364/telemetry":
+        # Prawdziwe pomiary: /proc, nvidia-smi, ufw, OpenSSH, czasy odpowiedzi usług.
+        controller = runtime.svl364_ssh_mcp
+        snapshot = await asyncio.to_thread(
+            controller.telemetry.snapshot,
+            include_ship=str(query.get("ship", "")).lower() in ("1", "true", "yes"),
+            ollama_host=runtime.ollama_host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+            comfyui_url=os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188"),
+            ssh_target=controller.get_status()["ssh"]["host"],
+        )
+        return 200, {**snapshot, "serverRevision": runtime.kernel.get_server_revision()}
+
     if method == "GET" and path == "/api/py/svl364/ssh-mcp/status":
         return 200, runtime.svl364_ssh_mcp.get_status()
 

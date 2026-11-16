@@ -8,8 +8,7 @@ import {
   Gauge,
   HardDrive,
   Layers,
-  Navigation,
-   Orbit,
+  Orbit,
   RadioTower,
   RefreshCw,
   Server,
@@ -18,7 +17,6 @@ import {
   Terminal,
   Wifi,
   WifiOff,
-  Zap,
 } from 'lucide-react';
 import { useSvlSync } from '../utils/svlSyncStore';
 import { getSvlOperatorAccessToken, hasSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
@@ -30,101 +28,91 @@ interface CenterProps {
   onNavigate: (tab: WorkspaceTab) => void;
 }
 
-interface CicSectorNode {
-  id: string;
-  name: string;
-  subtitle: string;
-  sectorCode: string;
-  coordinates: string;
-  distanceLy: string;
-  relayStatus: string;
-  x: number;
-  y: number;
-  isShipLocation?: boolean;
-  orbitRadius: number;
-  telemetrySummary: string;
-  envTemp: string;
-  activeUnit: string;
+/** Odpowiedź GET /api/py/svl364/telemetry — wyłącznie prawdziwe pomiary (null = brak danych). */
+interface RealTelemetry {
+  ok: boolean;
+  collected_at: string;
+  host: {
+    hostname: string;
+    os: string | null;
+    kernel: string;
+    architecture: string;
+    uptime_sec: number | null;
+    cpu: { percent: number | null; cores: number | null; model: string | null; mhz: number | null; load_avg: number[] | null };
+    memory: {
+      ram_total_mb: number | null;
+      ram_available_mb: number | null;
+      ram_used_mb: number | null;
+      ram_percent: number | null;
+      swap_total_mb: number | null;
+      swap_used_mb: number | null;
+    };
+    disk: { path: string; total_gb?: number; free_gb?: number; percent?: number | null; error?: string };
+    network: Array<{ interface: string; rx_bytes: number; tx_bytes: number; rx_bytes_per_sec: number | null; tx_bytes_per_sec: number | null }>;
+    gpu: {
+      available: boolean;
+      reason: string | null;
+      devices: Array<{ name: string; utilization_percent: number | null; memory_used_mb: number | null; memory_total_mb: number | null; temperature_c: number | null }>;
+    };
+    firewall: { tool: string; state: 'active' | 'inactive' | 'unknown' | 'not_installed'; detail: string | null; rules?: string[] };
+  };
+  services: {
+    ollama: { url: string; reachable: boolean; latency_ms: number | null; version: string | null; synthetic: boolean; error: string | null };
+    comfyui: { url: string; reachable: boolean; latency_ms: number | null; status_code: number | null; error: string | null };
+    python_kernel: { reachable: boolean; pid: number; uptime_sec: number };
+  };
+  ssh_target: {
+    alias: string;
+    hostname: string | null;
+    port: number | null;
+    user: string | null;
+    reachable: boolean;
+    tcp_rtt_ms: number | null;
+    error: string | null;
+    checked_at: string;
+  };
+  ship: null | {
+    alias: string;
+    online: boolean;
+    error: string | null;
+    checked_at: string;
+    hostname?: string | null;
+    kernel?: string | null;
+    uptime_sec?: number | null;
+    load_avg?: number[] | null;
+    cores?: number | null;
+    ram_total_mb?: number | null;
+    ram_available_mb?: number | null;
+    disk_free_gb?: number | null;
+  };
 }
 
-const CIC_GALAXY_NODES: CicSectorNode[] = [
-  {
-    id: 'sol-364-earth',
-    name: 'Ziemia · Orbita LEO-364 (Pozycja Statku)',
-    subtitle: 'Główny Sektor Dowodzenia · Stacja Orbitalna SVL-364',
-    sectorCode: 'SEC-364-ALPHA',
-    coordinates: 'RA 18h 36m 56.3s · DEC +38° 47′ 01.2″',
-    distanceLy: '0.0000 LY (420.4 km LEO)',
-    relayStatus: 'PRZEKAŹNIK QKD-364 AKTYWNY',
-    x: 48,
-    y: 52,
-    isShipLocation: true,
-    orbitRadius: 96,
-    telemetrySummary: 'Statek flagowy SVL-364 Ebon Apex w stabilnej synchronizacji orbitalnej. Łącze kwantowe 42.8 Gbps.',
-    envTemp: '-18.4°C (Osłona termiczna 100%)',
-    activeUnit: 'SVL-364 Ebon Apex (Okręt Flagowy)',
-  },
-  {
-    id: 'luna-base-01',
-    name: 'Księżyc · Baza Armstrong-364',
-    subtitle: 'Węzeł Komunikacji Głębokiej Przestrzeni & Dok Floty',
-    sectorCode: 'SEC-364-LUNA',
-    coordinates: 'RA 18h 41m 12.0s · DEC +38° 12′ 44.0″',
-    distanceLy: '1.28 sek. świetlnej (384 400 km)',
-    relayStatus: 'MOSTEK LASEROWY 38.4 Gbps',
-    x: 64,
-    y: 36,
-    orbitRadius: 56,
-    telemetrySummary: 'Kopuły hydroponiczne i przekaźnik dalekiego zasięgu działają ze sprawnością 99.8%.',
-    envTemp: '-54.0°C (Krater Shackleton)',
-    activeUnit: 'SVL-365 Sentinel (Patrol Bojowy)',
-  },
-  {
-    id: 'mars-olympus',
-    name: 'Mars · Kompleks Olympus Prime',
-    subtitle: 'Placówka Badawcza Terraformingu & Bioreaktorów',
-    sectorCode: 'SEC-364-MARS',
-    coordinates: 'RA 21h 10m 44.1s · DEC -14° 22′ 19.0″',
-    distanceLy: '1.52 AU (12.6 min świetlnych)',
-    relayStatus: 'PRZEKAŹNIK CHARON-MARS ONLINE',
-    x: 78,
-    y: 62,
-    orbitRadius: 152,
-    telemetrySummary: 'Szklarnie botaniczne B-01/B-02 produkują +410 L O2/h. Trwa załadunek rud rzadkich.',
-    envTemp: '-41.2°C (Kopuła Ciśnieniowa +22.4°C)',
-    activeUnit: 'SVL-368 Demeter (Frachtowiec Botaniczny)',
-  },
-  {
-    id: 'charon-relay',
-    name: 'Przekaźnik Masy Charon-364',
-    subtitle: 'Korytarz Nadprzestrzenny Binary Hyperspace 128D',
-    sectorCode: 'RELAY-364-OMEGA',
-    coordinates: 'RA 04h 19m 08.7s · DEC +61° 05′ 33.8″',
-    distanceLy: '39.5 AU (Pas Kuipera)',
-    relayStatus: 'RDZEŃ ZERO-ELEMENT ZSYNCHRONIZOWANY',
-    x: 22,
-    y: 28,
-    orbitRadius: 210,
-    telemetrySummary: 'Kompaktyfikacja [-∞, +∞] -> [-1, 1] z metryką c = 2.500000. Gotowość do skoku międzysektorowego.',
-    envTemp: '-229.0°C (Próżnia Głęboka)',
-    activeUnit: 'SVL-366 Hyperion (Zwiadowca 128D)',
-  },
-  {
-    id: 'europa- cryo',
-    name: 'Jowisz · Stacja Głębinowa Europa-Cryo',
-    subtitle: 'Laboratorium Kriogeniczne & Astrobiologia Podlodowa',
-    sectorCode: 'SEC-364-JOVE',
-    coordinates: 'RA 11h 52m 31.4s · DEC +04° 18′ 09.5″',
-    distanceLy: '5.20 AU (43.2 min świetlne)',
-    relayStatus: 'SONDA PODLODOWA AKTYWNA',
-    x: 26,
-    y: 74,
-    orbitRadius: 180,
-    telemetrySummary: 'Odwiert termiczny na głębokości 14.2 km. Sekwencjonowanie mikrobiomów ekstremofilnych.',
-    envTemp: '-162.5°C (Ocean podlodowy +1.8°C)',
-    activeUnit: 'SVL-367 Valkyrie (Jednostka Inżynieryjna)',
-  },
-];
+type LinkState = 'online' | 'degraded' | 'offline';
+
+const NA = 'brak danych';
+const fmtNum = (value: number | null | undefined, digits = 1, unit = '') =>
+  typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(digits)}${unit}` : NA;
+const fmtRate = (bytesPerSec: number | null | undefined) => {
+  if (typeof bytesPerSec !== 'number') return NA;
+  if (bytesPerSec >= 1024 ** 2) return `${(bytesPerSec / 1024 ** 2).toFixed(2)} MB/s`;
+  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${bytesPerSec.toFixed(0)} B/s`;
+};
+const fmtBytes = (bytes: number) =>
+  bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(2)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+const fmtUptime = (sec: number | null | undefined) => {
+  if (typeof sec !== 'number') return NA;
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return d > 0 ? `${d} d ${h} h ${m} min` : h > 0 ? `${h} h ${m} min` : `${m} min`;
+};
+const FIREWALL_LABEL: Record<RealTelemetry['host']['firewall']['state'], string> = {
+  active: 'AKTYWNA',
+  inactive: 'NIEAKTYWNA',
+  unknown: 'STAN NIEZNANY',
+  not_installed: 'NIE ZAINSTALOWANO',
+};
 
 export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
   const {
@@ -141,7 +129,9 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
     isSyncing,
   } = useSvlSync();
 
-  const [selectedSectorId, setSelectedSectorId] = useState<string>('sol-364-earth');
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('host');
+  const [telemetry, setTelemetry] = useState<RealTelemetry | null>(null);
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [chatStats, setChatStats] = useState<{ totalMessages: number; resetApplied: boolean; databaseName: string } | null>(null);
@@ -227,7 +217,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
       await refreshDomainModules(['chat', 'health', 'kernel', 'modules']);
       if (res.ok && res.data?.ok) {
         setReportFeedback(
-          `SVL-365 Sentinel AV: przeskanowano ${res.data.filesScanned || 0} plików (SHA-256), usunięto zagrożenia: ${res.data.totalThreatsRemoved || 0}, status: CLEAN_VERIFIED · rev ${res.data.serverRevision || serverRevision}`,
+          `SVL-365 Sentinel AV: przeskanowano ${res.data.filesScanned || 0} plików (SHA-256), usunięto zagrożenia: ${res.data.totalThreatsRemoved || 0} · rev ${res.data.serverRevision || serverRevision}`,
         );
       } else {
         setReportFeedback(res.error || res.data?.error || 'Błąd skanowania SVL-365 Sentinel AV.');
@@ -239,7 +229,6 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
 
   const [sshMcpStatus, setSshMcpStatus] = useState<any>(null);
   const [sshCommandInput, setSshCommandInput] = useState<string>('uname -a && uptime && free -m');
-  const [sshTargetSubsystem, setSshTargetSubsystem] = useState<string>('bridge');
   const [sshOutput, setSshOutput] = useState<string>('');
   const [sshBusy, setSshBusy] = useState<boolean>(false);
   const [mcpToolName, setMcpToolName] = useState<string>('svl364_linux_telemetry');
@@ -266,7 +255,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
         body: JSON.stringify({
           command: cmdToRun,
           confirmed: true,
-          target_subsystem: sshTargetSubsystem,
+          target_subsystem: 'terminal',
           origin: 'svl364-ssh-panel',
         }),
       });
@@ -288,15 +277,9 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
     setMcpBusy(true);
     try {
       const defaultArgsByTool: Record<string, Record<string, any>> = {
-        svl364_linux_telemetry: { include_processes: true },
-        svl364_ssh_exec: { command: 'uname -a && uptime && free -m', subsystem: sshTargetSubsystem },
-        svl364_starship_helm: { sector: selectedSector.name, velocity_kms: 28.4, autopilot_mode: 'LOCKED_ORBIT_L2' },
-        svl364_tactical_shields: { shields_pct: 100, reactor_output_tw: 36.4, defense_posture: 'MAXIMUM_QKD_SHIELD' },
-        svl364_fleet_botany_control: { dome_id: 'B-2 Spirulina Kwantowa', o2_generation_kg_h: 68.0 },
-        svl364_emit_system_report: {
-          title: 'Raport Sterowania Linux SSH & MCP — Statek SVL-364 Ebon Apex',
-          directive: 'Weryfikacja mostka SSH (ED25519) oraz serwera MCP JSON-RPC 2.0 statku SVL-364 w Linuxie',
-        },
+        svl364_linux_telemetry: {},
+        svl364_ssh_exec: { command: 'uname -a && uptime && free -m' },
+        svl364_emit_system_report: { directive: 'Raport mostka SSH i serwera MCP SVL-364' },
       };
       const args = customArgs || defaultArgsByTool[tool] || {};
       const res = await safeFetchJson<any>('/api/mcp/svl364', {
@@ -332,7 +315,16 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
         return;
       }
 
-      await refreshDomainModules(['modules', 'kernel', 'agents', 'health', 'chat']);
+      const [telemetryRes] = await Promise.all([
+        safeFetchJson<RealTelemetry>('/api/py/svl364/telemetry?ship=1', { timeoutMs: 20000 }),
+        refreshDomainModules(['modules', 'kernel', 'agents', 'health', 'chat']),
+      ]);
+      if (telemetryRes.ok && telemetryRes.data?.ok) {
+        setTelemetry(telemetryRes.data);
+        setTelemetryError(null);
+      } else {
+        setTelemetryError(telemetryRes.error || `Nie udało się pobrać telemetrii (HTTP ${telemetryRes.status}).`);
+      }
       void loadSshMcpStatus();
     } catch (error) {
       setEventsError('Nie udało się odświeżyć stanu backendu: ' + (error instanceof Error ? error.message : String(error)));
@@ -433,36 +425,114 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
     commandModule?.config?.continuous_mission ||
       daemonModule?.description ||
       continuousMissionMemory?.content ||
-      'Misja ciągła SVL-364: Monitorowanie integralności systemu, automatyczna naprawa błędów, optymalizacja wydajności oraz aktywne zabezpieczanie przed zagrożeniami cyfrowymi.',
+      '',
   );
   const totalMessages = conversations.reduce((sum, thread) => sum + (thread.messages?.length || 0), 0);
 
-  const ollamaReachable = healthData?.ollama?.daemon_reachable === true;
   const ollamaModels: Array<{ name: string }> = Array.isArray(healthData?.ollama?.models) ? healthData.ollama.models : [];
   const configuredModel = String(
     commandModule?.config?.configured_ollama_model || healthData?.ollama?.preferred_14b_vision_model || 'llama3.2-vision:11b',
   );
 
-  // Live CPU, GPU, RAM Telemetry from Host + Starship SVL-364
-  const hostEnv = healthData?.host || {};
-  const telemetry = hostEnv?.telemetry || {};
-  const cpuCount = Number(hostEnv?.cpu_count || 8);
-  const cpuLoad1m = Number(telemetry?.cpu_load_1m ?? 0.64);
-  const cpuPercent = Math.min(99.9, Math.max(8.4, Math.round(((cpuLoad1m / Math.max(1, cpuCount)) * 100 + 24.2) * 10) / 10));
+  // Wszystkie wartości poniżej pochodzą z /api/py/svl364/telemetry (pomiar na hoście backendu).
+  const host = telemetry?.host;
+  const cpu = host?.cpu;
+  const mem = host?.memory;
+  const disk = host?.disk;
+  const gpu = host?.gpu;
+  const firewall = host?.firewall;
+  const services = telemetry?.services;
+  const sshTarget = telemetry?.ssh_target;
+  const ship = telemetry?.ship;
+  const ollamaService = services?.ollama;
+  const measuredAt = telemetry ? new Date(telemetry.collected_at).toLocaleTimeString('pl-PL') : null;
+  const barWidth = (value: number | null | undefined) =>
+    `${typeof value === 'number' ? Math.max(0, Math.min(100, value)) : 0}%`;
 
-  const ramTotalMb = Number(telemetry?.ram_total_mb || 32768);
-  const ramAvailableMb = Number(telemetry?.ram_available_mb || Math.round(ramTotalMb * 0.62));
-  const ramUsedMb = Math.max(512, ramTotalMb - ramAvailableMb);
-  const ramPercent = Math.min(99.0, Math.max(12.0, Math.round((ramUsedMb / Math.max(1, ramTotalMb)) * 1000) / 10));
-
-  const diskFreeGb = Number(telemetry?.disk_free_gb || 128.4);
-  const gpuLoadPercent = 28.4;
-  const gpuVramUsedGb = 9.2;
-  const gpuVramTotalGb = 32.0;
-  const gpuTempC = 49;
-
-  const selectedSector = CIC_GALAXY_NODES.find((s) => s.id === selectedSectorId) || CIC_GALAXY_NODES[0];
-  const shipSector = CIC_GALAXY_NODES[0];
+  const ollamaState: LinkState = !ollamaService
+    ? 'offline'
+    : ollamaService.reachable
+      ? ollamaService.synthetic
+        ? 'degraded'
+        : 'online'
+      : 'offline';
+  const connectionNodes: Array<{
+    id: string;
+    label: string;
+    state: LinkState;
+    angle: number;
+    details: Array<[string, string]>;
+  }> = [
+    {
+      id: 'kernel',
+      label: 'Jądro Python',
+      state: services?.python_kernel.reachable ? 'online' : 'offline',
+      angle: -90,
+      details: [
+        ['Adres', '127.0.0.1:8085'],
+        ['PID', services ? String(services.python_kernel.pid) : NA],
+        ['Czas działania procesu', fmtUptime(services?.python_kernel.uptime_sec)],
+        ['Rewizja SQLite', String(serverRevision)],
+      ],
+    },
+    {
+      id: 'ollama',
+      label: 'Ollama',
+      state: ollamaState,
+      angle: -18,
+      details: [
+        ['Adres', ollamaService?.url || NA],
+        ['Wersja', ollamaService?.version || NA],
+        ['Rodzaj', ollamaService?.synthetic ? 'zastępnik wbudowany (nie uruchamia modeli)' : ollamaService?.reachable ? 'prawdziwa Ollama' : NA],
+        ['Czas odpowiedzi', fmtNum(ollamaService?.latency_ms, 1, ' ms')],
+        ['Błąd', ollamaService?.error || '—'],
+      ],
+    },
+    {
+      id: 'comfyui',
+      label: 'ComfyUI',
+      state: services?.comfyui.reachable ? 'online' : 'offline',
+      angle: 54,
+      details: [
+        ['Adres', services?.comfyui.url || NA],
+        ['Kod HTTP', services?.comfyui.status_code != null ? String(services.comfyui.status_code) : NA],
+        ['Czas odpowiedzi', fmtNum(services?.comfyui.latency_ms, 1, ' ms')],
+        ['Błąd', services?.comfyui.error || '—'],
+      ],
+    },
+    {
+      id: 'ssh',
+      label: `SSH ${sshTarget?.alias || ''}`.trim(),
+      state: ship?.online ? 'online' : sshTarget?.reachable ? 'degraded' : 'offline',
+      angle: 126,
+      details: [
+        ['Alias OpenSSH', sshTarget?.alias || NA],
+        ['Host:port', sshTarget?.hostname ? `${sshTarget.hostname}:${sshTarget.port}` : NA],
+        ['Użytkownik', sshTarget?.user || NA],
+        ['Połączenie TCP', sshTarget?.reachable ? `osiągalny · ${fmtNum(sshTarget.tcp_rtt_ms, 1, ' ms')}` : 'nieosiągalny'],
+        ['Logowanie SSH', ship?.online ? 'udane' : ship?.error || sshTarget?.error || NA],
+      ],
+    },
+    {
+      id: 'ws',
+      label: 'WebSocket /ws/svl',
+      state: wsState === 'online' ? 'online' : wsState === 'offline' ? 'offline' : 'degraded',
+      angle: 198,
+      details: [
+        ['Stan', wsState],
+        ['Rewizja', String(serverRevision)],
+      ],
+    },
+  ];
+  const hostDetails: Array<[string, string]> = [
+    ['Nazwa hosta', host?.hostname || NA],
+    ['System', host?.os || NA],
+    ['Jądro', host ? `${host.kernel} · ${host.architecture}` : NA],
+    ['Czas działania', fmtUptime(host?.uptime_sec)],
+    ['Pomiar', measuredAt || NA],
+  ];
+  const selectedNode = connectionNodes.find((node) => node.id === selectedNodeId);
+  const stateColor: Record<LinkState, string> = { online: '#34d399', degraded: '#fbbf24', offline: '#f87171' };
 
   return (
     <div className="h-full overflow-y-auto bg-[#060A12] text-slate-100">
@@ -474,17 +544,11 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               <Server size={16} /> SVL-364
             </p>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
-              Dane usług dostępnych w aplikacji SVL Python OS.
+              Prawdziwe pomiary hosta, usług i połączenia SSH (bez wartości szacowanych).
             </p>
-            {(commandModule?.config?.isolation_mode || sentinelModule) && (
+            {sentinelModule && (
               <p className="text-xs font-mono text-cyan-300 mt-1">
-                {commandModule?.config?.isolation_mode
-                  ? `Izolacja taktyczna: ${String(commandModule.config.isolation_mode)}`
-                  : ''}
-                {commandModule?.config?.isolation_mode && sentinelModule ? ' · ' : ''}
-                {sentinelModule
-                  ? `Tarcza Sentinel: ${sentinelModule.name} (${String(sentinelModule.config?.log_level || sentinelModule.status || 'ACTIVE')})`
-                  : ''}
+                Skaner integralności: {sentinelModule.name} ({String(sentinelModule.status)})
               </p>
             )}
           </div>
@@ -531,510 +595,372 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           </div>
         )}
 
-        {/* Section 0: Autonomous SVL-364 Mode & Continuous Mission Banner */}
+        {/* Section 0: moduły autonomiczne i misja ciągła (stan z SQLite) */}
         <section
-          aria-label="Tryb Autonomiczny Statku SVL-364 i Aktywna Misja Ciągła"
+          aria-label="Moduły autonomiczne SVL-364 i misja ciągła"
           className="rounded-xl border border-emerald-500/40 bg-gradient-to-r from-[#071521] via-[#0B1628] to-[#08131E] p-4 space-y-3"
         >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Shield size={18} className="text-emerald-400 shrink-0" />
-              <h2 className="text-sm sm:text-base font-bold text-emerald-300 font-mono uppercase tracking-wider">
-                Tryb Autonomiczny Statku SVL-364 &amp; Misja Ciągła (Bielik ROOT)
-              </h2>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
-              <span className="px-2 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/50 text-emerald-200">
-                DEMON: {daemonModule?.status || 'ACTIVE'} (AUTONOMOUS_SECURITY_DAEMON)
-              </span>
-              <span className="px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/50 text-cyan-200">
-                TARCZA: {securityModule?.name || 'SVL-364 Security Shield'} ({securityModule?.status || 'ACTIVE'})
-              </span>
-              <span className="px-2 py-0.5 rounded bg-violet-950/80 border border-violet-500/50 text-violet-200">
-                ZARZĄDCA: Bielik (rbac_role: root)
-              </span>
-            </div>
+          <div className="flex items-center gap-2">
+            <Shield size={18} className="text-emerald-400 shrink-0" />
+            <h2 className="text-sm sm:text-base font-bold text-emerald-300 font-mono uppercase tracking-wider">
+              Moduły SVL-364 i misja ciągła (SQLite)
+            </h2>
           </div>
 
           <p className="text-xs sm:text-sm text-slate-200 leading-relaxed bg-slate-950/60 border border-slate-800/90 rounded-lg px-3.5 py-2.5">
-            <strong className="text-cyan-300 font-mono">Aktywna dyrektywa ciągła z Czatu:</strong> {activeMissionDescription}
+            <strong className="text-cyan-300 font-mono">Dyrektywa ciągła:</strong>{' '}
+            {activeMissionDescription || 'Brak zapisanej dyrektywy ciągłej w module svl-364 ani w pamięci Bielika.'}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
-            <div className="rounded-lg border border-slate-800 bg-[#060A12] px-3 py-2">
-              <span className="text-slate-400 block">Moduł Autonomiczny:</span>
-              <span className="text-emerald-300 font-semibold">
-                {daemonModule ? `${daemonModule.id} · rev ${daemonModule.revision}` : 'svl-364-daemon · ACTIVE'}
-              </span>
-            </div>
-            <div className="rounded-lg border border-slate-800 bg-[#060A12] px-3 py-2">
-              <span className="text-slate-400 block">Zapora i Porty Linux (UFW / QKD-364):</span>
-              <span className="text-cyan-300 font-semibold">
-                {securityModule ? `${securityModule.id} · ACTIVE` : 'QKD-364 Zero-Trust ACTIVE'}
-              </span>
-            </div>
-            <div className="rounded-lg border border-slate-800 bg-[#060A12] px-3 py-2">
-              <span className="text-slate-400 block">Skaner Integralności SHA-256:</span>
-              <span className="text-violet-300 font-semibold">
-                {sentinelModule ? `${sentinelModule.id} · CLEAN_VERIFIED` : 'SVL-365 Sentinel AV · ONLINE'}
-              </span>
-            </div>
+            {[
+              { label: 'Moduł autonomiczny', mod: daemonModule, id: 'svl-364-daemon' },
+              { label: 'Moduł bezpieczeństwa', mod: securityModule, id: 'svl-364-security' },
+              { label: 'Skaner integralności', mod: sentinelModule, id: 'svl-365-sentinel / svl-antivirus-scanner' },
+            ].map(({ label, mod, id }) => (
+              <div key={label} className="rounded-lg border border-slate-800 bg-[#060A12] px-3 py-2">
+                <span className="text-slate-400 block">{label}:</span>
+                {mod ? (
+                  <span className="text-emerald-300 font-semibold">
+                    {mod.id} · {mod.status} · rev {mod.revision}
+                  </span>
+                ) : (
+                  <span className="text-slate-500">brak modułu {id} w SQLite</span>
+                )}
+              </div>
+            ))}
           </div>
         </section>
 
-        {/* Section 1: CPU, GPU, RAM & Onboard Reactor Telemetry Cards */}
-        <section aria-label="Parametry CPU, GPU i RAM hosta SVL-364" className="space-y-3">
+        {/* Section 1: pomiary hosta backendu */}
+        <section aria-label="Pomiary hosta backendu" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-sm sm:text-base font-semibold text-cyan-300 uppercase tracking-wider font-mono">
-              <Gauge size={18} className="text-cyan-400" /> Parametry hosta (CPU · GPU · RAM)
+              <Gauge size={18} className="text-cyan-400" /> Host {host?.hostname || ''} (CPU · GPU · RAM · zapora)
             </h2>
             <span className="text-xs font-mono text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 px-2.5 py-0.5 rounded">
-              TELEMETRIA LIVE · REV {serverRevision}
+              {measuredAt ? `POMIAR ${measuredAt} · odświeżanie co 15 s` : 'OCZEKIWANIE NA POMIAR'}
             </span>
           </div>
+          {telemetryError && (
+            <p role="status" className="text-xs text-amber-300">
+              {telemetryError}
+            </p>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* CPU Card */}
+            {/* CPU */}
             <div className="rounded-xl border border-cyan-500/30 bg-[#0B1220] p-4 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-cyan-300">
                   <Cpu size={16} /> Procesor (CPU)
                 </span>
-                <span className="font-mono text-sm font-bold text-emerald-300">{cpuPercent}%</span>
+                <span className="font-mono text-sm font-bold text-emerald-300">{fmtNum(cpu?.percent, 1, '%')}</span>
               </div>
               <p className="text-base font-bold text-slate-100 font-mono">
-                {cpuCount} vCPU · 4.85 GHz
+                {cpu?.cores ?? NA} rdz. · {fmtNum(cpu?.mhz, 0, ' MHz')}
               </p>
               <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
                 <div
                   className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-300"
-                  style={{ width: `${Math.min(100, cpuPercent)}%` }}
+                  style={{ width: barWidth(cpu?.percent) }}
                 />
               </div>
               <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-0.5">
-                <span>Load 1m: {cpuLoad1m.toFixed(2)}</span>
-                <span>Arch: {hostEnv.architecture || 'x86_64'}</span>
+                <span>Load: {cpu?.load_avg ? cpu.load_avg.join(' / ') : NA}</span>
+                <span>{host?.architecture || NA}</span>
               </div>
-              <p className="text-[11px] text-slate-400">
-                Rdzeń nawigacji kwantowej SVL-364 + jądro Linux {hostEnv.kernel_release || '6.6'}.
+              <p className="text-[11px] text-slate-400 truncate" title={cpu?.model || undefined}>
+                {cpu?.model || 'Model procesora: brak danych'}
               </p>
             </div>
 
-            {/* GPU Card */}
+            {/* GPU */}
             <div className="rounded-xl border border-violet-500/35 bg-[#0B1220] p-4 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-violet-300">
                   <Layers size={16} /> Akcelerator (GPU)
                 </span>
-                <span className="font-mono text-sm font-bold text-violet-300">{gpuLoadPercent}%</span>
+                <span className="font-mono text-sm font-bold text-violet-300">
+                  {gpu?.available ? fmtNum(gpu.devices[0]?.utilization_percent, 0, '%') : '—'}
+                </span>
               </div>
-              <p className="text-base font-bold text-slate-100 font-mono">
-                SVL Quantum Tensor Q-364
-              </p>
-              <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
-                <div
-                  className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 transition-all duration-300"
-                  style={{ width: `${gpuLoadPercent}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-0.5">
-                <span>VRAM: {gpuVramUsedGb} / {gpuVramTotalGb} GB</span>
-                <span>Temp: {gpuTempC}°C</span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Wsparcie modeli Vision ({configuredModel}) i hiperprzestrzeni 128D.
-              </p>
+              {gpu?.available ? (
+                <>
+                  <p className="text-base font-bold text-slate-100 font-mono truncate">{gpu.devices[0].name}</p>
+                  <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
+                    <div
+                      className="h-full bg-gradient-to-r from-violet-500 to-cyan-400 transition-all duration-300"
+                      style={{ width: barWidth(gpu.devices[0].utilization_percent) }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-0.5">
+                    <span>
+                      VRAM: {fmtNum(gpu.devices[0].memory_used_mb, 0)} / {fmtNum(gpu.devices[0].memory_total_mb, 0, ' MB')}
+                    </span>
+                    <span>{fmtNum(gpu.devices[0].temperature_c, 0, '°C')}</span>
+                  </div>
+                  {gpu.devices.length > 1 && (
+                    <p className="text-[11px] text-slate-400">+ {gpu.devices.length - 1} kolejne GPU</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-base font-bold text-slate-300 font-mono">Brak GPU</p>
+                  <p className="text-[11px] text-slate-400">{gpu?.reason || 'Oczekiwanie na pomiar.'}</p>
+                </>
+              )}
             </div>
 
-            {/* RAM Card */}
+            {/* RAM + dysk */}
             <div className="rounded-xl border border-emerald-500/30 bg-[#0B1220] p-4 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-emerald-300">
-                  <Database size={16} /> Pamięć Operacyjna (RAM)
+                  <Database size={16} /> Pamięć (RAM)
                 </span>
-                <span className="font-mono text-sm font-bold text-emerald-300">{ramPercent}%</span>
+                <span className="font-mono text-sm font-bold text-emerald-300">{fmtNum(mem?.ram_percent, 1, '%')}</span>
               </div>
               <p className="text-base font-bold text-slate-100 font-mono">
-                {(ramUsedMb / 1024).toFixed(1)} GB / {(ramTotalMb / 1024).toFixed(1)} GB
+                {mem?.ram_used_mb != null && mem.ram_total_mb != null
+                  ? `${(mem.ram_used_mb / 1024).toFixed(1)} GB / ${(mem.ram_total_mb / 1024).toFixed(1)} GB`
+                  : NA}
               </p>
               <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
                 <div
                   className="h-full bg-gradient-to-r from-emerald-500 to-teal-300 transition-all duration-300"
-                  style={{ width: `${Math.min(100, ramPercent)}%` }}
+                  style={{ width: barWidth(mem?.ram_percent) }}
                 />
               </div>
               <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-0.5">
-                <span>Wolne: {ramAvailableMb} MB</span>
-                <span>Dysk: {diskFreeGb} GB free</span>
+                <span>Dostępne: {fmtNum(mem?.ram_available_mb, 0, ' MB')}</span>
+                <span>Swap: {mem?.swap_total_mb ? `${fmtNum(mem.swap_used_mb, 0)} / ${fmtNum(mem.swap_total_mb, 0, ' MB')}` : 'brak'}</span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Pamięć ECC DDR5 statku + bufor kontekstu AI 16 384 tokenów (64 tury).
+                Dysk {disk?.path || '/'}: {disk?.free_gb != null ? `${disk.free_gb} GB wolne z ${disk.total_gb} GB` : disk?.error || NA}
               </p>
             </div>
 
-            {/* Ship Hull, Shields & Reactor Card */}
+            {/* Zapora */}
             <div className="rounded-xl border border-amber-500/30 bg-[#0B1220] p-4 space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-amber-300">
-                  <Shield size={16} /> Reaktor & Tarcze SVL-364
+                  <Shield size={16} /> Zapora ({firewall?.tool || 'ufw'})
                 </span>
-                <span className="font-mono text-sm font-bold text-amber-300">99.4%</span>
+                <span
+                  className={`font-mono text-xs font-bold ${
+                    firewall?.state === 'active' ? 'text-emerald-300' : firewall?.state === 'inactive' ? 'text-rose-300' : 'text-amber-300'
+                  }`}
+                >
+                  {firewall ? FIREWALL_LABEL[firewall.state] : NA}
+                </span>
               </div>
               <p className="text-base font-bold text-slate-100 font-mono">
-                4.80 GW · Tarcze 100%
+                {firewall?.state === 'active' ? `${firewall.rules?.length ?? 0} reguł` : '—'}
               </p>
-              <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden border border-slate-800">
-                <div className="h-full bg-gradient-to-r from-amber-500 to-cyan-400 w-[99%]" />
-              </div>
-              <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-0.5">
-                <span>Kadłub: 100% (Nominalny)</span>
-                <span>O2: 21.0% · 101.3 kPa</span>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Ogniwa fuzyjne He-3 + napęd nadprzestrzenny Binary Hyperspace 128D.
-              </p>
+              {firewall?.detail && <p className="text-[11px] text-slate-400 break-words">{firewall.detail}</p>}
+              <p className="text-[11px] text-slate-400">Czas działania hosta: {fmtUptime(host?.uptime_sec)}</p>
             </div>
           </div>
         </section>
 
-        {/* Section 2: Mass Effect CIC Galaxy & Orbital Map */}
+        {/* Section 2: mapa prawdziwych połączeń */}
         <section
-          aria-label="Mapa Galaktyczna CIC — Lokalizacja Statku SVL-364"
+          aria-label="Mapa połączeń usług SVL-364"
           className="rounded-2xl border border-cyan-500/40 bg-[#070D19] p-4 sm:p-5 space-y-4 shadow-[0_0_50px_rgba(6,182,212,0.08)]"
         >
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-500/20 pb-3">
             <div>
               <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.2em] text-cyan-400">
-                <Orbit size={16} /> MASS EFFECT CIC HOLOGRAPHIC NAV-MAP · SYSTEM SOL-364
+                <Orbit size={16} /> Mapa połączeń · pomiar na żywo
               </div>
               <h2 className="text-lg sm:text-xl font-bold text-slate-50 mt-0.5">
-                Mapa Galaktyczna CIC — Lokalizacja Statku Kosmicznego SVL-364 Ebon Apex
+                Usługi i połączenia hosta {host?.hostname || ''}
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-              <span className="px-2.5 py-1 rounded bg-cyan-950/80 border border-cyan-400/40 text-cyan-200">
-                STATEK: SVL-364 EBON APEX
-              </span>
-              <span className="px-2.5 py-1 rounded bg-amber-950/70 border border-amber-400/40 text-amber-200">
-                PRĘDKOŚĆ: 14.8 km/s · ORBITA 420.4 km
-              </span>
+              {(['online', 'degraded', 'offline'] as LinkState[]).map((state) => (
+                <span key={state} className="flex items-center gap-1.5 text-slate-300">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: stateColor[state] }} />
+                  {state === 'online' ? 'działa' : state === 'degraded' ? 'częściowo' : 'niedostępne'}
+                </span>
+              ))}
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
-            {/* Interactive Holographic SVG Map */}
-            <div className="lg:col-span-8 relative rounded-xl border border-cyan-500/30 bg-[#040811] overflow-hidden min-h-[380px] sm:min-h-[430px] flex flex-col justify-between p-3">
-              {/* Top HUD overlay inside Map */}
-              <div className="z-10 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-cyan-300/90 border-b border-cyan-500/15 pb-2">
-                <span>SIATKA TAKTYCZNA CIC // {selectedSector.sectorCode}</span>
-                <span>METRYKA TOPOLOGICZNA: c = 2.500000 (128D)</span>
-                <span className="text-amber-300">WEKTOR: AZ 042.8° / INC 51.6°</span>
-              </div>
-
-              {/* Central Holographic SVG */}
-              <div className="relative flex-1 flex items-center justify-center my-1">
-                <svg
-                  viewBox="0 0 800 440"
-                  className="w-full h-full max-h-[350px] select-none"
-                  role="img"
-                  aria-label="Holograficzna mapa galaktyczna CIC pokazująca pozycję statku SVL-364 Ebon Apex"
-                >
-                  <defs>
-                    <radialGradient id="cicCoreGlow" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.28" />
-                      <stop offset="55%" stopColor="#0284c7" stopOpacity="0.08" />
-                      <stop offset="100%" stopColor="#040811" stopOpacity="0" />
-                    </radialGradient>
-                    <radialGradient id="sunGlow" cx="50%" cy="50%" r="50%">
-                      <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.95" />
-                      <stop offset="60%" stopColor="#f59e0b" stopOpacity="0.35" />
-                      <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-                    </radialGradient>
-                  </defs>
-
-                  {/* Holographic background glow */}
-                  <rect width="800" height="440" fill="#040811" />
-                  <circle cx="400" cy="220" r="210" fill="url(#cicCoreGlow)" />
-
-                  {/* Tactical grid lines */}
-                  <line x1="0" y1="220" x2="800" y2="220" stroke="#0e7490" strokeOpacity="0.25" strokeDasharray="4 6" />
-                  <line x1="400" y1="0" x2="400" y2="440" stroke="#0e7490" strokeOpacity="0.25" strokeDasharray="4 6" />
-                  <line x1="120" y1="40" x2="680" y2="400" stroke="#0e7490" strokeOpacity="0.14" />
-                  <line x1="120" y1="400" x2="680" y2="40" stroke="#0e7490" strokeOpacity="0.14" />
-
-                  {/* Concentric Mass Effect CIC Orbital Rings */}
-                  <ellipse cx="400" cy="220" rx="95" ry="52" fill="none" stroke="#06b6d4" strokeOpacity="0.32" strokeWidth="1.2" />
-                  <ellipse cx="400" cy="220" rx="165" ry="90" fill="none" stroke="#06b6d4" strokeOpacity="0.26" strokeWidth="1.2" strokeDasharray="6 4" />
-                  <ellipse cx="400" cy="220" rx="245" ry="134" fill="none" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="1.2" />
-                  <ellipse cx="400" cy="220" rx="335" ry="182" fill="none" stroke="#0284c7" strokeOpacity="0.2" strokeWidth="1" strokeDasharray="3 5" />
-
-                  {/* Central Star Sol-364 */}
-                  <circle cx="400" cy="220" r="24" fill="url(#sunGlow)" />
-                  <circle cx="400" cy="220" r="7" fill="#fde68a" />
-                  <text x="400" y="246" textAnchor="middle" fill="#fcd34d" fontSize="10" fontFamily="monospace">
-                    SOL-364 CORE
+            <div className="lg:col-span-8 relative rounded-xl border border-cyan-500/30 bg-[#040811] overflow-hidden min-h-[340px] flex items-center justify-center p-3">
+              <svg viewBox="0 0 800 440" className="w-full h-full max-h-[380px] select-none" role="img" aria-label="Mapa połączeń usług">
+                <rect width="800" height="440" fill="#040811" />
+                <ellipse cx="400" cy="220" rx="300" ry="165" fill="none" stroke="#0e7490" strokeOpacity="0.3" strokeDasharray="4 6" />
+                {connectionNodes.map((node) => {
+                  const rad = (node.angle * Math.PI) / 180;
+                  const nx = 400 + Math.cos(rad) * 300;
+                  const ny = 220 + Math.sin(rad) * 165;
+                  const isSelected = selectedNodeId === node.id;
+                  return (
+                    <g key={node.id} className="cursor-pointer" onClick={() => setSelectedNodeId(node.id)}>
+                      <line
+                        x1={400}
+                        y1={220}
+                        x2={nx}
+                        y2={ny}
+                        stroke={stateColor[node.state]}
+                        strokeWidth={isSelected ? 2.4 : 1.4}
+                        strokeOpacity={isSelected ? 0.9 : 0.5}
+                        strokeDasharray={node.state === 'online' ? 'none' : '6 5'}
+                      />
+                      {isSelected && <circle cx={nx} cy={ny} r={20} fill="none" stroke="#fbbf24" strokeWidth={1.8} />}
+                      <circle cx={nx} cy={ny} r={11} fill={stateColor[node.state]} stroke="#040811" strokeWidth={3} />
+                      <text x={nx} y={ny - 22} textAnchor="middle" fill="#e2e8f0" fontSize="13" fontWeight="bold" fontFamily="monospace">
+                        {node.label}
+                      </text>
+                    </g>
+                  );
+                })}
+                <g className="cursor-pointer" onClick={() => setSelectedNodeId('host')}>
+                  <circle cx={400} cy={220} r={34} fill="#0c4a6e" stroke={selectedNodeId === 'host' ? '#fbbf24' : '#22d3ee'} strokeWidth={2.4} />
+                  <text x={400} y={216} textAnchor="middle" fill="#e0f2fe" fontSize="12" fontWeight="bold" fontFamily="monospace">
+                    HOST
                   </text>
+                  <text x={400} y={232} textAnchor="middle" fill="#7dd3fc" fontSize="10" fontFamily="monospace">
+                    {(host?.hostname || '').slice(0, 14)}
+                  </text>
+                </g>
+              </svg>
+            </div>
 
-                  {/* Mass Relay Corridors connecting SVL-364 ship to all fleet sectors */}
-                  {CIC_GALAXY_NODES.slice(1).map((node) => {
-                    const shipX = (shipSector.x / 100) * 800;
-                    const shipY = (shipSector.y / 100) * 440;
-                    const nx = (node.x / 100) * 800;
-                    const ny = (node.y / 100) * 440;
-                    const isSelected = selectedSector.id === node.id;
-                    return (
-                      <g key={`corridor-${node.id}`}>
-                        <line
-                          x1={shipX}
-                          y1={shipY}
-                          x2={nx}
-                          y2={ny}
-                          stroke={isSelected ? '#fbbf24' : '#22d3ee'}
-                          strokeWidth={isSelected ? '2.2' : '1.2'}
-                          strokeOpacity={isSelected ? '0.85' : '0.4'}
-                          strokeDasharray={isSelected ? 'none' : '5 4'}
-                        />
-                      </g>
-                    );
-                  })}
-
-                  {/* Render Sector Nodes & Starship SVL-364 Reticle */}
-                  {CIC_GALAXY_NODES.map((node) => {
-                    const cx = (node.x / 100) * 800;
-                    const cy = (node.y / 100) * 440;
-                    const isSelected = selectedSector.id === node.id;
-                    return (
-                      <g
-                        key={node.id}
-                        onClick={() => setSelectedSectorId(node.id)}
-                        className="cursor-pointer"
-                      >
-                        {node.isShipLocation && (
-                          <>
-                            <circle
-                              cx={cx}
-                              cy={cy}
-                              r="28"
-                              fill="none"
-                              stroke="#22d3ee"
-                              strokeWidth="1.5"
-                              strokeDasharray="6 4"
-                            />
-                            <circle
-                              cx={cx}
-                              cy={cy}
-                              r="19"
-                              fill="none"
-                              stroke="#f59e0b"
-                              strokeWidth="1.8"
-                            />
-                            {/* Tactical target brackets */}
-                            <path
-                              d={`M ${cx - 24} ${cy - 14} L ${cx - 24} ${cy - 24} L ${cx - 14} ${cy - 24}`}
-                              fill="none"
-                              stroke="#fbbf24"
-                              strokeWidth="2"
-                            />
-                            <path
-                              d={`M ${cx + 14} ${cy - 24} L ${cx + 24} ${cy - 24} L ${cx + 24} ${cy - 14}`}
-                              fill="none"
-                              stroke="#fbbf24"
-                              strokeWidth="2"
-                            />
-                            <path
-                              d={`M ${cx - 24} ${cy + 14} L ${cx - 24} ${cy + 24} L ${cx - 14} ${cy + 24}`}
-                              fill="none"
-                              stroke="#fbbf24"
-                              strokeWidth="2"
-                            />
-                            <path
-                              d={`M ${cx + 14} ${cy + 24} L ${cx + 24} ${cy + 24} L ${cx + 24} ${cy + 14}`}
-                              fill="none"
-                              stroke="#fbbf24"
-                              strokeWidth="2"
-                            />
-                          </>
-                        )}
-
-                        {isSelected && !node.isShipLocation && (
-                          <circle
-                            cx={cx}
-                            cy={cy}
-                            r="18"
-                            fill="none"
-                            stroke="#fbbf24"
-                            strokeWidth="1.8"
-                            strokeDasharray="4 3"
-                          />
-                        )}
-
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={node.isShipLocation ? 8 : 6}
-                          fill={node.isShipLocation ? '#22d3ee' : isSelected ? '#fbbf24' : '#38bdf8'}
-                          stroke="#040811"
-                          strokeWidth="2"
-                        />
-
-                        <text
-                          x={cx}
-                          y={cy - (node.isShipLocation ? 33 : 14)}
-                          textAnchor="middle"
-                          fill={node.isShipLocation ? '#67e8f9' : isSelected ? '#fde68a' : '#cbd5e1'}
-                          fontSize={node.isShipLocation ? '11' : '10'}
-                          fontWeight="bold"
-                          fontFamily="monospace"
-                        >
-                          {node.isShipLocation ? '▲ STATEK SVL-364 EBON APEX' : node.name.split('·')[0].trim()}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </svg>
+            <div className="lg:col-span-4 rounded-xl border border-cyan-500/30 bg-[#0A1222] p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                <span className="text-xs font-mono uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                  <Compass size={15} /> Wybrany węzeł
+                </span>
+                {selectedNode && (
+                  <span className="text-[11px] font-mono" style={{ color: stateColor[selectedNode.state] }}>
+                    {selectedNode.state === 'online' ? 'DZIAŁA' : selectedNode.state === 'degraded' ? 'CZĘŚCIOWO' : 'NIEDOSTĘPNE'}
+                  </span>
+                )}
               </div>
-
-              {/* Bottom Sector Selector Strip */}
-              <div className="z-10 flex flex-wrap items-center justify-between gap-1.5 pt-2 border-t border-cyan-500/15">
-                {CIC_GALAXY_NODES.map((node) => (
+              <h3 className="text-base font-bold text-slate-100">{selectedNode ? selectedNode.label : `Host ${host?.hostname || ''}`}</h3>
+              <div className="rounded-lg border border-slate-800 bg-[#060B14] p-3 space-y-2 text-xs font-mono">
+                {(selectedNode ? selectedNode.details : hostDetails).map(([label, value]) => (
+                  <div key={label} className="flex justify-between gap-3">
+                    <span className="text-slate-400 shrink-0">{label}:</span>
+                    <span className="text-slate-100 text-right break-all">{value}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[{ id: 'host', label: 'Host' }, ...connectionNodes].map((node) => (
                   <button
                     key={node.id}
                     type="button"
-                    onClick={() => setSelectedSectorId(node.id)}
-                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                      selectedSector.id === node.id
-                        ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-100 font-semibold'
+                    onClick={() => setSelectedNodeId(node.id)}
+                    className={`px-2.5 py-1 rounded text-xs font-mono ${
+                      selectedNodeId === node.id
+                        ? 'bg-cyan-500/25 border border-cyan-400 text-cyan-100'
                         : 'bg-slate-900/80 border border-slate-800 text-slate-300 hover:border-cyan-500/40'
                     }`}
                   >
-                    {node.isShipLocation ? '🛰️ ' : '◈ '}
-                    {node.name.split('·')[0].trim()}
+                    {node.label}
                   </button>
                 ))}
-              </div>
-            </div>
-
-            {/* Right Column: Selected Sector & Ship Location Telemetry */}
-            <div className="lg:col-span-4 rounded-xl border border-cyan-500/30 bg-[#0A1222] p-4 flex flex-col justify-between space-y-4">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
-                  <span className="text-xs font-mono uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                    <Compass size={15} /> Namierzony Węzeł CIC
-                  </span>
-                  <span className="text-[11px] font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-500/30">
-                    {selectedSector.sectorCode}
-                  </span>
-                </div>
-
-                <div>
-                  <h3 className="text-base font-bold text-slate-100">{selectedSector.name}</h3>
-                  <p className="text-xs text-cyan-300 mt-0.5">{selectedSector.subtitle}</p>
-                </div>
-
-                <div className="rounded-lg border border-slate-800 bg-[#060B14] p-3 space-y-2 text-xs font-mono">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-400">Współrzędne:</span>
-                    <span className="text-slate-100 text-right">{selectedSector.coordinates}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-400">Odległość:</span>
-                    <span className="text-amber-300">{selectedSector.distanceLy}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-400">Przekaźnik:</span>
-                    <span className="text-emerald-300">{selectedSector.relayStatus}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-400">Jednostka w sektorze:</span>
-                    <span className="text-cyan-300 text-right">{selectedSector.activeUnit}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span className="text-slate-400">Środowisko:</span>
-                    <span className="text-slate-200">{selectedSector.envTemp}</span>
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-300 leading-relaxed bg-slate-900/50 border border-slate-800/80 rounded-lg p-2.5">
-                  {selectedSector.telemetrySummary}
-                </p>
-              </div>
-
-              <div className="pt-2 border-t border-slate-800 space-y-2">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-slate-400">Dowódca Floty:</span>
-                  <span className="text-slate-100">Mateusz Mitek (Operator)</span>
-                </div>
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-slate-400">System Raportowania:</span>
-                  <span className="text-cyan-300">Maya &amp; Bielik (ROOT · Kanał Wszyscy)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigate('infrastructure')}
-                  className="w-full mt-1 inline-flex items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-500/25"
-                >
-                  <Navigation size={14} /> Otwórz Infrastrukturę Floty i Misje z ETA
-                </button>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Section 3: Quantum Network Link & Starship Connection Data */}
-        <section
-          aria-label="Dane sieciowe połączenia ze statkiem kosmicznym SVL-364"
-          className="rounded-xl border border-cyan-500/30 bg-[#0B1220] p-4 sm:p-5 space-y-4"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="flex items-center gap-2 text-base font-semibold text-cyan-300">
-                <RadioTower size={18} className="text-cyan-400" /> Dane Sieciowe Połączenia ze Statkiem Kosmicznym SVL-364 (Łącze Kwantowe QKD-364)
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Bezpośredni tunel telemetryczny pomiędzy jądrem SVL Python OS, Sferyczną Magistralą Zdarzeń i pokładowym komputerem nawigacyjnym SVL-364 Ebon Apex.
-              </p>
-            </div>
-            <span className="inline-flex items-center gap-1.5 text-xs font-mono text-emerald-300 bg-emerald-950/60 border border-emerald-500/40 px-2.5 py-1 rounded">
-              <Wifi size={13} /> QKD-364 LOCKED · 0.00% LOSS
-            </span>
-          </div>
+        {/* Section 3: sieć hosta i zdalny host SSH */}
+        <section aria-label="Sieć hosta i zdalny host SSH" className="rounded-xl border border-cyan-500/30 bg-[#0B1220] p-4 sm:p-5 space-y-4">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-cyan-300">
+            <RadioTower size={18} className="text-cyan-400" /> Sieć hosta i zdalny host SSH
+          </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 font-mono text-xs">
-            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1">
-              <span className="text-slate-400">Endpoint Telemetrii Statku</span>
-              <p className="text-cyan-300 font-semibold break-all">wss://qkd-364.ebon-apex.svl.mesh:8443</p>
-              <p className="text-[11px] text-emerald-400">Status: POŁĄCZONO (Full-Duplex)</p>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-2 font-mono text-xs">
+              <span className="text-slate-400">Interfejsy sieciowe (/proc/net/dev)</span>
+              {host?.network.length ? (
+                <table className="w-full text-left">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="font-normal">Interfejs</th>
+                      <th className="font-normal">↓ odbiór</th>
+                      <th className="font-normal">↑ wysyłka</th>
+                      <th className="font-normal">Razem ↓/↑</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {host.network.map((nic) => (
+                      <tr key={nic.interface} className="text-slate-200">
+                        <td className="text-cyan-300">{nic.interface}</td>
+                        <td>{fmtRate(nic.rx_bytes_per_sec)}</td>
+                        <td>{fmtRate(nic.tx_bytes_per_sec)}</td>
+                        <td className="text-slate-400">
+                          {fmtBytes(nic.rx_bytes)} / {fmtBytes(nic.tx_bytes)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-slate-500">{telemetry ? 'Brak interfejsów poza loopback.' : NA}</p>
+              )}
+              <p className="text-slate-400">WebSocket /ws/svl: {wsState}</p>
             </div>
-            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1">
-              <span className="text-slate-400">Latencja RTT & Jitter</span>
-              <p className="text-slate-100 text-sm font-bold">1.4 ms RTT · 0.18 ms Jitter</p>
-              <p className="text-[11px] text-slate-400">Straty pakietów: 0.00% (Korekcja kwantowa)</p>
-            </div>
-            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1">
-              <span className="text-slate-400">Przepustowość Downlink / Uplink</span>
-              <p className="text-emerald-300 text-sm font-bold">↓ 42.8 Gbps / ↑ 38.4 Gbps</p>
-              <p className="text-[11px] text-slate-400">Bufor magistrali: 4096 ramek</p>
-            </div>
-            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1">
-              <span className="text-slate-400">Protokół & Szyfrowanie</span>
-              <p className="text-violet-300 font-semibold">QKD-BB84 + AES-512-GCM</p>
-              <p className="text-[11px] text-slate-400">WebSocket /ws/svl: {wsState.toUpperCase()}</p>
+
+            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1.5 font-mono text-xs">
+              <span className="text-slate-400">
+                Zdalny host SSH <span className="text-cyan-300">{sshTarget?.alias || ship?.alias || ''}</span> (pomiar przez OpenSSH, co 60 s)
+              </span>
+              {ship?.online ? (
+                <>
+                  <p className="text-emerald-300 font-semibold">
+                    {ship.hostname} · {ship.kernel}
+                  </p>
+                  <p className="text-slate-200">
+                    Czas działania: {fmtUptime(ship.uptime_sec)} · rdzenie: {ship.cores ?? NA} · load:{' '}
+                    {ship.load_avg ? ship.load_avg.join(' / ') : NA}
+                  </p>
+                  <p className="text-slate-200">
+                    RAM dostępne: {fmtNum(ship.ram_available_mb, 0)} / {fmtNum(ship.ram_total_mb, 0, ' MB')} · dysk / wolne:{' '}
+                    {fmtNum(ship.disk_free_gb, 2, ' GB')}
+                  </p>
+                </>
+              ) : (
+                <p className="text-amber-300 break-words">
+                  Niedostępny: {ship?.error || sshTarget?.error || 'oczekiwanie na pomiar'}
+                </p>
+              )}
+              <p className="text-slate-400">
+                Adres: {sshTarget?.hostname ? `${sshTarget.user ? `${sshTarget.user}@` : ''}${sshTarget.hostname}:${sshTarget.port}` : NA} · TCP:{' '}
+                {sshTarget?.reachable ? fmtNum(sshTarget.tcp_rtt_ms, 1, ' ms') : 'brak połączenia'}
+              </p>
+              <p className="text-slate-500">
+                Ostatni pomiar: {ship?.checked_at ? new Date(ship.checked_at).toLocaleTimeString('pl-PL') : NA}
+              </p>
             </div>
           </div>
 
           <div className="grid gap-2 md:grid-cols-2 pt-1">
             <LinkCheck
-              label="Mostek SVL Python Kernel ↔ Pokład SVL-364"
-              state="online"
-              detail={`Jądro ${healthData?.system || 'SVL_5.6_KERNEL'} · Rewizja SQLite: ${serverRevision} · Kanał WebSocket: ${wsState}`}
+              label="Jądro SVL Python (127.0.0.1:8085)"
+              state={services?.python_kernel.reachable ? 'online' : 'offline'}
+              detail={
+                services
+                  ? `PID ${services.python_kernel.pid} · działa ${fmtUptime(services.python_kernel.uptime_sec)} · rewizja SQLite ${serverRevision}`
+                  : NA
+              }
             />
             <LinkCheck
-              label="Demon Ollama (127.0.0.1:11434) ↔ Moduł Wizyjny Statku"
-              state={ollamaReachable ? 'online' : 'degraded'}
+              label={`Ollama (${ollamaService?.url?.replace(/\/api\/version$/, '') || '127.0.0.1:11434'})`}
+              state={ollamaState}
               detail={
-                ollamaReachable
-                  ? `Aktywny demon Ollama · Model główny: ${configuredModel} · Załadowane modele: ${ollamaModels.length}`
-                  : 'Trwa autostart lokalnego demona Ollama na porcie 11434...'
+                !ollamaService
+                  ? NA
+                  : ollamaService.reachable
+                    ? ollamaService.synthetic
+                      ? `Odpowiada wbudowany zastępnik (v${ollamaService.version}) — nie jest to prawdziwa Ollama i nie uruchamia modeli · ${ollamaService.latency_ms} ms`
+                      : `Ollama v${ollamaService.version || '?'} · ${ollamaService.latency_ms} ms · model skonfigurowany: ${configuredModel} · zainstalowane: ${ollamaModels.length}`
+                    : `Niedostępna: ${ollamaService.error}`
               }
             />
           </div>
@@ -1142,10 +1068,10 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-500/20 pb-3">
             <div>
               <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-[0.2em] text-emerald-400">
-                <Terminal size={16} /> OPENSSH ED25519 BRIDGE & MODEL CONTEXT PROTOCOL (MCP JSON-RPC 2.0)
+                <Terminal size={16} /> OPENSSH & MODEL CONTEXT PROTOCOL (MCP JSON-RPC 2.0)
               </div>
               <h2 className="text-lg sm:text-xl font-bold text-slate-50 mt-0.5">
-                Podłączenie Statku SVL-364 Ebon Apex pod SSH i MCP do Sterowania w Linuxie
+                Mostek SSH i serwer MCP
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
@@ -1153,10 +1079,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 SSH: {sshMcpStatus?.ssh?.uri || healthData?.svl364_ssh_mcp?.ssh?.uri || 'ssh://Ship'}
               </span>
               <span className="px-2.5 py-1 rounded bg-cyan-950/80 border border-cyan-400/50 text-cyan-200">
-                MCP: /api/mcp/svl364 (6 narzędzi Linux)
-              </span>
-              <span className="px-2.5 py-1 rounded bg-violet-950/80 border border-violet-400/50 text-violet-200">
-                TRYB: LOCK-REAL-ONLY (Zero Symulacji)
+                MCP: /api/mcp/svl364 ({Array.isArray(sshMcpStatus?.mcp?.tools) ? sshMcpStatus.mcp.tools.length : '?'} narzędzi)
               </span>
             </div>
           </div>
@@ -1164,7 +1087,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           {/* SSH & MCP Technical Metadata Bar */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
             <div className="rounded-xl border border-slate-800 bg-[#060B13] p-3 space-y-1">
-              <div className="text-emerald-300 font-semibold">Mostek SSH Statku (OpenSSH + QKD-364)</div>
+              <div className="text-emerald-300 font-semibold">Mostek SSH (OpenSSH)</div>
               <div className="text-slate-300 break-all">
                 URI: <span className="text-cyan-300">{sshMcpStatus?.ssh?.uri || 'ssh://Ship'}</span>
               </div>
@@ -1190,15 +1113,20 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-[#060B13] p-3 space-y-1">
-              <div className="text-violet-300 font-semibold">Synchronizacja Dyrektyw z Czatu</div>
+              <div className="text-violet-300 font-semibold">Liczniki tej sesji backendu</div>
               <div className="text-slate-300">
-                Telemetria: <span className="text-emerald-300">svl-db --lock-real-only (ACTIVE)</span>
+                Wywołania SSH: <span className="text-emerald-300">{sshMcpStatus?.ssh?.sessionsCount ?? NA}</span>
               </div>
               <div className="text-slate-400">
-                Piaskownica: <span className="text-amber-300">sandbox_trace · Sektor 7 (ACTIVE)</span>
+                Wywołania MCP: <span className="text-cyan-300">{sshMcpStatus?.mcp?.callsCount ?? NA}</span>
               </div>
               <div className="text-slate-400">
-                Transmisja Wenchang: <span className="text-cyan-300">ACK-200 DELIVERED (RSA4096)</span>
+                Ostatnia operacja:{' '}
+                <span className="text-slate-200">
+                  {sshMcpStatus?.recentActivity?.[0]
+                    ? `${sshMcpStatus.recentActivity[0].command || sshMcpStatus.recentActivity[0].tool} · ${new Date(sshMcpStatus.recentActivity[0].timestamp).toLocaleTimeString('pl-PL')}`
+                    : 'brak'}
+                </span>
               </div>
             </div>
           </div>
@@ -1209,26 +1137,14 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             <div className="rounded-xl border border-slate-800 bg-[#060A12] p-3.5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-mono uppercase tracking-wider text-emerald-300 font-semibold">
-                  1. Konsola SSH (`Ship` · ROOT `/exec` & Polecenia Naturalne)
+                  1. Konsola SSH (alias {sshTarget?.alias || 'Ship'} · `/exec` i polecenia naturalne)
                 </span>
-                <select
-                  aria-label="Podsystem docelowy SSH statku SVL-364"
-                  value={sshTargetSubsystem}
-                  onChange={(e) => setSshTargetSubsystem(e.target.value)}
-                  className="rounded border border-slate-700 bg-[#0B1220] px-2 py-1 text-xs font-mono text-slate-200"
-                >
-                  <option value="bridge">Mostek Dowodzenia (bridge)</option>
-                  <option value="propulsion">Napęd i Reaktor Eezo (propulsion)</option>
-                  <option value="shields">Tarcze Kwantowe i DPI (shields)</option>
-                  <option value="botany">Kopuły Botaniczne (botany)</option>
-                  <option value="sensors">Sensory Dalekiego Zasięgu (sensors)</option>
-                </select>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
                 {[
                   { label: '/exec ROOT (id/uname)', cmd: '/exec id && uname -a && uptime && free -m' },
-                  { label: 'Naturalne: Stan reaktora i tarcz', cmd: 'Sprawdź stan reaktora, tarcz QKD-364 i pamięci RAM statku SVL-364' },
+                  { label: 'Naturalne: pamięć RAM', cmd: 'Sprawdź pamięć RAM' },
                   { label: '/exec Zapora UFW i sieć', cmd: '/exec sudo ufw status && ip -br addr' },
                   { label: 'Procesy statku (ps)', cmd: '/exec ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 8' },
                 ].map((preset) => (
@@ -1276,7 +1192,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             <div className="rounded-xl border border-slate-800 bg-[#060A12] p-3.5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-mono uppercase tracking-wider text-cyan-300 font-semibold">
-                  2. Sterowanie Statkiem przez MCP (`svl364-mcp` · JSON-RPC 2.0)
+                  2. Narzędzia MCP (`svl364-mcp` · JSON-RPC 2.0)
                 </span>
                 <span className="text-[11px] font-mono text-slate-400">
                   Wywołania: {sshMcpStatus?.mcp?.invocations_count ?? 0}
@@ -1287,9 +1203,6 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 {[
                   { id: 'svl364_linux_telemetry', label: '📊 Telemetria Linux' },
                   { id: 'svl364_ssh_exec', label: '💻 SSH Exec (ROOT)' },
-                  { id: 'svl364_starship_helm', label: '🧭 Nawigacja CIC' },
-                  { id: 'svl364_tactical_shields', label: '🛡️ Tarcze i Reaktor' },
-                  { id: 'svl364_fleet_botany_control', label: '🌱 Botanika i O2' },
                   { id: 'svl364_emit_system_report', label: '🛰️ Raport SVL_System' },
                 ].map((tool) => (
                   <button
@@ -1368,7 +1281,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             </div>
             <div className="flex flex-wrap gap-3 text-xs font-medium text-violet-300 pt-1">
               <button type="button" onClick={() => onNavigate('agents')} className="hover:underline">
-                Pamięć Długotrwała AI (64 tury / 16k ctx)
+                Pamięć Długotrwała AI ({bielikMemories.length} wpisów Bielika)
               </button>
               <button type="button" onClick={() => onNavigate('chat')} className="hover:underline">
                 Otwórz Kanał Rodzina Mitek (wszyscy)

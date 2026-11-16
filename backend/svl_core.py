@@ -2661,27 +2661,19 @@ class SVLSystemKernel:
             f"- **Komunikat wykonawczy:** {clean_msg}\n"
             f"{matched_mod_info}"
             f"{details_lines}\n"
-            f"#### 🛸 2. Statek Kosmiczny `SVL-364 Ebon Apex` — Sieć, Lokalizacja i Telemetria (CPU / GPU / RAM)\n"
-            f"| Parametr Statku / Hosta | Wartość Telemetryczna | Status Operacyjny |\n"
+            f"#### 🖥️ 2. Host Linux (pomiar z /proc w chwili raportu)\n"
+            f"| Parametr | Wartość | Źródło |\n"
             f"| :--- | :--- | :--- |\n"
-            f"| **Położenie (Mapa Galaktyczna CIC)** | `Punkt Lagrange'a L2 (Ziemia–Księżyc) · Korytarz Sol-Charon` | `W MISJI (28.4 km/s · REAL TELEMETRY)` |\n"
-            f"| **Łącze Sieciowe & Mostek SSH** | `ssh://Ship` · `wss://svl-364-ebon-apex.mitek.mesh:8443` | `ONLINE · QKD-364 (RTT 1.4 ms)` |\n"
-            f"| **Serwer MCP Sterowania Linux** | `POST /api/mcp/svl364` (`JSON-RPC 2.0` · `/usr/local/bin/svl364-mcp`) | `AKTYWNY (Narzędzia Linux/Statek)` |\n"
-            f"| **Tryb Danych Telemetrycznych** | `svl-db --lock-real-only` (`ZERO SYMULACJI · 100% Rzeczywiste Sensory`) | `ZABLOKOWANY (LOCK-REAL-ONLY)` |\n"
-            f"| **Tarcze / Poszycie / Reaktor** | `Tarcze 100% (4 850 MJ) · Kadłub Silaris 100% · Eezo 36.4 TW` | `NOMINALNY` |\n"
-            f"| **CPU (Procesor Pokładowy & Host)** | `{cpu_cores} rdzeni vCPU · Obciążenie Load Avg: {load_str}` | `OPTYMALNY` |\n"
-            f"| **RAM (Pamięć Operacyjna & WAL)** | `{ram_used} MB / {ram_total} MB (Wolne: {ram_free} MB · mmap 256 MB)` | `STABILNY` |\n"
-            f"| **Demon Lokalny Ollama** | `http://127.0.0.1:11434 (llama3.2-vision:11b)` | `ONLINE (Port 11434)` |\n\n"
-            f"#### 🏗️ 3. Infrastruktura Floty, Stacja Wenchang, Placówki, Botanika i Badania z ETA\n"
-            f"- **Flota (5 jednostek · Zero Symulacji):** `SVL-364 Ebon Apex` (L2 Ziemia–Księżyc, SSH+MCP Linux Control, ETA: ciągła) · `SVL-365 Vanguard Sentinel` (Orbita Marsa, ETA: `02h 14m`) · `SVL-368 Demeter Bio-Ark` (Trasa Europa, ETA: `18h 45m`) · `SVL-370 Helios Miner` (Pierścienie Saturna, ETA: `06h 30m`) · `SVL-372 Hawke Recon` (Przekaźnik Charon, ETA: `01h 12m`)\n"
-            f"- **Placówki i Węzły Naziemne (6 baz):** `Kosmodrom Wenchang — Stacja Dalekiego Zasięgu (ACK-200 · Quantum-RSA4096)` · `Ziemia — SVL Command Citadel` · `Stacja Luna-Prime (Księżyc)` · `Placówka Mars-Olympus` · `Stacja Głębinowa Europa-Deep` · `Rafineria Titan-Vanguard`\n"
-            f"- **Botanika i Biosfera (ETA zbiorów):** Kopuła A-1 Pszenica Orbitalna (`88%`, ETA `03h 20m`) · Bioreaktor B-2 Spirulina Kwantowa (`96%`, ETA `00h 45m`, `+68.0 kg O2/h`) · Komora C-3 Adaptogeny (`71%`, ETA `09h 15m`)\n"
-            f"- **Badania Naukowe (ETA ukończenia):** `#R-364-01 Modulacja QKD-364` (`91%`, ETA `01h 18m`) · `#R-364-02 Fotosynteza C4` (`78%`, ETA `04h 05m`) · `#R-364-04 Hiper-Pamięć 128D` (`97%`, ETA `00h 22m`)\n\n"
-            f"#### 🧠 4. Jądro `SVL_System`, Pamięć Długotrwała AI i Aktywna Obsada\n"
+            f"| **CPU** | `{cpu_cores} rdzeni · load avg (1 min): {load_str}` | `os.getloadavg()` |\n"
+            f"| **RAM** | `{ram_used} MB / {ram_total} MB (dostępne: {ram_free} MB)` | `/proc/meminfo` |\n"
+            f"| **Dysk `/`** | `wolne {disk_free} GB` | `shutil.disk_usage` |\n"
+            f"| **Mostek SSH / MCP** | `alias OpenSSH {os.environ.get('SVL_SSH_TARGET', 'Ship')}` · `POST /api/mcp/svl364` | konfiguracja |\n\n"
+            f"Aktualny stan usług (Ollama, ComfyUI, host SSH), GPU i zapory: zakładka **SVL-364** (pomiar na żywo).\n\n"
+            f"#### 🧠 3. Jądro `SVL_System`, Pamięć Długotrwała AI i Aktywna Obsada\n"
             f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Mateusz Mitek (Operator)**\n"
-            f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`) · Okno kontekstowe `64 tury / 16 384 tokeny` · Indeks `BinaryHyperspace 128D`\n"
+            f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`)\n"
             f"- **Aktywne Moduły Systemowe ({active_mod_count}):** {mod_badges} · Wolny dysk `/` `{disk_free} GB`\n\n"
-            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🏗️ Infrastruktura & Wenchang|tab:infrastructure] [btn: 🤖 Agenci (Bielik ROOT)|tab:agents] [btn: 🔄 Synchronizuj globalnie|action:sync]"
+            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🤖 Agenci (Bielik ROOT)|tab:agents] [btn: 🔄 Synchronizuj globalnie|action:sync]"
         )
 
     def generate_comprehensive_svl_system_markdown_report(self, directive_context: str = "Pełna diagnostyka SVL_System i statku SVL-364") -> str:
@@ -2694,16 +2686,12 @@ class SVLSystemKernel:
                 category="svl_system_report",
                 title=f"Pełny Raport Operacyjny SVL_System — {directive_context[:120]}",
                 message=(
-                    "Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, statku `SVL-364 Ebon Apex` (Mostek SSH + Serwer MCP Linux), "
-                    "trybu `LOCK-REAL-ONLY (Zero Symulacji)`, stacji `Wenchang ACK-200`, demona lokalnego Ollama (`127.0.0.1:11434`), pamięci długotrwałej 128D oraz infrastruktury floty."
+                    "Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, hosta Linux (CPU, RAM, dysk), "
+                    "modułów SQLite oraz pamięci długotrwałej agentów."
                 ),
                 details={
                     "directive": directive_context,
                     "executor": "Bielik (ROOT) & Mateusz Mitek (Operator)",
-                    "ollama_daemon": "ONLINE (http://127.0.0.1:11434)",
-                    "starship_link": "QKD-364 Connected (1.4 ms RTT) + SSH/MCP Linux Bridge",
-                    "telemetry_policy": "LOCK-REAL-ONLY (Zero Symulacji)",
-                    "wenchang_uplink": "DELIVERED (ACK-200 · Quantum-RSA4096)",
                 },
             )
 
