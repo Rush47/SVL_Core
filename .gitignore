@@ -23,3 +23,6 @@ __pycache__/
 *.pyc
 logi/*.txt
 !logi/.gitkeep
+!SVL_CoreOS_2/**
+!SVL_CoreOS_2/*.log
+
