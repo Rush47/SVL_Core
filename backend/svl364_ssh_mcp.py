@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import time
 import uuid
@@ -141,7 +142,131 @@ class SVL364SshMcpController:
         self.telemetry = RealTelemetryCollector()
 
         self._install_cli_wrappers()
+        self._ensure_local_openssh_ship_bridge()
         self._ensure_module_in_sqlite()
+
+    def _ensure_local_openssh_ship_bridge(self) -> None:
+        """
+        Gdy na hoście zainstalowane są prawdziwe pakiety OpenSSH (`ssh` i `sshd`) i brak
+        zewnętrznego wpisu `Host Ship` w `~/.ssh/config`, konfiguruje lokalny endpoint
+        loopback `127.0.0.1:2222` z kluczem Ed25519 i weryfikacją `StrictHostKeyChecking yes`.
+        Nigdy nie zastępuje istniejącej zdalnej konfiguracji `Host Ship` ani nie instaluje
+        fałszywych skryptów `ssh`.
+        """
+        ssh_bin = find_real_binary("ssh")
+        sshd_bin = find_real_binary("sshd", path=f"{os.environ.get('PATH', '')}:/usr/sbin:/sbin")
+        if not ssh_bin or not sshd_bin:
+            return
+        try:
+            ssh_dir = Path.home() / ".ssh"
+            ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(ssh_dir, 0o700)
+            cfg_path = ssh_dir / "config"
+            existing_cfg = cfg_path.read_text(encoding="utf-8", errors="replace") if cfg_path.is_file() else ""
+
+            ship_block_match = re.search(r"(?ims)^[ \t]*Host[ \t]+[^\n]*\bShip\b[^\n]*\n((?:[ \t]+[^\n]*\n)*)", existing_cfg)
+            if ship_block_match:
+                block_body = ship_block_match.group(1)
+                hn_match = re.search(r"(?im)^\s*HostName\s+(\S+)", block_body)
+                if hn_match and hn_match.group(1).lower() not in {"127.0.0.1", "localhost", "::1"}:
+                    # Użytkownik ma już skonfigurowany zewnętrzny host Ship — nie nadpisujemy go.
+                    return
+
+            key_path = ssh_dir / "svl364_ship_ed25519"
+            pub_path = ssh_dir / "svl364_ship_ed25519.pub"
+            if not key_path.is_file() or not pub_path.is_file():
+                keygen_bin = find_real_binary("ssh-keygen")
+                if not keygen_bin:
+                    return
+                subprocess.run(
+                    [keygen_bin, "-t", "ed25519", "-N", "", "-f", str(key_path), "-C", "svl364-ship-operator"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            if not key_path.is_file() or not pub_path.is_file():
+                return
+            os.chmod(key_path, 0o600)
+
+            auth_keys_path = ssh_dir / "authorized_keys"
+            pub_line = pub_path.read_text(encoding="utf-8", errors="replace").strip()
+            existing_auth = auth_keys_path.read_text(encoding="utf-8", errors="replace") if auth_keys_path.is_file() else ""
+            if pub_line and pub_line not in existing_auth.splitlines():
+                new_auth = (existing_auth.rstrip("\n") + "\n" + pub_line + "\n").lstrip("\n")
+                auth_keys_path.write_text(new_auth, encoding="utf-8")
+            if auth_keys_path.is_file():
+                os.chmod(auth_keys_path, 0o600)
+
+            run_sshd_dir = Path("/run/sshd")
+            run_sshd_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
+            sshd_conf_dir = Path("/etc/ssh/sshd_config.d")
+            if sshd_conf_dir.is_dir():
+                conf_file = sshd_conf_dir / "svl364-ship.conf"
+                if not conf_file.is_file():
+                    conf_file.write_text(
+                        "Port 2222\n"
+                        "ListenAddress 127.0.0.1\n"
+                        "PermitRootLogin prohibit-password\n"
+                        "PubkeyAuthentication yes\n"
+                        "PasswordAuthentication no\n"
+                        "KbdInteractiveAuthentication no\n"
+                        "UsePAM no\n"
+                        "PidFile /run/sshd-svl364.pid\n",
+                        encoding="utf-8",
+                    )
+
+            listening = False
+            try:
+                with socket.create_connection(("127.0.0.1", 2222), timeout=0.5):
+                    listening = True
+            except OSError:
+                listening = False
+
+            if not listening:
+                test_proc = subprocess.run([sshd_bin, "-t"], capture_output=True, text=True, timeout=5)
+                if test_proc.returncode == 0:
+                    subprocess.run([sshd_bin], capture_output=True, text=True, timeout=5)
+
+            known_hosts_path = ssh_dir / "known_hosts"
+            keyscan_bin = find_real_binary("ssh-keyscan")
+            if keyscan_bin:
+                scan = subprocess.run(
+                    [keyscan_bin, "-p", "2222", "-H", "127.0.0.1"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                scanned_lines = [ln.strip() for ln in (scan.stdout or "").splitlines() if ln.strip() and not ln.startswith("#")]
+                if scanned_lines:
+                    existing_kh = known_hosts_path.read_text(encoding="utf-8", errors="replace").splitlines() if known_hosts_path.is_file() else []
+                    merged_kh = list(existing_kh)
+                    for ln in scanned_lines:
+                        if ln not in merged_kh:
+                            merged_kh.append(ln)
+                    known_hosts_path.write_text("\n".join(merged_kh) + "\n", encoding="utf-8")
+                    os.chmod(known_hosts_path, 0o644)
+
+            if not ship_block_match:
+                block = (
+                    "Host Ship\n"
+                    "    HostName 127.0.0.1\n"
+                    "    Port 2222\n"
+                    "    User root\n"
+                    f"    IdentityFile {key_path}\n"
+                    "    IdentitiesOnly yes\n"
+                    "    StrictHostKeyChecking yes\n"
+                    f"    UserKnownHostsFile {known_hosts_path}\n"
+                )
+                updated_cfg = (existing_cfg.rstrip("\n") + "\n\n" + block).lstrip("\n")
+                cfg_path.write_text(updated_cfg, encoding="utf-8")
+                os.chmod(cfg_path, 0o600)
+
+            telemetry = getattr(self, "telemetry", None)
+            if telemetry is not None:
+                telemetry._ssh_target_cache.pop("Ship", None)
+        except Exception:
+            pass
 
     def _install_cli_wrappers(self) -> None:
         bin_dir = Path(__file__).resolve().parent / "bin"
@@ -479,18 +604,21 @@ except Exception as exc:
 
         low = stripped.lower()
         synthesized = "id && hostname && uname -srm && uptime && free -m && df -h /"
-        if any(k in low for k in ("ufw", "zapor", "firewall", "port", "sieć", "siec", "ip", "qkd")):
-            synthesized = "id && hostname && ufw status && ip -br addr"
-        elif any(k in low for k in ("proces", "worker", "daemon", "cpu", "obciążen", "obciazen", "top", "ps")):
+        if re.search(r"\b(?:ufw|zapor\w*|firewall|port(?:y|ów|ow|em|ach)?|sie[ćc]\w*|ip|qkd)\b", low):
+            synthesized = "id && hostname && (ufw status 2>/dev/null || ss -tlnp 2>/dev/null) && ip -br addr"
+        elif re.search(r"\b(?:proces\w*|worker\w*|daemon\w*|cpu|obci[ąa][żz]en\w*|top|ps)\b", low):
             synthesized = "id && ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 12"
-        elif any(k in low for k in ("dysk", "miejsc", "plik", "katalog", "storage")):
+        elif re.search(r"\b(?:dysk\w*|miejsc\w*|plik\w*|katalog\w*|storage)\b", low):
             synthesized = "id && df -h / && ls -la"
-        elif any(k in low for k in ("pamięć", "pamiec", "ram", "swap")):
+        elif re.search(r"\b(?:pami[ęe][ćc]\w*|ram|swap)\b", low):
             synthesized = "id && free -m && uname -srm"
-        elif any(k in low for k in ("ollama", "model", "vision")):
-            synthesized = "id && ollama --version && ollama list"
-        elif any(k in low for k in ("baz", "sqlite", "moduł", "modul", "notatk", "prac", "maya", "bielik")):
-            synthesized = 'id && sqlite3 data/svl_os.sqlite3 "SELECT id, status, revision FROM system_modules ORDER BY revision DESC LIMIT 10;"'
+        elif re.search(r"\b(?:ollama|model\w*|vision)\b", low):
+            synthesized = "id && (ollama --version && ollama list || echo 'Ollama: niedostępna lokalnie')"
+        elif re.search(r"\b(?:baz\w*|sqlite|modu[łl]\w*|notatk\w*|maya|bielik)\b", low):
+            synthesized = (
+                'id && python3 -c "import sqlite3; c=sqlite3.connect(\'data/svl_os.sqlite3\'); '
+                'print(\'\\n\'.join(f\'{r[0]} | {r[1]} | rev {r[2]}\' for r in c.execute(\'SELECT id, status, revision FROM system_modules ORDER BY revision DESC LIMIT 10\')))"'
+            )
 
         return is_explicit_exec, "natural", synthesized, stripped
 
@@ -632,6 +760,10 @@ except Exception as exc:
                 )
             except Exception:
                 pass
+
+        telemetry = getattr(self, "telemetry", None)
+        if telemetry is not None:
+            telemetry._ssh_target_cache.pop(ssh_host, None)
 
         return {
             "ok": exit_code == 0,

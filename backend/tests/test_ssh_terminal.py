@@ -167,6 +167,43 @@ class SshTerminalTests(unittest.TestCase):
         self.assertTrue(res["ssh_status"]["ssh"]["sshInstalled"])
         controller.kernel.append_terminal_entry.assert_not_called()
 
+    def test_ensure_local_openssh_preserves_external_ship_config(self) -> None:
+        import tempfile
+
+        controller = build_controller()
+        with tempfile.TemporaryDirectory() as tmp:
+            ssh_dir = Path(tmp) / ".ssh"
+            ssh_dir.mkdir(mode=0o700)
+            cfg_file = ssh_dir / "config"
+            original = "Host Ship\n    HostName 10.20.30.40\n    User pilot\n    Port 2222\n"
+            cfg_file.write_text(original, encoding="utf-8")
+            with (
+                patch("svl364_ssh_mcp.Path.home", return_value=Path(tmp)),
+                patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            ):
+                controller._ensure_local_openssh_ship_bridge()
+            self.assertEqual(cfg_file.read_text(encoding="utf-8"), original)
+
+    def test_ensure_local_openssh_skips_when_binaries_absent(self) -> None:
+        import tempfile
+
+        controller = build_controller()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch("svl364_ssh_mcp.Path.home", return_value=Path(tmp)),
+                patch("svl364_ssh_mcp.find_real_binary", return_value=None),
+            ):
+                controller._ensure_local_openssh_ship_bridge()
+            self.assertFalse((Path(tmp) / ".ssh" / "config").exists())
+
+    def test_raport_systemu_is_not_matched_as_port(self) -> None:
+        is_exec, mode, shell_cmd, _ = SVL364SshMcpController._parse_ssh_ship_input("/exec raport systemu")
+        self.assertTrue(is_exec)
+        self.assertEqual(mode, "natural")
+        self.assertIn("uname -srm", shell_cmd)
+        self.assertIn("df -h /", shell_cmd)
+        self.assertNotIn("ss -tlnp", shell_cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,8 +29,8 @@ const TERMINAL_TABS: Array<{
       'Zdalny terminal SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Obsługuje: (1) /exec <dowolne polecenie> oraz /root <dowolne polecenie>, (2) dowolne polecenia w języku naturalnym (Maya & Bielik ROOT), oraz (3) bezpośrednie komendy powłoki Linux.',
     quickCommands: [
       '/exec id && uname -a && uptime',
-      '/exec sudo ufw status',
-      'Sprawdź stan reaktora, tarcz QKD-364 i pamięci RAM statku SVL-364',
+      '/exec ip -br addr && ss -tlnp',
+      '/exec raport systemu',
       'Pokaż aktywne procesy root, dysk i moduły SQLite',
     ],
   },
@@ -119,12 +119,6 @@ export const TerminalsWorkspace: React.FC = () => {
   const [sshConfigStatus, setSshConfigStatus] = useState<string | null>(null);
   const [isSavingSshConfig, setIsSavingSshConfig] = useState(false);
 
-  useEffect(() => {
-    const onTokenChanged = () => setOperatorTokenInput(getSvlOperatorAccessToken());
-    window.addEventListener('svl-operator-token-changed', onTokenChanged);
-    return () => window.removeEventListener('svl-operator-token-changed', onTokenChanged);
-  }, []);
-
   const loadSshBridgeStatus = async () => {
     if (!getSvlOperatorAccessToken()) return;
     const res = await safeFetchJson<any>('/api/svl364/ssh-mcp/status', { timeoutMs: 8000 });
@@ -135,6 +129,17 @@ export const TerminalsWorkspace: React.FC = () => {
       }
     }
   };
+
+  useEffect(() => {
+    const onTokenChanged = () => {
+      setOperatorTokenInput(getSvlOperatorAccessToken());
+      if (activeTab === 'ssh') {
+        void loadSshBridgeStatus();
+      }
+    };
+    window.addEventListener('svl-operator-token-changed', onTokenChanged);
+    return () => window.removeEventListener('svl-operator-token-changed', onTokenChanged);
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab === 'ssh') {
