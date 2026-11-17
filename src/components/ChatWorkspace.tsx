@@ -311,10 +311,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       return;
     }
     if (!hasSvlOperatorAccessToken()) {
-      setDuplexStatus({
-        reason: 'auth',
-        text: 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.',
-      });
+      setDuplexStatus((prev) =>
+        prev?.reason === 'auth'
+          ? prev
+          : {
+              reason: 'auth',
+              text: 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.',
+            },
+      );
       return;
     }
     // Limit tur AI pilnuje serwer (powód pauzy wraca w odpowiedzi); tu tylko bezpiecznik.
