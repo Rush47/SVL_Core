@@ -2313,6 +2313,7 @@ class SVLSystemKernel:
             "linux": [],
             "ssh": [],
             "python": [],
+            "github": [],
             "hyperspace": [],
             "agents": [],
         }

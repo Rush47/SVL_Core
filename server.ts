@@ -32,6 +32,29 @@ import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githu
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import {
+  GITHUB_REPOSITORY,
+  assessGhCommand,
+  cancelConfirmation,
+  describeOp,
+  describeStatus,
+  destructiveReason,
+  executeOp,
+  getGitHubToken,
+  ghCliAvailable,
+  gitSync,
+  gitSyncStatus,
+  githubApi,
+  isAllowedApiPath,
+  queueConfirmation,
+  runGhCommand,
+  setGitHubLogger,
+  splitArgs,
+  syncBranch,
+  takeConfirmation,
+  verifyGitHubToken,
+  type GitSyncAction,
+} from './src/server/githubAdmin.ts';
+import {
   describeGeminiError,
   geminiCandidatesFor,
   isGeminiModelGoneError,
@@ -119,6 +142,9 @@ const svlFileLogger = new SvlFileLogger({ logDir: process.env.SVL_LOG_DIR || pat
 setGeminiModelLogger((level, message, details) =>
   svlFileLogger.log({ layer: 'GATEWAY', level, category: 'ai_models', message, details }),
 );
+setGitHubLogger((level, message, details) =>
+  svlFileLogger.log({ layer: 'GATEWAY', level, category: 'github', message, details }),
+);
 svlFileLogger.logSync({
   layer: 'SYSTEM',
   level: 'INFO',
@@ -179,7 +205,7 @@ function createGithubMcpServer(): McpServer {
     tools: [
       {
         name: 'github_read_file',
-        description: 'Read an allowed source file from mmitek515-netizen/SVL_open on the svl-sync branch.',
+        description: 'Read an allowed source file from Rush47/SVL_Core on the svl-sync branch.',
         inputSchema: {
           type: 'object',
           properties: { path: { type: 'string', minLength: 1, maxLength: 240 } },
@@ -893,6 +919,39 @@ async function startServer() {
     }
   };
 
+  // Automatyczna synchronizacja obustronna z GitHubem (SVL_GITHUB_AUTOSYNC_SEC; 0 = wyłączona).
+  const githubAutoSyncSec = Math.max(0, Number(process.env.SVL_GITHUB_AUTOSYNC_SEC || 0) || 0);
+  let lastGitHubAutoSync: { at: string; ok: boolean; summary: string } | null = null;
+  let githubAutoSyncRunning = false;
+  if (githubAutoSyncSec > 0) {
+    const minInterval = Math.max(60, githubAutoSyncSec);
+    setInterval(async () => {
+      if (githubAutoSyncRunning || !getGitHubToken()) return;
+      githubAutoSyncRunning = true;
+      try {
+        const r = await gitSync(__dirname, 'sync', 'SVL: automatyczna synchronizacja z GitHubem');
+        const changed = !/pobrano 0, wysłano 0/.test(r.summary);
+        lastGitHubAutoSync = { at: new Date().toISOString(), ok: r.ok, summary: r.summary };
+        if (!r.ok || changed) {
+          // Maya zgłasza błędy i realne zmiany (bez powiadomień o „nic nowego”).
+          void emitFamilyNotification(
+            {
+              severity: r.ok ? 'INFO' : 'WARN',
+              category: 'github',
+              title: r.ok ? `GitHub ${GITHUB_REPOSITORY}: zsynchronizowano` : `GitHub ${GITHUB_REPOSITORY}: synchronizacja nieudana`,
+              message: r.summary,
+              sourceEventId: `gh-autosync-${Date.now()}`,
+              origin: 'github-autosync',
+            },
+          );
+          if (r.ok) broadcastResyncRequired('github_autosync');
+        }
+      } finally {
+        githubAutoSyncRunning = false;
+      }
+    }, minInterval * 1000).unref?.();
+  }
+
   const FAMILY_CHANNEL_ID = 'conv-rodzina-mitek-wszyscy';
   /** Powiadomienie systemowe na kanale „wszyscy” (zapis w SQLite + natychmiastowy relay). */
   const emitFamilyNotification = async (
@@ -1124,6 +1183,7 @@ async function startServer() {
       python: 'svl-py3>>>',
       hyperspace: 'hyper128>',
       agents: 'agents>',
+      github: `gh(${GITHUB_REPOSITORY})$`,
     };
 
     const respondAndPersist = async (payload: Record<string, any>) => {
@@ -1159,6 +1219,36 @@ async function startServer() {
     };
 
     const effectiveCmd = trimmed;
+    if (terminalType === 'github') {
+      // Terminal GitHub CLI: `gh …` albo skróty synchronizacji (status/pobierz/wyślij/synchronizuj/init).
+      const syncVerb: Record<string, GitSyncAction> = {
+        status: 'status', pobierz: 'pull', pull: 'pull', 'wyślij': 'push', wyslij: 'push', push: 'push',
+        synchronizuj: 'sync', sync: 'sync', init: 'init',
+      };
+      const lowerCmd = effectiveCmd.toLowerCase();
+      if (syncVerb[lowerCmd]) {
+        const r = await gitSync(__dirname, syncVerb[lowerCmd], 'SVL: synchronizacja z terminala GitHub');
+        if (r.ok && r.action !== 'status') void pollAndRelayOutbox();
+        await respondAndPersist({
+          ok: r.ok, terminalType, command: trimmed,
+          stdout: r.ok ? `${r.summary}${r.action !== 'status' && r.status?.isRepo ? `\n${describeStatus(r.status)}` : ''}` : '',
+          stderr: r.ok ? '' : r.summary,
+        });
+        return;
+      }
+      const ghArgs = splitArgs(effectiveCmd.replace(/^\s*gh\s+/i, ''));
+      const verdict = assessGhCommand(ghArgs);
+      if (!verdict.allowed) {
+        await respondAndPersist({ ok: false, terminalType, command: trimmed, stdout: '', stderr: verdict.reason });
+        return;
+      }
+      const r = await runGhCommand(__dirname, ghArgs);
+      await respondAndPersist({
+        ok: r.ok, terminalType, command: trimmed,
+        stdout: r.ok ? r.output : '', stderr: r.ok ? '' : r.output,
+      });
+      return;
+    }
     if (terminalType === 'ssh') {
       const sshRes = await callPythonBackend(
         'POST',
@@ -1479,6 +1569,61 @@ async function startServer() {
     res.status(pyRes.status).json(pyRes.data);
   }));
 
+  // GitHub (Rush47/SVL_Core): stan tokenu i synchronizacji, akcje synchronizacji, GitHub CLI.
+  app.get('/api/github/status', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const [token, sync] = await Promise.all([
+      verifyGitHubToken(),
+      gitSyncStatus(__dirname, String(req.query.fetch || '1') !== '0'),
+    ]);
+    res.json({
+      ok: true,
+      repository: GITHUB_REPOSITORY,
+      branch: syncBranch(),
+      token,
+      sync,
+      ghCli: ghCliAvailable() ? 'gh' : 'rest',
+      autoSyncSec: githubAutoSyncSec,
+      lastAutoSync: lastGitHubAutoSync,
+    });
+  }));
+
+  app.post('/api/github/sync', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const action = String(req.body?.action || 'status') as GitSyncAction;
+    if (!['status', 'pull', 'push', 'sync', 'init'].includes(action)) {
+      res.status(400).json({ ok: false, error: 'action: status | pull | push | sync | init' });
+      return;
+    }
+    const r = await gitSync(__dirname, action, String(req.body?.message || 'SVL: synchronizacja z panelu GitHub'));
+    if (r.ok && action !== 'status') {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('github_sync');
+    }
+    res.json({ ...r, ok: r.ok, error: r.ok ? undefined : r.summary });
+  }));
+
+  app.post('/api/github/cli', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const ghArgs = splitArgs(String(req.body?.args || '').replace(/^\s*gh\s+/i, ''));
+    const verdict = assessGhCommand(ghArgs);
+    if (!verdict.allowed) {
+      res.status(400).json({ ok: false, error: verdict.reason });
+      return;
+    }
+    const r = await runGhCommand(__dirname, ghArgs);
+    res.json({ ok: r.ok, output: r.output, engine: r.engine, ...(r.ok ? {} : { error: r.output.slice(0, 300) }) });
+  }));
+
   app.post('/api/system/global-sync', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
@@ -1560,6 +1705,8 @@ async function startServer() {
     const replyConversationTitle = String(req.body?.conversationTitle || '').trim().slice(0, 200);
     const sendChatJson = res.json.bind(res);
     const chatStartedAt = Date.now();
+    // Przyciski potwierdzeń operacji GitHub zleconych przez AI (dopisywane pod odpowiedzią).
+    const githubConfirmationButtons: string[] = [];
     (res as any).json = (body: any) => {
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
       const failed = !body || body.ok !== true || body.provenance === 'error';
@@ -1590,6 +1737,9 @@ async function startServer() {
       }
       // Przyciski zapisane przez model jako linki Markdown → składnia `[btn: …|…]`.
       body.reply = normalizeAiInteractiveMarkup(body.reply);
+      if (githubConfirmationButtons.length > 0) {
+        body.reply = `${body.reply}\n\n**Wymaga Twojego potwierdzenia (GitHub ${GITHUB_REPOSITORY}):**\n${githubConfirmationButtons.join('\n')}`;
+      }
       const replyMessage = {
         id: `asst-${Date.now()}-${randomUUID().slice(0, 8)}`,
         role: 'assistant',
@@ -1634,20 +1784,10 @@ async function startServer() {
       return res;
     };
     const lowerClean = cleanMsg.toLowerCase();
+    // Narzędzia GitHub (Rush47/SVL_Core) dostępne, gdy wiadomość dotyczy GitHuba i serwer ma GITHUB_TOKEN.
     const requestsGitHubTools =
-      /github(?:\.com)?/i.test(cleanMsg) &&
-      /odczytaj|plik|zmień|zmodyfikuj|napraw|dodaj|utwórz|aktualizuj|zapisz|commit/i.test(
-          cleanMsg,
-        );
-    const requestsGitHubWrite =
-      (requestsGitHubTools && /zmień|zmodyfikuj|napraw|dodaj|utwórz|aktualizuj|zapisz|commit|push/i.test(cleanMsg));
-    if (requestsGitHubWrite &&
-        !hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({
-        ok: false, error: 'Operacje zapisu GitHub wymagają SVL_OPERATOR_TOKEN.',
-      });
-      return;
-    }
+      Boolean(getGitHubToken()) &&
+      /github|repozytor|\brepo\b|pull ?request|\bPR\b|\bissue|zgłoszeni|commit|gałę[źz]|gałęzi|branch|workflow|github actions|release|wydani|\bgh\b|synchronizuj z github|wypchnij|pobierz z github/i.test(cleanMsg);
     const isProhibitedMinorSafetyRisk =
       (/\b(1[0-7]|[0-9])\s*(-|\s)?(letni|letnia|lat|latek|latka)\b/i.test(lowerClean) ||
         /\b(dzieck|nieletn|małoletn|córk|syn)\b/i.test(lowerClean)) &&
@@ -1663,6 +1803,67 @@ async function startServer() {
         provenance: 'server_verified',
       });
       return;
+    }
+
+    // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja>.
+    const githubSlash = /^\/(gh|github)(?:\s+([\s\S]*))?$/i.exec(cleanMsg);
+    if (githubSlash) {
+      const replyGitHub = (ok: boolean, text: string) =>
+        res.json({
+          ok: true,
+          sender: 'Bielik',
+          agentId: 'Bielik',
+          modelUsed: `Bielik · GitHub ${GITHUB_REPOSITORY} (wynik serwera)`,
+          reply: text,
+          provenance: ok ? 'server_verified' : 'error',
+          followUpMessages: [],
+          appliedActions: [],
+        });
+      const rest = String(githubSlash[2] || '').trim();
+      if (githubSlash[1].toLowerCase() === 'gh') {
+        const ghArgs = splitArgs(rest);
+        const verdict = assessGhCommand(ghArgs);
+        if (!verdict.allowed) return void replyGitHub(false, `⛔ ${verdict.reason}`);
+        const r = await runGhCommand(__dirname, ghArgs);
+        return void replyGitHub(r.ok, `**\`gh ${rest}\`** (${r.engine === 'gh' ? 'GitHub CLI' : 'REST API'})\n\n\`\`\`\n${r.output.slice(0, 7000)}\n\`\`\``);
+      }
+      const [verb, arg] = rest.split(/\s+/, 2).map((v) => (v || '').toLowerCase());
+      const verbMap: Record<string, GitSyncAction> = {
+        status: 'status', stan: 'status', '': 'status',
+        pobierz: 'pull', pull: 'pull',
+        wyślij: 'push', wyslij: 'push', push: 'push',
+        synchronizuj: 'sync', sync: 'sync',
+        init: 'init', połącz: 'init', polacz: 'init',
+      };
+      if (verb === 'potwierdź' || verb === 'potwierdz' || verb === 'confirm') {
+        const entry = takeConfirmation(arg || '');
+        if (!entry) return void replyGitHub(false, `Nie ma oczekującej operacji o identyfikatorze \`${arg || '?'}\` (mogła wygasnąć po 15 min).`);
+        const r = await executeOp(__dirname, entry.op);
+        svlFileLogger.log({
+          layer: 'GATEWAY', level: r.ok ? 'WARN' : 'ERROR', category: 'github',
+          correlationId: corrId, message: `Operator potwierdził [${arg}]: ${describeOp(entry.op)} (${entry.reason}) → ${r.ok ? 'OK' : 'błąd'}`,
+        });
+        return void replyGitHub(r.ok, `${r.ok ? '✅' : '❌'} **${entry.reason}** — \`${describeOp(entry.op)}\`\n\n\`\`\`\n${r.output.slice(0, 5000)}\n\`\`\``);
+      }
+      if (verb === 'anuluj' || verb === 'cancel') {
+        return void replyGitHub(true, cancelConfirmation(arg || '') ? `Anulowano operację \`${arg}\`.` : `Brak oczekującej operacji \`${arg || '?'}\`.`);
+      }
+      const action = verbMap[verb];
+      if (!action) {
+        return void replyGitHub(
+          false,
+          'Polecenia: `/github status`, `/github pobierz`, `/github wyślij`, `/github synchronizuj`, `/github init`, `/gh <polecenie>` (np. `/gh pr list`).',
+        );
+      }
+      const r = await gitSync(__dirname, action, `SVL: ${action} z czatu`);
+      if (r.ok && action !== 'status') {
+        void pollAndRelayOutbox();
+      }
+      return void replyGitHub(
+        r.ok,
+        `${r.ok ? '✅' : '⚠️'} ${r.summary}${action !== 'status' && r.status && r.status.isRepo ? `\n\n${describeStatus(r.status)}` : ''}\n\n` +
+          '[btn: 🔄 Synchronizuj|send:/github synchronizuj] [btn: ⬇️ Pobierz|send:/github pobierz] [btn: ⬆️ Wyślij|send:/github wyślij] [btn: 📋 Stan|send:/github status]',
+      );
     }
 
     const mentionsBielik = /(?:^|\s)@bielik\b/i.test(cleanMsg);
@@ -1702,9 +1903,8 @@ async function startServer() {
     const agentState = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === selectedAgent) || {};
     const agentConfig = agentState.config || {};
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
-    const wantsGitHubTools =
-      requestsGitHubTools && (requestsGitHubWrite ? githubPermissions.writeSync : githubPermissions.read);
-    const wantsGitHubWrite = requestsGitHubWrite && githubPermissions.writeSync;
+    const wantsGitHubTools = requestsGitHubTools && githubPermissions.read;
+    const wantsGitHubWrite = wantsGitHubTools && githubPermissions.writeSync;
     if (requestsGitHubTools && !wantsGitHubTools) {
       res.status(403).json({
         ok: false,
@@ -1758,24 +1958,43 @@ async function startServer() {
       }
     };
 
+    // Operacje nieodwracalne zlecone przez AI czekają na potwierdzenie (przyciski w odpowiedzi).
+    const githubConfirmations: Array<{ id: string; reason: string; label: string }> = [];
+    const recordGitHubAction = (tool: string, ok: boolean, summary: string) =>
+      appliedActions.push({ tool, entity: 'github', entityId: GITHUB_REPOSITORY, summary: summary.slice(0, 300), ok });
+    const needsConfirmation = (tool: string, label: string, reason: string, op: Parameters<typeof queueConfirmation>[0]) => {
+      if (!githubPermissions.admin) {
+        recordGitHubAction(tool, false, `Brak uprawnienia github.admin: ${label}`);
+        return { ok: false, error: `Operacja administracyjna (${reason}) wymaga uprawnienia github.admin.` };
+      }
+      const id = queueConfirmation(op, reason);
+      githubConfirmations.push({ id, reason, label });
+      const shortLabel = label.replace(/[|\]\n]/g, ' ').slice(0, 70);
+      githubConfirmationButtons.push(
+        `- ${reason}: \`${shortLabel}\` [btn: ✅ Potwierdź|send:/github potwierdź ${id}] [btn: ✖ Anuluj|send:/github anuluj ${id}]`,
+      );
+      recordGitHubAction(tool, true, `Czeka na potwierdzenie operatora: ${label}`);
+      return {
+        ok: false,
+        requiresConfirmation: true,
+        confirmationId: id,
+        message: `Operacja „${label}” (${reason}) czeka na potwierdzenie operatora — przycisk pojawi się pod odpowiedzią.`,
+      };
+    };
+
     const executeChatTool = async (toolName: string, rawArgs: Record<string, any>): Promise<Record<string, any>> => {
       const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {};
-      if (toolName.startsWith('github_')) {
-        const allowed = toolName === 'github_read_file' ? githubPermissions.read : githubPermissions.writeSync;
-        if (!allowed) {
-          const error = 'Brak uprawnień dla operacji GitHub: ' + toolName;
-          appliedActions.push({
-            tool: toolName, entity: 'github', entityId: DEFAULT_GITHUB_FILE_BRANCH,
-            summary: error, ok: false,
-          });
-          return { ok: false, error };
-        }
+      if (toolName.startsWith('github_') && !githubPermissions.read) {
+        const error = 'Brak uprawnień dla operacji GitHub: ' + toolName;
+        recordGitHubAction(toolName, false, error);
+        return { ok: false, error };
       }
       if (toolName === 'github_read_file') {
         const filePath = String(args.path || '');
         return runGitHubTool(toolName, () => createGitHubFileService().readFile(filePath));
       }
       if (toolName === 'github_update_file') {
+        if (!githubPermissions.writeSync) return { ok: false, error: 'Brak uprawnienia github.write_sync.' };
         const filePath = String(args.path || '');
         const fileContent = String(args.content ?? '');
         const commitMessage = String(args.commit_message || '');
@@ -1783,28 +2002,116 @@ async function startServer() {
           createGitHubFileService().updateFile(filePath, fileContent, commitMessage),
         );
       }
+      if (toolName === 'github_api') {
+        const method = String(args.method || 'GET').toUpperCase();
+        const apiPath = String(args.path || '');
+        let body: unknown = undefined;
+        if (typeof args.body === 'string' && args.body.trim()) {
+          try { body = JSON.parse(args.body); } catch { return { ok: false, error: 'Pole body musi być poprawnym JSON-em.' }; }
+        }
+        if (!isAllowedApiPath(method, apiPath)) {
+          return { ok: false, error: `Dozwolone jest wyłącznie repozytorium ${GITHUB_REPOSITORY}.` };
+        }
+        if (method !== 'GET' && !githubPermissions.writeSync) return { ok: false, error: 'Brak uprawnienia github.write_sync.' };
+        const danger = destructiveReason(method, apiPath, body);
+        if (danger) {
+          return needsConfirmation(toolName, `${method} ${apiPath}`, danger, { kind: 'api', method, path: apiPath, body });
+        }
+        const r = await githubApi(method, apiPath, body);
+        if (method !== 'GET') recordGitHubAction(toolName, r.ok, `${method} ${apiPath} → ${r.ok ? `HTTP ${r.status}` : r.error}`);
+        return r.ok
+          ? { ok: true, status: r.status, data: JSON.stringify(r.data).slice(0, 12000) }
+          : { ok: false, status: r.status, error: r.error };
+      }
+      if (toolName === 'github_sync') {
+        const action = String(args.action || 'status').toLowerCase() as GitSyncAction;
+        if (!['status', 'pull', 'push', 'sync'].includes(action)) return { ok: false, error: 'action: status | pull | push | sync' };
+        if (action !== 'status' && !githubPermissions.writeSync) return { ok: false, error: 'Brak uprawnienia github.write_sync.' };
+        const r = await gitSync(__dirname, action, String(args.message || `SVL (${selectedDisplayName}): synchronizacja z czatu`));
+        if (action !== 'status') {
+          recordGitHubAction(toolName, r.ok, r.summary);
+          if (r.ok) pendingMutations = true;
+        }
+        return { ok: r.ok, summary: r.summary };
+      }
+      if (toolName === 'github_cli') {
+        const ghArgs = splitArgs(String(args.args || '').replace(/^\s*gh\s+/, ''));
+        const verdict = assessGhCommand(ghArgs);
+        if (!verdict.allowed) return { ok: false, error: verdict.reason };
+        if (verdict.destructive) {
+          return needsConfirmation(toolName, `gh ${ghArgs.join(' ')}`, verdict.destructive, { kind: 'gh', args: ghArgs });
+        }
+        if (!githubPermissions.writeSync && !/^(api|auth|repo view|pr list|pr view|issue list|issue view|run list|run view|release list|branch list|workflow list)/.test(ghArgs.join(' '))) {
+          return { ok: false, error: 'Brak uprawnienia github.write_sync dla tego polecenia gh.' };
+        }
+        const r = await runGhCommand(__dirname, ghArgs);
+        recordGitHubAction(toolName, r.ok, `gh ${ghArgs.slice(0, 4).join(' ')} (${r.engine})`);
+        return { ok: r.ok, output: r.output.slice(0, 12000) };
+      }
       return { ok: false, error: `Narzędzie wycofane lub niedostępne: ${toolName}` };
     };
 
     const chatToolDeclarations: FunctionDeclaration[] = [];
 
     if (wantsGitHubTools && githubPermissions.read) {
-      chatToolDeclarations.push({
-        name: 'github_read_file',
-        description:
-          'Odczytuje dozwolony plik źródłowy z gałęzi svl-sync w repo mmitek515-netizen/SVL_open.',
-        parameters: {
-          type: Type.OBJECT,
-          properties: { path: { type: Type.STRING, description: 'Ścieżka względna pliku źródłowego.' } },
-          required: ['path'],
+      chatToolDeclarations.push(
+        {
+          name: 'github_api',
+          description:
+            `Wywołuje REST API GitHuba dla repozytorium ${GITHUB_REPOSITORY} (np. GET /repos/${GITHUB_REPOSITORY}/pulls, ` +
+            `POST /repos/${GITHUB_REPOSITORY}/issues). Dozwolone wyłącznie ścieżki /repos/${GITHUB_REPOSITORY}/… oraz GET /user. ` +
+            'Operacje nieodwracalne (usuwanie, ustawienia repo, dostęp, ochrona gałęzi, scalanie PR) czekają na potwierdzenie operatora.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              method: { type: Type.STRING, description: 'GET, POST, PUT, PATCH lub DELETE.' },
+              path: { type: Type.STRING, description: `Ścieżka API, np. /repos/${GITHUB_REPOSITORY}/branches.` },
+              body: { type: Type.STRING, description: 'Opcjonalne ciało żądania jako JSON.' },
+            },
+            required: ['method', 'path'],
+          },
         },
-      });
+        {
+          name: 'github_sync',
+          description:
+            `Synchronizacja obustronna katalogu projektu SVL z ${GITHUB_REPOSITORY} (gałąź ${syncBranch()}): ` +
+            'status | pull (pobierz) | push (zapisz lokalne zmiany i wyślij) | sync (zapisz, scal, wyślij). Nigdy nie nadpisuje siłą.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: 'status, pull, push lub sync.' },
+              message: { type: Type.STRING, description: 'Opis commitu dla lokalnych zmian (opcjonalnie).' },
+            },
+            required: ['action'],
+          },
+        },
+        {
+          name: 'github_cli',
+          description:
+            `Uruchamia GitHub CLI (gh) dla ${GITHUB_REPOSITORY}, np. "pr list", "issue create --title X --body Y", ` +
+            '"run list", "workflow run nazwa.yml", "release create v1.0 --notes ...". Tylko to repozytorium.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: { args: { type: Type.STRING, description: 'Argumenty polecenia gh (bez słowa gh).' } },
+            required: ['args'],
+          },
+        },
+        {
+          name: 'github_read_file',
+          description: `Odczytuje plik źródłowy z gałęzi svl-sync repozytorium ${GITHUB_REPOSITORY}.`,
+          parameters: {
+            type: Type.OBJECT,
+            properties: { path: { type: Type.STRING, description: 'Ścieżka względna pliku źródłowego.' } },
+            required: ['path'],
+          },
+        },
+      );
     }
     if (wantsGitHubWrite) {
       chatToolDeclarations.push({
         name: 'github_update_file',
         description:
-          'Zapisuje wyłącznie dozwolony plik źródłowy jako commit na gałęzi svl-sync repo mmitek515-netizen/SVL_open. Nigdy nie zapisuje na main; nie przyjmuje sekretów.',
+          `Zapisuje plik źródłowy jako commit na gałęzi svl-sync repozytorium ${GITHUB_REPOSITORY}. Nie przyjmuje sekretów.`,
         parameters: {
           type: Type.OBJECT,
           properties: {

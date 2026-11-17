@@ -20,7 +20,7 @@ if [ -f /etc/os-release ]; then
 fi
 
 apt-get update -qq
-apt-get install -y python3 python3-venv python3-pip sqlite3 curl git jq polkitd sudo nodejs npm
+apt-get install -y python3 python3-venv python3-pip sqlite3 curl git jq polkitd sudo nodejs npm gh
 
 echo "=== [2/5] Tworzenie uzytkownika systemowego SVL OS ==="
 getent group svlos >/dev/null 2>&1 || addgroup --system svlos

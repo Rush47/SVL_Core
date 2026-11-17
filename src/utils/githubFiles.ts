@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 
-export const SVL_GITHUB_REPOSITORY = 'mmitek515-netizen/SVL_open';
+export const SVL_GITHUB_REPOSITORY = 'Rush47/SVL_Core';
 export const DEFAULT_GITHUB_FILE_BRANCH = 'svl-sync';
 export const MAX_GITHUB_FILE_BYTES = 128 * 1024;
 
@@ -118,7 +118,7 @@ export class GitHubFileService {
 
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
-      'User-Agent': 'SVL-Python-OS-Files',
+      'User-Agent': 'SVL-Core-Files',
       'X-GitHub-Api-Version': '2022-11-28',
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init.headers as Record<string, string> | undefined),

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { GitHubPanel } from './GitHubPanel';
 import {
   Copy,
   Check,
@@ -356,37 +357,8 @@ export const LinuxDeployDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 3: Agent source repository probes */}
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-100">
-              Repozytoria źródłowe agentów
-            </h2>
-          </div>
-
-          <div className="space-y-2 text-xs font-mono tabular-nums text-slate-300">
-            <div className="flex justify-between py-1 border-b border-slate-800/70">
-              <span className="text-slate-400">Repozytorium SVL_System:</span>
-              <span className={syncRep?.repositories_inspected?.SVL_System?.reachable ? 'text-emerald-400' : 'text-slate-400'}>
-                {syncRep?.repositories_inspected?.SVL_System?.reachable ? 'Połączono (GitHub API)' : 'Niezweryfikowane / offline'}
-              </span>
-            </div>
-            <div className="flex justify-between py-1 border-b border-slate-800/70">
-              <span className="text-slate-400">Repozytorium Debian_13:</span>
-              <span className={syncRep?.repositories_inspected?.Debian_13?.reachable ? 'text-emerald-400' : 'text-slate-400'}>
-                {syncRep?.repositories_inspected?.Debian_13?.reachable ? 'Połączono (GitHub API)' : 'Niezweryfikowane / offline'}
-              </span>
-            </div>
-            <div className="flex justify-between py-1 border-b border-slate-800/70">
-              <span className="text-slate-400">Silnik Pamięci:</span>
-              <span className="text-cyan-300">SQLite WAL + Hyperspace 128D</span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-lg bg-[#0B0D13] border border-slate-800 text-xs text-slate-400">
-            Synchronizacja i masowe pobieranie workspace z GitHub są wyłączone. Dostęp do pojedynczych plików pozostaje dostępny przez MCP.
-          </div>
-        </div>
+        {/* Card 3: GitHub Rush47/SVL_Core — token, synchronizacja obustronna */}
+        <GitHubPanel />
       </div>
 
       {/* Bottom Split: Workspace File Manager & External Debian 13 Connection Instructions */}

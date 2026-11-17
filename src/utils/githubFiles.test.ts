@@ -42,7 +42,7 @@ test('GitHub file reads are direct, branch-specific, and block secrets', async (
     content,
   });
   assert.deepEqual(requests, [{
-    url: 'https://api.github.com/repos/mmitek515-netizen/SVL_open/contents/src/utils/sample.ts?ref=svl-sync',
+    url: 'https://api.github.com/repos/Rush47/SVL_Core/contents/src/utils/sample.ts?ref=svl-sync',
     method: 'GET',
   }]);
 
@@ -65,7 +65,7 @@ test('GitHub file updates create the dedicated branch and reject secret content 
     const body = typeof init.body === 'string' ? JSON.parse(init.body) : {};
     requests.push({ url, method, body });
 
-    if (url.endsWith('/repos/mmitek515-netizen/SVL_open')) {
+    if (url.endsWith('/repos/Rush47/SVL_Core')) {
       return Response.json({ default_branch: 'main' });
     }
     if (url.endsWith('/branches/svl-sync')) {

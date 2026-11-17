@@ -64,6 +64,22 @@ const TERMINAL_TABS: Array<{
     ],
   },
   {
+    id: 'github',
+    label: 'GitHub CLI',
+    subtitle: 'GitHub CLI (gh) i synchronizacja obustronna z repozytorium Rush47/SVL_Core (token GITHUB_TOKEN z .env)',
+    defaultPrompt: 'gh(Rush47/SVL_Core)$',
+    welcomeText:
+      'GitHub CLI dla repozytorium Rush47/SVL_Core. Wpisz polecenie gh (np. "pr list", "issue list", "run list", "api /repos/Rush47/SVL_Core") albo synchronizację: status, pobierz, wyślij, synchronizuj, init.',
+    quickCommands: [
+      'status',
+      'synchronizuj',
+      'auth status',
+      'pr list',
+      'issue list',
+      'run list',
+    ],
+  },
+  {
     id: 'hyperspace',
     label: 'Konsola obliczeń 128-bit',
     subtitle: 'Moduł obliczeniowy 128-bit BinaryHyperspaceKernel (Hamming) + Analiza Harmoniczna Eulera/Fouriera',
@@ -109,6 +125,7 @@ export const TerminalsWorkspace: React.FC = () => {
     linux: [],
     ssh: [],
     python: [],
+    github: [],
     hyperspace: [],
     agents: [],
   });

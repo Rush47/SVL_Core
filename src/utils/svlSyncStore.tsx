@@ -34,6 +34,7 @@ const DEFAULT_TERMINAL_LOGS: Record<TerminalTabId, TerminalLogLine[]> = {
   linux: [],
   ssh: [],
   python: [],
+  github: [],
   hyperspace: [],
   agents: [],
 };

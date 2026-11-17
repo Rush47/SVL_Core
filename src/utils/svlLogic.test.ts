@@ -28,19 +28,15 @@ import {
   validateOperatorTokenFormat,
 } from './svlLogic';
 
-test('GitHub agent scopes distinguish read access from sync-branch writes', () => {
-  assert.deepEqual(getGitHubAgentPermissions(['github.read']), {
-    read: true,
-    writeSync: false,
-  });
+test('GitHub agent scopes: read, sync-branch writes and admin', () => {
+  assert.deepEqual(getGitHubAgentPermissions(['github.read']), { read: true, writeSync: false, admin: false });
   assert.deepEqual(getGitHubAgentPermissions(['github.read', 'github.write_sync']), {
     read: true,
     writeSync: true,
+    admin: false,
   });
-  assert.deepEqual(getGitHubAgentPermissions(undefined), {
-    read: false,
-    writeSync: false,
-  });
+  assert.deepEqual(getGitHubAgentPermissions(['github.admin']), { read: true, writeSync: true, admin: true });
+  assert.deepEqual(getGitHubAgentPermissions(undefined), { read: false, writeSync: false, admin: false });
 });
 test('mission completion claims are blocked when no mission status can be verified', () => {
   const context = 'Prowadzę misję, sprawdź czy cała procedura się zakończyła.';

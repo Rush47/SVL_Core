@@ -144,7 +144,7 @@ export async function searchLicensedAgentAvatars(
       format: 'json',
     }).toString();
     const response = await fetcher(apiUrl, {
-      headers: { Accept: 'application/json', 'User-Agent': 'SVL_open agent-avatar search' },
+      headers: { Accept: 'application/json', 'User-Agent': 'SVL_Core agent-avatar search' },
       signal: AbortSignal.timeout(8000),
     });
     if (!response.ok) {

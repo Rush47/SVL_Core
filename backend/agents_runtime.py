@@ -37,8 +37,9 @@ MAX_AGENT_TASK_RESULT_CHARS = 8000
 MAX_AGENT_TASK_TIMEOUT_SEC = 180
 MAX_AGENT_GITHUB_TOOL_CALLS = 4
 GITHUB_MCP_DEFAULT_URL = "http://127.0.0.1:3000/mcp/github"
-GITHUB_AGENT_SCOPES = ("github.read", "github.write_sync")
-GITHUB_AGENT_SCOPE_VERSION = 1
+# Bielik i Maya administrują repozytorium Rush47/SVL_Core (operacje nieodwracalne po potwierdzeniu operatora).
+GITHUB_AGENT_SCOPES = ("github.read", "github.write_sync", "github.admin")
+GITHUB_AGENT_SCOPE_VERSION = 2
 BIELIK_ROOT_SCOPE_VERSION = 1
 MISSION_CONTEXT_PATTERN = re.compile(r"\b(?:misj|procedur|operacj)\w*", re.IGNORECASE)
 MISSION_COMPLETION_PATTERNS = (
@@ -151,6 +152,7 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
                 "terminal.exec",
                 "github.read",
                 "github.write_sync",
+                "github.admin",
             ],
             "bus_topics": [
                 "svl.agent.task_queued",
@@ -210,6 +212,7 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
                 "terminal.exec",
                 "github.read",
                 "github.write_sync",
+                "github.admin",
                 "svl364.telemetry",
                 "user_notes.read",
                 "broadcast.wszyscy",
@@ -423,7 +426,7 @@ def _agent_github_tool_names(task: dict[str, Any]) -> list[str]:
         else set()
     )
     task_text = f"{task.get('title', '')}\n{task.get('payload', '')}"
-    if "github.read" not in scopes or not re.search(r"github(?:\.com)?|mmitek515-netizen/SVL_open", task_text, re.IGNORECASE):
+    if "github.read" not in scopes or not re.search(r"github(?:\.com)?|Rush47/SVL_Core", task_text, re.IGNORECASE):
         return []
 
     tools = ["github_read_file"]
@@ -1099,7 +1102,7 @@ class SVLAgentOrchestrator:
                 "accent_hex": meta["accent_hex"],
                 "preserved_role": meta["preserved_role"],
                 "capabilities": meta["capabilities"],
-                "source_repository": "https://github.com/mmitek515-netizen/SVL_System",
+                "source_repository": "https://github.com/Rush47/SVL_Core",
                 "source_profile_path": meta["source_profile_path"],
                 "source_nature": "SOFTWARE_DEFINITION_ONLY",
                 "external_process_connected": False,
@@ -1670,47 +1673,10 @@ class SVLAgentOrchestrator:
 
             await asyncio.sleep(0.2)
 
-    def _probe_github_repository(self, repo: str) -> dict[str, Any]:
-        """Sprawdza rzeczywisty stan repozytorium GitHub przez oficjalne API."""
-        url = f"https://api.github.com/repos/{repo}/contents"
-        headers = {"User-Agent": "SVL-Python-OS/5.6.0", "Accept": "application/vnd.github.v3+json"}
-        gh_token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
-        if gh_token:
-            headers["Authorization"] = f"Bearer {gh_token}"
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                items = json.loads(resp.read().decode("utf-8"))
-                names = [x.get("name") for x in items if isinstance(x, dict)]
-                return {
-                    "repository": repo,
-                    "reachable": True,
-                    "http_status": resp.status,
-                    "root_entries": names,
-                    "verified_at": datetime.now(timezone.utc).isoformat(),
-                }
-        except Exception as exc:
-            return {
-                "repository": repo,
-                "reachable": False,
-                "error": str(exc),
-                "verified_at": datetime.now(timezone.utc).isoformat(),
-            }
-
     async def connect_my_ai(
         self, triggered_by: str = "operator", skip_network_probes: bool = False
     ) -> dict[str, Any]:
         """Uruchamia i łączy lokalne procesy robocze skonfigurowanych agentów (np. Bielik na llama3.2-vision:11b)."""
-        svl_repo_probe = (
-            {"reachable": False, "checked": False, "reason": "skipped"}
-            if skip_network_probes
-            else self._probe_github_repository("mmitek515-netizen/SVL_System")
-        )
-        deb_repo_probe = (
-            {"reachable": False, "checked": False, "reason": "skipped"}
-            if skip_network_probes
-            else self._probe_github_repository("mmitek515-netizen/Debian_13")
-        )
         spawned_agents: list[dict[str, Any]] = []
         for name, meta in CANONICAL_SVL_AGENTS.items():
             cfg = self.get_agent_config(name)
@@ -1726,7 +1692,7 @@ class SVLAgentOrchestrator:
                 "accent_hex": meta["accent_hex"],
                 "preserved_role": meta["preserved_role"],
                 "capabilities": meta["capabilities"],
-                "source_repository": "https://github.com/mmitek515-netizen/SVL_System",
+                "source_repository": "https://github.com/Rush47/SVL_Core",
                 "source_profile_path": meta["source_profile_path"],
                 "source_nature": "LOCAL_OLLAMA_WORKER",
                 "external_process_connected": False,
@@ -1764,10 +1730,7 @@ class SVLAgentOrchestrator:
         report = {
             "command": "sync_agents",
             "executed_at": self.connected_at,
-            "repositories_inspected": {
-                "SVL_System": svl_repo_probe,
-                "Debian_13": deb_repo_probe,
-            },
+            "repository": "Rush47/SVL_Core",
             "architectural_finding": (
                 f"Aktywowano {len(spawned_agents)} lokalny worker AI (Bielik -> ollama:llama3.2-vision:11b)."
             ),

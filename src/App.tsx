@@ -211,7 +211,7 @@ function SVLWorkspaceShell() {
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
-            Terminale (4)
+            Terminale (5)
           </button>
           <button
             type="button"

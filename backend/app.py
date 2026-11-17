@@ -1171,7 +1171,7 @@ async def handle_api_request(
         cmd = str(body.get("command", ""))
         entry_id = str(body.get("id") or "").strip() or None
         display_ts = str(body.get("timestamp") or "").strip() or None
-        if tab not in ("linux", "ssh", "python", "hyperspace", "agents"):
+        if tab not in ("linux", "ssh", "python", "hyperspace", "agents", "github"):
             return 400, {"ok": False, "error": f"Unknown terminal tab: {tab}"}
         res = runtime.kernel.record_terminal_entry(
             tab=tab,
@@ -1188,7 +1188,7 @@ async def handle_api_request(
 
     if method == "POST" and path == "/api/py/terminal/clear":
         tab = str(body.get("tab", "linux")).strip()
-        if tab not in ("linux", "ssh", "python", "hyperspace", "agents"):
+        if tab not in ("linux", "ssh", "python", "hyperspace", "agents", "github"):
             return 400, {"ok": False, "error": f"Unknown terminal tab: {tab}"}
         res = runtime.kernel.clear_terminal_history(
             tab=tab,

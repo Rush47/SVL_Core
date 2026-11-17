@@ -20,6 +20,9 @@
    - Uruchamianie prawdziwej Ollamy (`backend/ollama_daemon.py`) — bez zastępników.
    - Obsługa komend `/exec raport systemu`, `/exec <polecenie>` i `@work` w 4 terminalach systemowych.
 
+5. **[05. GitHub — repozytorium Rush47/SVL_Core](docs/05_GITHUB_RUSH47_SVL_CORE.md)**
+   - Token classic w `.env`, synchronizacja obustronna, GitHub CLI i administracja repozytorium przez Bielika i Mayę.
+
 ---
 
 ## Szybki Start i Testy

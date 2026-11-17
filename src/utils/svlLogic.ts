@@ -57,13 +57,16 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   return clean;
 }
 
-export function getGitHubAgentPermissions(rawScopes: unknown): { read: boolean; writeSync: boolean } {
+export function getGitHubAgentPermissions(rawScopes: unknown): { read: boolean; writeSync: boolean; admin: boolean } {
   const scopes = new Set(
     Array.isArray(rawScopes) ? rawScopes.map((scope) => String(scope).trim().toLowerCase()) : [],
   );
+  const admin = scopes.has('github.admin');
   return {
-    read: scopes.has('github.read'),
-    writeSync: scopes.has('github.write_sync'),
+    read: admin || scopes.has('github.read'),
+    writeSync: admin || scopes.has('github.write_sync'),
+    // Administracja (usuwanie, ustawienia, dostęp) — zawsze po potwierdzeniu operatora.
+    admin,
   };
 }
 
@@ -495,7 +498,7 @@ export function resolveInstalledOllamaModel(
   return { name: String(pick?.name || pick?.model || names[0]), substituted: true, installedCount: names.length };
 }
 
-export type TerminalTabId = 'linux' | 'ssh' | 'python' | 'hyperspace' | 'agents';
+export type TerminalTabId = 'linux' | 'ssh' | 'python' | 'github' | 'hyperspace' | 'agents';
 
 export interface TerminalLogLine {
   id: string;
