@@ -2589,7 +2589,7 @@ class SVLSystemKernel:
             "event": sync_res["event"],
         }
 
-    def _format_detailed_iris_report_tx(
+    def _format_detailed_report_tx(
         self,
         conn: sqlite3.Connection,
         *,
@@ -2648,14 +2648,14 @@ class SVLSystemKernel:
             if formatted_pairs:
                 details_lines = "\n".join(formatted_pairs) + "\n"
 
-        # Jeśli message już jest pełnym wielosekcyjnym raportem, zwróć go czysto bez prefiksu Iris
+        # Jeśli message już jest pełnym wielosekcyjnym raportem, zwróć go bez dodatkowego nagłówka
         if "### " in clean_msg and len(clean_msg) > 450:
             return clean_msg
 
         mod_badges = ", ".join(f"`{r['id']}`" for r in mod_rows[:8])
         return (
-            f"### 🛰️ Raport Operacyjny `SVL_System` · Bielik (ROOT) [#{seq_num}] — {clean_title}\n"
-            f"> **Procesor ROOT:** `Bielik (llama3.2-vision:11b)` · **Kanał:** `Rodzina Mitek (wszyscy)` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
+            f"### 🛰️ Raport Operacyjny `SVL_System` · Maya [#{seq_num}] — {clean_title}\n"
+            f"> **Raport przygotowała:** Maya (AI statku SVL-364) · **Kanał:** `Rodzina Mitek (wszyscy)` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
             f"#### 📋 1. Szczegółowy Opis Zdarzenia i Operacji\n"
             f"- **Tytuł operacji:** **{clean_title}**\n"
             f"- **Komunikat wykonawczy:** {clean_msg}\n"
@@ -2670,16 +2670,16 @@ class SVLSystemKernel:
             f"| **Mostek SSH / MCP** | `alias OpenSSH {os.environ.get('SVL_SSH_TARGET', 'Ship')}` · `POST /api/mcp/svl364` | konfiguracja |\n\n"
             f"Aktualny stan usług (Ollama, ComfyUI, host SSH), GPU i zapory: zakładka **SVL-364** (pomiar na żywo).\n\n"
             f"#### 🧠 3. Jądro `SVL_System`, Pamięć Długotrwała AI i Aktywna Obsada\n"
-            f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Mateusz Mitek (Operator)**\n"
+            f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Maya (AI statku SVL-364)** · **Mateusz Mitek (Operator)**\n"
             f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`)\n"
             f"- **Aktywne Moduły Systemowe ({active_mod_count}):** {mod_badges} · Wolny dysk `/` `{disk_free} GB`\n\n"
-            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🤖 Agenci (Bielik ROOT)|tab:agents] [btn: 🔄 Synchronizuj globalnie|action:sync]"
+            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Mayę o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
         )
 
     def generate_comprehensive_svl_system_markdown_report(self, directive_context: str = "Pełna diagnostyka SVL_System i statku SVL-364") -> str:
         def _build(conn: sqlite3.Connection) -> str:
             srv_rev = self._get_server_revision_tx(conn)
-            return self._format_detailed_iris_report_tx(
+            return self._format_detailed_report_tx(
                 conn,
                 seq_num=srv_rev,
                 severity="INFO",
@@ -2773,6 +2773,36 @@ class SVLSystemKernel:
             "event": saved.get("event"),
             "serverRevision": saved.get("serverRevision"),
         }
+
+    def post_maya_report(
+        self,
+        content: str,
+        *,
+        model_label: str,
+        message_prefix: str,
+        origin: str = "python-kernel",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """Pełny raport (skan, raport systemu) publikowany przez Mayę na kanale „wszyscy”."""
+        msg_id = f"{message_prefix}-{uuid.uuid4().hex[:12]}"
+        return self.save_chat_message(
+            self.FAMILY_CHANNEL_ID,
+            self.FAMILY_CHANNEL_TITLE,
+            "svl-hybrid-router",
+            {
+                "id": msg_id,
+                "role": "assistant",
+                "sender": self.NOTIFICATION_SENDER,
+                "agentId": self.NOTIFICATION_AGENT_ID,
+                "modelUsed": model_label,
+                "provenance": "server_verified",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "content": str(content or "")[:20000],
+            },
+            origin=origin,
+            correlation_id=correlation_id,
+            event_id=f"evt-{msg_id}",
+        )
 
     def list_family_notifications(self, *, limit: int = 80) -> dict[str, Any]:
         safe_limit = max(1, min(500, int(limit or 80)))

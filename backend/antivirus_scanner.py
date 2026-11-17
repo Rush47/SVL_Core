@@ -305,21 +305,12 @@ class SVLAntivirusScanner:
         self.last_scan_report = report
 
         if emit_to_chat:
+            # Wynik skanu ogłasza Maya na kanale „wszyscy” (raport serwera, bez modelu AI).
             try:
-                self.kernel.save_chat_message(
-                    conversation_id,
-                    "Rodzina Mitek (wszyscy)",
-                    "svl-signature-scanner",
-                    {
-                        "id": f"msg-av-{uuid.uuid4().hex[:10]}",
-                        "role": "assistant",
-                        "sender": "Skaner SVL",
-                        "agentId": "svl-scanner",
-                        "modelUsed": "Skaner sygnatur SVL (bez modelu AI)",
-                        "provenance": "server_verified",
-                        "timestamp": datetime.now(timezone.utc).strftime("%H:%M"),
-                        "content": report_md,
-                    },
+                self.kernel.post_maya_report(
+                    report_md,
+                    model_label="Maya · skaner sygnatur SVL-365 (wynik serwera)",
+                    message_prefix="msg-av",
                     origin=origin,
                     correlation_id=correlation_id,
                 )

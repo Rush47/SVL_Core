@@ -3,10 +3,12 @@ import {
   AlertTriangle,
   CornerDownRight,
   Cpu,
+  FileText,
+  MessageCircle,
   RefreshCw,
+  ShieldCheck,
   Terminal,
   Users,
-  Zap,
 } from 'lucide-react';
 import { Button } from '@vector-im/compound-web';
 
@@ -32,13 +34,17 @@ export const ChatInteractiveButton: React.FC<ChatInteractiveButtonProps> = ({
         ? <Cpu className="w-3.5 h-3.5" aria-hidden="true" />
         : normalizedAction.startsWith('tab:linux')
           ? <Terminal className="w-3.5 h-3.5" aria-hidden="true" />
-          : normalizedAction === 'action:connect_ai' || normalizedAction === 'connect_ai'
-            ? <Zap className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
-            : normalizedAction === 'action:sync' || normalizedAction === 'sync'
-              ? <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
-              : disabled
-                ? <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
-                : <CornerDownRight className="w-3.5 h-3.5" aria-hidden="true" />;
+          : normalizedAction === 'action:sync' || normalizedAction === 'sync'
+            ? <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+            : normalizedAction === 'action:scan' || normalizedAction === 'action:antivirus'
+              ? <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
+              : normalizedAction === 'action:report'
+                ? <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                : normalizedAction.startsWith('ask:')
+                  ? <MessageCircle className="w-3.5 h-3.5" aria-hidden="true" />
+                  : disabled
+                    ? <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+                    : <CornerDownRight className="w-3.5 h-3.5" aria-hidden="true" />;
 
   return (
     <Button

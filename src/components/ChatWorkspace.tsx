@@ -31,6 +31,7 @@ import {
   createUniqueId,
   formatAgentDisplayName,
   isUnsafeChatInteractiveAction,
+  normalizeAgentCanonicalName,
   parseBielikChatCommand,
   safeFetchJson,
   getSvlOperatorAccessToken,
@@ -435,8 +436,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         method: 'POST',
         timeoutMs: 15000,
         body: JSON.stringify({
-          title: 'Pełny Raport Operacyjny SVL_System (host, moduły, pamięć)',
-          category: 'svl_system',
+          directive: 'Pełny raport operacyjny SVL_System (host, moduły, pamięć)',
+          emitToChat: true,
           origin: tabOrigin,
         }),
       });
@@ -768,6 +769,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     }
   };
 
+  /**
+   * Obsługa przycisków z wiadomości (pisanych przez Bielika i Mayę lub serwer):
+   * `send:` wysyła wiadomość do AI, `ask:Bielik|Maya` oddaje głos AI, `text:` wstawia tekst
+   * do pola, `tab:` otwiera zakładkę, `action:` uruchamia akcję systemu.
+   */
   const handleInteractiveAction = async (actionValue: string, label?: string) => {
     const val = actionValue.trim();
     if (!val) return;
@@ -775,30 +781,65 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       setChatActionError('Przyciski odpowiedzi AI nie mogą automatycznie uruchamiać powłoki. Wklej komendę ręcznie do terminala po sprawdzeniu.');
       return;
     }
+    const lower = val.toLowerCase();
 
-    if (val.startsWith('tab:')) {
-      const tabName = val.slice(4).trim();
-      if (!['chat', 'svl364', 'infrastructure', 'agents', 'terminals', 'kernel', 'linux'].includes(tabName)) return;
+    if (lower.startsWith('tab:')) {
+      const tabName = lower.slice(4).trim();
+      if (!['chat', 'svl364', 'infrastructure', 'agents', 'terminals', 'kernel', 'linux'].includes(tabName)) {
+        setChatActionError(`Przycisk wskazuje nieistniejącą zakładkę „${tabName}”.`);
+        return;
+      }
       onNavigateTab(tabName as 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux');
       return;
     }
 
-    if (val === 'action:sync' || val === 'sync') {
-      await handleRefreshAllDomains();
-      return;
-    }
-
-    if (val.startsWith('send:')) {
+    if (lower.startsWith('send:')) {
       const textToSend = val.slice(5).trim();
+      if (!textToSend) return;
+      if (sendingRef.current || isSending) {
+        setChatActionError('Poczekaj, aż AI skończy odpowiadać — potem kliknij przycisk ponownie.');
+        return;
+      }
       void handleSendMessage(textToSend);
       return;
     }
 
-    let textToFill = val.startsWith('text:') ? val.slice(5).trim() : val;
-    if (/^[a-z0-9_-]+$/i.test(textToFill) && label && !['action:sync', 'action:connect_ai'].includes(val)) {
-      textToFill = label;
+    if (lower.startsWith('ask:')) {
+      const agent = normalizeAgentCanonicalName(val.slice(4).trim());
+      void handleProactiveRef.current(agent === 'Bielik' || agent === 'Maya' ? agent : undefined, false);
+      return;
     }
-    setInput(textToFill);
+
+    if (lower.startsWith('text:')) {
+      setInput(val.slice(5).trim());
+      composerRef.current?.focus();
+      return;
+    }
+
+    const actionName = lower.startsWith('action:') ? lower.slice(7).trim() : lower;
+    if (actionName === 'sync') {
+      await handleRefreshAllDomains();
+      return;
+    }
+    if (actionName === 'scan' || actionName === 'antivirus') {
+      await handleRunAntivirusScan();
+      return;
+    }
+    if (actionName === 'report') {
+      await handleEmitComprehensiveSvlReport();
+      return;
+    }
+    if (actionName === 'image') {
+      await handleGenerateImage();
+      return;
+    }
+    if (lower.startsWith('action:')) {
+      setChatActionError(`Nieznana akcja przycisku: „${val}”.`);
+      return;
+    }
+
+    // Przycisk bez prefiksu (np. `[btn: Pokaż moduły]`) wstawia swoją treść do pola wpisywania.
+    setInput(/^[a-z0-9_-]+$/i.test(val) && label ? label : val);
     composerRef.current?.focus();
   };
 

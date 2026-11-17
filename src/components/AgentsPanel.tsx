@@ -527,16 +527,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
               </div>
 
               <div className="pt-3 border-t border-slate-800/80 space-y-1.5 text-[11px] font-mono tabular-nums text-slate-400">
-                <a
-                  href={`http://${window.location.hostname}:${6080 + CANONICAL_AGENTS.findIndex((agent) => agent.slug === meta.slug) + 1}/vnc.html?autoconnect=1&resize=scale`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(event) => event.stopPropagation()}
-                  className="block rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1.5 text-center font-sans text-xs text-slate-200 hover:bg-slate-700"
-                  title="Wymaga uruchomionego profilu desktops i hasła pulpitu."
-                >
-                  Otwórz lokalny pulpit · svl-{meta.slug}
-                </a>
                 <div className="flex justify-between">
                   <span>Silnik / Ollama:</span>
                   <span className="text-emerald-300 truncate max-w-[170px]">

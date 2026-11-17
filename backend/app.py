@@ -700,11 +700,24 @@ async def handle_api_request(
     if path == "/api/py/kernel/markdown-report" and method in ("GET", "POST"):
         directive = str(body.get("directive") or query.get("directive") or "raport systemu SVL_System i telemetria statku SVL-364").strip()
         report_md = runtime.kernel.generate_comprehensive_svl_system_markdown_report(directive)
+        posted = None
+        if method == "POST" and bool(body.get("emitToChat")):
+            # Raport publikuje Maya na kanale „wszyscy”, widoczny od razu u wszystkich.
+            posted = runtime.kernel.post_maya_report(
+                report_md,
+                model_label="Maya · raport SVL_System (wynik serwera)",
+                message_prefix="msg-report",
+                origin=origin,
+                correlation_id=corr,
+            )
         meta = runtime.kernel.get_sync_metadata()
         return 200, {
             "ok": True,
             "directive": directive,
             "report": report_md,
+            "reportMarkdown": report_md,
+            "postedToChat": bool(posted and posted.get("ok")),
+            "event": (posted or {}).get("event"),
             "serverRevision": meta["serverRevision"],
         }
 

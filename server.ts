@@ -20,6 +20,7 @@ import {
   getGitHubAgentPermissions,
   guardUnverifiedMissionCompletion,
   normalizeAgentCanonicalName,
+  normalizeAiInteractiveMarkup,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
   selectOllamaModelName,
@@ -28,6 +29,7 @@ import {
 } from './src/utils/svlLogic.ts';
 import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
+import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
   CONVERSATION_AGENTS,
@@ -1346,7 +1348,8 @@ async function startServer() {
     const corrId: string = (req as any).correlationId || '';
     const pyRes = await callPythonBackend('POST', '/api/py/security/antivirus/scan', req.body || {}, corrId);
     cachedChatContextMeta = null;
-    if (pyRes.status === 200 && pyRes.data?.ok) {
+    // Przy emitToChat pełny raport skanu publikuje Maya; w przeciwnym razie krótkie powiadomienie Mayi.
+    if (pyRes.status === 200 && pyRes.data?.ok && !req.body?.emitToChat) {
       const removed = Number(pyRes.data.threatsFoundAndPurged || 0);
       void emitFamilyNotification(
         {
@@ -1458,6 +1461,8 @@ async function startServer() {
       ) {
         return sendChatJson(body);
       }
+      // Przyciski zapisane przez model jako linki Markdown → składnia `[btn: …|…]`.
+      body.reply = normalizeAiInteractiveMarkup(body.reply);
       const replyMessage = {
         id: `asst-${Date.now()}-${randomUUID().slice(0, 8)}`,
         role: 'assistant',
@@ -2176,7 +2181,8 @@ async function startServer() {
         recalledMemories = agentsRes.data.agent_memories[memoryAgentName];
       }
     }
-    const agentMemoryContext = formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14);
+    // Kontekst systemowy: opis przycisków czatu + pamięć długotrwała agenta.
+    const agentMemoryContext = buildAgentSystemContext(formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14));
 
     // Antivirus Scan & Chat Synchronization priority handler
     const hasAntivirusKeyword =
@@ -2203,7 +2209,7 @@ async function startServer() {
       );
       if (avRes.status === 200 && avRes.data?.ok && avRes.data?.reportMarkdown) {
         const avReply = String(avRes.data.reportMarkdown);
-        const avBadge = 'Skaner sygnatur SVL (bez modelu AI)';
+        const avBadge = 'Maya · skaner sygnatur SVL-365 (wynik serwera)';
         appliedActions.push({
           tool: 'svl_antivirus_scan_and_purge',
           entity: 'module',
@@ -2215,8 +2221,8 @@ async function startServer() {
         void pollAndRelayOutbox();
         res.json({
           ok: true,
-          sender: selectedDisplayName,
-          agentId: selectedAgent,
+          sender: 'Maya',
+          agentId: 'Maya',
           modelUsed: avBadge,
           reply: withDirectiveReceipts(avReply),
           provenance: 'server_verified',
@@ -2578,9 +2584,9 @@ async function startServer() {
       const kernelReply = String(repFallback.data?.report || '').trim();
       res.json({
         ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent,
-        modelUsed: displayModelBadge,
+        sender: 'Maya',
+        agentId: 'Maya',
+        modelUsed: 'Maya · raport SVL_System (wynik serwera)',
         reply: withDirectiveReceipts(kernelReply),
         provenance: 'server_verified',
         followUpMessages: [],
@@ -2871,14 +2877,14 @@ async function startServer() {
       } else if (Array.isArray(agentsRes.data?.agent_memories?.[speaker])) {
         speakerMemories = agentsRes.data.agent_memories[speaker];
       }
-      const speakerMemoryContext = formatMemoryPromptContext(speakerMemories, speaker, 12);
+      const speakerMemoryContext = buildAgentSystemContext(formatMemoryPromptContext(speakerMemories, speaker, 12));
 
       // 2) Wskazana AI dopisuje swoją kwestię własnym modelem (lub inicjuje rozmowę na pustym kanale).
       const line = await generateAgentProactiveLine(
         modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, speakerMemoryContext, failures,
       );
       if (!line) return noModel();
-      const text = cleanAgentReply(line.text, speaker);
+      const text = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
       if (!text || isRepetitive(text, turns.slice(-8).map((t) => t.content))) {
         return skip('nothing_new', `${speaker} nie miał(a) nic nowego do powiedzenia — wypowiedź pominięta.`);
       }

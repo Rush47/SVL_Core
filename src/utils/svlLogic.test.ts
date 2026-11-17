@@ -16,6 +16,7 @@ import {
   parseBielikChatCommand,
   parseSshShipTerminalInput,
   extractBielikActionTags,
+  normalizeAiInteractiveMarkup,
   parseChatInteractiveToken,
   resolveAvatarProfileKey,
   safeFetchJson,
@@ -406,4 +407,18 @@ test('safeFetchJson retries transient proxy HTML HTTP 200 responses even when ma
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('AI buttons: Polish keyword and Markdown links with chat actions become working buttons', () => {
+  assert.deepEqual(parseChatInteractiveToken('[przycisk: Skanuj|action:scan]'), { label: 'Skanuj', action: 'action:scan' });
+  assert.deepEqual(parseChatInteractiveToken('[BTN: Raport|action:report]'), { label: 'Raport', action: 'action:report' });
+  assert.equal(
+    normalizeAiInteractiveMarkup('Wybierz: [Zapytaj Mayę](ask:Maya) albo [Moduły](send:/moduly).'),
+    'Wybierz: [btn: Zapytaj Mayę|ask:Maya] albo [btn: Moduły|send:/moduly].',
+  );
+  // zwykłe linki i nieznane schematy zostają bez zmian
+  assert.equal(normalizeAiInteractiveMarkup('[Docs](https://example.com)'), '[Docs](https://example.com)');
+  assert.equal(normalizeAiInteractiveMarkup('[X](javascript:alert(1))'), '[X](javascript:alert(1))');
+  assert.equal(isUnsafeChatInteractiveAction('send:/exec rm -rf /'), true);
+  assert.equal(isUnsafeChatInteractiveAction('ask:Bielik'), false);
 });

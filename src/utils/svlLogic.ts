@@ -89,14 +89,36 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
   return UNVERIFIED_MISSION_STATUS_REPLY;
 }
 
+/** Słowa kluczowe przycisku w treści czatu: `[btn: Etykieta|akcja]` (też `button`, `action`, `przycisk`). */
+export const CHAT_BUTTON_TOKEN_PATTERN = '\\[(?:btn|button|action|przycisk):[^\\]\\n]+\\]';
+
 export function parseChatInteractiveToken(token: string): { label: string; action: string } | null {
-  const match = token.trim().match(/^\[(?:btn|button|action):([^\]]+)\]$/);
+  const match = token.trim().match(/^\[(?:btn|button|action|przycisk):([^\]\n]+)\]$/i);
   if (!match) return null;
 
   const separator = match[1].indexOf('|');
   const label = (separator < 0 ? match[1] : match[1].slice(0, separator)).trim();
   const action = (separator < 0 ? label : match[1].slice(separator + 1)).trim();
   return label ? { label, action: action || label } : null;
+}
+
+/** Akcje, które rozumie czat (patrz `handleInteractiveAction`). */
+const CHAT_ACTION_PREFIX = /^(?:send|text|tab|action|ask):/i;
+
+/**
+ * Ujednolica przyciski pisane przez modele: linki Markdown z akcją czatu, np.
+ * `[Synchronizuj](action:sync)` albo `[Zapytaj Mayę](send: Jaki jest stan?)`,
+ * zamieniane są na `[btn: Etykieta|akcja]`. Zwykłe linki http(s) zostają bez zmian.
+ */
+export function normalizeAiInteractiveMarkup(text: string): string {
+  return String(text || '').replace(
+    /\[([^\]\n]{1,80})\]\(\s*((?:send|text|tab|action|ask):[^)\n]{0,300})\)/gi,
+    (_all, label: string, action: string) => {
+      const cleanLabel = label.replace(/[|\]]/g, ' ').trim();
+      const cleanAction = action.replace(/\]/g, ' ').trim();
+      return cleanLabel && CHAT_ACTION_PREFIX.test(cleanAction) ? `[btn: ${cleanLabel}|${cleanAction}]` : _all;
+    },
+  );
 }
 
 export function isUnsafeChatInteractiveAction(action: string): boolean {

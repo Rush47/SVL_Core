@@ -6,6 +6,7 @@ import {
 import { ChatInteractiveButton } from './ChatInteractiveButton';
 import {
   isUnsafeChatInteractiveAction,
+  normalizeAiInteractiveMarkup,
   parseChatInteractiveToken,
 } from '../utils/svlLogic';
 
@@ -52,7 +53,14 @@ export function renderFormattedLine(
   keyPrefix: string,
   onAction?: (actionValue: string, label?: string) => void,
 ): React.ReactNode {
-  const tokens = line.split(/(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[(?:btn|button|action):[^\]]+\]|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g);
+  // Najpierw wydzielamy przyciski — `_` lub `*` w etykiecie/akcji nie może ich rozbić formatowaniem.
+  const tokens = line
+    .split(/(\[(?:btn|button|action|przycisk):[^\]\n]+\])/gi)
+    .flatMap((part) =>
+      parseChatInteractiveToken(part)
+        ? [part]
+        : part.split(/(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g),
+    );
   return tokens.map((tok, i) => {
     const button = parseChatInteractiveToken(tok);
     if (button) {
@@ -138,7 +146,7 @@ export function renderFormattedContent(
   content: string,
   onAction?: (actionValue: string, label?: string) => void,
 ): React.ReactNode {
-  const normalized = (content || '').trim();
+  const normalized = normalizeAiInteractiveMarkup((content || '').trim());
   if (!normalized) return null;
 
   const codeBlockRegex = /(```[\s\S]*?(?:```|$))/g;
