@@ -174,7 +174,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   useEffect(() => {
     trackGuiEvent({
       kind: 'gui_ws_state',
-      level: wsLastError && wsState !== 'online' ? 'WARN' : 'INFO',
+      // Brak tokenu przed zalogowaniem to stan oczekiwany, nie ostrzeżenie.
+      level:
+        wsLastError && wsState !== 'online' && !/SVL_OPERATOR_TOKEN/.test(wsLastError) ? 'WARN' : 'INFO',
       action: `Stan WebSocket /ws/svl: ${wsState}`,
       detail: wsLastError ? { lastError: wsLastError } : undefined,
     });

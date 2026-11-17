@@ -85,7 +85,18 @@ let discovered: { at: number; models: string[] } | null = null;
 let discovering: Promise<string[]> | null = null;
 const goneModels = new Set<string>();
 
+type GeminiModelLogger = (level: 'INFO' | 'WARN' | 'ERROR', message: string, details?: Record<string, unknown>) => void;
+let modelLogger: GeminiModelLogger | null = null;
+
+/** Podpięcie loggera plików (logi/): wykryte modele, błędy listy, modele wycofane. */
+export function setGeminiModelLogger(logger: GeminiModelLogger | null): void {
+  modelLogger = logger;
+}
+
 export function markGeminiModelGone(model: string): void {
+  if (!goneModels.has(model)) {
+    modelLogger?.('WARN', `Model Gemini ${model} niedostępny (404 / wycofany) — pomijany do restartu serwera`);
+  }
   goneModels.add(model);
 }
 
@@ -103,9 +114,18 @@ export async function discoverGeminiModels(client: any): Promise<string[]> {
       }
       const ranked = rankGeminiChatModels(all);
       discovered = { at: Date.now(), models: ranked };
+      modelLogger?.(
+        ranked.length > 0 ? 'INFO' : 'WARN',
+        `Modele Gemini dostępne dla klucza: ${ranked.length} (z ${all.length} zwróconych przez API)`,
+        { top: ranked.slice(0, 8) },
+      );
       return ranked;
-    } catch {
+    } catch (error) {
       discovered = { at: Date.now() - DISCOVERY_TTL_MS + 60_000, models: [] }; // ponów za minutę
+      modelLogger?.('WARN', 'Nie udało się pobrać listy modeli Gemini — używana lista zapasowa', {
+        error: describeGeminiError(error instanceof Error ? error.message : String(error)),
+        fallback: GEMINI_STATIC_FALLBACK,
+      });
       return [];
     } finally {
       discovering = null;

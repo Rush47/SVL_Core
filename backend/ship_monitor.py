@@ -18,6 +18,11 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
+try:
+    from svl_file_logger import append_python_log
+except ImportError:  # uruchomienie jako pakiet `backend.`
+    from backend.svl_file_logger import append_python_log
+
 STATE_KEY = "ship_monitor_state_v1"
 
 # Progi (z histerezą, żeby wahania wokół progu nie generowały serii powiadomień).
@@ -234,6 +239,17 @@ class ShipMonitor:
         self._save_state(state)
         self.last_check = {"alias": alias, "online": bool(ship.get("online")), "notifications": len(emitted),
                            "checked_at": state["checked_at"]}
+        online = bool(ship.get("online"))
+        append_python_log(
+            "ship_monitor",
+            (
+                f"Pomiar SVL-364 przez SSH ({alias}): " + (measurement_line(ship, alias) if online else
+                f"BRAK ŁĄCZNOŚCI — {str(ship.get('error') or 'nieznany błąd')[:300]}")
+                + f" · powiadomień: {len(emitted)}"
+            ),
+            level="INFO" if online else "WARN",
+            origin="ship-monitor",
+        )
         return emitted
 
     def _run(self) -> None:

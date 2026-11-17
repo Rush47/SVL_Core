@@ -36,6 +36,7 @@ import {
   geminiCandidatesFor,
   isGeminiModelGoneError,
   markGeminiModelGone,
+  setGeminiModelLogger,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
@@ -113,7 +114,11 @@ try {
   // ignore read-only fs
 }
 
-const svlFileLogger = new SvlFileLogger();
+// Katalog logi/ względem projektu (jak w backendzie Python), niezależnie od katalogu uruchomienia procesu.
+const svlFileLogger = new SvlFileLogger({ logDir: process.env.SVL_LOG_DIR || path.join(__dirname, 'logi') });
+setGeminiModelLogger((level, message, details) =>
+  svlFileLogger.log({ layer: 'GATEWAY', level, category: 'ai_models', message, details }),
+);
 svlFileLogger.logSync({
   layer: 'SYSTEM',
   level: 'INFO',
@@ -1554,7 +1559,25 @@ async function startServer() {
     const replyConversationId = String(conversationId || '').trim().slice(0, 120);
     const replyConversationTitle = String(req.body?.conversationTitle || '').trim().slice(0, 200);
     const sendChatJson = res.json.bind(res);
+    const chatStartedAt = Date.now();
     (res as any).json = (body: any) => {
+      // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
+      const failed = !body || body.ok !== true || body.provenance === 'error';
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: failed ? 'WARN' : 'INFO',
+        category: 'ai_chat',
+        correlationId: corrId,
+        origin: String(origin || 'client'),
+        message:
+          `${String(body?.sender || targetAgent || '?')} · kanał ${replyConversationId || '-'} · ` +
+          `model: ${String(body?.modelUsed || '-')} · ${failed ? 'BRAK ODPOWIEDZI MODELU' : 'odpowiedź OK'} ` +
+          `(${Date.now() - chatStartedAt} ms, HTTP ${res.statusCode})`,
+        details: failed
+          ? { error: body?.error || null, provenance: body?.provenance || null, reasons: body?.failureReasons || null }
+          : { provenance: body?.provenance || null, replyChars: String(body?.reply || '').length },
+      });
+      if (body && typeof body === 'object') delete body.failureReasons;
       if (
         res.statusCode !== 200 ||
         !replyConversationId ||
@@ -2748,6 +2771,7 @@ async function startServer() {
       sender: selectedDisplayName,
       agentId: selectedAgent,
       modelUsed: directiveReceipts.length > 0 ? displayModelBadge : 'Brak dostępnego modelu AI',
+      failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null },
       reply: conversationalReply,
       provenance: directiveReceipts.length > 0 ? 'server_verified' : 'error',
       followUpMessages: [],
@@ -2920,6 +2944,14 @@ async function startServer() {
     const isAutonomous = Boolean(autonomous);
 
     const skip = (reason: string, detail?: string) => {
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: reason === 'no_model' ? 'ERROR' : 'INFO',
+        category: 'ai_proactive',
+        correlationId: corrId,
+        origin: String(origin || 'client'),
+        message: `Rozmowa obustronna (${convId}) pominięta: ${reason}${detail ? ` — ${detail}` : ''}`,
+      });
       res.status(isAutonomous ? 200 : reason === 'no_model' ? 503 : 409).json({
         ok: false,
         skipped: true,
@@ -3074,6 +3106,15 @@ async function startServer() {
 
       lastProactiveAt.set(convId, Date.now());
       if (pySave.data?.event) publishOutboxEvent(pySave.data.event);
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: 'INFO',
+        category: 'ai_proactive',
+        correlationId: corrId,
+        origin: String(origin || 'client'),
+        message: `Rozmowa obustronna (${convId}): ${speaker} · ${line.label} · ${text.length} znaków`,
+        details: failures.length > 0 ? { earlierFailures: failures.slice(0, 4) } : undefined,
+      });
       res.json({
         ok: true,
         sender: speaker,

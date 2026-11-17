@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:python": "python3 -m unittest discover -s backend/tests -p 'test_*.py' -v",
+    "test:python": "SVL_LOG_DIR=${TMPDIR:-/tmp}/svl-test-logi python3 -m unittest discover -s backend/tests -p 'test_*.py' -v",
     "test:unit": "npx --yes tsx --test src/utils/svlLogic.test.ts src/utils/githubFiles.test.ts src/server/chatDirectives.test.ts src/server/conversation.test.ts src/server/memoryPrompt.test.ts src/server/geminiModels.test.ts src/server/fileLogger.test.ts"
   },
   "dependencies": {

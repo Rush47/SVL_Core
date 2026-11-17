@@ -2778,7 +2778,20 @@ class SVLSystemKernel:
             event_id=f"evt-{notif_id}",
         )
         if not saved.get("ok"):
+            append_python_log(
+                "notification", f"Nie zapisano powiadomienia Mayi: {clean_title}",
+                level="ERROR", origin=origin, details={"error": saved.get("error")},
+            )
             return {"ok": False, "error": saved.get("error") or "Nie zapisano powiadomienia."}
+        if not saved.get("deduplicated"):
+            append_python_log(
+                "notification",
+                f"Maya → kanał wszyscy [{sev}/{clean_category}]: {clean_title}",
+                level="WARN" if sev in ("WARN", "ALERT") else "INFO",
+                correlation_id=correlation_id,
+                origin=origin,
+                details={"id": notif_id, "message": clean_message[:300]},
+            )
         return {
             "ok": True,
             "deduplicated": bool(saved.get("deduplicated")),
