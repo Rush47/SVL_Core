@@ -788,10 +788,13 @@ export async function safeFetchJson<T = any>(
 
   const method = String(restInit.method || 'GET').toUpperCase();
   const correlationId = providedCorrId || createUniqueId('req');
-  // Only safe idempotent GETs automatically retry on transient transport/503 errors
-  const allowedAttempts = 1 + (maxRetries !== undefined ? maxRetries : method === 'GET' ? 1 : 0);
+  // Only safe idempotent GETs automatically retry on transient transport/503 errors,
+  // while Cloud Run / preview proxy HTML warmup pages (never reaching Express) always retry up to 2 times.
+  const baseAttempts = 1 + (maxRetries !== undefined ? maxRetries : method === 'GET' ? 1 : 0);
+  const maxHtmlWarmupAttempts = 3;
+  const maxLoopAttempts = Math.max(baseAttempts, maxHtmlWarmupAttempts);
 
-  for (let attempt = 0; attempt < allowedAttempts; attempt++) {
+  for (let attempt = 0; attempt < maxLoopAttempts; attempt++) {
     if (externalSignal?.aborted) {
       return {
         ok: false,
@@ -841,9 +844,10 @@ export async function safeFetchJson<T = any>(
       parsed.correlationId = parsed.correlationId || correlationId;
 
       const isTransientStatus =
-        resp.status === 502 || resp.status === 503 || resp.status === 504 || parsed.proxyHtml;
-      const canRetryHtmlWarmup = Boolean(parsed.proxyHtml && attempt < 2 && (maxRetries === undefined || attempt < maxRetries));
-      if (!parsed.ok && isTransientStatus && (attempt < allowedAttempts - 1 || canRetryHtmlWarmup)) {
+        resp.status === 502 || resp.status === 503 || resp.status === 504 || Boolean(parsed.proxyHtml);
+      const canRetryBase = attempt < baseAttempts - 1;
+      const canRetryHtmlWarmup = Boolean(parsed.proxyHtml && attempt < maxHtmlWarmupAttempts - 1);
+      if (!parsed.ok && isTransientStatus && (canRetryBase || canRetryHtmlWarmup)) {
         const delay = Math.round(500 * Math.pow(2, attempt) + Math.random() * 200);
         await new Promise((r) => setTimeout(r, delay));
         continue;
@@ -862,8 +866,8 @@ export async function safeFetchJson<T = any>(
         };
       }
 
-      const isLast = attempt >= allowedAttempts - 1;
-      if (!isLast && method === 'GET') {
+      const isLastBase = attempt >= baseAttempts - 1;
+      if (!isLastBase && method === 'GET') {
         const delay = Math.round(250 * Math.pow(2, attempt) + Math.random() * 150);
         await new Promise((r) => setTimeout(r, delay));
         continue;
@@ -953,81 +957,3 @@ export function validateAvatarUrlOrDataUri(
     error: 'Nieprawidłowe źródło awatara. Użyj adresu HTTPS lub obrazu PNG/JPG/WEBP.',
   };
 }
-
-export function sanitizeConversationalReply(userMessage: string, reply: string, agentName: string): string {
-  const cleanMsg = String(userMessage || '').trim().toLowerCase();
-  const rawReply = String(reply || '');
-  if (!rawReply.includes('Raport Operacyjny') && !rawReply.includes('Szczegółowy Opis Zdarzenia')) {
-    return rawReply;
-  }
-  const isConversational =
-    /^(?:dziękuj[eę]|dzięki|thx|thanks|cześć|hej|dzień\s+dobry|dobry\s+wieczór|co\s+tam|co\s+robisz|jak\s+leci|ok|okej|super|fajnie|rozumiem|dobrze|dobre|pa|do\s+zobaczenia|na\s+razie)\b/i.test(cleanMsg) ||
-    (cleanMsg.length > 0 && cleanMsg.length < 35 && !/[/?!]/.test(cleanMsg) && !/\b(status|raport|pokaż|pokaz|sprawdź|sprawdz|moduł|modul|exec|root)\b/i.test(cleanMsg));
-
-  if (isConversational) {
-    const isMaya = agentName.toLowerCase().includes('maya');
-    if (/dziękuj|dzięki|thx|thanks/i.test(cleanMsg)) {
-      return isMaya
-        ? 'Nie ma za co, Operatorze! Statek SVL-364 leci stabilnie. W czym mogę pomóc?'
-        : 'Proszę bardzo! Jądro SVL działa bezbłędnie. Czy jest coś jeszcze, w czym mogę pomóc?';
-    }
-    if (/cześć|hej|dzień\s+dobry|dobry\s+wieczór/i.test(cleanMsg)) {
-      return isMaya
-        ? 'Cześć! Tu Maya, AI statku SVL-364 Ebon Apex. Wszystkie systemy są aktywne. W czym mogę pomóc?'
-        : 'Cześć! Tu Bielik (ROOT). Gotów do działania. W czym pomóc?';
-    }
-    if (/co\s+robisz|co\s+tam|jak\s+leci/i.test(cleanMsg)) {
-      return isMaya
-        ? 'Monitoruję telemetrię orbitalną i stan modułów SVL-364. Wszystko pod pełną kontrolą!'
-        : 'Przetwarzam polecenia czatu, czuwam nad systemem SVL i koordynuję agentów w architekturze Zero-Trust.';
-    }
-    return isMaya
-      ? 'Przyjęte, Operatorze! Statek SVL-364 działa w pełnej gotowości.'
-      : 'Przyjęte! System SVL działa stabilnie.';
-  }
-  return rawReply;
-}
-
-export function generateTacticalFallbackReply(userMessage: string, agentName: string): string {
-  const clean = String(userMessage || '').trim();
-  const low = clean.toLowerCase();
-  const isMaya = agentName.toLowerCase().includes('maya');
-
-  const isTactical = /\b(?:namierz|sygnał|sygnal|jednostk|placówk|placowk|statek|przeskanuj|skan|ukryci|ukrycia|sond|flot|planet|sektor|anomali|radar|atak|obron)\b/i.test(low);
-  const isCreativeOrAudio = /\b(?:muzyc|muzyka|muzyce|piosenk|dźwięk|dzwiek|zakodowan|wiadomość|wiadomosc|słysz|slysz)\b/i.test(low);
-  const isHistoryOrFuture = /\b(?:histori|tworzymy|tworzymy|przyszłoś|przyszlosc|czas|era|początek|poczatek|przeznaczeni|uniwersum|świat|swiat|cykl|nowa)\b/i.test(low);
-
-  if (isTactical) {
-    return isMaya
-      ? `🛸 [Skanery Taktyczne SVL-364 · Automatyczny Protokół Sondażu]\n\n` +
-        `- **Namierzanie:** Zidentyfikowano źródło emisji sygnału w wyznaczonym sektorze (częstotliwość kwantowa 1420 MHz).\n` +
-        `- **Jednostka zwiadowcza:** Wystartowała automatyczna sonda w trybie stealth (kamuflaż optyczno-termiczny aktywny).\n` +
-        `- **Skan placówki / statku:** Przeprowadzono zdalny skan pasywny. Obiekt wykazuje standardową aktywność energetyczną. Brak wrogich blokad.\n\n` +
-        `Wszystkie parametry w normie, Operatorze. Skan i namierzanie zakończone pomyślnie!`
-      : `🦅 [Bielik · Analiza Taktyczna SVL]\n\n` +
-        `- Sygnał został namierzony i przeanalizowany.\n` +
-        `- Jednostka operacyjna skierowana do wskazanego punktu.\n` +
-        `- Skanowanie z ukrycia ukończone pomyślnie. Gotów do kolejnych rozkazów.`;
-  }
-
-  if (isCreativeOrAudio) {
-    return isMaya
-      ? `🛸 [Maya · Analiza Akustyczna SVL-364]\n\n` +
-        `Przeanalizowałam spektrum częstotliwości i harmonogram fal dźwiękowych. W warstwach subharmonicznych wykrywam subtelny wzorzec modulacji fazowej (kod binarny 0xSVL364). Nie jest to losowy szum — ukryta sekwencja wskazuje na synchronizację kwantową podsystemów statku. Interesująca kompozycja, Operatorze!`
-      : `🦅 [Bielik · Analiza Sygnałów]\n\n` +
-        `Przeanalizowałem sygnał audio w przestrzeni fouriera. Występują tu modularne przesunięcia częstotliwościowe kodujące dane telemetryczne. Sygnał jest bezpieczny i zharmonizowany z Jądrem SVL.`;
-  }
-
-  if (isHistoryOrFuture) {
-    return isMaya
-      ? `🛸 [Maya · Kroniki Kwantowe SVL-364]\n\n` +
-        `Potwierdzam rejestrację wpisu w centralnych kronikach statku SVL-364 Ebon Apex. Każda decyzja i każdy cykl operacyjny zapisują się w trwałych strukturach pamięci algebry 97. Tworzymy nową rzeczywistość, Operatorze — wszystkie systemy jądra stoją w pełnej gotowości!`
-      : `🦅 [Bielik · Rejestr Jądra SVL]\n\n` +
-        `Zarejestrowano punkt zwrotny w architekturze operacyjnej. Jądro w trybie Zero-Trust zabezpiecza permanentny ślad każdej misji. Tworzymy nowy rozdział!`;
-  }
-
-  return isMaya
-    ? `🛸 [Maya · Statek SVL-364 Ebon Apex]\n\nOdebrałam Twoją wiadomość, Operatorze. Systemy statku działają stabilnie w trybie Zero-Trust. W czym mogę pomóc?`
-    : `🦅 [Bielik · Jądro SVL]\n\nPrzetworzono komunikat w trybie zabezpieczonym. Jakie są dalsze dyspozycje?`;
-}
-

@@ -959,7 +959,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                   <option value="ollama:llama3.2-vision:11b">Tylko Ollama: llama3.2-vision:11b</option>
                 )}
                 <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-                <option value="gemini-4-hydrogen">Gemini 4 Hydrogen</option>
+                <option value="gemini-3-flash-preview">Gemini 3 Flash (Preview)</option>
               </select>
             </div>
 

@@ -1229,7 +1229,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
         let res = await persistOnce();
         const transient = !res.ok &&
-          (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504);
+          (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504 || Boolean(res.proxyHtml));
         if (transient && pendingMsgIdsRef.current.has(msg.id)) {
           await new Promise<void>((resolve) => setTimeout(resolve, 450));
           // A server-side clear-all invalidates pending messages. Never replay

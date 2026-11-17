@@ -72,9 +72,22 @@ test('repetition detection ignores case, punctuation and small edits', () => {
   assert.equal(isRepetitive('', previous), true);
 });
 
-test('reply cleanup strips own name prefix and cuts lines written for other speakers', () => {
+import { isWebSearchRequest } from './webSearch.ts';
+
+test('reply cleanup strips own name, [System] prefixes and cuts lines written for other speakers', () => {
   assert.equal(cleanAgentReply('Bielik: Jasne, zróbmy to.', 'Bielik'), 'Jasne, zróbmy to.');
   assert.equal(cleanAgentReply('[Maya]: ... Dobrze.', 'Maya'), 'Dobrze.');
+  assert.equal(cleanAgentReply('[System]: Cześć, Mateuszu!', 'Maya'), 'Cześć, Mateuszu!');
+  assert.equal(cleanAgentReply('[Mateusz (Operator)]: Cześć!', 'Maya'), 'Cześć!');
+  assert.equal(cleanAgentReply('[Maya (AI Statku SVL-364)]: Systemy sprawne.', 'Maya'), 'Systemy sprawne.');
   assert.equal(cleanAgentReply('Myślę, że warto.\n[Maya]: Zgadzam się!\nMateusz: OK', 'Bielik'), 'Myślę, że warto.');
   assert.equal(cleanAgentReply('Pierwsze zdanie.\n\nMateusz Mitek (Operator): dopisek', 'Maya'), 'Pierwsze zdanie.');
+  assert.equal(cleanAgentReply('Drugie zdanie.\n[System]: uwaga', 'Bielik'), 'Drugie zdanie.');
+});
+
+test('web search trigger ignores casual Polish words teraz, dzisiaj, wiadomość', () => {
+  assert.equal(isWebSearchRequest('Cześć wszystkim! O czym dzisiaj porozmawiamy?'), false);
+  assert.equal(isWebSearchRequest('Już teraz tworzymy historie'), false);
+  assert.equal(isWebSearchRequest('Wyślij krótką wiadomość do Maya'), false);
+  assert.equal(isWebSearchRequest('Wyszukaj w internecie najnowsze wiadomości ze świata'), true);
 });

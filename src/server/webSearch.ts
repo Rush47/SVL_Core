@@ -24,14 +24,16 @@ export function isWebSearchRequest(message: string): boolean {
   const asksForSources =
     /\b(?:podaj|wyslij|daj|wstaw|dolacz|udostepnij|chce|potrzebuj\w*|poprosz\w*|give|send|provide|find|search|include|cite|need)\b.{0,60}(?:internet|sieci|online|web|link|url|zrod|source|citation)/i.test(normalizedMessage);
   const explicitlySearchesWeb =
-    /(?:wyszuk\w*|poszuk\w*|znajdz|przeszuk\w*|sprawdz|search|look up)\b.{0,60}(?:internet|sieci|online|web)/i.test(
+    /(?:wyszuk\w*|poszuk\w*|znajdz|przeszuk\w*|sprawdz|search|look up)\b.{0,60}(?:internet|sieci|online|web|google)/i.test(
       normalizedMessage,
     ) ||
-    /(?:internet|sieci|online|web).{0,60}(?:wyszuk\w*|poszuk\w*|znajdz|przeszuk\w*|sprawdz|search|look up)/i.test(
+    /(?:internet|sieci|online|web|google).{0,60}(?:wyszuk\w*|poszuk\w*|znajdz|przeszuk\w*|sprawdz|search|look up)/i.test(
       normalizedMessage,
     );
   const asksForCurrentInformation =
-    /(?:najnowsz\w*|aktualn\w*|dzisiaj|obecnie|teraz|latest|current|today|recent|news|wiadomos\w*)/i.test(normalizedMessage);
+    /\b(?:najnowsz\w*\s+(?:informacj|wiadomos|dane|wersj|wydan)|wiadomosci\s+(?:ze\s+swiata|z\s+kraju|sportow|gospodarcz|dnia)|aktualn\w*\s+(?:kurs|cen|pogod|informacj|dane|statystyk|wynik)|pogoda\s+(?:w|we|na|na\s+dzis)|kurs\s+(?:walut|dolara|euro|btc|bitcoin)|kto\s+(?:jest|wygral)\s+(?:obecnie|teraz|dzisiaj)|breaking\s+news|latest\s+(?:news|version|release|updates))\b/i.test(
+      normalizedMessage,
+    );
 
   return asksForSources || explicitlySearchesWeb || asksForCurrentInformation;
 }

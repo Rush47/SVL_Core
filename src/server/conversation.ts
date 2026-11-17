@@ -113,15 +113,27 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
   });
 }
 
-/** Usuwa prefiks z własnym imieniem i ucina miejsce, w którym model zaczyna pisać za innych. */
+/** Usuwa prefiks z własnym imieniem (lub [System]: / [Mateusz (Operator)]:) i ucina miejsce, w którym model zaczyna pisać za innych. */
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
-  const speakerNames = [speaker, 'Asystent SVL'].map(escapeRegExp).join('|');
+  const speakerNames = [
+    speaker,
+    'Asystent SVL',
+    'Asystent',
+    'System',
+    'AI',
+    'Model',
+    'Mateusz Mitek',
+    'Mateusz',
+    'Operator',
+  ]
+    .map(escapeRegExp)
+    .join('|');
   let out = String(text || '')
     .trim()
-    .replace(new RegExp(`^(?:\\[?\\s*(?:${speakerNames})\\s*\\]?\\s*[:：]\\s*)+`, 'i'), '')
+    .replace(new RegExp(`^(?:\\[?\\s*(?:${speakerNames})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]\\s*)+`, 'i'), '')
     .replace(/^\.{2,}\s*/, '')
     .trim();
-  const participants = [...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent SVL']
+  const participants = [...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent SVL', 'Asystent', 'System']
     .map(escapeRegExp)
     .join('|');
   const nextSpeakerLine = new RegExp(`\\n\\s*\\[?\\s*(?:${participants})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]`, 'i');

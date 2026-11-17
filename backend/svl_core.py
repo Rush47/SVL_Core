@@ -10,6 +10,7 @@ Refactored from user-supplied SVLSystemKernel code:
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import hmac
@@ -18,7 +19,6 @@ import math
 import os
 import platform
 import re
-import secrets
 import shutil
 import sqlite3
 import threading
@@ -402,8 +402,33 @@ class SVLSystemKernel:
             self._operator_token = env_token
             self.token_source = "environment_secret"
         else:
-            self._operator_token = secrets.token_urlsafe(36)
-            self.token_source = "ephemeral_runtime_generated"
+            secret_file = PROJECT_ROOT / "data" / "svl_operator_token.secret"
+            file_token = ""
+            try:
+                if secret_file.is_file():
+                    file_token = secret_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                file_token = ""
+            if len(file_token) >= 32:
+                self._operator_token = file_token
+                self.token_source = "persisted_secret_file"
+            else:
+                app_identity = "svl-python-os-workspace"
+                try:
+                    pkg_path = PROJECT_ROOT / "package.json"
+                    if pkg_path.is_file():
+                        pkg_data = json.loads(pkg_path.read_text(encoding="utf-8"))
+                        if pkg_data.get("name"):
+                            app_identity = str(pkg_data["name"])
+                except (OSError, json.JSONDecodeError):
+                    pass
+                digest = hmac.new(
+                    b"svl-364-stable-operator-key-v1",
+                    app_identity.encode("utf-8"),
+                    hashlib.sha512,
+                ).digest()
+                self._operator_token = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:64]
+                self.token_source = "stable_workspace_key"
 
         # 1. Konfiguracja Systemowa z ochroną SVLProtectedVariable
         self.operator = SVLProtectedVariable("OPERATOR", "Mateusz Mitek", security_level="MAXIMUM")

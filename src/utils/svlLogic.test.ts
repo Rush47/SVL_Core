@@ -17,11 +17,10 @@ import {
   normalizeAgentCanonicalName,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
-  sanitizeConversationalReply,
-  generateTacticalFallbackReply,
   extractBielikActionTags,
   parseChatInteractiveToken,
   resolveAvatarProfileKey,
+  safeFetchJson,
   safeParseJsonResponse,
   selectOllamaModelName,
   setSvlCodexAccessToken,
@@ -379,43 +378,43 @@ test('parseSshShipTerminalInput handles /exec root commands, natural Polish dire
   assert.equal(directShell.shellCommand, 'df -h / && free -h');
 });
 
-test('sanitizeConversationalReply blocks raw system reports on conversational input like Dziękuję or Cześć', () => {
-  const rawReport = '### 🛰️ Raport Operacyjny SVL_System · Bielik (ROOT) [#201] — Pełny Raport\n\n#### 📋 1. Szczegółowy Opis Zdarzenia';
-  
-  const gratitudeReply = sanitizeConversationalReply('Dziękuję', rawReport, 'Maya');
-  assert.equal(gratitudeReply.includes('Raport Operacyjny'), false);
-  assert.match(gratitudeReply, /Nie ma za co/i);
-
-  const greetingReply = sanitizeConversationalReply('Cześć Maya', rawReport, 'Maya');
-  assert.equal(greetingReply.includes('Raport Operacyjny'), false);
-  assert.match(greetingReply, /Cześć! Tu Maya/i);
-
-  const normalReport = sanitizeConversationalReply('Poproszę pełny raport', rawReport, 'Maya');
-  assert.equal(normalReport.includes('Raport Operacyjny'), true);
-});
-
 test('space tactical prompts containing przeskanuj do not trigger antivirus scan', () => {
   const msg = "Namierz co wysyła ten sygnał i wyślij tam jednostkę i przeskanuj tą placówkę lub statek z ukrycia";
   const hasAntivirusKeyword = /\b(?:wirus\w*|antywirus\w*|malware|kwarantann\w*)\b/i.test(msg) || /^\/antivirus\b/i.test(msg);
-  const hasExplicitFileScan = /\bprzeskanuj\b/i.test(msg) && /\b(?:plik|pliki|kod|system|baz[ęe]|baze|katalog)\b/i.test(msg);
+  const hasExplicitFileScan = /\bprzeskanuj\b/i.test(msg) && /\b(?:plik|pliki|kod|system|baz[ęe]|baze|katalog|komputer)\b/i.test(msg);
   const hasSpaceTacticalContext = /\b(?:placówk|placowk|statek|sygnał|sygnal|jednostk|ukryci|ukrycia|sond|flot|planet|sektor|anomali|radar)\b/i.test(msg);
   const wantsAntivirusScan = (hasAntivirusKeyword || hasExplicitFileScan) && !hasSpaceTacticalContext;
   assert.equal(wantsAntivirusScan, false);
 });
 
-test('generateTacticalFallbackReply provides immersive tactical reply when models are unavailable', () => {
-  const reply = generateTacticalFallbackReply("Namierz co wysyła ten sygnał i wyślij tam jednostkę i przeskanuj tą placówkę lub statek z ukrycia", "Maya");
-  assert.match(reply, /Skanery Taktyczne SVL-364/i);
-  assert.match(reply, /Namierzanie/i);
+test('safeFetchJson retries transient proxy HTML HTTP 200 responses even when maxRetries is 0', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response('<!doctype html><html><body>Loading preview</body></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      });
+    }
+    return new Response(JSON.stringify({ ok: true, saved: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  try {
+    const result = await safeFetchJson<{ ok: boolean; saved: boolean }>('/api/py/chat/conversations/message', {
+      method: 'POST',
+      maxRetries: 0,
+      timeoutMs: 5000,
+      body: JSON.stringify({ test: true }),
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.ok, true);
+    assert.equal(result.data?.saved, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
-
-test('generateTacticalFallbackReply handles history and future statements gracefully', () => {
-  const reply = generateTacticalFallbackReply("Już teraz tworzymy historie", "Maya");
-  assert.match(reply, /Kroniki Kwantowe SVL-364/i);
-  assert.match(reply, /Tworzymy nową rzeczywistość/i);
-});
-
-
-
-
-

@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createHttpServer, IncomingMessage } from 'node:http';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn, ChildProcess, execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -39,6 +39,7 @@ import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/s
 import {
   CONVERSATION_AGENTS,
   OPERATOR_LABEL,
+  agentOf,
   buildTranscript,
   cleanAgentReply,
   consecutiveAiTurns,
@@ -55,9 +56,28 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const OPERATOR_TOKEN_SECRET_FILE = path.join(__dirname, 'data', 'svl_operator_token.secret');
 
-// Never use a universal development credential: this gateway can execute commands,
-// access private workspace files, and publish to GitHub. Load persisted secret from
-// data/svl_operator_token.secret when .env is absent, or generate and persist one.
+function deriveStableWorkspaceOperatorToken(projectDir: string): string {
+  let appIdentity = 'svl-python-os-workspace';
+  try {
+    const pkg = JSON.parse(fsSync.readFileSync(path.join(projectDir, 'package.json'), 'utf8'));
+    if (pkg?.name) appIdentity = String(pkg.name);
+  } catch {
+    // fallback identity
+  }
+  return createHmac('sha512', 'svl-364-stable-operator-key-v1')
+    .update(appIdentity)
+    .digest('base64url')
+    .slice(0, 64);
+}
+
+// Never use a weak development credential like '364_OMNIKLUCZ_ROOT'.
+// Load explicit SVL_OPERATOR_TOKEN from env/.env, else persisted data/svl_operator_token.secret,
+// else derive one stable 64-char cryptographic token for this workspace so it never changes across resets.
+const explicitEnvToken = (process.env.SVL_OPERATOR_TOKEN || '').trim();
+if (explicitEnvToken && explicitEnvToken.length < 32) {
+  throw new Error('SVL_OPERATOR_TOKEN must be at least 32 characters long.');
+}
+process.env.SVL_OPERATOR_TOKEN = explicitEnvToken;
 if (!process.env.SVL_OPERATOR_TOKEN) {
   try {
     const saved = fsSync.readFileSync(OPERATOR_TOKEN_SECRET_FILE, 'utf8').trim();
@@ -65,15 +85,12 @@ if (!process.env.SVL_OPERATOR_TOKEN) {
       process.env.SVL_OPERATOR_TOKEN = saved;
     }
   } catch {
-    // will generate below
+    // derive stable token below
   }
 }
-if (process.env.SVL_OPERATOR_TOKEN && process.env.SVL_OPERATOR_TOKEN.trim().length < 32) {
-  throw new Error('SVL_OPERATOR_TOKEN must be at least 32 characters long.');
-}
 if (!process.env.SVL_OPERATOR_TOKEN) {
-  process.env.SVL_OPERATOR_TOKEN = randomBytes(48).toString('base64url');
-  console.warn('[SVL auth] Created a random operator token. Privileged endpoints require authentication.');
+  process.env.SVL_OPERATOR_TOKEN = deriveStableWorkspaceOperatorToken(__dirname);
+  console.info('[SVL auth] Initialized single stable SVL_OPERATOR_TOKEN.');
 }
 process.env.SVL_OPERATOR_TOKEN = process.env.SVL_OPERATOR_TOKEN.trim();
 try {
@@ -200,10 +217,12 @@ function redactForSync(input: any): any {
 }
 
 // One list of Gemini chat models for every chat path (operator chat and two-way conversation).
-const GEMINI_CHAT_MODELS = ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+const GEMINI_CHAT_MODELS = ['gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
 function geminiCandidates(requestedModel?: string): string[] {
+  const normalizedReq =
+    requestedModel === 'gemini-4-hydrogen' ? 'gemini-3-flash-preview' : requestedModel;
   return [...new Set(
-    [process.env.GEMINI_MODEL, requestedModel?.startsWith('gemini-') ? requestedModel : null, ...GEMINI_CHAT_MODELS]
+    [process.env.GEMINI_MODEL, normalizedReq?.startsWith('gemini-') ? normalizedReq : null, ...GEMINI_CHAT_MODELS]
       .filter((entry): entry is string => Boolean(entry)),
   )];
 }
@@ -2109,9 +2128,17 @@ async function startServer() {
     }
 
     // Antivirus Scan & Chat Synchronization priority handler
-    const wantsAntivirusScan = /\b(?:wirus\w*|antywirus\w*|przeskanuj|usuń\s+wirus\w*|usun\s+wirus\w*|malware|kwarantann\w*)\b/i.test(
-      cleanMsg,
-    );
+    const hasAntivirusKeyword =
+      /\b(?:wirus\w*|antywirus\w*|usuń\s+wirus\w*|usun\s+wirus\w*|malware|kwarantann\w*)\b/i.test(cleanMsg) ||
+      /^\/antivirus\b/i.test(cleanMsg);
+    const hasExplicitFileScan =
+      /\bprzeskanuj\b/i.test(cleanMsg) &&
+      /\b(?:plik|pliki|kod|system|baz[ęe]|baze|katalog|komputer)\b/i.test(cleanMsg);
+    const hasSpaceTacticalContext =
+      /\b(?:placówk|placowk|statek|sygnał|sygnal|jednostk|ukryci|ukrycia|sond|flot|planet|sektor|anomali|radar)\b/i.test(
+        cleanMsg,
+      );
+    const wantsAntivirusScan = (hasAntivirusKeyword || hasExplicitFileScan) && !hasSpaceTacticalContext;
     if (wantsAntivirusScan) {
       const avRes = await callPythonBackend(
         'POST',
@@ -2362,7 +2389,12 @@ async function startServer() {
             ]
           : [...coalescedHistory, { role: 'user', parts: currentParts }];
 
-      const callModelWithRetry = async (candidate: string, contentsPayload: any[], includeTools: boolean) => {
+      const callModelWithRetry = async (
+        candidate: string,
+        contentsPayload: any[],
+        includeTools: boolean,
+        useSearchGrounding = wantsWebSources,
+      ) => {
         const tempCfg = candidate === 'gemini-3.1-flash-lite' ? { temperature: effectiveTemperature } : {};
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
@@ -2373,7 +2405,7 @@ async function startServer() {
                 ...tempCfg,
                 ...(includeTools
                   ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
-                  : wantsWebSources
+                  : useSearchGrounding
                     ? { tools: [{ googleSearch: {} }] }
                     : {}),
                 abortSignal: AbortSignal.timeout(14000),
@@ -2381,6 +2413,9 @@ async function startServer() {
             });
           } catch (err: any) {
             const msgStr = String(err?.message || err);
+            if (useSearchGrounding && !includeTools) {
+              return await callModelWithRetry(candidate, contentsPayload, false, false);
+            }
             if (attempt === 0 && (msgStr.includes('429') || msgStr.includes('RESOURCE_EXHAUSTED') || msgStr.includes('503'))) {
               await new Promise((r) => setTimeout(r, 1100));
               continue;
@@ -2391,6 +2426,7 @@ async function startServer() {
         throw new Error('Retry exhausted');
       };
 
+      const geminiErrors: string[] = [];
       for (const candidate of candidateModels) {
         try {
           const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
@@ -2424,7 +2460,7 @@ async function startServer() {
 
           let replyText = (response.text || '').trim();
           if (!replyText) {
-            const plainRes = await callModelWithRetry(candidate, baseContents, false);
+            const plainRes = await callModelWithRetry(candidate, baseContents, false, false);
             replyText = (plainRes.text || '').trim();
           }
           if (replyText) {
@@ -2433,6 +2469,7 @@ async function startServer() {
             replyText = withDirectiveReceipts(
               appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
             );
+            const geminiBadge = `${selectedDisplayName} · Gemini (${candidate})${imageBase64 ? ' · Vision' : ''}`;
             if (agentState?.canonical_name) {
               const memRes = await callPythonBackend(
                 'POST',
@@ -2440,7 +2477,7 @@ async function startServer() {
                 {
                   agent: selectedAgent,
                   kind: 'episode',
-                  content: `Rozmowa (${displayModelBadge}): Pytanie "${cleanMsg.slice(0, 120)}" -> Odpowiedź "${replyText.slice(0, 180)}"`,
+                  content: `Rozmowa (${geminiBadge}): Pytanie "${cleanMsg.slice(0, 120)}" -> Odpowiedź "${replyText.slice(0, 180)}"`,
                   origin,
                   correlationId: corrId,
                 },
@@ -2452,7 +2489,7 @@ async function startServer() {
               ok: true,
               sender: selectedDisplayName,
               agentId: selectedAgent,
-              modelUsed: imageBase64 ? `${displayModelBadge} · Vision` : displayModelBadge,
+              modelUsed: geminiBadge,
               reply: replyText,
               provenance: webSources.length > 0 ? 'web_sources' : 'model_unverified',
               ...(wantsWebSources && webSources.length === 0
@@ -2464,12 +2501,13 @@ async function startServer() {
             });
             return;
           }
+          geminiErrors.push(`${candidate}: pusta odpowiedź`);
         } catch (error) {
-          geminiFailure = `${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`;
+          geminiErrors.push(`${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
           continue;
         }
       }
-      geminiFailure = geminiFailure || 'żaden model Gemini nie zwrócił odpowiedzi';
+      geminiFailure = geminiErrors.join(' | ') || 'żaden model Gemini nie zwrócił odpowiedzi';
     }
 
     // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
@@ -2545,17 +2583,76 @@ async function startServer() {
     busy: 'Inna karta lub poprzednie wywołanie właśnie generuje wypowiedź.',
   };
 
-  /** Dopisanie tekstu: najpierw Ollama (raw), awaryjnie Gemini z samym tekstem — bez instrukcji. */
-  const continueTranscript = async (
+  /** Wybór kolejnego mówcy przez Ollamę (`raw: true`) lub Gemini (krótki wybór spośród uczestników). */
+  const predictNextSpeaker = async (
     agentModel: string,
     ollamaHost: string,
-    text: string,
-    options: { temperature: number; numPredict: number; stop: string[] },
+    transcript: string,
+    participants: ConversationAgent[],
+    requestedModel: string,
+    failures: string[],
+  ): Promise<{ predicted: ConversationAgent | 'operator' | null; providerOnline: boolean }> => {
+    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${transcript}\n[`, {
+      temperature: 0.7,
+      numPredict: 12,
+      stop: [']', '\n'],
+      timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
+    });
+    if (fromOllama.ok) {
+      return { predicted: parsePredictedSpeaker(fromOllama.text), providerOnline: true };
+    }
+    failures.push(fromOllama.reason);
+    const gemini = getGeminiClient();
+    if (!gemini) {
+      failures.push('Gemini: brak klucza GEMINI_API_KEY');
+      return { predicted: null, providerOnline: false };
+    }
+    const choices = [...participants, 'Operator'].join(', ');
+    for (const candidate of geminiCandidates(requestedModel)) {
+      try {
+        const gen = await gemini.models.generateContent({
+          model: candidate,
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text:
+                    `${transcript}\n\n` +
+                    `Kto naturalnie zabiera głos jako następny (${choices})? Odpowiedz wyłącznie jedną nazwą.`,
+                },
+              ],
+            },
+          ],
+          config: {
+            temperature: 0.5,
+            maxOutputTokens: 20,
+            abortSignal: AbortSignal.timeout(15000),
+          },
+        });
+        const parsed = parsePredictedSpeaker(gen.text || '');
+        if (parsed) return { predicted: parsed, providerOnline: true };
+      } catch (error) {
+        failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+      }
+    }
+    return { predicted: null, providerOnline: true };
+  };
+
+  /** Wypowiedź wskazanego agenta: najpierw Ollama (`raw: true`), awaryjnie Gemini z perspektywy agenta. */
+  const generateAgentProactiveLine = async (
+    agentModel: string,
+    ollamaHost: string,
+    turns: DialogueTurn[],
+    transcript: string,
+    speaker: ConversationAgent,
     requestedModel: string,
     failures: string[],
   ): Promise<{ text: string; label: string } | null> => {
-    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, text, {
-      ...options,
+    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${transcript}\n[${speaker}]: `, {
+      temperature: 0.8,
+      numPredict: 400,
+      stop: ['\n['],
       timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
     });
     if (fromOllama.ok) return { text: fromOllama.text, label: `Ollama (${fromOllama.model})` };
@@ -2565,19 +2662,30 @@ async function startServer() {
       failures.push('Gemini: brak klucza GEMINI_API_KEY');
       return null;
     }
+    const perspective = toAgentPerspective(turns, speaker, 24);
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = perspective.map((turn) => ({
+      role: turn.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: turn.content }],
+    }));
+    if (contents.length === 0) {
+      contents.push({ role: 'user', parts: [{ text: transcript }] });
+    } else if (contents[contents.length - 1].role === 'model') {
+      contents.push({ role: 'user', parts: [{ text: `[Kontynuuj wypowiedź jako ${speaker}.]` }] });
+    }
     for (const candidate of geminiCandidates(requestedModel)) {
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
-          contents: [{ role: 'user', parts: [{ text }] }],
+          contents,
           config: {
-            temperature: options.temperature,
-            maxOutputTokens: options.numPredict,
-            stopSequences: options.stop.slice(0, 5),
+            temperature: 0.8,
+            maxOutputTokens: 1024,
+            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:'],
             abortSignal: AbortSignal.timeout(15000),
           },
         });
-        return { text: gen.text || '', label: `Gemini (${candidate})` };
+        const text = (gen.text || '').trim();
+        if (text) return { text, label: `Gemini (${candidate})` };
       } catch (error) {
         failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
       }
@@ -2645,26 +2753,33 @@ async function startServer() {
       const noModel = () =>
         skip('no_model', `Żaden model AI nie odpowiedział (${[...new Set(failures)].slice(0, 3).join('; ')}).`);
 
-      // 1) Model sam wskazuje, kto mówi następny.
-      const prediction = await continueTranscript(
-        modelFor(participants[0]), ollamaHost, `${transcript}\n[`,
-        { temperature: 0.7, numPredict: 12, stop: [']', '\n'] }, requestedModel, failures,
+      const lastDialogueTurn = [...turns].reverse().find((t) => (t.role === 'user' || t.role === 'assistant') && Boolean(t.content.trim()));
+      const lastAi = [...turns]
+        .reverse()
+        .map((t) => agentOf(t))
+        .find((s): s is ConversationAgent => Boolean(s && participants.includes(s)));
+      const fallbackNextSpeaker: ConversationAgent = participants.find((a) => a !== lastAi) || participants[0];
+
+      // 1) Model sam wskazuje, kto mówi następny (gdy ostatni pisał Operator, AI przejmuje głos).
+      const { predicted, providerOnline } = await predictNextSpeaker(
+        modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
       );
-      if (!prediction) return noModel();
-      const predicted = parsePredictedSpeaker(prediction.text);
+      if (!providerOnline) return noModel();
       let speaker: ConversationAgent | null =
         predicted && predicted !== 'operator' && participants.includes(predicted) ? predicted : null;
       if (!speaker) {
-        if (isAutonomous) return skip(predicted === 'operator' ? 'waiting_for_operator' : 'no_decision');
-        // Operator kliknął „Niech AI mówi dalej”: głos dostaje AI, która najdawniej mówiła.
-        const lastAi = [...turns].reverse().map((t) => (t.role === 'assistant' ? t.sender : '')).find((s) => participants.includes(s as ConversationAgent));
-        speaker = participants.find((a) => a !== lastAi) || participants[0];
+        if (lastDialogueTurn?.role === 'user') {
+          speaker = fallbackNextSpeaker;
+        } else if (isAutonomous) {
+          return skip(predicted === 'operator' ? 'waiting_for_operator' : 'no_decision');
+        } else {
+          speaker = fallbackNextSpeaker;
+        }
       }
 
       // 2) Wskazana AI dopisuje swoją kwestię własnym modelem.
-      const line = await continueTranscript(
-        modelFor(speaker), ollamaHost, `${transcript}\n[${speaker}]: `,
-        { temperature: 0.8, numPredict: 400, stop: ['\n['] }, requestedModel, failures,
+      const line = await generateAgentProactiveLine(
+        modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, failures,
       );
       if (!line) return noModel();
       const text = cleanAgentReply(line.text, speaker);

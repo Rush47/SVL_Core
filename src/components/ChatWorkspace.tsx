@@ -1260,8 +1260,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   Ollama: {m.name} ({m.parameter_size || 'LLM'})
                 </option>
               ))}
-              <option value="gemini-4-hydrogen">Gemini 4 Hydrogen</option>
+              <option value="gemini-3-flash-preview">Gemini 3 Flash (Preview)</option>
               <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
               <option value="codex-cli">Codex CLI · konto ChatGPT</option>
             </select>
           </div>

@@ -84,7 +84,7 @@ export async function searchLicensedAgentAvatars(
 
   let groundedResponse;
   let lastSearchError: unknown;
-  for (const model of ['gemini-4-hydrogen', 'gemini-3.1-flash-lite']) {
+  for (const model of ['gemini-3-flash-preview', 'gemini-3.1-flash-lite']) {
     try {
       groundedResponse = await ai.models.generateContent({
         model,
