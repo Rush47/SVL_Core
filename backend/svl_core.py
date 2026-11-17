@@ -873,7 +873,8 @@ class SVLSystemKernel:
             self.ensure_mitek_family_channel()
 
     def _purge_decommissioned_agents_v1(self) -> None:
-        """Odłącza i usuwa dane wyłączonych kont AI (Agata Mitek, Iris AI, Aria/si_1, Alex, Astyria, Aurelius) oraz powiadomień z SQLite."""
+        """Jednorazowe odłączenie wyłączonych kont AI (Agata, Iris, Aria, Alex, Astyria, Aurelius) bez usuwania bieżących rozmów."""
+        marker = "decommissioned_agents_purged_2026_11_16_v1"
         removed_ids = ("Agata", "Aria", "Alex", "Astyria", "Aurelius", "si_1", "Iris", "iris")
         removed_senders = (
             "Agata", "Aria", "Alex", "Astyria", "Aurelius", "si_1", "Iris", "Iris AI",
@@ -892,6 +893,8 @@ class SVLSystemKernel:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _purge(conn: sqlite3.Connection) -> None:
+            if conn.execute("SELECT 1 FROM sync_meta WHERE key = ?", (marker,)).fetchone():
+                return
             existing_tables = {
                 str(r["name"])
                 for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -1033,12 +1036,9 @@ class SVLSystemKernel:
                         (json.dumps(val, ensure_ascii=False), now_iso, wkey),
                     )
 
-            # Usuń stare jednowierszowe komunikaty 'System SVL' (SY), Iris AI oraz powtarzające się wypełniacze proaktywne
+            # Usuń wyłącznie dawne wpisy wyłączonych profili Iris AI (nie usuwaj bieżących rozmów ani asst-proactive-*)
             conn.execute(
-                "DELETE FROM chat_messages WHERE sender IN ('System SVL', 'Iris', 'Iris AI') OR role = 'system'"
-            )
-            conn.execute(
-                "DELETE FROM chat_messages WHERE id LIKE 'asst-proactive-%' OR id LIKE 'iris-chat-%'"
+                "DELETE FROM chat_messages WHERE sender IN ('System SVL', 'Iris', 'Iris AI') OR id LIKE 'iris-chat-%'"
             )
 
             # Usuń wycofane moduły oraz moduły Iris/Powiadomienia
@@ -1139,6 +1139,8 @@ class SVLSystemKernel:
                 opis_txt = str(ur["opis"] or "")
                 if removed_word_re.search(opis_txt) or "wszystkich 4 AI" in opis_txt or "wszystkich 5 AI" in opis_txt:
                     conn.execute("DELETE FROM update_history WHERE id = ?", (ur["id"],))
+
+            conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
 
         self.run_db(_purge, write=True)
 

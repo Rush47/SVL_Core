@@ -49,6 +49,12 @@ import {
   type ConversationAgent,
   type DialogueTurn,
 } from './src/server/conversation.ts';
+import {
+  buildProactiveStarterPrompt,
+  formatMemoryPromptContext,
+  selectNextFreeSpeaker,
+  type AgentMemoryRecord,
+} from './src/server/memoryPrompt.ts';
 
 dotenv.config();
 
@@ -1054,7 +1060,11 @@ async function startServer() {
           corrId,
         );
       }
-      res.json(payload);
+      const normalizedPayload =
+        payload.ok === false && !payload.error
+          ? { ...payload, error: String(payload.stderr || 'Błąd wykonania polecenia.') }
+          : payload;
+      res.json(normalizedPayload);
     };
 
     const effectiveCmd = trimmed;
@@ -1072,6 +1082,9 @@ async function startServer() {
         corrId,
       );
       const sshResult = sshRes.data || {};
+      const errText = sshResult.ok
+        ? ''
+        : String(sshResult.stderr || sshResult.output || sshResult.rawOutput || sshResult.error || `Błąd SSH (HTTP ${sshRes.status}).`);
       void pollAndRelayOutbox();
       broadcastResyncRequired('ssh_ship_terminal', Number(sshResult.serverRevision || 0));
       await respondAndPersist({
@@ -1082,7 +1095,9 @@ async function startServer() {
         mode: sshResult.mode,
         exitCode: sshResult.exitCode,
         stdout: sshResult.ok ? sshResult.output || sshResult.rawOutput || '' : '',
-        stderr: sshResult.ok ? '' : sshResult.output || sshResult.rawOutput || sshResult.error || `Błąd SSH (HTTP ${sshRes.status}).`,
+        stderr: errText,
+        ...(sshResult.ok ? {} : { error: String(sshResult.error || errText) }),
+        sshStatus: sshResult.ssh_status,
         durationMs: sshResult.durationMs,
       });
       return;
@@ -1095,17 +1110,26 @@ async function startServer() {
       const sshRes = await callPythonBackend(
         'POST',
         '/api/py/svl364/ssh/exec',
-        { command: sshSubCmd, target_subsystem: 'bridge', origin: `terminal:${terminalType}`, correlationId: corrId },
+        {
+          command: sshSubCmd,
+          confirmed: true,
+          target_subsystem: 'bridge',
+          origin: `terminal:${terminalType}`,
+          correlationId: corrId,
+        },
         corrId,
       );
       void pollAndRelayOutbox();
+      const ok = Boolean(sshRes.data?.ok);
+      const errText = ok ? '' : String(sshRes.data?.stderr || sshRes.data?.error || sshRes.data?.output || 'Błąd wykonania SSH.');
       await respondAndPersist({
-        ok: Boolean(sshRes.data?.ok),
+        ok,
         terminalType,
         command: trimmed,
         specialCommand: 'svl364-ssh',
-        stdout: sshRes.data?.stdout || JSON.stringify(sshRes.data, null, 2),
-        stderr: sshRes.data?.stderr || '',
+        stdout: ok ? (sshRes.data?.stdout || sshRes.data?.output || JSON.stringify(sshRes.data, null, 2)) : '',
+        stderr: errText,
+        ...(ok ? {} : { error: errText }),
       });
       return;
     }
@@ -1377,23 +1401,29 @@ async function startServer() {
       return;
     }
     const corrId: string = (req as any).correlationId || '';
+    const origin = String(req.body?.origin || 'operator_global_sync');
     cachedChatContextMeta = null;
-    const [healthRes, agentsRes, modsRes] = await Promise.all([
+    const [chatSyncRes, healthRes, agentsRes, modsRes, kernelRes] = await Promise.all([
+      callPythonBackend('POST', '/api/py/chat/sync-mutations', { origin, correlationId: corrId }, corrId),
       callPythonBackend('GET', '/api/py/health', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
+      callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
     ]);
     await pollAndRelayOutbox();
     const srvRev = Math.max(
+      Number(chatSyncRes.data?.serverRevision || 0),
       Number(healthRes.data?.serverRevision || 0),
       Number(agentsRes.data?.serverRevision || 0),
       Number(modsRes.data?.serverRevision || 0),
+      Number(kernelRes.data?.serverRevision || 0),
     );
     broadcastResyncRequired(String(req.body?.reason || 'operator_global_sync'), srvRev);
     res.json({
       ok: true,
       serverRevision: srvRev,
       modulesCount: Array.isArray(modsRes.data?.modules) ? modsRes.data.modules.length : 0,
+      appliedCount: Number(chatSyncRes.data?.appliedCount || 0),
       timestamp: new Date().toISOString(),
     });
   }));
@@ -1818,32 +1848,43 @@ async function startServer() {
       }
 
       if (cmd.kind === 'memory_list') {
+        const memAgent = selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
         const memRes = await callPythonBackend('GET', '/api/py/agents/status', undefined, corrId);
-        const mems: any[] = Array.isArray(memRes.data?.agent_memories?.Bielik) ? memRes.data.agent_memories.Bielik : [];
+        const mems: any[] = Array.isArray(memRes.data?.agent_memories?.[memAgent])
+          ? memRes.data.agent_memories[memAgent]
+          : [];
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(memRes.data?.serverRevision || 0));
         appliedActions.push({
           tool: 'bielik_memory_list',
           entity: 'agent_memory',
-          entityId: 'Bielik',
+          entityId: memAgent,
           serverRevision: latestActionSrvRev,
-          summary: `Odczytano ${mems.length} wpisów pamięci Bielika`,
+          summary: `Odczytano ${mems.length} wpisów pamięci ${memAgent}`,
           ok: true,
         });
         const lines = mems
-          .slice(0, 15)
-          .map((m: any) => `- **[${String(m.kind || 'fact').toUpperCase()}]** ${m.content} *(${String(m.created_at || '').slice(0, 19).replace('T', ' ')})*`)
+          .slice(0, 20)
+          .map((m: any) => {
+            const scopeTag = m.scope === 'global' ? ' · global' : '';
+            return `- **[${String(m.kind || 'fact').toUpperCase()}${scopeTag}]** ${m.content} *(${String(m.created_at || '').slice(0, 19).replace('T', ' ')})*`;
+          })
           .join('\n');
         return {
-          text: `### 🧠 Pamięć Długotrwała Bielika (${mems.length} wpisów)\n\n${lines || 'Brak zapisanych wpisów pamięci dla agenta Bielik.'}`,
+          text: `### 🧠 Pamięć Długotrwała (${memAgent}: ${mems.length} wpisów)\n\n${lines || `Brak zapisanych wpisów pamięci dla agenta ${memAgent}.`}`,
         };
       }
 
       if (cmd.kind === 'memory_save') {
+        const isGroupChannel = !isBielikChannel && !isMayaChannel && !mentionsBielik && !mentionsMaya &&
+          (targetAgent === 'Rodzina Mitek' || targetAgent === 'Auto' || conversationId === 'conv-rodzina-mitek-wszyscy');
+        const memAgent = selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
+        const memScope = isGroupChannel ? 'global' : `agent:${memAgent}`;
         const memRes = await callPythonBackend(
           'POST',
           '/api/py/agents/memory',
           {
-            agent: 'Bielik',
+            agent: memAgent,
+            scope: memScope,
             kind: cmd.memoryKind || 'fact',
             content: cmd.content,
             origin,
@@ -1858,20 +1899,21 @@ async function startServer() {
         appliedActions.push({
           tool: 'bielik_memory_save',
           entity: 'agent_memory',
-          entityId: 'Bielik',
+          entityId: memAgent,
           serverRevision: latestActionSrvRev,
           summary: !ok
             ? String(memRes.data?.error || 'Błąd zapisu')
             : duplicate
-              ? `Wpis już istnieje w pamięci Bielik: "${cmd.content.slice(0, 60)}"`
-              : `Zapisano w pamięci Bielik: "${cmd.content.slice(0, 60)}"`,
+              ? `Wpis już istnieje w pamięci (${memScope}): "${cmd.content.slice(0, 60)}"`
+              : `Zapisano w pamięci (${memScope}): "${cmd.content.slice(0, 60)}"`,
           ok,
         });
+        const targetLabel = isGroupChannel ? 'wspólnej pamięci Rodziny Mitek (Bielik + Maya)' : `pamięci długotrwałej **${memAgent}**`;
         return {
           text: duplicate
-            ? `ℹ️ Ten wpis jest już w pamięci długotrwałej **Bielika** — nie dodano duplikatu: „${cmd.content}”`
+            ? `ℹ️ Ten wpis jest już w ${targetLabel} — nie dodano duplikatu: „${cmd.content}”`
             : ok
-            ? `✅ Zapisano wpis w pamięci długotrwałej **Bielika** (\`agent:Bielik\`, rev \`${latestActionSrvRev}\`): „${cmd.content}”`
+            ? `✅ Zapisano wpis w ${targetLabel} (\`${memScope}\`, rev \`${latestActionSrvRev}\`): „${cmd.content}”`
             : `❌ Nie udało się zapisać pamięci: ${memRes.data?.error || 'błąd backendu'}`,
         };
       }
@@ -2082,6 +2124,24 @@ async function startServer() {
       });
       return;
     }
+    // Recalled persistent SQLite memory for the active agent (shared 'global' + agent-scoped)
+    const memoryAgentName = selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
+    let recalledMemories: AgentMemoryRecord[] = [];
+    if (hasOperatorAuth) {
+      const memSearch = await callPythonBackend(
+        'POST',
+        '/api/py/agents/memory/search',
+        { agent: memoryAgentName, query: cleanMsg, limit: 16 },
+        corrId,
+      );
+      if (memSearch.status === 200 && Array.isArray(memSearch.data?.memories)) {
+        recalledMemories = memSearch.data.memories;
+      } else if (Array.isArray(agentsRes.data?.agent_memories?.[memoryAgentName])) {
+        recalledMemories = agentsRes.data.agent_memories[memoryAgentName];
+      }
+    }
+    const agentMemoryContext = formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14);
+
     if (model === 'codex-cli') {
       if (!hasCodexChatAuth) {
         res.status(401).json({
@@ -2097,11 +2157,14 @@ async function startServer() {
         });
         return;
       }
+      const codexHistory = agentMemoryContext
+        ? [{ role: 'user' as const, content: agentMemoryContext }, ...conversationHistory]
+        : conversationHistory;
       const codexResult = await generateCodexCliChat(
         {
           agentName: selectedDisplayName,
           message: cleanMsg,
-          history: conversationHistory,
+          history: codexHistory,
         },
         __dirname,
       );
@@ -2264,6 +2327,7 @@ async function startServer() {
         );
         if (!installed) throw new Error(`model ${selectedOllamaModelName} nie jest zainstalowany`);
         const ollamaMessages = [
+          ...(agentMemoryContext ? [{ role: 'system', content: agentMemoryContext }] : []),
           ...agentHistory,
           {
             role: 'user',
@@ -2403,6 +2467,7 @@ async function startServer() {
               contents: contentsPayload,
               config: {
                 ...tempCfg,
+                ...(agentMemoryContext ? { systemInstruction: agentMemoryContext } : {}),
                 ...(includeTools
                   ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
                   : useSearchGrounding
@@ -2572,13 +2637,12 @@ async function startServer() {
   // Najpierw model dopisuje „[…”, czyli sam wskazuje, kto mówi następny; potem wskazana AI
   // dopisuje swoją kwestię własnym modelem. Gdy model wskaże Operatora — AI czekają.
   const SAFETY_MAX_AI_TURNS = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 8);
-  const AUTONOMOUS_MIN_INTERVAL_MS = 4000;
+  const AUTONOMOUS_MIN_INTERVAL_MS = 3200;
   const proactiveInFlight = new Set<string>();
   const lastProactiveAt = new Map<string, number>();
   const SKIP_MESSAGES: Record<string, string> = {
     waiting_for_operator: 'Model wskazał, że teraz Twoja kolej — AI czekają na Twoją wiadomość.',
     no_decision: 'Model nie wskazał kolejnego mówcy — rozmowa czeka na Ciebie.',
-    no_conversation: 'Napisz pierwszą wiadomość — AI kontynuują rozmowę, same jej nie zaczynają.',
     ai_turn_limit: `Bezpiecznik kosztów: ${SAFETY_MAX_AI_TURNS} wypowiedzi AI z rzędu bez Twojej wiadomości.`,
     busy: 'Inna karta lub poprzednie wywołanie właśnie generuje wypowiedź.',
   };
@@ -2626,7 +2690,7 @@ async function startServer() {
           ],
           config: {
             temperature: 0.5,
-            maxOutputTokens: 20,
+            maxOutputTokens: 128,
             abortSignal: AbortSignal.timeout(15000),
           },
         });
@@ -2639,7 +2703,7 @@ async function startServer() {
     return { predicted: null, providerOnline: true };
   };
 
-  /** Wypowiedź wskazanego agenta: najpierw Ollama (`raw: true`), awaryjnie Gemini z perspektywy agenta. */
+  /** Wypowiedź wskazanego agenta: najpierw Ollama (`raw: true`), awaryjnie Gemini z pamięcią długotrwałą i perspektywą agenta. */
   const generateAgentProactiveLine = async (
     agentModel: string,
     ollamaHost: string,
@@ -2647,9 +2711,14 @@ async function startServer() {
     transcript: string,
     speaker: ConversationAgent,
     requestedModel: string,
+    memoryContext: string,
     failures: string[],
   ): Promise<{ text: string; label: string } | null> => {
-    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${transcript}\n[${speaker}]: `, {
+    const rawPromptPrefix = memoryContext ? `${memoryContext}\n\n` : '';
+    const starterBlock = transcript
+      ? `${transcript}\n[${speaker}]: `
+      : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
+    const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${rawPromptPrefix}${starterBlock}`, {
       temperature: 0.8,
       numPredict: 400,
       stop: ['\n['],
@@ -2668,9 +2737,12 @@ async function startServer() {
       parts: [{ text: turn.content }],
     }));
     if (contents.length === 0) {
-      contents.push({ role: 'user', parts: [{ text: transcript }] });
+      contents.push({
+        role: 'user',
+        parts: [{ text: buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext) }],
+      });
     } else if (contents[contents.length - 1].role === 'model') {
-      contents.push({ role: 'user', parts: [{ text: `[Kontynuuj wypowiedź jako ${speaker}.]` }] });
+      contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
     for (const candidate of geminiCandidates(requestedModel)) {
       try {
@@ -2680,6 +2752,7 @@ async function startServer() {
           config: {
             temperature: 0.8,
             maxOutputTokens: 1024,
+            ...(memoryContext ? { systemInstruction: memoryContext } : {}),
             stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:'],
             abortSignal: AbortSignal.timeout(15000),
           },
@@ -2701,6 +2774,7 @@ async function startServer() {
     const corrId: string = (req as any).correlationId || '';
     const {
       conversationId = 'conv-rodzina-mitek-wszyscy',
+      targetAgent = '',
       model = 'svl-hybrid-router',
       origin = 'client',
       history = [],
@@ -2728,19 +2802,28 @@ async function startServer() {
       const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId);
       const stored = (Array.isArray(convSnap.data?.conversations) ? convSnap.data.conversations : [])
         .find((c: any) => c.id === convId);
-      const source: any[] = Array.isArray(stored?.messages) ? stored.messages : Array.isArray(history) ? history : [];
+      const source: any[] = Array.isArray(stored?.messages) && stored.messages.length > 0
+        ? stored.messages
+        : Array.isArray(history)
+          ? history
+          : [];
       const turns: DialogueTurn[] = source
         .filter((m: any) => m && typeof m.content === 'string')
         .slice(-40)
         .map((m: any) => ({ role: String(m.role || ''), sender: String(m.sender || ''), content: String(m.content) }));
 
       const transcript = buildTranscript(turns, 30);
-      if (!transcript) return skip('no_conversation');
-      if (isAutonomous && consecutiveAiTurns(turns) >= SAFETY_MAX_AI_TURNS) return skip('ai_turn_limit');
+      const consecutiveAi = consecutiveAiTurns(turns);
+      if (isAutonomous && consecutiveAi >= SAFETY_MAX_AI_TURNS) return skip('ai_turn_limit');
 
       const channelAgent: ConversationAgent | null =
         convId === 'conv-agent-bielik' ? 'Bielik' : convId === 'conv-agent-maya' ? 'Maya' : null;
       const participants: ConversationAgent[] = channelAgent ? [channelAgent] : CONVERSATION_AGENTS;
+      const reqTargetNorm = normalizeAgentCanonicalName(String(targetAgent || ''));
+      const explicitTarget: ConversationAgent | null =
+        channelAgent ||
+        (reqTargetNorm === 'Bielik' || reqTargetNorm === 'Maya' ? reqTargetNorm : null);
+
       const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
       const modelFor = (agent: ConversationAgent): string => {
         if (requestedModel.startsWith('ollama:')) return requestedModel.slice('ollama:'.length);
@@ -2758,28 +2841,49 @@ async function startServer() {
         .reverse()
         .map((t) => agentOf(t))
         .find((s): s is ConversationAgent => Boolean(s && participants.includes(s)));
-      const fallbackNextSpeaker: ConversationAgent = participants.find((a) => a !== lastAi) || participants[0];
 
-      // 1) Model sam wskazuje, kto mówi następny (gdy ostatni pisał Operator, AI przejmuje głos).
-      const { predicted, providerOnline } = await predictNextSpeaker(
-        modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
-      );
-      if (!providerOnline) return noModel();
-      let speaker: ConversationAgent | null =
-        predicted && predicted !== 'operator' && participants.includes(predicted) ? predicted : null;
-      if (!speaker) {
-        if (lastDialogueTurn?.role === 'user') {
-          speaker = fallbackNextSpeaker;
-        } else if (isAutonomous) {
-          return skip(predicted === 'operator' ? 'waiting_for_operator' : 'no_decision');
-        } else {
-          speaker = fallbackNextSpeaker;
-        }
+      let predicted: ConversationAgent | 'operator' | null = null;
+      if (transcript) {
+        const pred = await predictNextSpeaker(
+          modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
+        );
+        if (!pred.providerOnline) return noModel();
+        predicted = pred.predicted;
       }
 
-      // 2) Wskazana AI dopisuje swoją kwestię własnym modelem.
+      const speakerChoice = selectNextFreeSpeaker({
+        predicted,
+        participants,
+        lastTurnRole: lastDialogueTurn?.role,
+        lastAiSpeaker: lastAi || null,
+        isAutonomous,
+        consecutiveAi,
+        hasTurns: Boolean(transcript),
+        explicitTarget,
+      });
+      if (!speakerChoice.speaker) {
+        return skip(speakerChoice.skipReason || 'no_decision');
+      }
+      const speaker = speakerChoice.speaker;
+
+      // Recalled SQLite memory for this speaker so free conversation remembers operator facts & past sessions.
+      let speakerMemories: AgentMemoryRecord[] = [];
+      const memSearch = await callPythonBackend(
+        'POST',
+        '/api/py/agents/memory/search',
+        { agent: speaker, query: lastDialogueTurn?.content || '', limit: 14 },
+        corrId,
+      );
+      if (memSearch.status === 200 && Array.isArray(memSearch.data?.memories)) {
+        speakerMemories = memSearch.data.memories;
+      } else if (Array.isArray(agentsRes.data?.agent_memories?.[speaker])) {
+        speakerMemories = agentsRes.data.agent_memories[speaker];
+      }
+      const speakerMemoryContext = formatMemoryPromptContext(speakerMemories, speaker, 12);
+
+      // 2) Wskazana AI dopisuje swoją kwestię własnym modelem (lub inicjuje rozmowę na pustym kanale).
       const line = await generateAgentProactiveLine(
-        modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, failures,
+        modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, speakerMemoryContext, failures,
       );
       if (!line) return noModel();
       const text = cleanAgentReply(line.text, speaker);
@@ -2802,7 +2906,7 @@ async function startServer() {
         '/api/py/chat/conversations/message',
         {
           conversation_id: convId,
-          title: getCanonicalConversationTitle(convId),
+          title: (typeof stored?.title === 'string' && stored.title.trim()) ? stored.title : getCanonicalConversationTitle(convId),
           model,
           message: assistantMsg,
           origin,
@@ -2817,6 +2921,22 @@ async function startServer() {
         });
         return;
       }
+      void callPythonBackend(
+        'POST',
+        '/api/py/agents/memory',
+        {
+          agent: speaker,
+          kind: 'episode',
+          source: 'free_chat',
+          content: `Swobodna rozmowa (${speaker}): "${text.slice(0, 200)}"`,
+          origin,
+          correlationId: corrId,
+        },
+        corrId,
+      ).then((memRes) => {
+        if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
+      }).catch(() => undefined);
+
       lastProactiveAt.set(convId, Date.now());
       if (pySave.data?.event) publishOutboxEvent(pySave.data.event);
       res.json({

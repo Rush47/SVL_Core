@@ -32,7 +32,7 @@ const re = (source: string) => new RegExp(source, 'iu');
 
 const MEMORY_SAVE_PATTERNS = [
   re(`${B}(?:zapisz|dodaj|wpisz)\\s+(?:to\\s+)?(?:w|do)\\s+pami(?:ę|e)ci(?:\\s+d(?:ł|l)ugotrwa(?:ł|l)ej)?${E}\\s*[,:]?\\s*(?:(?:że|ze)${E}\\s*)?(.+)$`),
-  re(`${B}zapami(?:ę|e)taj(?:\\s+sobie)?${E}\\s*[,:]?\\s*(?:(?:że|ze)${E}\\s*)?(.+)$`),
+  re(`${B}(?:zapami(?:ę|e)taj|pami(?:ę|e)taj)(?:\\s+sobie)?${E}\\s*[,:]?\\s*(?:(?:że|ze)${E}\\s*)?(.+)$`),
 ];
 
 const STATUS_WORDS: Array<[RegExp, ModuleStatus]> = [

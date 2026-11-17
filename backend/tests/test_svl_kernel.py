@@ -730,6 +730,102 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertTrue(clr_resp["ok"])
                 self.assertEqual(backend_app.runtime.kernel.list_terminal_history()["codex"], [])
 
+    def test_proactive_and_system_messages_survive_kernel_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "restart_persist.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "user-keep-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Pamiętasz jak Agata była kiedyś w starym systemie?",
+                    "timestamp": "12:00",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "ollama:llama3.2-vision:11b · rozmowa obustronna",
+                {
+                    "id": "asst-proactive-12345",
+                    "role": "assistant",
+                    "sender": "Maya",
+                    "agentId": "Maya",
+                    "content": "Cześć Mateusz! Chętnie porozmawiam o nowym systemie SVL.",
+                    "timestamp": "12:01",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "sys-report-1",
+                    "role": "system",
+                    "sender": "SVL System Kernel",
+                    "content": "Zsynchronizowano raport SVL.",
+                    "timestamp": "12:02",
+                },
+            )
+
+            # Simulate multiple server restarts on the same SQLite DB
+            restarted_1 = SVLSystemKernel(db_path=db_file, operator_token=token)
+            restarted_2 = SVLSystemKernel(db_path=db_file, operator_token=token)
+            convs = {c["id"]: c for c in restarted_2.list_conversations_with_messages()}
+            msg_ids = [m["id"] for m in convs["conv-rodzina-mitek-wszyscy"]["messages"]]
+            self.assertEqual(msg_ids, ["user-keep-1", "asst-proactive-12345", "sys-report-1"])
+
+    def test_agent_memory_recall_and_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "agent_memory.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            orchestrator = SVLAgentOrchestrator(kernel, SphericalEventBus())
+            try:
+                m_global = orchestrator.add_agent_memory(
+                    "Bielik",
+                    "Operator mieszka w Gdańsku i lubi czarną kawę.",
+                    kind="fact",
+                    scope="global",
+                    source="operator",
+                )
+                m_maya = orchestrator.add_agent_memory(
+                    "Maya",
+                    "Reaktor SVL-364 pracuje stabilnie przy 880 Hz.",
+                    kind="decision",
+                    scope="agent:Maya",
+                    source="operator",
+                )
+                self.assertFalse(m_global["deduplicated"])
+                # Maya sees both global and agent:Maya memories when recalling
+                recalled_maya = orchestrator.recall_agent_memories("Maya", query="kawę Gdańsk", limit=10)
+                contents = [item["content"] for item in recalled_maya]
+                self.assertTrue(any("Gdańsku" in c for c in contents))
+                self.assertEqual(recalled_maya[0]["id"], m_global["id"])
+
+                # Bielik also sees global memory, but not private agent:Maya memory
+                recalled_bielik = orchestrator.recall_agent_memories("Bielik", query="Reaktor", limit=10)
+                self.assertTrue(any(item["id"] == m_global["id"] for item in recalled_bielik))
+                self.assertFalse(any(item["id"] == m_maya["id"] for item in recalled_bielik))
+
+                # Delete Maya's memory and verify deletion + missing id handling
+                del_ok = orchestrator.delete_agent_memory("Maya", m_maya["id"])
+                self.assertTrue(del_ok["ok"])
+                self.assertTrue(del_ok["deleted"])
+                remaining_maya = orchestrator.get_agent_memories("Maya", limit=20)
+                self.assertFalse(any(item["id"] == m_maya["id"] for item in remaining_maya))
+
+                del_missing = orchestrator.delete_agent_memory("Maya", "nonexistent-id")
+                self.assertFalse(del_missing["ok"])
+                self.assertFalse(del_missing["deleted"])
+            finally:
+                asyncio.run(orchestrator.shutdown())
+
 
 if __name__ == "__main__":
     unittest.main()

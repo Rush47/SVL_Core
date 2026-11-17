@@ -1348,6 +1348,111 @@ class SVLAgentOrchestrator:
 
         return [dict(r) for r in self.kernel.run_db(_read, write=False)]
 
+    def recall_agent_memories(
+        self,
+        canonical_name: str,
+        query: str = "",
+        limit: int = 20,
+        kind_filter: str = "",
+    ) -> list[dict[str, Any]]:
+        safe_limit = max(1, min(100, int(limit or 20)))
+        clean_kind = str(kind_filter or "").strip().lower()
+        query_words = {
+            w
+            for w in re.findall(r"[\wąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{2,}", str(query or "").casefold())
+        }
+
+        def _read(conn: Any) -> list[Any]:
+            if clean_kind:
+                return conn.execute(
+                    "SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory "
+                    "WHERE scope IN (?, 'global') AND lower(kind) = ? ORDER BY created_at DESC LIMIT 200",
+                    (f"agent:{canonical_name}", clean_kind),
+                ).fetchall()
+            return conn.execute(
+                "SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory "
+                "WHERE scope IN (?, 'global') ORDER BY created_at DESC LIMIT 200",
+                (f"agent:{canonical_name}",),
+            ).fetchall()
+
+        rows = [dict(r) for r in self.kernel.run_db(_read, write=False)]
+        kind_weights = {
+            "decision": 3.0,
+            "preference": 2.8,
+            "fact": 2.5,
+            "task": 2.0,
+            "episode": 0.9,
+        }
+        total = max(1, len(rows))
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for idx, row in enumerate(rows):
+            content_low = str(row.get("content") or "").casefold()
+            kind_key = str(row.get("kind") or "fact").casefold()
+            recency_score = (total - idx) / total
+            base = kind_weights.get(kind_key, 1.5) + recency_score
+            if query_words:
+                entry_words = set(re.findall(r"[\wąćęłńóśźżĄĆĘŁŃÓŚŹŻ]{2,}", content_low))
+                overlap = len(query_words & entry_words)
+                prefix_hits = sum(
+                    1
+                    for qw in query_words
+                    if len(qw) >= 4 and qw[:4] in content_low
+                )
+                score = base + overlap * 4.0 + prefix_hits * 1.5
+            else:
+                score = base
+            scored.append((score, {**row, "score": round(score, 3)}))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [item[1] for item in scored[:safe_limit]]
+
+    def delete_agent_memory(
+        self,
+        canonical_name: str,
+        memory_id: str,
+        origin: str = "client",
+        correlation_id: str = "",
+        event_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        target_scope = f"agent:{canonical_name}"
+
+        def _delete(conn: Any) -> dict[str, Any]:
+            row = conn.execute(
+                "SELECT id, scope FROM agent_memory WHERE id = ? AND scope IN (?, 'global')",
+                (memory_id, target_scope),
+            ).fetchone()
+            if not row:
+                return {
+                    "ok": False,
+                    "deleted": False,
+                    "error": "Nie znaleziono wpisu pamięci dla tego agenta.",
+                    "serverRevision": self.kernel.get_server_revision(),
+                }
+            conn.execute("DELETE FROM agent_memory WHERE id = ?", (memory_id,))
+            sync_res = self.kernel.commit_entity_event_tx(
+                conn,
+                entity="agent_memory",
+                entity_id=canonical_name,
+                event_type="agent.memory_deleted",
+                origin=origin,
+                correlation_id=correlation_id,
+                event_id=event_id,
+                payload={"agent": canonical_name, "memoryId": memory_id},
+            )
+            return {
+                "ok": True,
+                "deleted": True,
+                "id": memory_id,
+                "revision": sync_res["revision"],
+                "serverRevision": sync_res["serverRevision"],
+                "event": sync_res["event"],
+            }
+
+        res = self.kernel.run_db(_delete, write=True)
+        if canonical_name in self.agent_states:
+            self.agent_states[canonical_name]["memory_entries_count"] = self._count_memories(canonical_name)
+        return res
+
     def append_agent_log(self, canonical_name: str, level: str, message: str) -> dict[str, Any]:
         entry = {
             "id": str(uuid.uuid4()),

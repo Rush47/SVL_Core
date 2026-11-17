@@ -147,6 +147,26 @@ class SshTerminalTests(unittest.TestCase):
         self.assertFalse((bin_dir / "ssh").exists())
         self.assertTrue((bin_dir / "svl364-ssh").exists())
 
+    def test_terminal_origin_avoids_duplicate_sqlite_log_and_exposes_ssh_status(self) -> None:
+        from unittest.mock import MagicMock
+
+        controller = build_controller()
+        controller.telemetry = MagicMock()
+        controller.telemetry.ssh_target.return_value = {"reachable": False, "error": "Brak ssh"}
+        controller.kernel.append_terminal_entry = MagicMock()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=1, stdout="", stderr="Permission denied")
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
+        ):
+            res = controller.execute_ssh_command("uname -a", origin="terminal:ssh", confirmed=True)
+
+        self.assertFalse(res["ok"])
+        self.assertIn("Permission denied", res["error"])
+        self.assertTrue(res["ssh_status"]["ssh"]["sshInstalled"])
+        controller.kernel.append_terminal_entry.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

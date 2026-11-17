@@ -21,6 +21,12 @@ test('natural memory directives save the remaining content', () => {
   assert.deepEqual(parseChatDirectives('Bielik, zapamiętaj: Operator pije kawę o 7:00'), [
     { kind: 'memory_save', memoryKind: 'fact', content: 'Operator pije kawę o 7:00' },
   ]);
+  assert.deepEqual(parseChatDirectives('Pamiętaj, że lubię czarną herbatę'), [
+    { kind: 'memory_save', memoryKind: 'fact', content: 'lubię czarną herbatę' },
+  ]);
+  assert.deepEqual(parseChatDirectives('Pamiętaj sobie: kod alarmu to 364'), [
+    { kind: 'memory_save', memoryKind: 'fact', content: 'kod alarmu to 364' },
+  ]);
   assert.deepEqual(parseChatDirectives('Co pamiętasz?'), [{ kind: 'memory_list' }]);
 });
 

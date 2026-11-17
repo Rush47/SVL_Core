@@ -212,9 +212,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [selectedAgentPanelState, setSelectedAgentPanelState] = useState<string>('Bielik');
 
   const pendingMsgIdsRef = useRef<Set<string>>(new Set());
+  // Recently saved message IDs kept for 30s so slightly lagged snapshots cannot erase them.
+  const recentlyPersistedMsgExpiryRef = useRef<Map<string, number>>(new Map());
   // Keep a newly-created EMPTY thread visible while SQLite create is in-flight.
   const pendingConvIdsRef = useRef<Set<string>>(new Set());
   const deletedConvIdsRef = useRef<Set<string>>(new Set());
+  const appliedChatServerRevRef = useRef(0);
+  const chatMutationEpochRef = useRef(0);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenEventOrderRef = useRef<string[]>([]);
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
@@ -230,6 +234,19 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const inflightCatchupRef = useRef<Promise<void> | null>(null);
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const wsReconnectNowRef = useRef<(() => void) | null>(null);
+
+  const getProtectedMsgIds = useCallback((): Set<string> => {
+    const now = Date.now();
+    const ids = new Set<string>(pendingMsgIdsRef.current);
+    for (const [id, expiresAt] of recentlyPersistedMsgExpiryRef.current.entries()) {
+      if (expiresAt > now) {
+        ids.add(id);
+      } else {
+        recentlyPersistedMsgExpiryRef.current.delete(id);
+      }
+    }
+    return ids;
+  }, []);
 
   // Server SQLite is authoritative. Do not persist old messages in localStorage.
 
@@ -318,6 +335,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         };
       }
       const requestSeq = ++refreshSeqRef.current;
+      const chatReqEpoch = chatMutationEpochRef.current;
       /** True when this response is newer than the last one applied to `slot`. */
       const isFresh = (slot: string) => {
         if ((appliedSeqRef.current[slot] || 0) > requestSeq) return false;
@@ -409,14 +427,26 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             if (!r.ok || !r.data?.ok || !Array.isArray(r.data.conversations)) {
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
-            advanceServerRevision(r.data.serverRevision);
+            const respSrvRev = Number(r.data.serverRevision || 0);
+            advanceServerRevision(respSrvRev);
+            if (
+              !isFresh('chat') ||
+              (respSrvRev > 0 && respSrvRev < appliedChatServerRevRef.current) ||
+              chatMutationEpochRef.current !== chatReqEpoch
+            ) {
+              return;
+            }
+            if (respSrvRev > appliedChatServerRevRef.current) {
+              appliedChatServerRevRef.current = respSrvRev;
+            }
             const hydrated = normalizeConversationsFromServer(r.data.conversations);
             refreshedConversationIds = new Set(hydrated.map((conversation) => conversation.id));
             for (const conversation of hydrated) {
               deletedConvIdsRef.current.delete(conversation.id);
             }
+            const protectedMsgIds = getProtectedMsgIds();
             setConversations((prev) =>
-              mergeConversationThreads(hydrated, prev, pendingMsgIdsRef.current, deletedConvIdsRef.current, pendingConvIdsRef.current),
+              mergeConversationThreads(hydrated, prev, protectedMsgIds, deletedConvIdsRef.current, pendingConvIdsRef.current),
             );
           }),
         );
@@ -439,6 +469,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
               throw new Error(r.data?.error || r.error || `HTTP ${r.status}`);
             }
             advanceServerRevision(r.data.serverRevision);
+            if (!isFresh('workspace')) return;
             const ws = r.data.workspaceState as any;
             setWorkspaceState(ws);
             const rawConv = ws.active_conversation_id?.value ?? ws.active_conversation_id;
@@ -484,7 +515,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       return { ok: true };
     },
-    [advanceServerRevision],
+    [advanceServerRevision, getProtectedMsgIds],
   );
 
   const refreshAllDomains = useCallback(
@@ -511,11 +542,14 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             reason === 'boot_initial_load' ||
             reason === 'remote_system_mutation';
           if (!isRemoteTrigger && hasSvlOperatorAccessToken()) {
-            void safeFetchJson('/api/system/global-sync', {
+            const gsRes = await safeFetchJson<{ ok: boolean; serverRevision?: number }>('/api/system/global-sync', {
               method: 'POST',
-              timeoutMs: 8000,
+              timeoutMs: 6000,
               body: JSON.stringify({ reason, origin: tabOrigin }),
-            }).catch(() => undefined);
+            }).catch(() => null);
+            if (gsRes?.ok && gsRes.data?.serverRevision) {
+              advanceServerRevision(gsRes.data.serverRevision);
+            }
           }
           const result = await refreshDomainModules([
             'health',
@@ -612,8 +646,11 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (evt.entity === 'chat') {
         if (evt.type === 'chat.all_cleared') {
           pendingMsgIdsRef.current.clear();
+          recentlyPersistedMsgExpiryRef.current.clear();
           pendingConvIdsRef.current.clear();
           deletedConvIdsRef.current.clear();
+          chatMutationEpochRef.current += 1;
+          appliedChatServerRevRef.current = Math.max(appliedChatServerRevRef.current, incomingSrvRev);
           setConversations(INITIAL_WELCOME_CONVERSATIONS);
           try { localStorage.removeItem(CONVERSATIONS_CACHE_KEY); } catch { /* unavailable */ }
           scheduleDomainRefresh(['chat']);
@@ -623,6 +660,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           (evt.type === 'chat.thread_deleted' || evt.type === 'chat.conversation_deleted') &&
           evt.entityId
         ) {
+          chatMutationEpochRef.current += 1;
           deletedConvIdsRef.current.add(evt.entityId);
           setConversations((prev) => prev.filter((c) => c.id !== evt.entityId));
         }
@@ -1061,14 +1099,21 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const notifyLocalMutation = useCallback(
     (entity: string, entityId: string, srvRev?: number, event?: SvlSyncEvent | null) => {
+      const effectiveRev = Number(event?.serverRevision || srvRev || 0);
       if (event) {
         recordSeenEventId(event.eventId);
         advanceServerRevision(event.serverRevision);
       } else if (srvRev) {
         advanceServerRevision(srvRev);
       }
+      if (entity === 'chat') {
+        chatMutationEpochRef.current += 1;
+        if (effectiveRev > appliedChatServerRevRef.current) {
+          appliedChatServerRevRef.current = effectiveRev;
+        }
+      }
       setLastSyncedAt(new Date().toLocaleTimeString('pl-PL', { hour12: false }));
-      emitCrossTabSignal(entity, entityId, srvRev || event?.serverRevision, event?.eventId);
+      emitCrossTabSignal(entity, entityId, effectiveRev || undefined, event?.eventId);
     },
     [advanceServerRevision, emitCrossTabSignal, recordSeenEventId],
   );
@@ -1188,6 +1233,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const appendAndPersistChatMessage = useCallback(
     async (convId: string, convTitle: string, model: string, msg: SyncableMessage) => {
+      chatMutationEpochRef.current += 1;
       pendingMsgIdsRef.current.add(msg.id);
       setConversations((prev) =>
         prev.map((c) => {
@@ -1228,25 +1274,32 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           body: payload,
         });
         let res = await persistOnce();
-        const transient = !res.ok &&
-          (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504 || Boolean(res.proxyHtml));
-        if (transient && pendingMsgIdsRef.current.has(msg.id)) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 450));
+        for (let retry = 0; retry < 2; retry += 1) {
+          const transient = !res.ok &&
+            (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504 || Boolean(res.proxyHtml));
+          if (!transient || !pendingMsgIdsRef.current.has(msg.id)) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 450 * (retry + 1)));
           // A server-side clear-all invalidates pending messages. Never replay
           // old writes into an intentionally emptied conversation.
-          if (pendingMsgIdsRef.current.has(msg.id)) {
-            res = await persistOnce();
-          }
+          if (!pendingMsgIdsRef.current.has(msg.id)) break;
+          res = await persistOnce();
         }
 
         if (res.ok && res.data?.ok) {
+          chatMutationEpochRef.current += 1;
+          recentlyPersistedMsgExpiryRef.current.set(msg.id, Date.now() + 30000);
+          const srvRev = Number(res.data.serverRevision || 0);
+          if (srvRev > appliedChatServerRevRef.current) {
+            appliedChatServerRevRef.current = srvRev;
+          }
           if (Array.isArray(res.data.conversations)) {
             const hydrated = normalizeConversationsFromServer(res.data.conversations);
             for (const conversation of hydrated) {
               deletedConvIdsRef.current.delete(conversation.id);
             }
+            const protectedMsgIds = getProtectedMsgIds();
             setConversations((prev) =>
-              mergeConversationThreads(hydrated, prev, pendingMsgIdsRef.current, deletedConvIdsRef.current, pendingConvIdsRef.current),
+              mergeConversationThreads(hydrated, prev, protectedMsgIds, deletedConvIdsRef.current, pendingConvIdsRef.current),
             );
           }
           pendingConvIdsRef.current.delete(convId);
@@ -1268,7 +1321,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         pendingMsgIdsRef.current.delete(msg.id);
       }
     },
-    [notifyLocalMutation, tabOrigin],
+    [getProtectedMsgIds, notifyLocalMutation, tabOrigin],
   );
 
   const createConversation = useCallback((): SyncableConversation => {
@@ -1339,6 +1392,11 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       });
 
       if (res.ok && res.data?.ok) {
+        chatMutationEpochRef.current += 1;
+        const srvRev = Number(res.data.serverRevision || 0);
+        if (srvRev > appliedChatServerRevRef.current) {
+          appliedChatServerRevRef.current = srvRev;
+        }
         pendingConvIdsRef.current.delete(convId);
         deletedConvIdsRef.current.add(convId);
         const remaining = conversationsRef.current.filter((c) => c.id !== convId);
@@ -1351,8 +1409,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           for (const conversation of hydrated) {
             deletedConvIdsRef.current.delete(conversation.id);
           }
+          const protectedMsgIds = getProtectedMsgIds();
           setConversations((prev) =>
-            mergeConversationThreads(hydrated, prev, pendingMsgIdsRef.current, deletedConvIdsRef.current, pendingConvIdsRef.current),
+            mergeConversationThreads(hydrated, prev, protectedMsgIds, deletedConvIdsRef.current, pendingConvIdsRef.current),
           );
         }
         notifyLocalMutation('chat', convId, res.data.serverRevision, res.data.event);
@@ -1360,7 +1419,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
       return { ok: false, error: res.error || res.data?.error || 'Nie udało się usunąć sesji w bazie SQLite.' };
     },
-    [activeConvIdState, notifyLocalMutation, setActiveConvId, tabOrigin],
+    [activeConvIdState, getProtectedMsgIds, notifyLocalMutation, setActiveConvId, tabOrigin],
   );
 
   const clearAllConversationsAndBuffers = useCallback(async () => {
@@ -1381,8 +1440,14 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     if (res.ok && res.data?.ok && Array.isArray(res.data.conversations)) {
+      chatMutationEpochRef.current += 1;
+      const srvRev = Number(res.data.serverRevision || 0);
+      if (srvRev > appliedChatServerRevRef.current) {
+        appliedChatServerRevRef.current = srvRev;
+      }
       pendingConvIdsRef.current.clear();
       pendingMsgIdsRef.current.clear();
+      recentlyPersistedMsgExpiryRef.current.clear();
       deletedConvIdsRef.current.clear();
       const hydrated = normalizeConversationsFromServer(res.data.conversations);
       setConversations(hydrated);

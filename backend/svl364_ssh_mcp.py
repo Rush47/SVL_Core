@@ -314,18 +314,31 @@ except Exception as exc:
         if isinstance(mod.get("config"), dict):
             cfg.update(mod["config"])
         target = self._configured_ssh_target(cfg)
+        ssh_bin = find_real_binary("ssh")
+        ssh_cfg_exists = (Path.home() / ".ssh" / "config").is_file()
+        telemetry = getattr(self, "telemetry", None)
+        target_probe = (
+            telemetry.ssh_target(target)
+            if telemetry is not None
+            else {"reachable": False, "error": "OpenSSH nie jest skonfigurowany" if not ssh_bin else None}
+        )
         return {
             "ok": True,
             "moduleId": "svl-364-ssh-mcp",
             "status": "ACTIVE",
             "ssh": {
                 "connected": self.ssh_connected,
+                "sshInstalled": bool(ssh_bin),
+                "sshBinaryPath": ssh_bin,
+                "sshConfigExists": ssh_cfg_exists,
+                "targetReachable": bool(target_probe.get("reachable")),
+                "targetError": target_probe.get("error"),
                 "host": target,
                 "mode": "OpenSSH config/agent",
                 "authentication": "OpenSSH config/agent",
                 "connectionUri": f"ssh://{target}",
                 "uri": f"ssh://{target}",
-                "cliCommand": "ssh Ship",
+                "cliCommand": f"ssh {target}",
                 "sessionsCount": self.ssh_sessions_count,
                 "invocations_count": self.ssh_sessions_count,
             },
@@ -376,9 +389,16 @@ except Exception as exc:
 
         cfg["ssh_host"] = self._configured_ssh_target(cfg)
         cfg["ssh_mode"] = "openssh-config"
+        if "ssh_port" in cfg:
+            try:
+                cfg["ssh_port"] = max(1, min(65535, int(cfg["ssh_port"])))
+            except (TypeError, ValueError):
+                cfg["ssh_port"] = 22
         for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher", *FICTIONAL_SHIP_KEYS):
             cfg.pop(key, None)
         cfg["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.telemetry._ssh_target_cache.clear()
+        self.telemetry._ship_cache.clear()
         self.kernel.upsert_system_module(
             module_id="svl-364-ssh-mcp",
             name="SVL-364 Mostek SSH & Serwer MCP (Linux Control)",
@@ -504,8 +524,21 @@ except Exception as exc:
         # Tylko prawdziwy OpenSSH; nigdy nie wykonujemy polecenia lokalnie zamiast zdalnie.
         ssh_bin = find_real_binary("ssh")
         if not ssh_bin:
-            message = "OpenSSH (`ssh`) nie jest zainstalowany na hoście backendu — polecenie nie zostało wykonane."
-            return {"ok": False, "error": message, "exitCode": 127, "output": "", "stdout": "", "stderr": message}
+            message = (
+                f"OpenSSH (`ssh`) nie jest zainstalowany na hoście backendu (cel: ssh://{ssh_host}) — "
+                "polecenie zdalne nie zostało wykonane. Zainstaluj pakiet `openssh-client` lub użyj zakładki `Powłoka Linux (ROOT)` dla poleceń lokalnych."
+            )
+            return {
+                "ok": False,
+                "error": message,
+                "exitCode": 127,
+                "output": "",
+                "stdout": "",
+                "stderr": message,
+                "sshEndpoint": f"ssh://{ssh_host}",
+                "ssh_status": self.get_status(),
+                "serverRevision": self.kernel.get_server_revision(),
+            }
 
         self.ssh_sessions_count += 1
         started = time.time()
@@ -574,23 +607,26 @@ except Exception as exc:
         }
         self.recent_activity.append(entry)
 
-        # Log into root terminal history in SQLite so Terminals tab shows it immediately
-        try:
-            self.kernel.append_terminal_entry(
-                "ssh",
-                {
-                    "type": "output",
-                    "text": formatted_output,
-                    "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                },
-                origin=origin,
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            pass
+        # Zapisuj bezpośrednio do SQLite tylko spoza mostka `/api/terminal/exec` (ten sam zapisuje przez respondAndPersist).
+        if not str(origin or "").startswith("terminal:"):
+            try:
+                self.kernel.append_terminal_entry(
+                    "ssh",
+                    {
+                        "kind": "stdout" if exit_code == 0 else "stderr",
+                        "text": formatted_output,
+                        "command": clean_cmd[:300],
+                        "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                    },
+                    origin=origin,
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                pass
 
         return {
             "ok": exit_code == 0,
+            "error": "" if exit_code == 0 else (stderr_out or f"Połączenie SSH z {ssh_host} zakończyło się kodem {exit_code}."),
             "command": clean_cmd,
             "effectiveCommand": effective_shell_cmd,
             "mode": cmd_mode,
@@ -599,8 +635,8 @@ except Exception as exc:
             "durationMs": duration_ms,
             "sshEndpoint": f"ssh://{ssh_host}",
             "output": formatted_output,
-            "stdout": formatted_output,
-            "stderr": stderr_out if exit_code != 0 else "",
+            "stdout": formatted_output if exit_code == 0 else "",
+            "stderr": formatted_output if exit_code != 0 else "",
             "rawOutput": combined,
             "entry": entry,
             "ssh_status": self.get_status(),

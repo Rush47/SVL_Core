@@ -4,6 +4,7 @@ import {
   RefreshCw,
   MessageSquare,
   AlertTriangle,
+  Trash2,
 } from 'lucide-react';
 import {
   CANONICAL_AGENTS,
@@ -197,6 +198,8 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     }
   };
 
+  const [deletingMemoryId, setDeletingMemoryId] = useState<string | null>(null);
+
   const handleAddMemory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgent) {
@@ -226,6 +229,33 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
       await refreshDomainModules(['agents']);
     } else {
       setMemoryStatus(`Błąd: ${res.error || data?.error || 'Nie udało się zapisać pamięci.'}`);
+    }
+  };
+
+  const handleDeleteMemory = async (memId: string) => {
+    if (!selectedAgent || !memId || deletingMemoryId) return;
+    setDeletingMemoryId(memId);
+    try {
+      const res = await safeFetchJson<any>('/api/py/agents/memory/delete', {
+        method: 'POST',
+        timeoutMs: 12000,
+        body: JSON.stringify({
+          agent: selectedAgent,
+          memory_id: memId,
+          origin: tabOrigin,
+          eventId: createUniqueId('evt-mem-del'),
+        }),
+      });
+      const data = res.data;
+      if (res.ok && data?.ok) {
+        setMemoryStatus(`Usunięto wpis pamięci z SQLite (${memId.slice(0, 8)}).`);
+        notifyLocalMutation('agent_memory', selectedAgent, data.serverRevision, data.event);
+        await refreshDomainModules(['agents']);
+      } else {
+        setMemoryStatus(`Błąd: ${res.error || data?.error || 'Nie udało się usunąć wpisu pamięci.'}`);
+      }
+    } finally {
+      setDeletingMemoryId(null);
     }
   };
 
@@ -867,11 +897,23 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                   key={mem.id}
                   className="p-3 rounded-lg bg-[#0B0D13] border border-slate-800/90 text-xs space-y-1"
                 >
-                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 tabular-nums">
-                    <span>
+                  <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400 tabular-nums">
+                    <span className="truncate">
                       {mem.scope} · {mem.kind} · źródło: {mem.source}
                     </span>
-                    <span>{new Date(mem.created_at).toLocaleTimeString('pl-PL')}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span>{new Date(mem.created_at).toLocaleTimeString('pl-PL')}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteMemory(mem.id)}
+                        disabled={deletingMemoryId === mem.id}
+                        aria-label={`Usuń wpis pamięci ${mem.id}`}
+                        className="inline-flex items-center gap-1 rounded border border-rose-500/35 bg-rose-950/30 px-1.5 py-0.5 text-[10px] text-rose-300 hover:bg-rose-900/40 disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>{deletingMemoryId === mem.id ? 'Usuwanie...' : 'Usuń'}</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="text-slate-200 leading-relaxed">{mem.content}</div>
                 </div>

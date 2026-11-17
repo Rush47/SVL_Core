@@ -924,6 +924,9 @@ async def handle_api_request(
             return 400, {"ok": False, "error": f"Brak aktywnego agenta: {raw_agent or '(brak)'}"}
         content = str(body.get("content", "")).strip()
         kind = str(body.get("kind", "fact")).strip()
+        raw_scope = str(body.get("scope") or "").strip()
+        target_scope = "global" if raw_scope == "global" else f"agent:{agent_name}"
+        source = str(body.get("source") or "operator").strip()[:60] or "operator"
         if not content:
             return 400, {"ok": False, "error": "Treść pamięci jest wymagana."}
         try:
@@ -931,7 +934,8 @@ async def handle_api_request(
                 agent_name,
                 content,
                 kind=kind,
-                source="operator",
+                source=source,
+                scope=target_scope,
                 origin=origin,
                 correlation_id=corr,
                 event_id=event_id,

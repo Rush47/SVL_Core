@@ -217,8 +217,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     autoTurnsRef.current = 0;
   }, [activeConv?.id]);
 
+  const [duplexTick, setDuplexTick] = useState(0);
+
   const handleTriggerProactiveChat = async (agentOverride?: string, autonomous = false) => {
     if (sendingRef.current || isSending || isProactiveLoading || !activeConv) return;
+    if (!hasSvlOperatorAccessToken() && !hasSvlCodexAccessToken()) {
+      const authText = 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.';
+      if (autonomous) {
+        setDuplexStatus({ reason: 'auth', text: authText });
+      } else {
+        setChatActionError(authText);
+      }
+      return;
+    }
     if (!autonomous) {
       autoTurnsRef.current = 0;
     }
@@ -226,7 +237,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     setChatActionError(null);
     lastInteractionTimeRef.current = Date.now();
     try {
-      const chosenTarget = agentOverride || 'Auto';
+      const chosenTarget =
+        agentOverride ||
+        (targetAgent === 'Bielik' || targetAgent === 'Maya' ? targetAgent : 'Auto');
       const recentMsgs = (activeConv.messages || []).slice(-12);
       const lastMsg = recentMsgs[recentMsgs.length - 1];
       const historyPayload = recentMsgs.map((m) => ({
@@ -263,8 +276,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           autoTurnsRef.current += 1;
         }
         setDuplexStatus(null);
-        await refreshDomainModules(['chat']);
         notifyLocalMutation('chat', activeConv.id, res.data.serverRevision);
+        await refreshDomainModules(['chat', 'agents']);
       } else if (res.data?.skipped && res.data.reason) {
         // 'busy' = inna karta właśnie pisze; jej wiadomość przyjdzie przez synchronizację.
         if (res.data.reason !== 'busy') {
@@ -272,8 +285,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           // Przy ręcznym wywołaniu pasek trybu obustronnego może być ukryty — pokaż powód wprost.
           if (!autonomous) setChatActionError(res.data.error || res.data.reason);
         }
-      } else if (!autonomous) {
-        setChatActionError(`Błąd inicjacji rozmowy: ${res.error || res.data?.error || 'brak odpowiedzi'}`);
+      } else {
+        const errMsg = `Błąd inicjacji rozmowy: ${res.error || res.data?.error || 'brak odpowiedzi'}`;
+        if (autonomous) {
+          setDuplexStatus({ reason: 'error', text: errMsg });
+        } else {
+          setChatActionError(errMsg);
+        }
       }
     } finally {
       setIsProactiveLoading(false);
@@ -283,14 +301,30 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleProactiveRef = useRef(handleTriggerProactiveChat);
   handleProactiveRef.current = handleTriggerProactiveChat;
 
+  // Nowa wiadomość (od Operatora lub z innej karty) albo zmiana kanału odblokowuje rozmowę.
+  useEffect(() => {
+    setDuplexStatus(null);
+  }, [activeConv?.id, activeConv?.messages.length]);
+
   useEffect(() => {
     const justEnabled = !prevDuplexActiveRef.current && duplexActive;
     prevDuplexActiveRef.current = duplexActive;
     if (justEnabled) {
       autoTurnsRef.current = 0;
+      setDuplexStatus(null);
     }
-
-    if (!duplexActive || !activeConv || isSending || isProactiveLoading || !hasSvlOperatorAccessToken()) {
+    if (!duplexActive) {
+      setDuplexStatus(null);
+      return;
+    }
+    if (!activeConv || isSending || isProactiveLoading) {
+      return;
+    }
+    if (!hasSvlOperatorAccessToken()) {
+      setDuplexStatus({
+        reason: 'auth',
+        text: 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.',
+      });
       return;
     }
     // Limit tur AI pilnuje serwer (powód pauzy wraca w odpowiedzi); tu tylko bezpiecznik.
@@ -302,21 +336,38 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       return;
     }
 
-    const delayMs = justEnabled ? 2500 : autoTurnsRef.current === 0 ? 4000 : 7000;
+    const delayMs = justEnabled ? 1800 : autoTurnsRef.current === 0 ? 3500 : 6000;
     const timer = setTimeout(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      if (sendingRef.current || getInput().trim().length > 0) return;
-      if (!hasSvlOperatorAccessToken()) return;
+      if ((typeof document !== 'undefined' && document.hidden) || sendingRef.current || getInput().trim().length > 0) {
+        setDuplexTick((n) => n + 1);
+        return;
+      }
+      if (!hasSvlOperatorAccessToken()) {
+        setDuplexStatus({
+          reason: 'auth',
+          text: 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.',
+        });
+        return;
+      }
       void handleProactiveRef.current(undefined, true);
     }, delayMs);
 
-    return () => clearTimeout(timer);
-  }, [duplexActive, duplexStatus, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        setDuplexTick((n) => n + 1);
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
 
-  // Nowa wiadomość (od Operatora lub z innej karty) albo zmiana kanału odblokowuje rozmowę.
-  useEffect(() => {
-    setDuplexStatus(null);
-  }, [activeConv?.id, activeConv?.messages.length, duplexActive]);
+    return () => {
+      clearTimeout(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
+    };
+  }, [duplexActive, duplexStatus, duplexTick, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
 
   useEffect(() => {
     setSvlCodexAccessToken(codexAccessInput);
@@ -1565,7 +1616,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           <div role="status" aria-live="polite" className="shrink-0 border-b border-violet-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
             <div
               className={`mx-auto flex max-w-5xl items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
-                duplexStatus.reason === 'no_model'
+                duplexStatus.reason === 'no_model' || duplexStatus.reason === 'auth' || duplexStatus.reason === 'error'
                   ? 'border-amber-500/40 bg-amber-950/30 text-amber-200'
                   : 'border-violet-500/35 bg-violet-950/30 text-violet-200'
               }`}
@@ -1574,7 +1625,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               <span className="min-w-0 flex-1">
                 <strong className="font-semibold">Czat obustronny:</strong> {duplexStatus.text}
               </span>
-              {duplexStatus.reason !== 'no_model' && (
+              {duplexStatus.reason !== 'no_model' && duplexStatus.reason !== 'auth' && (
                 <button
                   type="button"
                   onClick={() => {

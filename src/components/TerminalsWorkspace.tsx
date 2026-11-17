@@ -128,12 +128,33 @@ export const TerminalsWorkspace: React.FC = () => {
   });
 
   const [operatorTokenInput, setOperatorTokenInput] = useState(() => getSvlOperatorAccessToken());
+  const [sshBridgeStatus, setSshBridgeStatus] = useState<any>(null);
+  const [sshTargetInput, setSshTargetInput] = useState('');
+  const [sshConfigStatus, setSshConfigStatus] = useState<string | null>(null);
+  const [isSavingSshConfig, setIsSavingSshConfig] = useState(false);
 
   useEffect(() => {
     const onTokenChanged = () => setOperatorTokenInput(getSvlOperatorAccessToken());
     window.addEventListener('svl-operator-token-changed', onTokenChanged);
     return () => window.removeEventListener('svl-operator-token-changed', onTokenChanged);
   }, []);
+
+  const loadSshBridgeStatus = async () => {
+    if (!getSvlOperatorAccessToken()) return;
+    const res = await safeFetchJson<any>('/api/svl364/ssh-mcp/status', { timeoutMs: 8000 });
+    if (res.ok && res.data?.ok) {
+      setSshBridgeStatus(res.data.ssh || null);
+      if (res.data.ssh?.host) {
+        setSshTargetInput((prev) => prev || String(res.data.ssh.host));
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'ssh') {
+      void loadSshBridgeStatus();
+    }
+  }, [activeTab, serverRevision]);
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -209,8 +230,26 @@ export const TerminalsWorkspace: React.FC = () => {
       const data = res.data;
 
       if (!res.ok || !data || data.ok === false) {
-        appendLocalOnlyLog(activeTab, 'stderr', res.error || data?.error || `Błąd HTTP ${res.status}`);
+        const errMsg =
+          (typeof data?.stderr === 'string' && data.stderr.trim()) ||
+          (typeof data?.error === 'string' && data.error.trim()) ||
+          res.error ||
+          `Błąd wykonania HTTP ${res.status}`;
+        if (data?.sshStatus) {
+          setSshBridgeStatus(data.sshStatus.ssh || data.sshStatus);
+        }
+        if (data) {
+          // Backend zapisał już wpis błędu w SQLite — odśwież historię zamiast dublować komunikat lokalny.
+          setLocalFallbackLogs((prev) => ({ ...prev, [activeTab]: [] }));
+          await refreshTerminals();
+        } else {
+          appendLocalOnlyLog(activeTab, 'stderr', errMsg);
+        }
+        setTerminalActionError(errMsg);
         return;
+      }
+      if (data?.sshStatus) {
+        setSshBridgeStatus(data.sshStatus.ssh || data.sshStatus);
       }
       setCommandInput('');
 
@@ -222,6 +261,30 @@ export const TerminalsWorkspace: React.FC = () => {
       ]);
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  const handleSaveSshTarget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = sshTargetInput.trim();
+    if (!target || isSavingSshConfig) return;
+    setIsSavingSshConfig(true);
+    setSshConfigStatus(null);
+    try {
+      const res = await safeFetchJson<any>('/api/svl364/ssh-mcp/config', {
+        method: 'POST',
+        timeoutMs: 10000,
+        body: JSON.stringify({ ssh_host: target, origin: tabOrigin }),
+      });
+      if (res.ok && res.data?.ok) {
+        setSshBridgeStatus(res.data.ssh || null);
+        setSshConfigStatus(`Zapisano cel SSH: ssh://${res.data.ssh?.host || target}`);
+        await refreshDomainModules(['modules', 'health']);
+      } else {
+        setSshConfigStatus(`Błąd: ${res.error || res.data?.error || 'Nie udało się zapisać celu SSH.'}`);
+      }
+    } finally {
+      setIsSavingSshConfig(false);
     }
   };
 
@@ -314,6 +377,56 @@ export const TerminalsWorkspace: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {activeTab === 'ssh' && (
+        <div className="px-4 py-2 bg-[#090D15] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+          <div className="flex flex-wrap items-center gap-2 text-slate-300">
+            <span className={sshBridgeStatus?.sshInstalled ? 'text-emerald-400' : 'text-amber-300'}>
+              {sshBridgeStatus?.sshInstalled
+                ? `OpenSSH: OK (${sshBridgeStatus.sshBinaryPath || '/usr/bin/ssh'})`
+                : 'OpenSSH: brak pakietu ssh na hoście backendu'}
+            </span>
+            <span aria-hidden="true" className="text-slate-600">·</span>
+            <span className={sshBridgeStatus?.targetReachable ? 'text-emerald-300' : 'text-amber-300'}>
+              Cel: {sshBridgeStatus?.uri || 'ssh://Ship'} ({sshBridgeStatus?.targetReachable ? 'osiągalny' : 'nieosiągalny'})
+            </span>
+            {(!sshBridgeStatus?.sshInstalled || !sshBridgeStatus?.targetReachable) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTerminalActionError(null);
+                  setActiveTab('linux');
+                }}
+                className="px-2 py-0.5 rounded bg-violet-600/25 hover:bg-violet-600/35 border border-violet-500/40 text-violet-200 whitespace-nowrap"
+              >
+                Przełącz na Powłokę Linux (ROOT lokalny)
+              </button>
+            )}
+          </div>
+          <form onSubmit={(e) => void handleSaveSshTarget(e)} className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={sshTargetInput}
+              onChange={(e) => setSshTargetInput(e.target.value)}
+              placeholder="user@host lub alias z ~/.ssh/config"
+              aria-label="Docelowy host SSH"
+              className="w-48 max-w-full rounded border border-slate-700 bg-[#0B0D13] px-2 py-0.5 text-[11px] text-slate-100"
+            />
+            <button
+              type="submit"
+              disabled={isSavingSshConfig || !sshTargetInput.trim()}
+              className="px-2 py-0.5 rounded bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white whitespace-nowrap"
+            >
+              {isSavingSshConfig ? 'Zapis...' : 'Ustaw cel SSH'}
+            </button>
+          </form>
+          {sshConfigStatus && (
+            <span className={sshConfigStatus.startsWith('Błąd') ? 'text-rose-300' : 'text-emerald-300'}>
+              {sshConfigStatus}
+            </span>
+          )}
+        </div>
+      )}
 
       {terminalActionError && (
         <div className="px-4 py-2 bg-rose-950/40 border-b border-rose-500/40 text-xs font-mono text-rose-300">
