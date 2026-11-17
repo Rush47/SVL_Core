@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createHttpServer, IncomingMessage } from 'node:http';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawn, ChildProcess, execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
@@ -149,6 +149,23 @@ try {
   fsSync.writeFileSync(OPERATOR_TOKEN_SECRET_FILE, process.env.SVL_OPERATOR_TOKEN, { mode: 0o600 });
 } catch {
   // ignore read-only fs
+}
+
+// Klucz MCP w adresie (konektor aplikacji Claude): z .env albo wygenerowany raz i zapisany w data/ (poza gitem).
+const MCP_URL_KEY_FILE = path.join(__dirname, 'data', 'svl_mcp_url_key.secret');
+if (!String(process.env.SVL_MCP_URL_KEY || '').trim() || String(process.env.SVL_MCP_URL_KEY).trim().length < 32) {
+  try {
+    const saved = fsSync.existsSync(MCP_URL_KEY_FILE) ? fsSync.readFileSync(MCP_URL_KEY_FILE, 'utf8').trim() : '';
+    if (saved.length >= 32) {
+      process.env.SVL_MCP_URL_KEY = saved;
+    } else {
+      process.env.SVL_MCP_URL_KEY = randomBytes(32).toString('base64url');
+      fsSync.mkdirSync(path.dirname(MCP_URL_KEY_FILE), { recursive: true });
+      fsSync.writeFileSync(MCP_URL_KEY_FILE, process.env.SVL_MCP_URL_KEY, { mode: 0o600 });
+    }
+  } catch {
+    // system plików tylko do odczytu — konektor przez adres niedostępny, nagłówek Bearer działa nadal
+  }
 }
 
 // Load GITHUB_TOKEN / GH_TOKEN from env/.env or persisted data/svl_github_token.secret
@@ -649,6 +666,18 @@ async function executeLinuxShellCommand(cmd: string, cwd = __dirname): Promise<{
   });
 }
 
+/** Klucz MCP w adresie (konektor aplikacji Claude): osobny sekret SVL_MCP_URL_KEY, min. 32 znaki. */
+function mcpUrlKeyMatches(candidate: string): boolean {
+  const secret = String(process.env.SVL_MCP_URL_KEY || '').trim();
+  const value = String(candidate || '').trim();
+  if (secret.length < 32 || value.length !== secret.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(value, 'utf8'), Buffer.from(secret, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 function hasOperatorAuthorization(candidate: unknown): boolean {
   if (typeof candidate !== 'string') return false;
   const trimmedCandidate = candidate.trim();
@@ -693,15 +722,22 @@ async function startServer() {
   }));
 
   // MCP całego systemu SVL (Claude Code / Claude Desktop / inne klienty MCP): Bearer SVL_OPERATOR_TOKEN.
-  app.all('/mcp/svl', asyncRoute(async (req, res) => {
+  // Dwa sposoby logowania: nagłówek Bearer <SVL_OPERATOR_TOKEN> (Claude Code / Desktop) albo
+  // osobny klucz w adresie /mcp/svl/<SVL_MCP_URL_KEY> (konektor w aplikacji Claude — bez nagłówków).
+  app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
     const authorization = req.headers.authorization;
-    const token = typeof authorization === 'string' && authorization.startsWith('Bearer ')
+    const bearer = typeof authorization === 'string' && authorization.startsWith('Bearer ')
       ? authorization.slice(7).trim()
       : '';
-    if (!hasOperatorAuthorization(token)) {
-      res.status(401).json({ ok: false, error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN>.' });
+    const urlKeyOk = mcpUrlKeyMatches(String(req.params.urlKey || ''));
+    if (!hasOperatorAuthorization(bearer) && !urlKeyOk) {
+      res.status(401).json({
+        ok: false,
+        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN> albo adresu /mcp/svl/<SVL_MCP_URL_KEY>.',
+      });
       return;
     }
+    const token = hasOperatorAuthorization(bearer) ? bearer : String(process.env.SVL_OPERATOR_TOKEN || '').trim();
     const svlMcp = createSvlMcpServer({
       baseUrl: `http://127.0.0.1:${PORT}`,
       operatorToken: token,
@@ -1721,6 +1757,21 @@ async function startServer() {
     const r = await runGhCommand(__dirname, ghArgs);
     res.json({ ok: r.ok, output: r.output, engine: r.engine, ...(r.ok ? {} : { error: r.output.slice(0, 300) }) });
   }));
+
+  // Dane konektora MCP dla aplikacji Claude (tylko dla operatora; klucz nie trafia do logów).
+  app.get('/api/mcp/connector', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const key = String(process.env.SVL_MCP_URL_KEY || '').trim();
+    res.json({
+      ok: true,
+      urlKeyPath: key.length >= 32 ? `/mcp/svl/${key}` : null,
+      bearerPath: '/mcp/svl',
+      tools: 12,
+    });
+  });
 
   app.post('/api/system/global-sync', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {

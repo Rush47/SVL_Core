@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GitHubPanel } from './GitHubPanel';
+import { McpConnectorCard } from './McpConnectorCard';
 import {
   Copy,
   Check,
@@ -440,7 +441,10 @@ export const LinuxDeployDashboard: React.FC = () => {
         </div>
 
         {/* Card 3: GitHub Rush47/SVL_Core — token, synchronizacja obustronna */}
-        <GitHubPanel onSelectRepoFile={(fp) => setSelectedFilePath(fp)} />
+        <div className="space-y-6">
+          <GitHubPanel onSelectRepoFile={(fp) => setSelectedFilePath(fp)} />
+          <McpConnectorCard />
+        </div>
       </div>
 
       {/* Bottom Split: Workspace File Manager & External Debian 13 Connection Instructions */}
