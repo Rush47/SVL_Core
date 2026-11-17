@@ -338,6 +338,9 @@ function getGeminiClient(): GoogleGenAI | null {
   }
   return new GoogleGenAI({
     apiKey: apiKey.trim(),
+    // @google/genai 3.x domyślnie używa API `v1`, w którym nie ma modeli preview, aliasów *-latest
+    // ani części funkcji (np. wyszukiwania Google) — stąd 404 „not found for API version v1”.
+    apiVersion: process.env.GOOGLE_GENAI_API_VERSION || 'v1beta',
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -2822,8 +2825,8 @@ async function startServer() {
             abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
           },
         });
-        const parsed = parsePredictedSpeaker(gen.text || '');
-        if (parsed) return { predicted: parsed, providerOnline: true };
+        // Model odpowiedział — wynik (także brak wskazania) jest decyzją; kolejne modele niepotrzebne.
+        return { predicted: parsePredictedSpeaker(gen.text || ''), providerOnline: true };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);

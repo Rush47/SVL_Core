@@ -6,7 +6,12 @@
 // (szybkie → stabilne → nowsze) i pamięta modele, które zwróciły 404, żeby ich nie ponawiać.
 
 /** Zapas, gdy listy modeli nie da się pobrać. */
-export const GEMINI_STATIC_FALLBACK = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest'];
+export const GEMINI_STATIC_FALLBACK = [
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite', // odpowiadał (bez 404) w AI Studio — tylko przekraczał krótki limit czasu
+  'gemini-flash-lite-latest',
+  'gemini-3-flash-preview',
+];
 
 const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma)/i;
 
@@ -110,14 +115,15 @@ export async function discoverGeminiModels(client: any): Promise<string[]> {
 }
 
 /** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, wykryte modele, zapas. */
-export async function geminiCandidatesFor(client: any, requestedModel?: string, max = 4): Promise<string[]> {
+export async function geminiCandidatesFor(client: any, requestedModel?: string, max = 5): Promise<string[]> {
   const requested = String(requestedModel || '').trim();
   const fromApi = await discoverGeminiModels(client);
   const ordered = [
     process.env.GEMINI_MODEL,
     requested.startsWith('gemini-') ? requested : null,
-    ...fromApi,
-    ...(fromApi.length === 0 ? GEMINI_STATIC_FALLBACK : []),
+    // Wykryte modele najpierw; zapas zawsze na końcu, gdyby lista z API była niepełna.
+    ...fromApi.slice(0, Math.max(1, max - 2)),
+    ...GEMINI_STATIC_FALLBACK,
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
   return [...new Set(ordered)].filter((m) => !goneModels.has(m)).slice(0, max);
 }
