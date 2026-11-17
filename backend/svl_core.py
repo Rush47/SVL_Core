@@ -435,6 +435,28 @@ class SVLSystemKernel:
                 self._operator_token = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")[:64]
                 self.token_source = "stable_workspace_key"
 
+        # Load GITHUB_TOKEN / GH_TOKEN from .env or data/svl_github_token.secret for standalone Python workers
+        gh_tok = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+        if not gh_tok:
+            gh_secret_file = PROJECT_ROOT / "data" / "svl_github_token.secret"
+            with contextlib.suppress(OSError):
+                if gh_secret_file.is_file():
+                    gh_tok = gh_secret_file.read_text(encoding="utf-8").strip()
+        if not gh_tok:
+            env_file = PROJECT_ROOT / ".env"
+            with contextlib.suppress(OSError):
+                if env_file.is_file():
+                    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+                        line = raw_line.strip()
+                        if line.startswith(("GITHUB_TOKEN=", "GH_TOKEN=")):
+                            val = line.split("=", 1)[1].strip().strip("\"'")
+                            if val:
+                                gh_tok = val
+                                break
+        if len(gh_tok) >= 20:
+            os.environ["GITHUB_TOKEN"] = gh_tok
+            os.environ["GH_TOKEN"] = gh_tok
+
         # 1. Konfiguracja Systemowa z ochroną SVLProtectedVariable
         self.operator = SVLProtectedVariable("OPERATOR", "Mateusz Mitek", security_level="MAXIMUM")
         self.sys_version = SVLProtectedVariable(

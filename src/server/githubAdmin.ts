@@ -250,7 +250,7 @@ export interface GitSyncStatus {
 }
 
 async function git(projectDir: string, args: string[], timeoutMs?: number): Promise<RunResult> {
-  return run('git', args, projectDir, gitEnv(), timeoutMs);
+  return run('git', ['-c', `safe.directory=${projectDir}`, ...args], projectDir, gitEnv(), timeoutMs);
 }
 
 async function fetchRemote(projectDir: string, branch: string): Promise<RunResult> {
@@ -345,9 +345,14 @@ export async function gitSync(
   }
 
   if (action === 'init') {
-    if (fsSync.existsSync(path.join(projectDir, '.git'))) return done(true, 'Repozytorium git już istnieje.');
-    const init = await git(projectDir, ['init', '-q', '-b', branch]);
-    if (!init.ok) return done(false, `git init: ${scrub(init.stderr)}`);
+    const hasGitDir = fsSync.existsSync(path.join(projectDir, '.git'));
+    if (hasGitDir) {
+      const headOk = await git(projectDir, ['rev-parse', '--verify', 'HEAD']);
+      if (headOk.ok) return done(true, 'Repozytorium git już istnieje.');
+    } else {
+      const init = await git(projectDir, ['init', '-q', '-b', branch]);
+      if (!init.ok) return done(false, `git init: ${scrub(init.stderr)}`);
+    }
     const f = await fetchRemote(projectDir, branch);
     if (!f.ok) return done(false, `Pobranie z GitHuba: ${scrub(f.stderr)}`);
     // Ustawia historię z GitHuba, NIE zmieniając plików na dysku (różnice widać jako lokalne zmiany).

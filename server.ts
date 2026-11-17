@@ -99,6 +99,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const OPERATOR_TOKEN_SECRET_FILE = path.join(__dirname, 'data', 'svl_operator_token.secret');
+const GITHUB_TOKEN_SECRET_FILE = path.join(__dirname, 'data', 'svl_github_token.secret');
 
 function deriveStableWorkspaceOperatorToken(projectDir: string): string {
   let appIdentity = 'svl-python-os-workspace';
@@ -142,6 +143,29 @@ try {
   fsSync.writeFileSync(OPERATOR_TOKEN_SECRET_FILE, process.env.SVL_OPERATOR_TOKEN, { mode: 0o600 });
 } catch {
   // ignore read-only fs
+}
+
+// Load GITHUB_TOKEN / GH_TOKEN from env/.env or persisted data/svl_github_token.secret
+const explicitGithubToken = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim();
+if (explicitGithubToken) {
+  process.env.GITHUB_TOKEN = explicitGithubToken;
+  process.env.GH_TOKEN = explicitGithubToken;
+  try {
+    fsSync.mkdirSync(path.dirname(GITHUB_TOKEN_SECRET_FILE), { recursive: true });
+    fsSync.writeFileSync(GITHUB_TOKEN_SECRET_FILE, explicitGithubToken, { mode: 0o600 });
+  } catch {
+    // ignore read-only fs
+  }
+} else {
+  try {
+    const savedGhToken = fsSync.readFileSync(GITHUB_TOKEN_SECRET_FILE, 'utf8').trim();
+    if (savedGhToken.length >= 20) {
+      process.env.GITHUB_TOKEN = savedGhToken;
+      process.env.GH_TOKEN = savedGhToken;
+    }
+  } catch {
+    // optional GitHub token not configured yet
+  }
 }
 
 // Katalog logi/ względem projektu (jak w backendzie Python), niezależnie od katalogu uruchomienia procesu.
@@ -405,7 +429,9 @@ function scrubRuntimeLog(input: string): string {
     const value = process.env[key];
     if (value && value.length >= 8) cleaned = cleaned.split(value).join('[REDACTED]');
   }
-  cleaned = cleaned.replace(/\bBearer\s+[A-Za-z0-9_.-]{12,}/gi, 'Bearer [REDACTED]');
+  cleaned = cleaned.replace(/\bBearer\s+[A-Za-z0-9_.\-=+/]{12,}/gi, 'Bearer [REDACTED]');
+  cleaned = cleaned.replace(/\bBasic\s+[A-Za-z0-9+/=]{12,}/gi, 'Basic [REDACTED]');
+  cleaned = cleaned.replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[REDACTED_GITHUB_TOKEN]');
   cleaned = cleaned.replace(/(?:authorization|api[_-]?key|password|token)\s*[:=]\s*['"]?[^\s,'"]{12,}/gi, '[REDACTED_CREDENTIAL]');
   return cleaned.slice(0, 900);
 }
@@ -562,6 +588,20 @@ async function executeLinuxShellCommand(cmd: string, cwd = __dirname): Promise<{
   const t0 = Date.now();
   const trimmedCmd = String(cmd || '').trim();
 
+  const ghToken = getGitHubToken();
+  const gitShellEnv: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_CONFIG_COUNT: ghToken ? '2' : '1',
+    GIT_CONFIG_KEY_0: 'safe.directory',
+    GIT_CONFIG_VALUE_0: __dirname,
+    ...(ghToken
+      ? {
+          GIT_CONFIG_KEY_1: 'http.https://github.com/.extraheader',
+          GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${ghToken}`).toString('base64')}`,
+        }
+      : {}),
+  };
+
   return new Promise((resolve) => {
     execFile(
       '/bin/bash',
@@ -572,6 +612,7 @@ async function executeLinuxShellCommand(cmd: string, cwd = __dirname): Promise<{
         maxBuffer: 1024 * 1024,
         env: {
           ...process.env,
+          ...gitShellEnv,
           PATH: `${path.join(__dirname, 'backend', 'bin')}:/usr/local/bin:${process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'}`,
           PAGER: 'cat',
           TERM: 'xterm-256color',
@@ -1607,6 +1648,9 @@ async function startServer() {
       res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
       return;
     }
+    if (getGitHubToken() && !fsSync.existsSync(path.join(__dirname, '.git'))) {
+      await gitSync(__dirname, 'init').catch(() => null);
+    }
     const [token, sync] = await Promise.all([
       verifyGitHubToken(),
       gitSyncStatus(__dirname, String(req.query.fetch || '1') !== '0'),
@@ -1663,11 +1707,15 @@ async function startServer() {
     }
     const corrId: string = (req as any).correlationId || '';
     cachedChatContextMeta = null;
-    const [healthRes, agentsRes, modsRes, kernelRes] = await Promise.all([
+    if (getGitHubToken() && !fsSync.existsSync(path.join(__dirname, '.git'))) {
+      await gitSync(__dirname, 'init').catch(() => null);
+    }
+    const [healthRes, agentsRes, modsRes, kernelRes, ghSync] = await Promise.all([
       callPythonBackend('GET', '/api/py/health', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
       callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
+      getGitHubToken() ? gitSyncStatus(__dirname, Boolean(req.body?.fetchGitHub)).catch(() => null) : Promise.resolve(null),
     ]);
     await pollAndRelayOutbox();
     const srvRev = Math.max(
@@ -1681,6 +1729,7 @@ async function startServer() {
       ok: true,
       serverRevision: srvRev,
       modulesCount: Array.isArray(modsRes.data?.modules) ? modsRes.data.modules.length : 0,
+      github: ghSync ? { repository: GITHUB_REPOSITORY, branch: syncBranch(), head: ghSync.head, remoteHead: ghSync.remoteHead, ahead: ghSync.ahead, behind: ghSync.behind } : null,
       timestamp: new Date().toISOString(),
     });
   }));

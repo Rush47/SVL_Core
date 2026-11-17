@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, GitBranch, Github, Link2, RefreshCw } from 'lucide-react';
 import { safeFetchJson } from '../utils/svlLogic';
+import { useSvlSync } from '../utils/svlSyncStore';
 
 type SyncAction = 'status' | 'pull' | 'push' | 'sync' | 'init';
 
@@ -47,6 +48,7 @@ const ACTION_LABELS: Record<SyncAction, string> = {
 
 /** Panel GitHub: token z .env, stan synchronizacji z Rush47/SVL_Core, akcje pobierz/wyślij/synchronizuj. */
 export const GitHubPanel: React.FC = () => {
+  const { serverRevision } = useSvlSync();
   const [status, setStatus] = useState<GitHubStatus | null>(null);
   const [busy, setBusy] = useState<SyncAction | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -60,6 +62,12 @@ export const GitHubPanel: React.FC = () => {
   useEffect(() => {
     void load(false).then(() => load(true));
   }, [load]);
+
+  useEffect(() => {
+    if (serverRevision > 0) {
+      void load(false);
+    }
+  }, [serverRevision, load]);
 
   const run = async (action: SyncAction) => {
     setBusy(action);

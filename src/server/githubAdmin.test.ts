@@ -144,3 +144,33 @@ test('bidirectional sync: local + remote changes merge, conflicts abort, secrets
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('gitSync init recovers an unborn .git directory without overwriting workspace files', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'svl-gh-init-'));
+  const bare = path.join(root, 'remote.git');
+  const seed = path.join(root, 'seed');
+  const target = path.join(root, 'target');
+  const prevRemote = process.env.SVL_GITHUB_REMOTE_URL;
+  process.env.SVL_GITHUB_REMOTE_URL = `file://${bare}`;
+  try {
+    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+    execFileSync('git', ['clone', '-q', bare, seed]);
+    fs.writeFileSync(path.join(seed, 'README.md'), 'remote\n');
+    sh(seed, 'add', '-A');
+    sh(seed, 'commit', '-q', '-m', 'initial');
+    sh(seed, 'push', '-q', 'origin', 'HEAD:main');
+
+    fs.mkdirSync(target, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'main', target]);
+    fs.writeFileSync(path.join(target, 'README.md'), 'local-edit\n');
+
+    const res = await gitSync(target, 'init');
+    assert.equal(res.ok, true, res.summary);
+    assert.equal(fs.readFileSync(path.join(target, 'README.md'), 'utf8'), 'local-edit\n');
+    assert.equal(res.status?.dirtyFiles?.includes('README.md'), true);
+  } finally {
+    if (prevRemote === undefined) delete process.env.SVL_GITHUB_REMOTE_URL;
+    else process.env.SVL_GITHUB_REMOTE_URL = prevRemote;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

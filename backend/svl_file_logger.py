@@ -58,6 +58,8 @@ def scrub_log_text(raw: Any, extra_secrets: Optional[list[str]] = None) -> str:
             cleaned = cleaned.replace(sec, "[REDACTED]")
 
     cleaned = re.sub(r"\bBearer\s+[A-Za-z0-9_.\-=+/]{8,}", "Bearer [REDACTED]", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bBasic\s+[A-Za-z0-9+/=]{12,}", "Basic [REDACTED]", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b", "[REDACTED_GITHUB_TOKEN]", cleaned)
     cleaned = re.sub(r"\bsvl-auth\.[A-Za-z0-9_-]{4,}", "svl-auth.[REDACTED]", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
         r"(x-svl-operator-token|authorization)\s*[:=]\s*['\"]?[^\s,'\";\]]+",

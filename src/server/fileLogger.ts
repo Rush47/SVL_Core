@@ -77,6 +77,8 @@ export function scrubSensitiveText(input: unknown, extraSecrets: string[] = []):
 
   cleaned = cleaned
     .replace(/\bBearer\s+[A-Za-z0-9_.\-=+/]{8,}/gi, 'Bearer [REDACTED]')
+    .replace(/\bBasic\s+[A-Za-z0-9+/=]{12,}/gi, 'Basic [REDACTED]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[REDACTED_GITHUB_TOKEN]')
     .replace(/\bsvl-auth\.[A-Za-z0-9_-]{4,}/gi, 'svl-auth.[REDACTED]')
     .replace(/(x-svl-operator-token|authorization)\s*[:=]\s*['"]?[^\s,'";\]]+/gi, '$1=[REDACTED]')
     .replace(
