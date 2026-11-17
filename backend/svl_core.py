@@ -457,7 +457,6 @@ class SVLSystemKernel:
         self.agent_registry: dict[str, dict[str, Any]] = {}
         self._init_database()
         self._remove_nonproduction_artifacts()
-        self._purge_previous_chat_once()
         self._revert_commands_and_remove_agata_once()
         self._purge_decommissioned_agents_v1()
 
@@ -833,29 +832,6 @@ class SVLSystemKernel:
                         )
 
         self.run_db(_seed_family, write=True)
-
-    def _purge_previous_chat_once(self) -> None:
-        """One-time operator-requested reset. New chat messages survive subsequent restarts."""
-        marker = "chat_history_reset_2026_11_15_v1"
-
-        def _reset(conn: sqlite3.Connection) -> bool:
-            if conn.execute("SELECT 1 FROM sync_meta WHERE key = ?", (marker,)).fetchone():
-                return False
-            conn.execute("DELETE FROM chat_messages")
-            conn.execute("DELETE FROM conversations")
-            conn.execute("DELETE FROM sync_entities WHERE entity = 'chat'")
-            conn.execute("DELETE FROM sync_outbox WHERE entity = 'chat'")
-            self.commit_entity_event_tx(
-                conn, entity="chat", entity_id="all",
-                event_type="chat.all_cleared", origin="one_time_operator_reset",
-                event_id="evt-chat-history-reset-2026-11-15",
-                payload={"action": "clear_all", "one_time": True},
-            )
-            conn.execute("INSERT INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
-            return True
-
-        if self.run_db(_reset, write=True):
-            self.ensure_mitek_family_channel()
 
     def _purge_decommissioned_agents_v1(self) -> None:
         """Jednorazowe odłączenie wyłączonych kont AI (Agata, Iris, Aria, Alex, Astyria, Aurelius) bez usuwania bieżących rozmów."""
@@ -1544,7 +1520,14 @@ class SVLSystemKernel:
             "container_runtime_note",
         }
 
+        # Jednorazowa migracja: wcześniej działała przy KAŻDYM starcie i nadpisywała nazwę,
+        # opis i konfigurację modułów svl-364 / svl-duplex-chat zmienione przez operatora.
+        marker = "nonproduction_artifacts_removed_v1"
+
         def _migrate(conn: sqlite3.Connection) -> None:
+            if conn.execute("SELECT 1 FROM sync_meta WHERE key = ?", (marker,)).fetchone():
+                return
+            conn.execute("INSERT INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
             conn.execute(
                 """
                 DELETE FROM update_history
@@ -2823,27 +2806,6 @@ class SVLSystemKernel:
             "notifications": items,
             "totalCount": len(items),
             "serverRevision": self.get_server_revision(),
-        }
-
-    def sync_chat_state_mutations(
-        self,
-        *,
-        origin: str = "python-kernel",
-        correlation_id: str = "",
-    ) -> dict[str, Any]:
-        """
-        Zwraca aktualny stan modułów bez automatycznego wykonywania ani materializowania
-        poleceń z historii czatu (tryb wycofanych poleceń).
-        """
-        mods = self.list_system_modules()
-        self.config["active_modules"] = [m["id"] for m in mods if m.get("status") == "ACTIVE"]
-        return {
-            "ok": True,
-            "appliedCount": 0,
-            "materializedModules": [],
-            "serverRevision": self.get_server_revision(),
-            "events": [],
-            "modules": mods,
         }
 
     @staticmethod

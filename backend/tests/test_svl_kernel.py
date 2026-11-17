@@ -110,6 +110,23 @@ class TestSVLKernelSuite(unittest.TestCase):
             self.assertFalse(recorded["is_demo"])
             self.assertEqual([item["wersja"] for item in kernel.get_update_history()], ["test-release"])
 
+    def test_startup_cleanup_runs_once_and_keeps_operator_module_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "test_once.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            kernel.run_db(
+                lambda conn: conn.execute(
+                    "UPDATE system_modules SET name = 'Mój statek', config_json = ? WHERE id = 'svl-364'",
+                    ('{"dynamic_resource_allocation": true}',),
+                ),
+                write=True,
+            )
+            restarted = SVLSystemKernel(db_path=db_file, operator_token=token)
+            svl364 = next(m for m in restarted.list_system_modules() if m["id"] == "svl-364")
+            self.assertEqual(svl364["name"], "Mój statek")
+            self.assertTrue(svl364["config"].get("dynamic_resource_allocation"))
+
     def test_startup_removes_known_nonproduction_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "test_cleanup.sqlite3")
@@ -146,6 +163,8 @@ class TestSVLKernelSuite(unittest.TestCase):
                         "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, ?, ?, ?, ?, ?)",
                         ("demo-row", "DEMO_FIXTURE", "fixture", "now", 1, "test"),
                     ),
+                    # Symulacja bazy sprzed migracji (jednorazowa migracja jeszcze nie wykonana).
+                    conn.execute("DELETE FROM sync_meta WHERE key = 'nonproduction_artifacts_removed_v1'"),
                 ),
                 write=True,
             )
@@ -185,11 +204,10 @@ class TestSVLKernelSuite(unittest.TestCase):
                 },
             )
 
-            result = kernel.sync_chat_state_mutations(origin="test-suite")
             current = next(
-                module for module in result["modules"] if module["id"] == "svl-364"
+                module for module in kernel.list_system_modules() if module["id"] == "svl-364"
             )
-            self.assertEqual(result["appliedCount"], 0)
+            self.assertFalse(hasattr(kernel, "sync_chat_state_mutations"))
             self.assertEqual(current["config"], original["config"])
             self.assertEqual(current["source"], original["source"])
 
@@ -528,10 +546,6 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "timestamp": "16:28",
                 },
             )
-            first_sync = kernel.sync_chat_state_mutations(origin="test-suite")
-            self.assertEqual(first_sync["appliedCount"], 0)
-            self.assertEqual(first_sync["materializedModules"], [])
-
             mods = kernel.list_system_modules()
             svl364 = next((m for m in mods if m["id"] == "svl-364"), None)
             self.assertIsNotNone(svl364)
@@ -552,76 +566,6 @@ class TestSVLKernelSuite(unittest.TestCase):
 
             kernel.delete_system_module("custom-mod-99")
             self.assertFalse(any(m["id"] == "custom-mod-99" for m in kernel.list_system_modules()))
-
-    def test_chat_command_module_changes_are_persisted_as_visible_chat_report(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict("os.environ", {"SVL_SQLITE_PATH": str(Path(tmpdir) / "app.sqlite3")}):
-                import app as backend_app
-
-            class FakeKernel:
-                def __init__(self) -> None:
-                    self.saved_messages: list[dict[str, Any]] = []
-
-                def save_chat_message(self, _cid: str, _title: str, _model: str, msg: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
-                    self.saved_messages.append(msg)
-                    return {"ok": True, "deduplicated": False}
-
-                def sync_chat_state_mutations(self, **_kwargs: Any) -> dict[str, Any]:
-                    return {
-                        "ok": True,
-                        "appliedCount": 1,
-                        "materializedModules": ["svl-364"],
-                        "serverRevision": 12,
-                        "events": [{
-                            "eventId": "evt-module-svl364",
-                            "entity": "module",
-                            "entityId": "svl-364",
-                            "serverRevision": 12,
-                        }],
-                        "modules": [{"id": "svl-364", "name": "SVL-364", "revision": 4}],
-                    }
-
-                def list_conversations_with_messages(self) -> list[dict[str, Any]]:
-                    return [{"id": "conv-test", "messages": self.saved_messages}]
-
-            class FakeRuntime:
-                def __init__(self) -> None:
-                    self.kernel = FakeKernel()
-
-                def apply_active_module_settings(self) -> None:
-                    return None
-
-            fake_runtime = FakeRuntime()
-            body = {
-                "conversation_id": "conv-test",
-                "title": "Test",
-                "model": "svl-hybrid-router",
-                "eventId": "evt-user-test",
-                "message": {
-                    "id": "user-test",
-                    "role": "user",
-                    "sender": "Operator",
-                    "content": "Skonfiguruj moduł SVL-364",
-                    "timestamp": "04:00",
-                },
-            }
-            with patch.object(backend_app, "runtime", fake_runtime):
-                status, response = asyncio.run(
-                    backend_app.handle_api_request(
-                        "POST",
-                        "/api/py/chat/conversations/message",
-                        {},
-                        body,
-                    )
-                )
-
-            self.assertEqual(status, 200)
-            self.assertEqual(len(fake_runtime.kernel.saved_messages), 2)
-            report = fake_runtime.kernel.saved_messages[1]
-            self.assertEqual(report["role"], "system")
-            self.assertEqual(report["appliedActions"][0]["entityId"], "svl-364")
-            self.assertEqual(response["conversations"][0]["messages"][1]["appliedActions"][0]["ok"], True)
-            self.assertEqual(response["events"][0]["eventId"], "evt-module-svl364")
 
     def test_python_terminal_history_persists_and_clears(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

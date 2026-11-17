@@ -1697,38 +1697,6 @@ class SVLAgentOrchestrator:
                 "verified_at": datetime.now(timezone.utc).isoformat(),
             }
 
-    def _probe_external_running_agents(self) -> dict[str, Any]:
-        """
-        Sprawdza, czy pod SVL_ORIGINAL_AGENTS_URL działają już zewnętrzne procesy agentów
-        (zgodnie z kontraktem originalAgentsStatus.mjs z SVL_System).
-        """
-        base_url = os.environ.get("SVL_ORIGINAL_AGENTS_URL", "").strip()
-        token = os.environ.get("DEBIAN13_ORIGINAL_AGENTS_TOKEN", "").strip()
-        if not base_url or not token:
-            return {
-                "configured": False,
-                "external_processes_running": False,
-                "reason": "SVL_ORIGINAL_AGENTS_URL / DEBIAN13_ORIGINAL_AGENTS_TOKEN not configured; external process probe skipped.",
-            }
-        try:
-            req = urllib.request.Request(
-                f"{base_url.rstrip('/')}/api/agent-tasks/workers",
-                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                return {
-                    "configured": True,
-                    "external_processes_running": True,
-                    "remote_payload": data,
-                }
-        except Exception as exc:
-            return {
-                "configured": True,
-                "external_processes_running": False,
-                "reason": f"External endpoint unreachable: {exc}",
-            }
-
     async def connect_my_ai(
         self, triggered_by: str = "operator", skip_network_probes: bool = False
     ) -> dict[str, Any]:
@@ -1742,11 +1710,6 @@ class SVLAgentOrchestrator:
             {"reachable": False, "checked": False, "reason": "skipped"}
             if skip_network_probes
             else self._probe_github_repository("mmitek515-netizen/Debian_13")
-        )
-        external_probe = (
-            {"configured": False, "external_processes_running": False, "checked": False}
-            if skip_network_probes
-            else self._probe_external_running_agents()
         )
         spawned_agents: list[dict[str, Any]] = []
         for name, meta in CANONICAL_SVL_AGENTS.items():
@@ -1766,7 +1729,7 @@ class SVLAgentOrchestrator:
                 "source_repository": "https://github.com/mmitek515-netizen/SVL_System",
                 "source_profile_path": meta["source_profile_path"],
                 "source_nature": "LOCAL_OLLAMA_WORKER",
-                "external_process_connected": bool(external_probe.get("external_processes_running")),
+                "external_process_connected": False,
                 "instance_origin": "LOCAL_OLLAMA_WORKER",
                 "status": "STARTING_LOCAL_WORKER" if proc.is_alive() else "STOPPED",
                 "pid": proc.pid if proc.is_alive() else None,
@@ -1805,7 +1768,6 @@ class SVLAgentOrchestrator:
                 "SVL_System": svl_repo_probe,
                 "Debian_13": deb_repo_probe,
             },
-            "external_process_probe": external_probe,
             "architectural_finding": (
                 f"Aktywowano {len(spawned_agents)} lokalny worker AI (Bielik -> ollama:llama3.2-vision:11b)."
             ),

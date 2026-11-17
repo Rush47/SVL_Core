@@ -329,8 +329,16 @@ class SVLAntivirusScanner:
         return report
 
     def get_status(self) -> dict[str, Any]:
+        # Odczyt statusu niczego nie zmienia — skan (który usuwa zagrożenia z bazy)
+        # uruchamia wyłącznie operator.
         if self.last_scan_report is None:
-            return self.scan_and_purge(emit_to_chat=False, origin="antivirus-status-init")
+            return {
+                "ok": True,
+                "status": "NOT_SCANNED",
+                "scansCount": 0,
+                "message": "Skan nie był jeszcze uruchamiany od startu systemu.",
+                "serverRevision": self.kernel.get_server_revision(),
+            }
         return {
             **self.last_scan_report,
             "scansCount": self.scans_count,

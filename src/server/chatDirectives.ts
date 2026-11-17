@@ -63,8 +63,6 @@ const SIMPLE_RULES: Array<[RegExp, () => BielikSlashCommand]> = [
 
 const AGENT_TASK = re(`${B}(?:zle(?:ć|c)|dodaj)\\s+zadanie${E}\\s*[:\\-–—]?\\s*(.+)$`);
 const ROOT_EXEC = re(`${B}(?:wykonaj|uruchom)\\s+(?:polecenie|komend(?:ę|e))\\s+\`([^\`]{1,1000})\``);
-const MAYA_BROADCAST = re(`${B}powiadomie\\p{L}*`);
-const MAYA_BROADCAST_VERB = re(`${B}(?:ustaw|stw(?:ó|o)rz|w(?:ł|l)(?:ą|a)cz|pod(?:ł|l)(?:ą|a)cz|skonfiguruj)${E}`);
 
 function mapStatusWord(word: string): ModuleStatus | null {
   for (const [pattern, status] of STATUS_WORDS) {
@@ -178,17 +176,6 @@ export function parseChatDirectives(
 
   const exec = ROOT_EXEC.exec(text);
   if (exec && exec[1].trim()) push({ kind: 'root_exec', command: exec[1].trim() });
-
-  if (MAYA_BROADCAST.test(text) && MAYA_BROADCAST_VERB.test(text)) {
-    push({
-      kind: 'module_upsert',
-      id: 'svl-maya-broadcast',
-      status: 'ACTIVE',
-      name: 'Maya SVL-364 — Szczegółowe Powiadomienia Telemetryczne (Kanał Wszyscy)',
-      description:
-        'Autoryzowany mostek powiadomień szczegółowych AI Maya (ROOT) ze statku SVL-364 Ebon Apex oraz bazy notatek i prac Operatora Mateusza Mitka na kanał Rodzina Mitek (wszyscy).',
-    });
-  }
 
   return commands;
 }

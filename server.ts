@@ -1373,10 +1373,8 @@ async function startServer() {
       return;
     }
     const corrId: string = (req as any).correlationId || '';
-    const origin = String(req.body?.origin || 'operator_global_sync');
     cachedChatContextMeta = null;
-    const [chatSyncRes, healthRes, agentsRes, modsRes, kernelRes] = await Promise.all([
-      callPythonBackend('POST', '/api/py/chat/sync-mutations', { origin, correlationId: corrId }, corrId),
+    const [healthRes, agentsRes, modsRes, kernelRes] = await Promise.all([
       callPythonBackend('GET', '/api/py/health', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
@@ -1384,7 +1382,6 @@ async function startServer() {
     ]);
     await pollAndRelayOutbox();
     const srvRev = Math.max(
-      Number(chatSyncRes.data?.serverRevision || 0),
       Number(healthRes.data?.serverRevision || 0),
       Number(agentsRes.data?.serverRevision || 0),
       Number(modsRes.data?.serverRevision || 0),
@@ -1395,7 +1392,6 @@ async function startServer() {
       ok: true,
       serverRevision: srvRev,
       modulesCount: Array.isArray(modsRes.data?.modules) ? modsRes.data.modules.length : 0,
-      appliedCount: Number(chatSyncRes.data?.appliedCount || 0),
       timestamp: new Date().toISOString(),
     });
   }));
@@ -3350,7 +3346,7 @@ async function startServer() {
   const bindHost = process.env.SVL_BIND_HOST ||
     (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
   httpServer.listen(PORT, bindHost, () => {
-    console.log(`[SVL Python OS] Open WebUI & Gateway running on http://${bindHost}:${PORT}`);
+    console.log(`[SVL Python OS] Gateway running on http://${bindHost}:${PORT}`);
   });
 }
 
