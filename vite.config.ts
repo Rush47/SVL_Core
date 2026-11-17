@@ -10,6 +10,23 @@ export default defineConfig(() => {
       alias: {
         '@': fileURLToPath(new URL('.', import.meta.url)),
       },
+      // Jedna kopia Reacta — dwie kopie dają „Cannot read properties of null (reading 'useState')”.
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      // Wszystkie zależności frontendu optymalizowane od razu przy starcie. Bez tego Vite
+      // dobudowuje je w trakcie sesji (np. przy leniwie ładowanej zakładce), a przy wyłączonym
+      // HMR (AI Studio) przeglądarka miesza stare i nowe kopie Reacta.
+      entries: ['index.html', 'src/**/*.tsx', '!src/**/*.test.tsx'],
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'lucide-react',
+        '@vector-im/compound-web',
+      ],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

@@ -142,8 +142,86 @@ export async function geminiCandidatesFor(client: any, requestedModel?: string, 
     process.env.GEMINI_MODEL,
     requested.startsWith('gemini-') ? requested : null,
     // Wykryte modele najpierw; zapas zawsze na końcu, gdyby lista z API była niepełna.
-    ...fromApi.slice(0, Math.max(1, max - 2)),
+    ...diversify(fromApi).slice(0, Math.max(1, max - 2)),
     ...GEMINI_STATIC_FALLBACK,
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
-  return [...new Set(ordered)].filter((m) => !goneModels.has(m)).slice(0, max);
+  const unique = [...new Set(ordered)].filter((m) => !goneModels.has(m));
+  // Modele, które przed chwilą przekroczyły czas / były przeciążone (503), idą na koniec.
+  const now = Date.now();
+  const healthy = unique.filter((m) => !(coolingDown.get(m) && now < (coolingDown.get(m) as number)));
+  const cooling = unique.filter((m) => !healthy.includes(m));
+  return [...diversify(healthy), ...cooling].slice(0, max);
+}
+
+/**
+ * Różne rodziny po kolei (flash → flash-lite → alias → pro → reszta), żeby po przekroczeniu
+ * czasu przez najnowszy flash nie próbować trzech kolejnych równie wolnych modeli flash.
+ */
+export function diversify(models: string[]): string[] {
+  const family = (m: string) => (/-latest$/i.test(m) ? 'alias' : /flash-lite/i.test(m) ? 'lite' : /flash/i.test(m) ? 'flash' : /pro/i.test(m) ? 'pro' : 'other');
+  const buckets = new Map<string, string[]>();
+  for (const m of models) {
+    const f = family(m);
+    if (!buckets.has(f)) buckets.set(f, []);
+    buckets.get(f)!.push(m);
+  }
+  const order = ['flash', 'lite', 'alias', 'pro', 'other'];
+  const out: string[] = [];
+  while (out.length < models.length) {
+    for (const f of order) {
+      const next = buckets.get(f)?.shift();
+      if (next) out.push(next);
+    }
+  }
+  // Wymuszony GEMINI_MODEL zawsze pierwszy.
+  const forced = process.env.GEMINI_MODEL;
+  return forced && out.includes(forced) ? [forced, ...out.filter((m) => m !== forced)] : out;
+}
+
+const COOLDOWN_MS = 5 * 60 * 1000;
+const coolingDown = new Map<string, number>();
+const noThinkingConfig = new Set<string>();
+
+/** Przekroczony czas / 503 / 429 → model na 5 minut przesunięty na koniec kolejki. */
+export function noteGeminiSlowOrBusy(model: string): void {
+  coolingDown.set(model, Date.now() + COOLDOWN_MS);
+  modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas lub jest przeciążony — na 5 min na koniec kolejki`);
+}
+
+export function isGeminiSlowOrBusyError(message: string): boolean {
+  return /aborted|AbortError|TimeoutError|timed? ?out|\b503\b|UNAVAILABLE|high demand|\b429\b|RESOURCE_EXHAUSTED|overloaded/i.test(
+    String(message || ''),
+  );
+}
+
+/**
+ * Ograniczenie „myślenia” modeli Gemini 3.x (domyślnie myślą długo — czat przekraczał 30 s).
+ * GEMINI_THINKING_LEVEL: MINIMAL | LOW | MEDIUM | HIGH | OFF (domyślnie LOW).
+ */
+export function geminiThinkingConfig(model: string): Record<string, unknown> {
+  const level = String(process.env.GEMINI_THINKING_LEVEL || 'LOW').toUpperCase();
+  if (level === 'OFF' || noThinkingConfig.has(model)) return {};
+  if (!['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].includes(level)) return {};
+  return { thinkingConfig: { thinkingLevel: level } };
+}
+
+/** Model odrzucił thinkingConfig (400) — dla niego wysyłamy zapytania bez tego ustawienia. */
+export function isThinkingConfigError(message: string): boolean {
+  return /\b400\b|INVALID_ARGUMENT/i.test(message) && /thinking/i.test(message);
+}
+
+export function disableThinkingConfigFor(model: string): void {
+  noThinkingConfig.add(model);
+}
+
+/** Wspólny budżet czasu dla całego zapytania (wszystkich kandydatów). */
+export function createGeminiDeadline(totalMs = Number(process.env.GEMINI_TOTAL_BUDGET_MS || 150000)) {
+  const endsAt = Date.now() + totalMs;
+  const perAttempt = Number(process.env.GEMINI_TIMEOUT_MS || 60000);
+  return {
+    remaining: () => Math.max(0, endsAt - Date.now()),
+    /** Limit pojedynczej próby: min(GEMINI_TIMEOUT_MS, pozostały czas). */
+    attemptTimeout: () => Math.max(0, Math.min(perAttempt, endsAt - Date.now())),
+    expired: () => Date.now() >= endsAt - 1000,
+  };
 }

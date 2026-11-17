@@ -55,7 +55,13 @@ import {
   type GitSyncAction,
 } from './src/server/githubAdmin.ts';
 import {
+  createGeminiDeadline,
   describeGeminiError,
+  disableThinkingConfigFor,
+  geminiThinkingConfig,
+  isGeminiSlowOrBusyError,
+  isThinkingConfigError,
+  noteGeminiSlowOrBusy,
   geminiCandidatesFor,
   isGeminiModelGoneError,
   markGeminiModelGone,
@@ -2909,36 +2915,45 @@ async function startServer() {
             ]
           : [...coalescedHistory, { role: 'user', parts: currentParts }];
 
+      // Wspólny budżet czasu (mieści się w oczekiwaniu przeglądarki) zamiast N × stały limit.
+      const geminiDeadline = createGeminiDeadline();
       const callModelWithRetry = async (
         candidate: string,
         contentsPayload: any[],
         includeTools: boolean,
         useSearchGrounding = wantsWebSources,
-      ) => {
+      ): Promise<GenerateContentResponse> => {
         const tempCfg = candidate === 'gemini-3.1-flash-lite' ? { temperature: effectiveTemperature } : {};
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const timeoutMs = geminiDeadline.attemptTimeout();
+          if (timeoutMs < 3000) throw new Error('przekroczono łączny limit czasu odpowiedzi (timeout)');
           try {
             return await ai.models.generateContent({
               model: candidate,
               contents: contentsPayload,
               config: {
                 ...tempCfg,
+                ...geminiThinkingConfig(candidate),
                 ...(agentMemoryContext ? { systemInstruction: agentMemoryContext } : {}),
                 ...(includeTools
                   ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
                   : useSearchGrounding
                     ? { tools: [{ googleSearch: {} }] }
                     : {}),
-                abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
+                abortSignal: AbortSignal.timeout(timeoutMs),
               },
             });
           } catch (err: any) {
             const msgStr = String(err?.message || err);
+            if (isThinkingConfigError(msgStr) && Object.keys(geminiThinkingConfig(candidate)).length > 0) {
+              disableThinkingConfigFor(candidate);
+              continue;
+            }
             if (useSearchGrounding && !includeTools) {
               return await callModelWithRetry(candidate, contentsPayload, false, false);
             }
-            if (attempt === 0 && (msgStr.includes('429') || msgStr.includes('RESOURCE_EXHAUSTED') || msgStr.includes('503'))) {
-              await new Promise((r) => setTimeout(r, 1100));
+            if (attempt === 0 && /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE/.test(msgStr)) {
+              await new Promise((r) => setTimeout(r, 1500));
               continue;
             }
             throw err;
@@ -2949,6 +2964,10 @@ async function startServer() {
 
       const geminiErrors: string[] = [];
       for (const candidate of candidateModels) {
+        if (geminiDeadline.expired()) {
+          geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
+          break;
+        }
         try {
           const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
           let response: GenerateContentResponse = await callModelWithRetry(candidate, turnContents, wantsSystemTool);
@@ -3026,7 +3045,8 @@ async function startServer() {
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : String(error);
           if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-          geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
+          else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
+          geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
           continue;
         }
       }
@@ -3134,7 +3154,9 @@ async function startServer() {
       return { predicted: null, providerOnline: false };
     }
     const choices = [...participants, 'Operator'].join(', ');
+    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 90000));
     for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
+      if (proactiveDeadline.attemptTimeout() < 3000) break;
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
@@ -3152,8 +3174,9 @@ async function startServer() {
           ],
           config: {
             temperature: 0.5,
-            maxOutputTokens: 128,
-            abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
+            maxOutputTokens: 512,
+            ...geminiThinkingConfig(candidate),
+            abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
           },
         });
         // Model odpowiedział — wynik (także brak wskazania) jest decyzją; kolejne modele niepotrzebne.
@@ -3161,7 +3184,9 @@ async function startServer() {
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
+        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
+        else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
       }
     }
     return { predicted: null, providerOnline: true };
@@ -3208,17 +3233,20 @@ async function startServer() {
     } else if (contents[contents.length - 1].role === 'model') {
       contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
+    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 90000));
     for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
+      if (proactiveDeadline.attemptTimeout() < 3000) break;
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
           contents,
           config: {
             temperature: 0.8,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 2048,
             ...(memoryContext ? { systemInstruction: memoryContext } : {}),
             stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:'],
-            abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
+            ...geminiThinkingConfig(candidate),
+            abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
           },
         });
         const text = (gen.text || '').trim();
@@ -3226,7 +3254,9 @@ async function startServer() {
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
+        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
+        else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
       }
     }
     return null;

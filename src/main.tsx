@@ -16,6 +16,13 @@ declare global {
 
 initGuiTelemetryLogger();
 
+const STALE_RELOAD_KEY = 'svl:stale-bundle-reload-at';
+/** Błędy typowe dla nieaktualnych paczek Vite po ich przebudowie w trakcie sesji. */
+function isStaleBundleError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error || '');
+  return /reading 'use[A-Z][A-Za-z]*'|Invalid hook call|dynamically imported module|Importing a module script failed|Outdated Optimize Dep/i.test(msg);
+}
+
 class GuiErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; errorMessage: string }
@@ -30,6 +37,20 @@ class GuiErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
+    // Nieaktualne paczki Vite (dwie kopie Reacta / nieudany import leniwej zakładki) naprawia
+    // jednorazowe przeładowanie strony — bez pętli przeładowań (znacznik w sessionStorage).
+    if (isStaleBundleError(error)) {
+      try {
+        const last = Number(sessionStorage.getItem(STALE_RELOAD_KEY) || 0);
+        if (Date.now() - last > 30000) {
+          sessionStorage.setItem(STALE_RELOAD_KEY, String(Date.now()));
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // sessionStorage niedostępny — zostaje ekran z przyciskiem „Odśwież interfejs”
+      }
+    }
     trackGuiEvent({
       kind: 'react_error_boundary',
       level: 'ERROR',
