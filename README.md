@@ -23,6 +23,9 @@
 5. **[05. GitHub — repozytorium Rush47/SVL_Core](docs/05_GITHUB_RUSH47_SVL_CORE.md)**
    - Token classic w `.env`, synchronizacja obustronna, GitHub CLI i administracja repozytorium przez Bielika i Mayę.
 
+6. **[06. Claude: MCP, automatyzacja GitHub i narzędzia AI](docs/06_CLAUDE_MCP_I_AUTOMATYZACJA.md)**
+   - Serwer MCP całego systemu (`/mcp/svl`), `@claude` w issue i PR, CI, czytanie stron i wykonywanie kodu w czacie.
+
 ---
 
 ## Szybki Start i Testy

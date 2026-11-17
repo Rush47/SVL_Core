@@ -31,6 +31,7 @@ import {
 import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
+import { createSvlMcpServer } from './src/server/svlMcpServer.ts';
 import {
   GITHUB_REPOSITORY,
   assessGhCommand,
@@ -641,6 +642,31 @@ async function startServer() {
     } finally {
       await githubMcpTransport.close();
       await githubMcpServer.close();
+    }
+  }));
+
+  // MCP całego systemu SVL (Claude Code / Claude Desktop / inne klienty MCP): Bearer SVL_OPERATOR_TOKEN.
+  app.all('/mcp/svl', asyncRoute(async (req, res) => {
+    const authorization = req.headers.authorization;
+    const token = typeof authorization === 'string' && authorization.startsWith('Bearer ')
+      ? authorization.slice(7).trim()
+      : '';
+    if (!hasOperatorAuthorization(token)) {
+      res.status(401).json({ ok: false, error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN>.' });
+      return;
+    }
+    const svlMcp = createSvlMcpServer({
+      baseUrl: `http://127.0.0.1:${PORT}`,
+      operatorToken: token,
+      logDir: svlFileLogger.logDir,
+    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    try {
+      await svlMcp.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } finally {
+      await transport.close();
+      await svlMcp.close();
     }
   }));
 
@@ -2734,6 +2760,16 @@ async function startServer() {
     const ai = getGeminiClient();
     // Pytania o aktualne informacje / źródła idą do Gemini z wyszukiwaniem Google (odpowiedź ze źródłami).
     const wantsWebSources = isWebSearchRequest(cleanMsg) && !wantsGitHubTools;
+    // Wbudowane narzędzia Gemini: czytanie stron z linków w wiadomości i wykonywanie kodu (obliczenia).
+    const wantsUrlContext = /https?:\/\/\S+/i.test(cleanMsg) && !wantsGitHubTools;
+    const wantsCodeExecution =
+      !wantsGitHubTools &&
+      /\b(?:oblicz|policz|wylicz|przelicz|wykonaj kod|uruchom kod|napisz i uruchom|python|symulacj\p{L}*|statystyk\p{L}*|średni\p{L}*|procent\p{L}*|równani\p{L}*)/iu.test(cleanMsg);
+    const builtinGeminiTools: Array<Record<string, object>> = [
+      ...(wantsWebSources ? [{ googleSearch: {} }] : []),
+      ...(wantsUrlContext ? [{ urlContext: {} }] : []),
+      ...(wantsCodeExecution && !wantsWebSources && !wantsUrlContext ? [{ codeExecution: {} }] : []),
+    ];
     const webSearchUnavailableNote =
       'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
       'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
@@ -2921,7 +2957,7 @@ async function startServer() {
         candidate: string,
         contentsPayload: any[],
         includeTools: boolean,
-        useSearchGrounding = wantsWebSources,
+        useSearchGrounding = builtinGeminiTools.length > 0,
       ): Promise<GenerateContentResponse> => {
         const tempCfg = candidate === 'gemini-3.1-flash-lite' ? { temperature: effectiveTemperature } : {};
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -2938,7 +2974,7 @@ async function startServer() {
                 ...(includeTools
                   ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
                   : useSearchGrounding
-                    ? { tools: [{ googleSearch: {} }] }
+                    ? { tools: builtinGeminiTools }
                     : {}),
                 abortSignal: AbortSignal.timeout(timeoutMs),
               },
@@ -2949,7 +2985,8 @@ async function startServer() {
               disableThinkingConfigFor(candidate);
               continue;
             }
-            if (useSearchGrounding && !includeTools) {
+            // Narzędzia wbudowane pomijamy tylko, gdy model ich nie obsługuje — nie przy przeciążeniu/czasie.
+            if (useSearchGrounding && !includeTools && !isGeminiSlowOrBusyError(msgStr)) {
               return await callModelWithRetry(candidate, contentsPayload, false, false);
             }
             if (attempt === 0 && /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE/.test(msgStr)) {
@@ -2999,6 +3036,13 @@ async function startServer() {
           }
 
           let replyText = (response.text || '').trim();
+          // Wykonany kod i jego wynik (narzędzie codeExecution) dołączamy do odpowiedzi.
+          const executedCode = String((response as any).executableCode || '').trim();
+          const executedResult = String((response as any).codeExecutionResult || '').trim();
+          if (replyText && executedCode) {
+            replyText += `\n\n**Wykonany kod (Gemini):**\n\`\`\`python\n${executedCode.slice(0, 4000)}\n\`\`\`` +
+              (executedResult ? `\n**Wynik:**\n\`\`\`\n${executedResult.slice(0, 3000)}\n\`\`\`` : '');
+          }
           if (!replyText) {
             const plainRes = await callModelWithRetry(candidate, baseContents, false, false);
             replyText = (plainRes.text || '').trim();
