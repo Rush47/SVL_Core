@@ -26,6 +26,8 @@ export interface ApexStatusPayload {
   version: string;
   distro: string;
   kernel_release: string;
+  service_status?: string;
+  sentinel?: { checked_at: string; stale?: boolean; issues?: string[] } | null;
   hot_swap_status: string;
   debootstrap_status: string;
   operator_root: string;
@@ -286,6 +288,19 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
             <strong className="text-cyan-300">{apex.kernel_master_daemon}</strong> · Drugi Agent ROOT:{' '}
             <strong className="text-amber-300">{apex.secondary_daemon}</strong> · Czat Obustronny (Full Duplex):{' '}
             <strong className="text-emerald-300">AKTYWNY</strong>
+          </p>
+          <p className="text-xs text-slate-400">
+            Jądro: <span className="font-mono text-slate-200">{apex.kernel_release}</span> · Usługa:{' '}
+            <span className="text-slate-200">{apex.service_status || 'wczytywanie…'}</span> · SVL-Sentinel:{' '}
+            <span className={apex.sentinel && !apex.sentinel.stale ? 'text-emerald-300' : 'text-amber-300'}>
+              {!apex.sentinel
+                ? 'nie działa na tym hoście'
+                : apex.sentinel.stale
+                  ? 'brak świeżego pomiaru'
+                  : apex.sentinel.issues && apex.sentinel.issues.length > 0
+                    ? `problemy: ${apex.sentinel.issues.join('; ')}`
+                    : `OK (pomiar ${new Date(apex.sentinel.checked_at).toLocaleTimeString('pl-PL')})`}
+            </span>
           </p>
         </div>
 

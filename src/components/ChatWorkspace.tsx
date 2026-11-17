@@ -1642,7 +1642,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               </div>
               <div className="space-y-1.5">
                 <h2 className="text-base sm:text-lg font-semibold text-slate-100">
-                  {activeConv?.title || 'SVL Python OS · Czat Roboczy'}
+                  {activeConv?.title || 'SVL CoreOS 2 · Czat Roboczy'}
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
                   {hasAnyChatAuth

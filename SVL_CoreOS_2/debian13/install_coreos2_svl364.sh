@@ -1,88 +1,183 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# SVL CoreOS 2: Apex — Pełny Instalator Systemowy Debian 13 (Trixie) + Debootstrap
-# Przeznaczenie: Stacja SVL-364 Ebon Apex & Węzeł Główny Rush47/SVL_Core
-# Operator ROOT: Mateusz Mitek | Kernel Master Daemon: Maya AI (ROOT)
+# SVL CoreOS 2: Apex — instalator na Debianie 13 (Trixie)
+#
+# Instaluje CAŁY system SVL (brama Node + jądro Python + interfejs) jako usługi systemd:
+#   svl-coreos2.service  — SVL CoreOS 2 (port 3000, jądro Python 8085)
+#   svl-sentinel.service — demon nadzoru (pomiary, samonaprawa, powiadomienia Mayi)
+# Każdy krok raportuje prawdziwy wynik; log: /var/log/svl-coreos2-install.log
+#
+# Użycie (jako root, z katalogu repozytorium):
+#   sudo bash SVL_CoreOS_2/debian13/install_coreos2_svl364.sh
+# Opcje (zmienne środowiskowe):
+#   SVL_ROOT=/opt/svl-coreos-2      katalog instalacji
+#   SVL_INSTALL_OLLAMA=1            zainstaluj też Ollamę (oficjalny skrypt ollama.com)
+#   SVL_RUN_DEBOOTSTRAP=1           dodatkowo zbuduj rootfs Debiana 13 (DEBOOTSTRAP_TARGET)
 # ==============================================================================
-set -euo pipefail
+set -uo pipefail
 
 SVL_ROOT="${SVL_ROOT:-/opt/svl-coreos-2}"
-DEBOOTSTRAP_TARGET="${DEBOOTSTRAP_TARGET:-/mnt/svl_coreos2_trixie_rootfs}"
-DEBIAN_SUITE="trixie"
-DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
+ENV_DIR="/etc/svl-coreos2"
+ENV_FILE="${ENV_DIR}/svl.env"
+STATE_DIR="/var/lib/svl-coreos2"
 LOG_FILE="${SVL_LOG_FILE:-/var/log/svl-coreos2-install.log}"
+DEBOOTSTRAP_TARGET="${DEBOOTSTRAP_TARGET:-/srv/svl-coreos2/rootfs}"
+DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-echo "[SVL-CoreOS-2:Apex] =========================================================="
-echo "[SVL-CoreOS-2:Apex] Inicjalizacja pełnej instalacji Debian 13 (${DEBIAN_SUITE})..."
-echo "[SVL-CoreOS-2:Apex] Operator: Mateusz Mitek (ROOT) | Kernel Master: Maya (ROOT)"
-echo "[SVL-CoreOS-2:Apex] =========================================================="
+if [ "$(id -u)" -ne 0 ]; then
+  echo "[BŁĄD] Uruchom jako root: sudo bash $0" >&2
+  exit 1
+fi
+mkdir -p "$(dirname "${LOG_FILE}")"
+exec > >(tee -a "${LOG_FILE}") 2>&1
 
-# 1. Weryfikacja środowiska i katalogów docelowych
-mkdir -p "${SVL_ROOT}"/{kernel,security,ai_core,gui,infrastructure,system/assets,debian13,logs}
-mkdir -p /var/quarantine/svl_vault || true
+RESULTS=()
+FAILED=0
+step() {
+  local name="$1"; shift
+  echo "[$(date -u +%FT%TZ)] ▶ ${name}"
+  if "$@"; then
+    RESULTS+=("OK       ${name}")
+  else
+    RESULTS+=("BŁĄD     ${name}")
+    FAILED=1
+  fi
+}
+skip() { RESULTS+=("POMINIĘTO ${1} — ${2}"); echo "[$(date -u +%FT%TZ)] ⏭ ${1}: ${2}"; }
 
-# 2. Instalacja narzędzi bazowych i debootstrap na hoście Debian 13 (Trixie)
-if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+echo "=== SVL CoreOS 2: Apex — instalacja $(date -u +%FT%TZ) ==="
+. /etc/os-release 2>/dev/null || true
+echo "Host: ${PRETTY_NAME:-nieznany} · jądro $(uname -r) · repozytorium: ${REPO_DIR}"
+if [ "${VERSION_ID:-}" != "13" ]; then
+  echo "[UWAGA] To nie jest Debian 13 (${PRETTY_NAME:-?}). Instalacja zostanie wykonana, ale wspierany jest Debian 13 (Trixie)."
+fi
+
+install_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
+  apt-get update -y &&
   apt-get install -y --no-install-recommends \
-    debootstrap arch-install-scripts squashfs-tools xorriso grub-efi-amd64-bin \
-    python3 python3-pip python3-venv python3-dev build-essential \
-    openssh-client openssh-server nftables ufw wireguard-tools openvpn \
-    qemu-kvm libvirt-daemon-system ovmf bpftool linux-perf \
-    curl wget git jq sqlite3 ca-certificates zstd lz4
-fi
+    nodejs npm python3 python3-venv python3-pip git rsync curl ca-certificates jq sqlite3 \
+    openssh-client nftables gh debootstrap
+}
 
-# 3. Etap Debootstrap Stage 1 & Stage 2 (Pełny obraz bazowy Debian 13 Trixie)
-if [ "${SVL_RUN_DEBOOTSTRAP:-0}" = "1" ] && command -v debootstrap >/dev/null 2>&1; then
-  echo "[SVL-CoreOS-2:Apex] Uruchamianie Debootstrap Stage 1 (${DEBIAN_SUITE} amd64)..."
-  mkdir -p "${DEBOOTSTRAP_TARGET}"
-  debootstrap \
-    --arch=amd64 \
-    --variant=minbase \
-    --components=main,contrib,non-free,non-free-firmware \
-    --include=systemd,systemd-sysv,dbus,udev,iproute2,iputils-ping,nftables,openssh-server,python3,sqlite3,ca-certificates,curl,zstd \
-    "${DEBIAN_SUITE}" "${DEBOOTSTRAP_TARGET}" "${DEBIAN_MIRROR}"
+copy_system() {
+  mkdir -p "${SVL_ROOT}" &&
+  rsync -a --delete \
+    --exclude node_modules --exclude dist --exclude '__pycache__' --exclude 'logi/*.txt' \
+    --exclude 'data/*.sqlite3*' --exclude 'data/*.secret' --exclude '.env' \
+    "${REPO_DIR}/" "${SVL_ROOT}/"
+}
 
-  cat > "${DEBOOTSTRAP_TARGET}/etc/apt/sources.list.d/debian-trixie.sources" << 'APT_EOF'
-Types: deb deb-src
-URIs: https://deb.debian.org/debian
-Suites: trixie trixie-updates
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+build_system() {
+  cd "${SVL_ROOT}" &&
+  npm ci --no-audit --no-fund &&
+  npx vite build &&
+  python3 -m venv "${SVL_ROOT}/.venv" &&
+  "${SVL_ROOT}/.venv/bin/pip" install --quiet -r backend/requirements.txt
+}
 
-Types: deb
-URIs: https://security.debian.org/debian-security
-Suites: trixie-security
-Components: main contrib non-free non-free-firmware
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-APT_EOF
+write_env() {
+  mkdir -p "${ENV_DIR}" "${STATE_DIR}" &&
+  if [ ! -f "${ENV_FILE}" ]; then
+    umask 077
+    cat > "${ENV_FILE}" <<EOF
+# SVL CoreOS 2: Apex — konfiguracja (tylko root)
+SVL_OPERATOR_TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')
+SVL_BIND_HOST=0.0.0.0
+PORT=3000
+SVL_SQLITE_PATH=${STATE_DIR}/svl_os.sqlite3
+SVL_LOG_DIR=${SVL_ROOT}/logi
+SVL_COREOS_EDITION=Apex
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_PREFERRED_MODEL=llama3.2-vision:11b
+# Uzupełnij według potrzeb:
+GITHUB_TOKEN=
+GEMINI_API_KEY=
+EOF
+    echo "Utworzono ${ENV_FILE} z nowym SVL_OPERATOR_TOKEN (odczyt: sudo grep SVL_OPERATOR_TOKEN ${ENV_FILE})."
+  else
+    echo "Zachowano istniejący ${ENV_FILE}."
+  fi
+}
+
+install_services() {
+  cat > /etc/systemd/system/svl-coreos2.service <<EOF
+[Unit]
+Description=SVL CoreOS 2: Apex (brama SVL + jądro Python + interfejs)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${SVL_ROOT}
+EnvironmentFile=${ENV_FILE}
+Environment=NODE_ENV=production
+Environment=PATH=${SVL_ROOT}/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/npx tsx server.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  sed "s#/opt/svl-coreos-2#${SVL_ROOT}#g" "${SCRIPT_DIR}/svl-sentinel.service" > /etc/systemd/system/svl-sentinel.service &&
+  if [ -f "${SCRIPT_DIR}/svl-coreos2-sysctl.conf" ]; then
+    cp "${SCRIPT_DIR}/svl-coreos2-sysctl.conf" /etc/sysctl.d/99-svl-coreos2.conf && sysctl --system >/dev/null
+  fi
+  systemctl daemon-reload &&
+  systemctl enable --now svl-coreos2.service &&
+  systemctl enable --now svl-sentinel.service
+}
+
+install_ollama() {
+  command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
+}
+
+verify_running() {
+  local i
+  for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+      echo "SVL CoreOS 2 odpowiada na http://127.0.0.1:3000"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "SVL CoreOS 2 nie odpowiada po 60 s — sprawdź: journalctl -u svl-coreos2 -n 100"
+  return 1
+}
+
+run_debootstrap() {
+  mkdir -p "${DEBOOTSTRAP_TARGET}" &&
+  debootstrap --arch=amd64 --variant=minbase \
+    --include=systemd,systemd-sysv,dbus,udev,iproute2,openssh-server,python3,sqlite3,ca-certificates,curl \
+    trixie "${DEBOOTSTRAP_TARGET}" "${DEBIAN_MIRROR}" &&
   echo "svl-364-apex" > "${DEBOOTSTRAP_TARGET}/etc/hostname"
-  echo "[SVL-CoreOS-2:Apex] Debootstrap Stage 1 & 2 zakończony pomyślnie w ${DEBOOTSTRAP_TARGET}."
+}
+
+step "Pakiety systemowe (apt)" install_packages
+step "Kopiowanie SVL CoreOS 2 do ${SVL_ROOT}" copy_system
+step "Budowa (npm ci, vite build, venv Python)" build_system
+step "Konfiguracja ${ENV_FILE}" write_env
+if [ "${SVL_INSTALL_OLLAMA:-0}" = "1" ]; then
+  step "Ollama" install_ollama
 else
-  echo "[SVL-CoreOS-2:Apex] Weryfikacja lokalnego manifestu Debian 13 Trixie Rootfs (tryb Hot-Swap In-Place)..."
+  skip "Ollama" "ustaw SVL_INSTALL_OLLAMA=1, aby zainstalować"
+fi
+step "Usługi systemd (svl-coreos2, svl-sentinel)" install_services
+step "Sprawdzenie działania" verify_running
+if [ "${SVL_RUN_DEBOOTSTRAP:-0}" = "1" ]; then
+  step "Debootstrap Debian 13 → ${DEBOOTSTRAP_TARGET}" run_debootstrap
+else
+  skip "Debootstrap rootfs" "ustaw SVL_RUN_DEBOOTSTRAP=1, aby zbudować"
 fi
 
-# 4. Kopiowanie modułów SVL_CoreOS_2 (25 plików w 7 podkatalogach)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cp -r "${SCRIPT_DIR}/"* "${SVL_ROOT}/" 2>/dev/null || true
-
-# 5. Konfiguracja parametrów jądra (sysctl: eBPF, BBR, 128D Hyperspace buffers)
-if [ -f "${SCRIPT_DIR}/debian13/svl-coreos2-sysctl.conf" ] && [ -d /etc/sysctl.d ] && [ -w /etc/sysctl.d ]; then
-  cp "${SCRIPT_DIR}/debian13/svl-coreos2-sysctl.conf" /etc/sysctl.d/99-svl-coreos2.conf
-  sysctl --system >/dev/null 2>&1 || true
+echo
+echo "=== Podsumowanie SVL CoreOS 2 ($(date -u +%FT%TZ)) ==="
+printf '%s\n' "${RESULTS[@]}"
+if [ "${FAILED}" -ne 0 ]; then
+  echo "WYNIK: instalacja NIEPEŁNA — sprawdź kroki z BŁĄD powyżej (log: ${LOG_FILE})."
+  exit 1
 fi
-
-# 6. Rejestracja usługi systemd SVL-Sentinel Daemon (Auto-Healing + AV + Firewall)
-if [ -f "${SCRIPT_DIR}/debian13/svl-sentinel.service" ] && [ -d /etc/systemd/system ] && [ -w /etc/systemd/system ]; then
-  cp "${SCRIPT_DIR}/debian13/svl-sentinel.service" /etc/systemd/system/svl-sentinel.service
-  systemctl daemon-reload || true
-  systemctl enable svl-sentinel.service || true
-fi
-
-# 7. Atomowa podmiana jądra (Hot-Swap Engine) i test integralności
-if command -v python3 >/dev/null 2>&1 && [ -f "${SCRIPT_DIR}/kernel/hot_swap_engine.py" ]; then
-  python3 "${SCRIPT_DIR}/kernel/hot_swap_engine.py" || true
-fi
-
-echo "[SVL-CoreOS-2:Apex] Instalacja Debian 13 (Trixie) i aktywacja Hot-Swap zakończona (100%)."
+echo "WYNIK: SVL CoreOS 2: Apex zainstalowany i działa (http://<adres>:3000)."

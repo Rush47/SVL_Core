@@ -30,7 +30,10 @@ class ApexControllerHonestyTest(unittest.TestCase):
 
                 self.assertEqual(st["kernel_release"], platform.release())
                 self.assertEqual(st["debootstrap_status"], "NIE URUCHOMIONO")
-                self.assertIn("NIE WYKONANO", st["hot_swap_status"])
+                self.assertIn("nie dotyczy", st["hot_swap_status"])
+                self.assertTrue(st["active"])
+                self.assertEqual(st["version"], "2.0.0-Apex")
+                self.assertIn("service_status", st)
                 self.assertIsNone(st["install_log"])
                 self.assertEqual(st["fighter_incidents_count"], 0)
                 self.assertEqual(st["remote_desktop_fps"], 0)

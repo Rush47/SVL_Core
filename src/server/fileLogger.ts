@@ -225,7 +225,7 @@ export class SvlFileLogger {
       const fullPath = path.join(this.logDir, fileName);
       if (!fsSync.existsSync(fullPath)) {
         const header =
-          `=== SVL PYTHON OS · LOG SYSTEMOWY (${fileName}) · Utworzono: ${new Date().toISOString()} ===\n`;
+          `=== SVL COREOS 2: APEX · LOG SYSTEMOWY (${fileName}) · Utworzono: ${new Date().toISOString()} ===\n`;
         fsSync.writeFileSync(fullPath, header, { encoding: 'utf8' });
       }
     }

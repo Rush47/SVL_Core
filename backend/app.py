@@ -792,6 +792,19 @@ class SVLCoreOS2ApexController:
             }
         return out
 
+    @staticmethod
+    def _sentinel_state() -> Optional[dict[str, Any]]:
+        """Ostatni pomiar demona SVL-Sentinel (jeśli działa na tym hoście)."""
+        path = Path(os.environ.get("SVL_SENTINEL_STATE", "/var/lib/svl-coreos2/sentinel_status.json"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            checked = datetime.fromisoformat(str(data.get("checked_at")))
+            age = (datetime.now(timezone.utc) - checked).total_seconds()
+            data["stale"] = age > 3 * float(data.get("interval_sec", 30))
+            return data
+        except Exception:
+            return None
+
     def _install_state(self) -> dict[str, Any]:
         rootfs_ok = (self.rootfs_dir / "etc" / "debian_version").exists()
         log_exists = self.install_log_path.exists()
@@ -809,15 +822,26 @@ class SVLCoreOS2ApexController:
                     files_list.append(f"SVL_CoreOS_2/{p.relative_to(self.coreos_dir).as_posix()}")
         install = self._install_state()
         is_debian13 = "trixie" in self._os_pretty().lower() or "debian gnu/linux 13" in self._os_pretty().lower()
+        service = self._systemd_active("svl-coreos2")
+        sentinel = self._sentinel_state()
         return {
             "ok": True,
             "measured": True,
-            "active": False,
+            # Ten stan zwraca działający SVL CoreOS 2 (brama + jądro) — system działa.
+            "active": True,
             "system_title": "SVL CoreOS 2: Apex",
-            "version": "2.0.0 (pliki w repozytorium)",
+            "version": "2.0.0-Apex",
+            "edition": os.environ.get("SVL_COREOS_EDITION", "Apex"),
+            "service_status": (
+                "AKTYWNA (systemd: svl-coreos2)" if service
+                else ("brak systemd — uruchomiony bez usługi (np. AI Studio / npm run dev)" if service is None
+                      else "NIEZAINSTALOWANA jako usługa — uruchom instalator SVL_CoreOS_2/debian13/install_coreos2_svl364.sh")
+            ),
+            "installed_root": os.environ.get("SVL_ROOT", "/opt/svl-coreos-2") if Path(os.environ.get("SVL_ROOT", "/opt/svl-coreos-2")).exists() else None,
+            "sentinel": sentinel,
             "distro": self._os_pretty() + ("" if is_debian13 else " — to nie jest Debian 13"),
             "kernel_release": platform.release(),
-            "hot_swap_status": install["hot_swap_status"],
+            "hot_swap_status": "nie dotyczy — SVL CoreOS 2 instaluje instalator (usługi systemd), bez podmiany na żywo",
             "debootstrap_status": install["debootstrap_status"],
             "install_log": install["install_log"],
             "operator_root": "Mateusz Mitek",

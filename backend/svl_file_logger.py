@@ -118,7 +118,7 @@ def ensure_log_files(log_dir: Optional[Path] = None) -> Path:
             fpath = target_dir / fname
             if not fpath.exists():
                 header = (
-                    f"=== SVL PYTHON OS · LOG SYSTEMOWY ({fname}) · "
+                    f"=== SVL COREOS 2: APEX · LOG SYSTEMOWY ({fname}) · "
                     f"Utworzono: {datetime.now(timezone.utc).isoformat()} ===\n"
                 )
                 fpath.write_text(header, encoding="utf-8")

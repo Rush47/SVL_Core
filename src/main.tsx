@@ -64,7 +64,7 @@ class GuiErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return (
         <div className="flex h-screen w-screen flex-col items-center justify-center bg-[#0B0D13] p-6 text-center text-slate-200">
-          <h1 className="mb-2 text-lg font-bold text-rose-400">Wystąpił błąd interfejsu SVL Python OS</h1>
+          <h1 className="mb-2 text-lg font-bold text-rose-400">Wystąpił błąd interfejsu SVL CoreOS 2</h1>
           <p className="mb-4 max-w-lg text-xs text-slate-400">{this.state.errorMessage}</p>
           <button
             type="button"
