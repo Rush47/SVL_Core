@@ -646,19 +646,7 @@ class SVLSystemKernel:
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS iris_notifications (
-                    id TEXT PRIMARY KEY,
-                    seq_num INTEGER NOT NULL,
-                    severity TEXT NOT NULL DEFAULT 'INFO',
-                    category TEXT NOT NULL DEFAULT 'system',
-                    title TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    details_json TEXT NOT NULL DEFAULT '{}',
-                    channel TEXT NOT NULL DEFAULT 'wszyscy',
-                    is_read INTEGER NOT NULL DEFAULT 0,
-                    source_event_id TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL
-                );
+                DROP TABLE IF EXISTS iris_notifications;
 
                 CREATE INDEX IF NOT EXISTS idx_chat_messages_conv ON chat_messages (conversation_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_agent_memory_scope ON agent_memory (scope, created_at);
@@ -667,9 +655,6 @@ class SVLSystemKernel:
                 CREATE INDEX IF NOT EXISTS idx_terminal_history_tab ON terminal_history (tab, created_at);
                 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log (id DESC);
                 CREATE INDEX IF NOT EXISTS idx_system_modules_status ON system_modules (status, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_iris_notifications_seq ON iris_notifications (seq_num DESC);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_iris_notifications_source_evt
-                    ON iris_notifications (source_event_id) WHERE source_event_id != '';
                 """
             )
             conn.execute(
@@ -2323,7 +2308,6 @@ class SVLSystemKernel:
             "linux": [],
             "ssh": [],
             "python": [],
-            "codex": [],
             "hyperspace": [],
             "agents": [],
         }
@@ -2730,36 +2714,15 @@ class SVLSystemKernel:
 
         return self.run_db(_build, write=False)
 
-    def _row_to_iris_notification(self, r: sqlite3.Row) -> dict[str, Any]:
-        try:
-            details_obj = json.loads(r["details_json"] or "{}")
-            if not isinstance(details_obj, dict):
-                details_obj = {}
-        except Exception:
-            details_obj = {}
-        seq_num = int(r["seq_num"] or 1)
-        severity = str(r["severity"] or "INFO").upper()
-        title = str(r["title"] or "").strip()
-        msg_body = str(r["message"] or "").strip()
-        formatted_line = f"[Iris][{seq_num}] {severity}: {title}" + (
-            f"\n{msg_body}" if msg_body and msg_body != title else ""
-        )
-        return {
-            "id": str(r["id"]),
-            "seqNum": seq_num,
-            "severity": severity if severity in ("INFO", "WARN", "ALERT") else "INFO",
-            "category": str(r["category"] or "system"),
-            "title": title,
-            "message": msg_body,
-            "formattedLine": formatted_line,
-            "details": details_obj,
-            "channel": str(r["channel"] or "wszyscy"),
-            "isRead": bool(int(r["is_read"] or 0)),
-            "sourceEventId": str(r["source_event_id"] or ""),
-            "createdAt": str(r["created_at"] or ""),
-        }
+    FAMILY_CHANNEL_ID = "conv-rodzina-mitek-wszyscy"
+    FAMILY_CHANNEL_TITLE = "Rodzina Mitek (wszyscy)"
+    # Powiadomienia systemu na kanale „wszyscy” przekazuje AI pokładowe statku — Maya.
+    NOTIFICATION_SENDER = "Maya"
+    NOTIFICATION_AGENT_ID = "Maya"
+    NOTIFICATION_SEVERITIES = ("INFO", "WARN", "ALERT")
+    _NOTIFICATION_ICONS = {"INFO": "ℹ️", "WARN": "⚠️", "ALERT": "🚨"}
 
-    def emit_iris_notification(
+    def emit_family_notification(
         self,
         *,
         severity: str = "INFO",
@@ -2767,52 +2730,98 @@ class SVLSystemKernel:
         title: str = "",
         message: str = "",
         details: Optional[dict[str, Any]] = None,
-        channel: str = "wszyscy",
         source_event_id: str = "",
-        mirror_to_family_chat: bool = True,
-        origin: str = "iris",
-        correlation_id: str = "",
-        event_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "disabled": True,
-            "deduplicated": False,
-            "notification": None,
-            "mirroredMessageId": None,
-            "error": "Powiadomienia i Iris AI zostały trwale usunięte z systemu, a jej uprawnienia roota odebrane.",
-            "serverRevision": self.get_server_revision(),
-        }
-
-    def list_iris_notifications(
-        self,
-        *,
-        limit: int = 80,
-        unread_only: bool = False,
-        category: str = "",
-    ) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "disabled": True,
-            "notifications": [],
-            "totalCount": 0,
-            "unreadCount": 0,
-            "latestSeq": 0,
-            "serverRevision": self.get_server_revision(),
-        }
-
-    def mark_iris_notifications_read(
-        self,
-        ids: Optional[list[str]] = None,
-        *,
-        origin: str = "client",
+        origin: str = "python-kernel",
         correlation_id: str = "",
     ) -> dict[str, Any]:
+        """
+        Powiadomienie od Mayi na kanale Rodzina Mitek (wszyscy): wiadomość `role=system`
+        zapisana w SQLite z rewizją i zdarzeniem outbox, więc trafia do wszystkich klientów
+        przez /ws/svl. Te same `source_event_id` nie tworzą duplikatów.
+        """
+        clean_title = str(title or "").strip()[:200]
+        clean_message = str(message or "").strip()[:4000]
+        if not clean_title and not clean_message:
+            return {"ok": False, "error": "Powiadomienie wymaga tytułu lub treści."}
+        sev = str(severity or "INFO").upper()
+        if sev not in self.NOTIFICATION_SEVERITIES:
+            sev = "INFO"
+        clean_category = re.sub(r"[^a-z0-9_.-]", "", str(category or "system").lower())[:40] or "system"
+        source_id = re.sub(r"[^A-Za-z0-9_.:-]", "", str(source_event_id or ""))[:90]
+        notif_id = f"notif-{source_id}" if source_id else f"notif-{uuid.uuid4().hex}"
+        icon = self._NOTIFICATION_ICONS[sev]
+        lines = [f"{icon} **{clean_title}**" if clean_title else icon]
+        if clean_message and clean_message != clean_title:
+            lines.append(clean_message)
+        notif_msg = {
+            "id": notif_id,
+            "role": "system",
+            "sender": self.NOTIFICATION_SENDER,
+            "agentId": self.NOTIFICATION_AGENT_ID,
+            "modelUsed": f"Maya · powiadomienie · {clean_category} · {sev}",
+            "provenance": "server_verified",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "content": "\n\n".join(lines),
+        }
+        saved = self.save_chat_message(
+            self.FAMILY_CHANNEL_ID,
+            self.FAMILY_CHANNEL_TITLE,
+            "svl-hybrid-router",
+            notif_msg,
+            origin=origin,
+            correlation_id=correlation_id,
+            event_id=f"evt-{notif_id}",
+        )
+        if not saved.get("ok"):
+            return {"ok": False, "error": saved.get("error") or "Nie zapisano powiadomienia."}
         return {
             "ok": True,
-            "disabled": True,
-            "updatedCount": 0,
-            "unreadCount": 0,
+            "deduplicated": bool(saved.get("deduplicated")),
+            "notification": {
+                "id": notif_id,
+                "severity": sev,
+                "category": clean_category,
+                "title": clean_title,
+                "message": clean_message,
+                "details": sanitize_sync_value(details or {}, [self._operator_token]),
+                "channel": "wszyscy",
+                "createdAt": notif_msg["timestamp"],
+            },
+            "event": saved.get("event"),
+            "serverRevision": saved.get("serverRevision"),
+        }
+
+    def list_family_notifications(self, *, limit: int = 80) -> dict[str, Any]:
+        safe_limit = max(1, min(500, int(limit or 80)))
+
+        def _read(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            return conn.execute(
+                """
+                SELECT id, content, metadata_json, created_at FROM chat_messages
+                WHERE conversation_id = ? AND role = 'system' AND sender = ? AND id LIKE 'notif-%'
+                ORDER BY rowid DESC LIMIT ?
+                """,
+                (self.FAMILY_CHANNEL_ID, self.NOTIFICATION_SENDER, safe_limit),
+            ).fetchall()
+
+        rows = self.run_db(_read, write=False)
+        items = []
+        for r in rows:
+            try:
+                meta = json.loads(r["metadata_json"] or "{}")
+            except Exception:
+                meta = {}
+            items.append({
+                "id": str(r["id"]),
+                "content": str(r["content"] or ""),
+                "label": str(meta.get("modelUsed") or ""),
+                "channel": "wszyscy",
+                "createdAt": str(r["created_at"] or ""),
+            })
+        return {
+            "ok": True,
+            "notifications": items,
+            "totalCount": len(items),
             "serverRevision": self.get_server_revision(),
         }
 
@@ -3008,7 +3017,7 @@ class SVLSystemKernel:
         """
         now_iso = datetime.now(timezone.utc).isoformat()
         def _reset(conn: sqlite3.Connection) -> dict[str, Any]:
-            for tbl in ("chat_messages", "conversations", "system_modules", "iris_notifications", "terminal_history", "agent_tasks", "sync_entities", "sync_outbox"):
+            for tbl in ("chat_messages", "conversations", "system_modules", "terminal_history", "agent_tasks", "sync_entities", "sync_outbox"):
                 try:
                     conn.execute(f"DELETE FROM {tbl}")
                 except Exception:
@@ -3033,7 +3042,7 @@ class SVLSystemKernel:
         except ImportError:
             from backend.antivirus_scanner import SVLAntivirusScanner
         av = SVLAntivirusScanner(self)
-        av.scan_and_purge(emit_to_chat=False, emit_to_iris=False, origin=origin)
+        av.scan_and_purge(emit_to_chat=False, origin=origin)
 
         return {
             "ok": True,

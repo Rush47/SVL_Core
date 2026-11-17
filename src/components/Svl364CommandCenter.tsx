@@ -177,7 +177,6 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           timeoutMs: 15000,
           body: JSON.stringify({
             directive: 'Pełny raport operacyjny usług SVL-364 i hosta',
-            emitToIris: false,
             origin: 'svl364-command-center',
           }),
         },
@@ -209,7 +208,6 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
         timeoutMs: 25000,
         body: JSON.stringify({
           emitToChat: true,
-          emitToIris: false,
           origin: 'svl364-command-center-av',
         }),
       });

@@ -412,7 +412,6 @@ class SVLRealVisionEngine:
         ollama_host: str = "http://127.0.0.1:11434",
         emit_to_chat: bool = False,
         conversation_id: str = "conv-rodzina-mitek-wszyscy",
-        emit_to_iris: bool = False,
         origin: str = "real-vision",
         correlation_id: str = "",
     ) -> dict[str, Any]:

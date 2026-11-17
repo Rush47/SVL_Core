@@ -143,12 +143,12 @@ class TestSVLRealVisionSuite(unittest.TestCase):
                 origin="test",
             )
             av = SVLAntivirusScanner(kernel)
-            scan = av.scan_and_purge(emit_to_chat=False, emit_to_iris=False, origin="unit-test")
+            scan = av.scan_and_purge(emit_to_chat=False, origin="unit-test")
             self.assertTrue(scan["ok"])
             self.assertIn(scan["status"], ("CLEAN", "THREATS_DETECTED"))
             self.assertNotIn("potwierdzona", scan["reportMarkdown"])
             # skaner niczego nie kasuje w plikach projektu
-            self.assertTrue((BACKEND_DIR.parent / "deploy" / "systemd" / "svl-codex-mcp.service").exists())
+            self.assertTrue((BACKEND_DIR.parent / "deploy" / "systemd" / "svl-python-os.service").exists())
             self.assertGreaterEqual(scan["threatsFoundAndPurged"], 2)
             self.assertGreaterEqual(len(scan["neutralizedThreats"]), 2)
             mods = {m["id"]: m for m in kernel.list_system_modules()}

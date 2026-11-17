@@ -29,7 +29,7 @@ except ImportError:  # uruchomienie jako pakiet backend.*
     from backend.host_discovery import HostDiscovery
     from backend.real_telemetry import disk_used_percent, find_real_binary
 
-SVL_SYSTEMD_UNITS = ("svl-python-os", "svl-comfyui", "svl-codex-mcp", "ollama", "ssh")
+SVL_SYSTEMD_UNITS = ("svl-python-os", "svl-comfyui", "ollama", "ssh")
 KNOWN_PORTS = {
     22: "SSH",
     80: "HTTP",

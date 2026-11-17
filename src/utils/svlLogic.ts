@@ -46,9 +46,6 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   const clean = String(rawName || '').trim();
   if (!clean) return 'SVL System Kernel';
   const low = clean.toLowerCase();
-  if (low === 'agata' || low === 'agata mitek' || low === 'assistant' || low === 'iris' || low === 'iris ai') {
-    return 'Asystent SVL';
-  }
   if (low === 'bielik' || low === 'bielik ai') return 'Bielik';
   if (low === 'maya' || low === 'maya ai' || low === 'maya svl-364') return 'Maya';
   if (low === 'all' || low === 'rodzina mitek' || low === 'rodzina mitek (wszyscy)') {
@@ -115,17 +112,6 @@ export function normalizeAgentCanonicalName(
 ): string | null {
   const clean = String(rawName || '').trim().toLowerCase();
   if (!clean) return null;
-  if (
-    clean === 'agata' ||
-    clean === 'agata mitek' ||
-    clean === 'aria' ||
-    clean === 'alex' ||
-    clean === 'astyria' ||
-    clean === 'aurelius' ||
-    clean === 'si_1'
-  ) {
-    return null;
-  }
   if (clean === 'bielik' || clean === 'bielik ai' || clean === 'conv-agent-bielik') {
     return 'Bielik';
   }
@@ -456,7 +442,7 @@ export function selectOllamaModelName(
   return preferredFallback;
 }
 
-export type TerminalTabId = 'linux' | 'ssh' | 'python' | 'codex' | 'hyperspace' | 'agents';
+export type TerminalTabId = 'linux' | 'ssh' | 'python' | 'hyperspace' | 'agents';
 
 export interface TerminalLogLine {
   id: string;
@@ -762,16 +748,6 @@ export function hasSvlOperatorAccessToken(): boolean {
   return getSvlOperatorAccessToken().length > 0;
 }
 
-let svlCodexAccessToken = '';
-export function setSvlCodexAccessToken(value: string): void {
-  svlCodexAccessToken = String(value || '').slice(0, 512);
-}
-export function getSvlCodexAccessToken(): string {
-  return svlCodexAccessToken;
-}
-export function hasSvlCodexAccessToken(): boolean {
-  return svlCodexAccessToken.length > 0;
-}
 
 export async function safeFetchJson<T = any>(
   url: string,
@@ -822,9 +798,6 @@ export async function safeFetchJson<T = any>(
       if (typeof window !== 'undefined' && url.startsWith('/api/')) {
         if (svlOperatorAccessToken && !mergedHeaders.has('X-SVL-Operator-Token')) {
           mergedHeaders.set('X-SVL-Operator-Token', svlOperatorAccessToken);
-        }
-        if (svlCodexAccessToken && !mergedHeaders.has('X-SVL-Codex-Access')) {
-          mergedHeaders.set('X-SVL-Codex-Access', svlCodexAccessToken);
         }
       }
       if (!mergedHeaders.has('Accept')) mergedHeaders.set('Accept', 'application/json');

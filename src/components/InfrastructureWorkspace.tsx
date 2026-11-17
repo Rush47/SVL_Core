@@ -255,7 +255,7 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
       const res = await safeFetchJson<{ ok: boolean; serverRevision?: number }>('/api/py/kernel/markdown-report', {
         method: 'POST',
         timeoutMs: 15000,
-        body: JSON.stringify({ directive: 'Raport infrastruktury hosta', emitToIris: false, origin: 'infrastructure-workspace' }),
+        body: JSON.stringify({ directive: 'Raport infrastruktury hosta', origin: 'infrastructure-workspace' }),
       });
       await refreshDomainModules(['chat', 'modules']);
       setStatusMsg(

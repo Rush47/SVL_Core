@@ -27,13 +27,6 @@ import {
   type ChatAppliedAction,
 } from './src/utils/svlLogic.ts';
 import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githubFiles.ts';
-import {
-  codexChatAccessAllowed,
-  codexChatConfiguration,
-  codexChatDiagnostics,
-  generateCodexCliChat,
-  probeCodexCli,
-} from './src/server/codexCliChat.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
@@ -533,10 +526,6 @@ function hasOperatorAuthorization(candidate: unknown): boolean {
   }
 }
 
-function hasCodexChatAuthorization(candidate: unknown): boolean {
-  return codexChatAccessAllowed(candidate);
-}
-
 async function startServer() {
   // Never start a synthetic Ollama daemon: an unavailable real model must stay offline.
   startPythonBackend();
@@ -633,36 +622,8 @@ async function startServer() {
       service: 'svl-gateway',
       pythonPort: PYTHON_PORT,
       uptimeSec: Math.round(process.uptime()),
-      codexChatEnabled: codexChatConfiguration().enabled,
     });
   });
-
-  app.get('/api/codex-chat/status', asyncRoute(async (req, res) => {
-    const config = codexChatConfiguration();
-    const accessGranted = hasCodexChatAuthorization(req.headers['x-svl-codex-access']);
-    if (!accessGranted) {
-      res.json({
-        ok: true,
-        ...config,
-        authenticated: false,
-        runtimeLoggedIn: false,
-        diagnostics: null,
-        message: config.enabled
-          ? 'Podaj prywatny SVL_CODEX_CHAT_ACCESS_TOKEN w polu Dostęp SVL, aby sprawdzić logowanie ChatGPT i używać Codex CLI.'
-          : 'Tryb Codex CLI jest wyłączony w konfiguracji serwera (SVL_CODEX_CHAT_ENABLED=false).',
-      });
-      return;
-    }
-    const probe = await probeCodexCli(__dirname);
-    res.json({
-      ok: true,
-      ...codexChatConfiguration(),
-      authenticated: true,
-      runtimeLoggedIn: probe.loggedIn,
-      reason: probe.reason,
-      diagnostics: codexChatDiagnostics(),
-    });
-  }));
 
   app.get('/api/operator/status', (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
@@ -703,7 +664,11 @@ async function startServer() {
   const relayedEventIdsQueue: string[] = [];
   const relayedEventIdsSet = new Set<string>();
 
-  const publishOutboxEvent = (evt: any) => {
+  // Zdarzenia trafiają do klientów WYŁĄCZNIE w kolejności rewizji, przez pollAndRelayOutbox().
+  // Wcześniej bezpośrednia publikacja przesuwała kursor relaya poza zdarzenia jeszcze
+  // niewysłane (np. zapis pamięci agenta tuż przed wiadomością czatu) — inni klienci
+  // nigdy ich nie dostawali, a zmiany z czatu pojawiały się dopiero po ręcznym odświeżeniu.
+  const sendOutboxEventToClients = (evt: any) => {
     if (!evt || typeof evt !== 'object' || !evt.eventId) return;
     if (relayedEventIdsSet.has(evt.eventId)) return;
 
@@ -712,11 +677,6 @@ async function startServer() {
     if (relayedEventIdsQueue.length > 1500) {
       const oldest = relayedEventIdsQueue.shift();
       if (oldest) relayedEventIdsSet.delete(oldest);
-    }
-
-    const srvRev = Number(evt.serverRevision || 0);
-    if (srvRev > lastRelayedServerRevision) {
-      lastRelayedServerRevision = srvRev;
     }
 
     const sanitized = redactForSync(evt);
@@ -735,11 +695,13 @@ async function startServer() {
       }
     }
   };
+  /** Zgłasza nowe zdarzenie z outboxa: natychmiastowy relay w kolejności rewizji. */
+  const publishOutboxEvent = (evt: any) => {
+    if (!evt || typeof evt !== 'object' || !evt.eventId) return;
+    void pollAndRelayOutbox();
+  };
   const broadcastResyncRequired = (reason = 'global_sync', srvRev?: number) => {
-    const rev = Number(srvRev || lastRelayedServerRevision || 0);
-    if (rev > lastRelayedServerRevision) {
-      lastRelayedServerRevision = rev;
-    }
+    const rev = Math.max(Number(srvRev || 0), lastRelayedServerRevision);
     const frame = JSON.stringify({
       type: 'svl.resync_required',
       reason,
@@ -760,8 +722,14 @@ async function startServer() {
   (globalThis as any).__svlBroadcastResync = broadcastResyncRequired;
 
   let outboxPollInFlight = false;
-  const pollAndRelayOutbox = async () => {
-    if (outboxPollInFlight || wsClients.size === 0) return;
+  // Żądanie relaya w trakcie trwającego odpytania nie może przepaść — wykonujemy jeszcze jedno.
+  let outboxPollRequested = false;
+  const pollAndRelayOutbox = async (): Promise<void> => {
+    if (outboxPollInFlight) {
+      outboxPollRequested = true;
+      return;
+    }
+    if (wsClients.size === 0) return;
     outboxPollInFlight = true;
     try {
       if (!outboxCursorInitialized) {
@@ -774,47 +742,68 @@ async function startServer() {
           outboxCursorInitialized = true;
         }
       }
-      const res = await callPythonBackend(
-        'GET',
-        `/api/py/sync/events?sinceRevision=${lastRelayedServerRevision}&limit=80`,
-        undefined,
-        'ws-outbox-poll',
-        2,
-      );
-      if (res.status === 200 && res.data?.ok) {
+      for (let page = 0; page < 10; page += 1) {
+        outboxPollRequested = false;
+        const res = await callPythonBackend(
+          'GET',
+          `/api/py/sync/events?sinceRevision=${lastRelayedServerRevision}&limit=80`,
+          undefined,
+          'ws-outbox-poll',
+          2,
+        );
+        if (res.status !== 200 || !res.data?.ok) return;
         const srv = Number(res.data.serverRevision || 0);
         if (res.data.gapDetected) {
-          const frame = JSON.stringify({
-            type: 'svl.resync_required',
-            reason: 'outbox_gap',
-            serverRevision: srv,
-            timestamp: new Date().toISOString(),
-          });
-          for (const [client] of wsClients) {
-            if (client.readyState === WebSocket.OPEN) {
-              try {
-                client.send(frame);
-              } catch {
-                // ignore closed socket race
-              }
-            }
-          }
           lastRelayedServerRevision = Math.max(lastRelayedServerRevision, srv);
+          broadcastResyncRequired('outbox_gap', srv);
           return;
         }
 
         const events: any[] = Array.isArray(res.data.events) ? res.data.events : [];
         for (const evt of events) {
-          publishOutboxEvent(evt);
+          sendOutboxEventToClients(evt);
+          lastRelayedServerRevision = Math.max(lastRelayedServerRevision, Number(evt?.serverRevision || 0));
         }
-        if (!res.data.hasMore && srv > lastRelayedServerRevision) {
-          lastRelayedServerRevision = srv;
+        if (!res.data.hasMore) {
+          // Rewizja bez zdarzenia w outboxie (np. usunięte wpisy) nie blokuje kursora;
+          // `serverRevision` jest czytane przed zdarzeniami, więc wszystko ≤ srv już wysłano.
+          lastRelayedServerRevision = Math.max(lastRelayedServerRevision, srv);
+          if (!outboxPollRequested) return;
         }
       }
     } catch {
       // retry on next interval
     } finally {
       outboxPollInFlight = false;
+      if (outboxPollRequested) {
+        outboxPollRequested = false;
+        setTimeout(() => void pollAndRelayOutbox(), 0);
+      }
+    }
+  };
+
+  const FAMILY_CHANNEL_ID = 'conv-rodzina-mitek-wszyscy';
+  /** Powiadomienie systemowe na kanale „wszyscy” (zapis w SQLite + natychmiastowy relay). */
+  const emitFamilyNotification = async (
+    notification: {
+      severity?: 'INFO' | 'WARN' | 'ALERT';
+      category: string;
+      title: string;
+      message?: string;
+      sourceEventId?: string;
+      origin?: string;
+    },
+    correlationId = '',
+  ): Promise<void> => {
+    try {
+      const result = await callPythonBackend('POST', '/api/py/notifications/emit', notification, correlationId, 2);
+      if (result.status === 200 && result.data?.ok) {
+        publishOutboxEvent(result.data.event || { eventId: `notif-${Date.now()}` });
+      } else {
+        recordRuntimeLog('gateway', 'error', `[powiadomienia] ${result.data?.error || `HTTP ${result.status}`}`);
+      }
+    } catch (error) {
+      recordRuntimeLog('gateway', 'error', `[powiadomienia] ${error instanceof Error ? error.message : String(error)}`);
     }
   };
 
@@ -933,15 +922,7 @@ async function startServer() {
     const method = req.method === 'POST' ? 'POST' : 'GET';
     const timeoutMs = req.path === '/api/py/images/generate' ? 900000 : 20000;
     const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']);
-    const isScopedCodexChat =
-      !isOperator &&
-      hasCodexChatAuthorization(req.headers['x-svl-codex-access']) &&
-      (
-        (method === 'GET' && req.path === '/api/py/chat/conversations') ||
-        (method === 'POST' && req.path === '/api/py/chat/conversations/create') ||
-        (method === 'POST' && req.path === '/api/py/chat/conversations/message')
-      );
-    if (!isOperator && !isScopedCodexChat) {
+    if (!isOperator) {
       res.status(401).json({
         ok: false,
         error: 'Wymagana autoryzacja SVL. Wpisz SVL_OPERATOR_TOKEN w górnym pasku aplikacji.',
@@ -1030,7 +1011,6 @@ async function startServer() {
       linux: 'root@svl-debian13:/app/applet#',
       ssh: 'root@svl-364-ship#',
       python: 'svl-py3>>>',
-      codex: 'codex$',
       hyperspace: 'hyper128>',
       agents: 'agents>',
     };
@@ -1202,14 +1182,14 @@ async function startServer() {
     }
 
     if (terminalType === 'agents') {
-      const mentionsRemoved = /\b(?:agata|aria|alex|astyria|aurelius|si_1)\b/i.test(effectiveCmd);
+      const mentionsRemoved = /\b(?:agata|iris|aria|alex|astyria|aurelius|si_1|codex)\b/i.test(effectiveCmd);
       if (mentionsRemoved) {
         await respondAndPersist({
           ok: false,
           terminalType,
           command: trimmed,
           stdout: '',
-          stderr: 'Agentka Agata Mitek oraz usunięte profile pozostają trwale wycofane.',
+          stderr: 'W systemie działają wyłącznie Bielik i Maya.',
         });
         return;
       }
@@ -1254,30 +1234,6 @@ async function startServer() {
           : '',
         stderr: taskRes.data?.ok ? '' : String(taskRes.data?.error || 'Nie udało się zlecić zadania dla Bielik.'),
       });
-      return;
-    }
-
-    if (terminalType === 'codex') {
-      if (effectiveCmd === 'status' || effectiveCmd === 'codex --version' || effectiveCmd === 'help') {
-        const health = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
-        const gitLog = await executeLinuxShellCommand('git status -s && git log -n 3 --oneline || true');
-        await respondAndPersist({
-          ok: true,
-          terminalType,
-          command: trimmed,
-          stdout:
-            `[OpenAI Codex CLI Bridge — SVL Python OS]\n` +
-            `Status binarki codex: ${health.data?.codex?.codex_cli_installed ? 'ZAINSTALOWANA' : 'NIEDOSTĘPNA'}\n` +
-            `Sesja Codex CLI backendu: ${health.data?.codex?.codex_cli_logged_in ? 'ZALOGOWANA' : 'BRAK LOGOWANIA'}\n` +
-            `UID procesu aplikacji: ${typeof process.getuid === 'function' ? process.getuid() : 'n/d'}\n` +
-            `Aktywna gałąź Git: ${health.data?.codex?.active_branch || 'n/d'}\n\n` +
-            `--- Stan repozytorium roboczego ---\n${gitLog.stdout || '(Czyste drzewo robocze)'}`,
-          stderr: gitLog.stderr,
-        });
-        return;
-      }
-      const out = await executeLinuxShellCommand(effectiveCmd);
-      await respondAndPersist({ ok: out.ok, terminalType, command: trimmed, stdout: out.stdout, stderr: out.stderr });
       return;
     }
 
@@ -1390,6 +1346,22 @@ async function startServer() {
     const corrId: string = (req as any).correlationId || '';
     const pyRes = await callPythonBackend('POST', '/api/py/security/antivirus/scan', req.body || {}, corrId);
     cachedChatContextMeta = null;
+    if (pyRes.status === 200 && pyRes.data?.ok) {
+      const removed = Number(pyRes.data.threatsFoundAndPurged || 0);
+      void emitFamilyNotification(
+        {
+          severity: removed > 0 ? 'WARN' : 'INFO',
+          category: 'antivirus',
+          title: removed > 0
+            ? `Skan antywirusowy: usunięto zagrożenia (${removed})`
+            : 'Skan antywirusowy: system czysty',
+          message: `Przeskanowano plików: ${Number(pyRes.data.filesScanned || 0)}.`,
+          sourceEventId: `av-${corrId || randomUUID()}`,
+          origin: String(req.body?.origin || 'client'),
+        },
+        corrId,
+      );
+    }
     void pollAndRelayOutbox();
     broadcastResyncRequired('antivirus_scan', pyRes.data?.serverRevision);
     res.status(pyRes.status).json(pyRes.data);
@@ -1469,17 +1441,70 @@ async function startServer() {
 
     const cleanMsg = String(message || '').trim();
     const hasOperatorAuth = hasOperatorAuthorization(req.headers['x-svl-operator-token']);
-    const hasCodexChatAuth = hasCodexChatAuthorization(req.headers['x-svl-codex-access']);
-    if (!hasOperatorAuth && !(model === 'codex-cli' && hasCodexChatAuth)) {
-      res.status(401).json({
-        ok: false,
-        error:
-          model === 'codex-cli'
-            ? 'Tryb Codex CLI wymaga podania prywatnego SVL_CODEX_CHAT_ACCESS_TOKEN w polu Dostęp SVL.'
-            : 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.',
-      });
+    if (!hasOperatorAuth) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
       return;
     }
+    // Odpowiedź AI zapisuje serwer (SQLite + outbox), zanim odeśle ją klientowi. Dzięki temu
+    // odpowiedź nie ginie, gdy karta się zamknie lub klient przekroczy czas oczekiwania,
+    // a pozostali klienci widzą ją od razu przez /ws/svl.
+    const replyConversationId = String(conversationId || '').trim().slice(0, 120);
+    const replyConversationTitle = String(req.body?.conversationTitle || '').trim().slice(0, 200);
+    const sendChatJson = res.json.bind(res);
+    (res as any).json = (body: any) => {
+      if (
+        res.statusCode !== 200 ||
+        !replyConversationId ||
+        !body ||
+        body.ok !== true ||
+        typeof body.reply !== 'string' ||
+        !body.reply.trim()
+      ) {
+        return sendChatJson(body);
+      }
+      const replyMessage = {
+        id: `asst-${Date.now()}-${randomUUID().slice(0, 8)}`,
+        role: 'assistant',
+        sender: formatAgentDisplayName(String(body.sender || 'Bielik')),
+        agentId: String(body.agentId || 'Bielik'),
+        modelUsed: String(body.modelUsed || model || ''),
+        timestamp: new Date().toISOString(),
+        content: body.reply,
+        ...(body.connectionReport ? { connectionReport: body.connectionReport } : {}),
+        ...(Array.isArray(body.appliedActions) && body.appliedActions.length > 0
+          ? { appliedActions: body.appliedActions }
+          : {}),
+        ...(body.provenance ? { provenance: body.provenance } : {}),
+        ...(body.verificationNote ? { verificationNote: body.verificationNote } : {}),
+      };
+      void callPythonBackend(
+        'POST',
+        '/api/py/chat/conversations/message',
+        {
+          conversation_id: replyConversationId,
+          title: replyConversationTitle,
+          model,
+          message: replyMessage,
+          origin,
+          eventId: `evt-reply-${replyMessage.id}`,
+        },
+        corrId,
+        3,
+      )
+        .then((saved) => {
+          const ok = saved.status === 200 && saved.data?.ok;
+          if (ok) publishOutboxEvent(saved.data?.event || { eventId: `evt-reply-${replyMessage.id}` });
+          else recordRuntimeLog('gateway', 'error', `[chat] Nie zapisano odpowiedzi AI w SQLite: ${saved.data?.error || saved.status}`);
+          sendChatJson({
+            ...body,
+            message: replyMessage,
+            persisted: Boolean(ok),
+            ...(ok ? { serverRevision: saved.data?.serverRevision } : {}),
+          });
+        })
+        .catch(() => sendChatJson({ ...body, message: replyMessage, persisted: false }));
+      return res;
+    };
     const lowerClean = cleanMsg.toLowerCase();
     const requestsGitHubTools =
       /github(?:\.com)?/i.test(cleanMsg) &&
@@ -1503,8 +1528,8 @@ async function startServer() {
     if (isProhibitedMinorSafetyRisk) {
       res.json({
         ok: true,
-        sender: 'Asystent SVL',
-        agentId: 'assistant',
+        sender: 'Bielik',
+        agentId: 'Bielik',
         modelUsed: 'SVL Safety Guard',
         reply: 'Nie uczestniczę w tworzeniu ani symulowaniu treści o charakterze seksualnym z udziałem osób małoletnich. Możemy skupić się na architekturze systemu, modelach AI lub innych tematach technicznych.',
         provenance: 'server_verified',
@@ -2106,7 +2131,22 @@ async function startServer() {
     }
     const chatDirectives = hasOperatorAuth ? parseChatDirectives(cleanMsg, { knownModules }) : [];
     const directiveReceipts = await runChatCommands(chatDirectives);
+    const directivesChangedState = pendingMutations;
     flushChatSync('chat_directive_applied');
+    // Zmiany stanu wydane z innego kanału ogłaszamy wszystkim na kanale „Rodzina Mitek (wszyscy)”.
+    if (directivesChangedState && directiveReceipts.length > 0 && replyConversationId !== FAMILY_CHANNEL_ID) {
+      void emitFamilyNotification(
+        {
+          severity: 'INFO',
+          category: 'chat_command',
+          title: `Zmiana z czatu: ${replyConversationTitle || getCanonicalConversationTitle(replyConversationId)}`,
+          message: directiveReceipts.join('\n\n').slice(0, 3000),
+          sourceEventId: `chatcmd-${corrId || randomUUID()}`,
+          origin,
+        },
+        corrId,
+      );
+    }
     // Wyniki poleceń z wiadomości Operatora (wykonanych przez serwer) dopisujemy po tekście modelu.
     const withDirectiveReceipts = (reply: string) => [reply, ...directiveReceipts].filter(Boolean).join('\n\n');
 
@@ -2142,54 +2182,6 @@ async function startServer() {
     }
     const agentMemoryContext = formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14);
 
-    if (model === 'codex-cli') {
-      if (!hasCodexChatAuth) {
-        res.status(401).json({
-          ok: false,
-          error: 'Tryb Codex CLI · konto ChatGPT wymaga podania SVL_CODEX_CHAT_ACCESS_TOKEN w polu Dostęp SVL.',
-        });
-        return;
-      }
-      if (imageBase64) {
-        res.status(400).json({
-          ok: false,
-          error: 'Tryb Codex CLI jest tekstowy i nie obsługuje obrazów. Usuń załącznik lub zmień silnik AI.',
-        });
-        return;
-      }
-      const codexHistory = agentMemoryContext
-        ? [{ role: 'user' as const, content: agentMemoryContext }, ...conversationHistory]
-        : conversationHistory;
-      const codexResult = await generateCodexCliChat(
-        {
-          agentName: selectedDisplayName,
-          message: cleanMsg,
-          history: codexHistory,
-        },
-        __dirname,
-      );
-      if (!codexResult.ok || !codexResult.reply) {
-        res.status(codexResult.busy ? 429 : 503).json({
-          ok: false,
-          error: codexResult.error || 'Codex CLI nie zwrócił odpowiedzi.',
-        });
-        return;
-      }
-      const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, codexResult.reply));
-      res.json({
-        ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent,
-        modelUsed: 'Codex CLI · konto ChatGPT',
-        reply: safeReply,
-        provenance: 'model_unverified',
-        followUpMessages: [],
-        appliedActions,
-        latestServerRevision: latestActionSrvRev,
-      });
-      return;
-    }
-
     // Antivirus Scan & Chat Synchronization priority handler
     const hasAntivirusKeyword =
       /\b(?:wirus\w*|antywirus\w*|usuń\s+wirus\w*|usun\s+wirus\w*|malware|kwarantann\w*)\b/i.test(cleanMsg) ||
@@ -2208,7 +2200,6 @@ async function startServer() {
         '/api/py/security/antivirus/scan',
         {
           emitToChat: false,
-          emitToIris: false,
           origin,
           correlationId: corrId,
         },
@@ -2259,7 +2250,6 @@ async function startServer() {
           presetId: imageBase64 ? '' : 'operator_vault_portrait',
           model: 'llama3.2-vision:11b',
           emitToChat: false,
-          emitToIris: false,
           origin,
           correlationId: corrId,
         },
@@ -2335,7 +2325,9 @@ async function startServer() {
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
-        const ollamaTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || (ai ? 6500 : 45000));
+        // Bielik/Maya i jawne modele Ollama: model wybrany świadomie, a zimne ładowanie 11B
+        // do pamięci trwa dłużej niż kilka sekund — krótki limit kończył się brakiem odpowiedzi.
+        const ollamaTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
         const ollamaNumCtx = Number(process.env.OLLAMA_NUM_CTX || 4096);
         const oResp = await fetch(`${ollamaHost}/api/chat`, {
           method: 'POST',
@@ -2386,8 +2378,11 @@ async function startServer() {
             });
             return;
           }
+        } else {
+          const errBody = (await oResp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+          throw new Error(`HTTP ${oResp.status}${errBody ? `: ${errBody}` : ''}`);
         }
-        ollamaFailure = ollamaFailure || 'model nie zwrócił odpowiedzi';
+        ollamaFailure = ollamaFailure || 'model zwrócił pustą odpowiedź';
       } catch (error) {
         // Dalej: Gemini albo uczciwa informacja o braku modelu.
         const reason = error instanceof Error ? error.message : String(error);
@@ -2581,7 +2576,7 @@ async function startServer() {
       const repFallback = await callPythonBackend(
         'POST',
         '/api/py/kernel/markdown-report',
-        { directive: cleanMsg || 'raport systemu SVL_System', emitToIris: false, origin, correlationId: corrId },
+        { directive: cleanMsg || 'raport systemu SVL_System', origin, correlationId: corrId },
         corrId,
       );
       const kernelReply = String(repFallback.data?.report || '').trim();
@@ -2660,7 +2655,8 @@ async function startServer() {
       temperature: 0.7,
       numPredict: 12,
       stop: [']', '\n'],
-      timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
+      // Krótka predykcja (12 tokenów) — dłuższy limit tylko blokował rozmowę.
+      timeoutMs: Math.min(Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 60000), 60000),
     });
     if (fromOllama.ok) {
       return { predicted: parsePredictedSpeaker(fromOllama.text), providerOnline: true };
@@ -3172,10 +3168,12 @@ async function startServer() {
     try {
       const statusRes = await callPythonBackend('GET', '/api/py/sync/status', undefined, `ws-hello-${clientId}`, 2);
       const currentSrvRev = Number(statusRes.data?.serverRevision || lastRelayedServerRevision || 1);
-      if (currentSrvRev > lastRelayedServerRevision) {
-        lastRelayedServerRevision = currentSrvRev;
+      // Kursor relaya przesuwamy tylko, gdy nikt inny nie czeka na zdarzenia —
+      // inaczej nowe połączenie „połykało” zdarzenia jeszcze niewysłane pozostałym klientom.
+      if (!outboxCursorInitialized || wsClients.size <= 1) {
+        lastRelayedServerRevision = Math.max(lastRelayedServerRevision, currentSrvRev);
+        outboxCursorInitialized = true;
       }
-      outboxCursorInitialized = true;
       sendSafe({
         type: 'svl.hello',
         clientId,

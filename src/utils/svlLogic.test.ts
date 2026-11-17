@@ -7,10 +7,8 @@ import {
   compactifyValue,
   formatAgentDisplayName,
   getGitHubAgentPermissions,
-  getSvlCodexAccessToken,
   getSvlOperatorAccessToken,
   guardUnverifiedMissionCompletion,
-  hasSvlCodexAccessToken,
   hasSvlOperatorAccessToken,
   isUnsafeChatInteractiveAction,
   mergeConversationThreads,
@@ -23,7 +21,6 @@ import {
   safeFetchJson,
   safeParseJsonResponse,
   selectOllamaModelName,
-  setSvlCodexAccessToken,
   setSvlOperatorAccessToken,
   validateOllamaHostUrl,
   validateOperatorTokenFormat,
@@ -112,7 +109,7 @@ test('validateOperatorTokenFormat rejects disallowed and short tokens', () => {
   assert.equal(validToken.error, null);
 });
 
-test('CANONICAL_AGENTS configures Bielik and Maya on llama3.2-vision:11b while keeping Agata Mitek removed', () => {
+test('CANONICAL_AGENTS contains only Bielik and Maya on llama3.2-vision:11b', () => {
   assert.deepEqual(
     CANONICAL_AGENTS.map((a) => ({ name: a.canonicalName, profile: a.sourceProfile })),
     [
@@ -126,8 +123,8 @@ test('CANONICAL_AGENTS configures Bielik and Maya on llama3.2-vision:11b while k
   assert.equal(normalizeAgentCanonicalName('conv-agent-bielik'), 'Bielik');
   assert.equal(normalizeAgentCanonicalName('maya'), 'Maya');
   assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), 'Maya');
-  assert.equal(formatAgentDisplayName('Agata Mitek'), 'Asystent SVL');
-  assert.equal(formatAgentDisplayName('Iris AI'), 'Asystent SVL');
+  assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
+  assert.equal(normalizeAgentCanonicalName('codex'), null);
   assert.equal(formatAgentDisplayName('bielik ai'), 'Bielik');
   assert.equal(formatAgentDisplayName('maya ai'), 'Maya');
   assert.equal(resolveAvatarProfileKey('Agata Mitek', 'Agata'), null);
@@ -304,23 +301,15 @@ test('safeParseJsonResponse handles HTML <!doctype> and non-JSON payloads withou
   assert.equal(jsonRes.error, null);
 });
 
-test('operator and codex access tokens stay strictly in memory', () => {
+test('operator access token stays strictly in memory', () => {
   const prevOp = getSvlOperatorAccessToken();
-  const prevCodex = getSvlCodexAccessToken();
   try {
     setSvlOperatorAccessToken('');
-    setSvlCodexAccessToken('');
     assert.equal(hasSvlOperatorAccessToken(), false);
-    assert.equal(hasSvlCodexAccessToken(), false);
-
     setSvlOperatorAccessToken('op_secret_token_32_characters_minimum_xyz');
-    setSvlCodexAccessToken('codex_scoped_token_12345');
     assert.equal(hasSvlOperatorAccessToken(), true);
-    assert.equal(hasSvlCodexAccessToken(), true);
-    assert.equal(getSvlCodexAccessToken(), 'codex_scoped_token_12345');
   } finally {
     setSvlOperatorAccessToken(prevOp);
-    setSvlCodexAccessToken(prevCodex);
   }
 });
 

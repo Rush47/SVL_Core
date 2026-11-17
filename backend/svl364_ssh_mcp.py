@@ -805,7 +805,7 @@ except Exception as exc:
                 "serverRevision": self.kernel.get_server_revision(),
             }
 
-        if tool_name in ("svl364_emit_system_report", "svl364_emit_iris_report"):
+        if tool_name == "svl364_emit_system_report":
             directive = str(
                 arguments.get("directive")
                 or "Raport sterowania statkiem SVL-364 przez SSH i protokół MCP w Linuxie"

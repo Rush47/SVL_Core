@@ -64,19 +64,6 @@ const TERMINAL_TABS: Array<{
     ],
   },
   {
-    id: 'codex',
-    label: 'Codex CLI',
-    subtitle: 'Status binarki Codex CLI, logowania oraz bieżącej gałęzi repozytorium',
-    defaultPrompt: 'codex$',
-    welcomeText:
-      'Terminal OpenAI Codex CLI Bridge. Wpisz "status", aby sprawdzić binarkę codex, autoryzację ChatGPT OAuth (codex login --device-auth) oraz bieżącą gałąź repozytorium.',
-    quickCommands: [
-      'status',
-      'git status -s && git branch -v',
-      'git log -n 5 --oneline',
-    ],
-  },
-  {
     id: 'hyperspace',
     label: 'Konsola obliczeń 128-bit',
     subtitle: 'Moduł obliczeniowy 128-bit BinaryHyperspaceKernel (Hamming) + Analiza Harmoniczna Eulera/Fouriera',
@@ -122,7 +109,6 @@ export const TerminalsWorkspace: React.FC = () => {
     linux: [],
     ssh: [],
     python: [],
-    codex: [],
     hyperspace: [],
     agents: [],
   });

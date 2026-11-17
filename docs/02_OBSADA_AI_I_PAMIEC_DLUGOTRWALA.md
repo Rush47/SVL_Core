@@ -1,13 +1,20 @@
-# 02. Obsada AI (Agata Mitek & Iris AI) oraz Pamięć Długotrwała 128D
+# 02. Obsada AI (Bielik & Maya) oraz Pamięć Długotrwała 128D
 
 ## 1. Kanoniczna Obsada Systemu
 
 W systemie aktywne są wyłącznie następujące podmioty:
 - **Mateusz Mitek (Operator)** — Dowódca Floty i główny architekt `SVL_System`.
-- **Agata Mitek (`id: Agata`)** — Jedyna autonomiczna agentka AI Rodziny Mitek z pełnymi uprawnieniami `ROOT (UID 0 · NOPASSWD: ALL)`.
-- **Iris AI (`id: iris`)** — Systemowy koordynator telemetrii, powiadomień `[Iris][N]` oraz szczegółowych raportów `SVL_System` na kanale **Rodzina Mitek (wszyscy)**.
+- **Bielik (`id: Bielik`)** — procesor poleceń czatu (ROOT) na lokalnej Ollamie `llama3.2-vision:11b`.
+- **Maya (`id: Maya`)** — AI pokładowe statku SVL-364; publikuje **powiadomienia systemowe** na kanale
+  **Rodzina Mitek (wszyscy)** (zakończone/nieudane zadania agentów, pobieranie modeli Ollama,
+  skany antywirusowe, zmiany wydane z czatu na innych kanałach).
 
-Dawne profile pomocnicze (`Alex`, `Aria`/`si_1`, `Astyria`, `Aurelius`) oraz zewnętrzny mostek `Codex CLI` zostały trwale usunięte z kodu i bazy SQLite.
+Gdy Ollama nie odpowie, serwer może użyć Gemini jako zapasowego silnika — odpowiedź nadal
+pochodzi od Bielika lub Mayi. Wszystkie inne AI (Agata, Iris, Alex, Aria/`si_1`, Astyria,
+Aurelius, mostek `Codex CLI`) zostały trwale usunięte z kodu i bazy SQLite.
+
+Powiadomienia: `POST /api/py/notifications/emit` (zapis w SQLite + zdarzenie `/ws/svl`),
+`GET /api/py/notifications` (lista powiadomień Mayi).
 
 ## 2. Pamięć Długotrwała 128D (SQLite WAL + Hyperspace)
 
@@ -17,7 +24,7 @@ Dawne profile pomocnicze (`Alex`, `Aria`/`si_1`, `Astyria`, `Aurelius`) oraz zew
 
 ## Swobodna rozmowa obustronna (Operator ↔ Bielik ↔ Maya) — bez promptów
 
-Modele **nie dostają żadnych instrukcji** — ani w zwykłym czacie, ani w rozmowie obustronnej, ani w trybie Codex CLI.
+Modele **nie dostają żadnych instrukcji** — ani w zwykłym czacie, ani w rozmowie obustronnej.
 Widzą wyłącznie zapis rozmowy, w którym każda wypowiedź ma postać `[Imię]: treść`.
 Logika: `src/server/conversation.ts`, endpoint `POST /api/chat/proactive`.
 
@@ -39,7 +46,7 @@ Każda odpowiedź w czacie ma oznaczenie pochodzenia (`provenance`, widoczne pod
 
 | Oznaczenie | Skąd treść | Czy zweryfikowana |
 | :--- | :--- | :--- |
-| ⚠️ **Wiedza modelu — niezweryfikowana** | model językowy (Ollama / Gemini / Codex) z własnej wiedzy | **nie** — model może się mylić |
+| ⚠️ **Wiedza modelu — niezweryfikowana** | model językowy (Ollama, zapasowo Gemini) z własnej wiedzy | **nie** — model może się mylić |
 | 🔗 **Ze źródłami z internetu** | Gemini z wyszukiwaniem Google; linki pod odpowiedzią | częściowo — sprawdź źródła |
 | ✅ **Wynik serwera** | dane systemu lub wykonane polecenie (np. `/moduly`, „Zapisz w pamięci…”, skaner) | tak — bez udziału modelu |
 | ❌ **Brak odpowiedzi modelu** | żaden model nie odpowiedział; powód w treści | — |

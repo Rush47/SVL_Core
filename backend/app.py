@@ -218,7 +218,7 @@ class SVLBackendRuntime:
         correlation_id: str,
         event_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        return self.kernel.emit_sync_event(
+        result = self.kernel.emit_sync_event(
             entity="ollama",
             entity_id="pull",
             event_type=event_type,
@@ -227,6 +227,25 @@ class SVLBackendRuntime:
             event_id=event_id,
             payload={"model": state["model"], "pullState": state},
         )
+        if event_type in ("ollama.pull_completed", "ollama.pull_failed"):
+            failed = event_type == "ollama.pull_failed"
+            try:
+                self.kernel.emit_family_notification(
+                    severity="WARN" if failed else "INFO",
+                    category="ollama",
+                    title=(
+                        f"Ollama: nie pobrano modelu {state['model']}"
+                        if failed
+                        else f"Ollama: pobrano model {state['model']}"
+                    ),
+                    message=str(state.get("error") or "")[:600] if failed else "Model jest gotowy do użycia w czacie.",
+                    source_event_id=str((result.get("event") or {}).get("eventId") or ""),
+                    origin=origin,
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                pass
+        return result
 
     def _register_initial_services(self) -> None:
         self.kernel.register_service(
@@ -1106,7 +1125,7 @@ async def handle_api_request(
         cmd = str(body.get("command", ""))
         entry_id = str(body.get("id") or "").strip() or None
         display_ts = str(body.get("timestamp") or "").strip() or None
-        if tab not in ("linux", "ssh", "python", "codex", "hyperspace", "agents"):
+        if tab not in ("linux", "ssh", "python", "hyperspace", "agents"):
             return 400, {"ok": False, "error": f"Unknown terminal tab: {tab}"}
         res = runtime.kernel.record_terminal_entry(
             tab=tab,
@@ -1123,7 +1142,7 @@ async def handle_api_request(
 
     if method == "POST" and path == "/api/py/terminal/clear":
         tab = str(body.get("tab", "linux")).strip()
-        if tab not in ("linux", "ssh", "python", "codex", "hyperspace", "agents"):
+        if tab not in ("linux", "ssh", "python", "hyperspace", "agents"):
             return 400, {"ok": False, "error": f"Unknown terminal tab: {tab}"}
         res = runtime.kernel.clear_terminal_history(
             tab=tab,
@@ -1344,33 +1363,25 @@ async def handle_api_request(
             return 400, {"ok": False, "error": str(exc)}
 
     if method == "GET" and path == "/api/py/notifications":
-        meta = runtime.kernel.get_sync_metadata()
-        return 200, {
-            "ok": True,
-            "disabled": True,
-            "notifications": [],
-            "totalCount": 0,
-            "unreadCount": 0,
-            "latestSeq": 0,
-            "serverRevision": meta["serverRevision"],
-        }
+        return 200, runtime.kernel.list_family_notifications(limit=_opt_int(query.get("limit")) or 80)
 
     if method == "POST" and path == "/api/py/notifications/emit":
-        return 410, {
-            "ok": False,
-            "disabled": True,
-            "error": "Powiadomienia i Iris AI zostały trwale usunięte z systemu, a jej uprawnienia roota odebrane.",
-        }
+        details = body.get("details")
+        result = runtime.kernel.emit_family_notification(
+            severity=str(body.get("severity") or "INFO"),
+            category=str(body.get("category") or "system"),
+            title=str(body.get("title") or ""),
+            message=str(body.get("message") or ""),
+            details=details if isinstance(details, dict) else None,
+            source_event_id=str(body.get("sourceEventId") or body.get("source_event_id") or ""),
+            origin=origin,
+            correlation_id=corr,
+        )
+        return (200 if result.get("ok") else 400), result
 
     if method == "POST" and path == "/api/py/notifications/ack":
-        meta = runtime.kernel.get_sync_metadata()
-        return 200, {
-            "ok": True,
-            "disabled": True,
-            "updatedCount": 0,
-            "unreadCount": 0,
-            "serverRevision": meta["serverRevision"],
-        }
+        # Powiadomienia są wiadomościami kanału „wszyscy” — odczyt nie zmienia stanu.
+        return 200, {"ok": True, "updatedCount": 0, "serverRevision": runtime.kernel.get_server_revision()}
 
     if method == "GET" and path == "/api/py/avatars":
         avatars = runtime.kernel.get_persisted_avatars()
@@ -1480,7 +1491,6 @@ async def handle_api_request(
             ollama_host=runtime.ollama_host,
             emit_to_chat=bool(body.get("emitToChat") or body.get("emit_to_chat")),
             conversation_id=str(body.get("conversationId") or body.get("conversation_id") or "conv-rodzina-mitek-wszyscy"),
-            emit_to_iris=False,
             origin=origin,
             correlation_id=corr,
         )
@@ -1497,7 +1507,6 @@ async def handle_api_request(
             model="llama3.2-vision:11b",
             ollama_host=runtime.ollama_host,
             emit_to_chat=bool(body.get("emitToChat") or body.get("emit_to_chat")),
-            emit_to_iris=False,
             origin=origin,
             correlation_id=corr,
         )
@@ -1509,7 +1518,6 @@ async def handle_api_request(
     if method == "POST" and path == "/api/py/security/antivirus/scan":
         res = runtime.antivirus.scan_and_purge(
             emit_to_chat=bool(body.get("emitToChat") or body.get("emit_to_chat")),
-            emit_to_iris=False,
             conversation_id=str(body.get("conversationId") or body.get("conversation_id") or "conv-rodzina-mitek-wszyscy"),
             origin=origin,
             correlation_id=corr,

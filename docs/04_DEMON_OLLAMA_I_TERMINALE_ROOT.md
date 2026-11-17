@@ -17,4 +17,4 @@ Terminal **SSH · Ship** używa aliasu OpenSSH z `SVL_SSH_TARGET` (domyślnie `S
 
 Każde polecenie w terminalu SSH wymaga potwierdzenia operatora i jest przekazywane jako polecenie powłoki na wskazany host. Połączenie działa bez PTY; brak SSH, błąd uwierzytelnienia lub nieznany host kończy się błędem — polecenie nigdy nie przełącza się na lokalny shell. Wywołania Ollama/MCP nie mogą uruchamiać poleceń SSH.
 
-Pozostałe terminale (Linux, Python, Codex, hyperspace i agenci) zachowują swoje dotychczasowe lokalne funkcje. Polecenie `/exec raport systemu` nadal generuje raport `SVL_System`; nie jest specjalnie przechwytywane w terminalu SSH, gdzie każde wpisane polecenie trafia na host `Ship`.
+Pozostałe terminale (Linux, Python, hyperspace i agenci) zachowują swoje dotychczasowe lokalne funkcje. Polecenie `/exec raport systemu` nadal generuje raport `SVL_System`; nie jest specjalnie przechwytywane w terminalu SSH, gdzie każde wpisane polecenie trafia na host `Ship`.

@@ -189,7 +189,6 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
           model: 'llama3.2-vision:11b',
           emitToChat,
           conversationId: activeConversationId,
-          emitToIris: false,
           origin: 'real-vision-panel',
         }),
       });

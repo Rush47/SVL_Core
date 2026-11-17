@@ -23,7 +23,6 @@ import {
   Brain,
   FileBarChart2,
   Shield,
-  KeyRound,
 } from 'lucide-react';
 import {
   CANONICAL_AGENTS,
@@ -34,11 +33,8 @@ import {
   isUnsafeChatInteractiveAction,
   parseBielikChatCommand,
   safeFetchJson,
-  getSvlCodexAccessToken,
   getSvlOperatorAccessToken,
-  hasSvlCodexAccessToken,
   hasSvlOperatorAccessToken,
-  setSvlCodexAccessToken,
   setSvlOperatorAccessToken,
   validateOllamaHostUrl,
 } from '../utils/svlLogic';
@@ -122,16 +118,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
   const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
-  const [codexAccessInput, setCodexAccessInput] = useState(() => getSvlCodexAccessToken());
-  const [codexStatus, setCodexStatus] = useState<{
-    checking: boolean;
-    enabled?: boolean;
-    authenticated?: boolean;
-    runtimeLoggedIn?: boolean;
-    model?: string | null;
-    reason?: string | null;
-    message?: string | null;
-  }>({ checking: false });
   const [isSending, setIsSending] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
@@ -221,7 +207,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
   const handleTriggerProactiveChat = async (agentOverride?: string, autonomous = false) => {
     if (sendingRef.current || isSending || isProactiveLoading || !activeConv) return;
-    if (!hasSvlOperatorAccessToken() && !hasSvlCodexAccessToken()) {
+    if (!hasSvlOperatorAccessToken()) {
       const authText = 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby AI mogło pisać w trybie swobodnej rozmowy.';
       if (autonomous) {
         setDuplexStatus({ reason: 'auth', text: authText });
@@ -259,7 +245,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         reason?: string;
       }>('/api/chat/proactive', {
         method: 'POST',
-        timeoutMs: 30000,
+        // Serwer może czekać na zimny start modelu Ollama (predykcja + wypowiedź);
+        // 30 s kończyło się błędem w karcie, choć wypowiedź i tak trafiała do SQLite.
+        timeoutMs: 200000,
+        maxRetries: 0,
         body: JSON.stringify({
           conversationId: activeConv.id,
           targetAgent: chosenTarget,
@@ -369,68 +358,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     };
   }, [duplexActive, duplexStatus, duplexTick, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
 
-  useEffect(() => {
-    setSvlCodexAccessToken(codexAccessInput);
-  }, [codexAccessInput]);
-
-  useEffect(() => {
-    if (selectedModel !== 'codex-cli') return;
-    let cancelled = false;
-    setCodexStatus((prev) => ({ ...prev, checking: true }));
-    const timer = setTimeout(async () => {
-      const res = await safeFetchJson<{
-        ok: boolean;
-        enabled?: boolean;
-        authenticated?: boolean;
-        runtimeLoggedIn?: boolean;
-        model?: string | null;
-        reason?: string | null;
-        message?: string | null;
-      }>('/api/codex-chat/status', {
-        timeoutMs: 10000,
-        maxRetries: 0,
-      });
-      if (cancelled) return;
-      if (res.ok && res.data?.ok) {
-        setCodexStatus({
-          checking: false,
-          enabled: res.data.enabled,
-          authenticated: res.data.authenticated,
-          runtimeLoggedIn: res.data.runtimeLoggedIn,
-          model: res.data.model || null,
-          reason: res.data.reason || null,
-          message: res.data.message || null,
-        });
-        if (res.data.authenticated) {
-          void refreshDomainModules(['chat']);
-        }
-      } else {
-        setCodexStatus({
-          checking: false,
-          enabled: false,
-          authenticated: false,
-          runtimeLoggedIn: false,
-          message: res.error || 'Nie udało się sprawdzić statusu Codex CLI.',
-        });
-      }
-    }, codexAccessInput ? 250 : 20);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [selectedModel, codexAccessInput, refreshDomainModules]);
-
   const ollamaReachable = Boolean(healthData?.ollama?.daemon_reachable);
   const ollamaModels: any[] = healthData?.ollama?.models || [];
   const selectedModelSupportsVision =
-    selectedModel !== 'codex-cli' &&
-    (
-      selectedModel === 'svl-hybrid-router' ||
-      selectedModel.startsWith('gemini-') ||
-      selectedModel.includes('llama3.2-vision') ||
-      selectedModel.includes('vl') ||
-      selectedModel.includes('vision')
-    );
+    selectedModel === 'svl-hybrid-router' ||
+    selectedModel.includes('llama3.2-vision') ||
+    selectedModel.includes('vl') ||
+    selectedModel.includes('vision');
 
   const handleSaveOllamaConfig = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -501,7 +435,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         method: 'POST',
         timeoutMs: 15000,
         body: JSON.stringify({
-          emitToIris: false,
           title: 'Pełny Raport Operacyjny SVL_System (host, moduły, pamięć)',
           category: 'svl_system',
           origin: tabOrigin,
@@ -534,7 +467,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         timeoutMs: 25000,
         body: JSON.stringify({
           emitToChat: true,
-          emitToIris: false,
           origin: tabOrigin,
         }),
       });
@@ -679,6 +611,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             : selectedModel,
           targetAgent: effectiveTargetAgent,
           conversationId: targetConvId,
+          conversationTitle: targetTitle,
           history: historyPayload,
           imageBase64: currentImage?.base64 || '',
           imageMimeType: currentImage?.mimeType || 'image/png',
@@ -690,6 +623,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       if (!res.ok || !data || data.ok === false) {
         if (Array.isArray(data?.appliedActions) && data.appliedActions.length > 0) {
           void refreshDomainModules(['modules', 'agents', 'kernel', 'health']);
+        }
+        if (res.status === 0 && !data) {
+          // Przekroczony czas lub zerwane połączenie: serwer kończy generowanie i sam zapisuje
+          // odpowiedź w SQLite — dotrze tu przez synchronizację, więc odświeżamy kanał.
+          setChatActionError(
+            `${res.error || 'Brak połączenia z serwerem.'} Odpowiedź AI pojawi się automatycznie, gdy model ją wygeneruje.`,
+          );
+          void refreshDomainModules(['chat']);
+          return;
         }
         setChatActionError(res.error || data?.error || `Błąd serwera HTTP ${res.status}`);
         return;
@@ -704,13 +646,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           ? data.appliedActions
           : undefined;
 
+      // Serwer zapisuje odpowiedź sam (`data.message`, ten sam identyfikator) — ponowny zapis
+      // poniżej jest idempotentny i tylko scala stan lokalny bez drugiego wpisu w SQLite.
+      const serverMsg: Partial<ChatMessage> =
+        data.message && typeof data.message === 'object' && typeof data.message.id === 'string' ? data.message : {};
       const replyMsg: ChatMessage = {
-        id: createUniqueId('asst'),
+        id: serverMsg.id || createUniqueId('asst'),
         role: 'assistant',
-        sender: formatAgentDisplayName(data.sender || 'Asystent SVL'),
-        agentId: data.agentId || 'assistant',
+        sender: formatAgentDisplayName(data.sender || 'Bielik'),
+        agentId: data.agentId || 'Bielik',
         modelUsed: data.modelUsed || selectedModel,
-        timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: serverMsg.timestamp || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: data.reply || 'Brak odpowiedzi z serwera.',
         connectionReport: data.connectionReport,
         appliedActions,
@@ -876,7 +822,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     (sum, a) => sum + Number(a?.memory_entries_count || 0),
     0,
   );
-  const hasAnyChatAuth = hasSvlOperatorAccessToken() || (selectedModel === 'codex-cli' && hasSvlCodexAccessToken());
+  const hasAnyChatAuth = hasSvlOperatorAccessToken();
   const activeMessages = activeConv?.messages;
   const currentConvId = activeConv?.id;
   const visibleMessages = useMemo(() => (activeMessages || []).filter((msg) => {
@@ -975,7 +921,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-amber-300/15 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">
                         <span className="inline-flex items-center gap-1.5">
                           <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
-                          {isFamilyChannel ? 'Powiadomienie · kanał grupowy' : 'Wiadomość systemowa'}
+                          {msg.sender === 'Maya'
+                            ? 'Powiadomienie od Mayi'
+                            : isFamilyChannel
+                              ? 'Powiadomienie · kanał grupowy'
+                              : 'Wiadomość systemowa'}
                         </span>
                         {isFamilyChannel && (
                           <span className="rounded-full border border-amber-200/20 bg-amber-200/5 px-2 py-0.5 text-[9px]">
@@ -1304,17 +1254,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
             >
               <option value="svl-hybrid-router">
-                SVL Hybrid Router ({ollamaReachable ? `Ollama (${ollamaModels.length}) + Gemini` : 'Auto'})
+                Bielik / Maya · Ollama ({ollamaReachable ? `${ollamaModels.length} modeli` : 'niedostępna — zapas'})
               </option>
               {ollamaModels.map((m: any) => (
                 <option key={m.name} value={`ollama:${m.name}`}>
                   Ollama: {m.name} ({m.parameter_size || 'LLM'})
                 </option>
               ))}
-              <option value="gemini-3-flash-preview">Gemini 3 Flash (Preview)</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="codex-cli">Codex CLI · konto ChatGPT</option>
             </select>
           </div>
 
@@ -1382,47 +1328,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         </div>
 
-        {/* Codex CLI Access & External Host Status Bar (only when Codex CLI selected) */}
-        {selectedModel === 'codex-cli' && (
-          <div className="shrink-0 border-b border-cyan-500/30 bg-[#0C1320] px-3 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
-              <label htmlFor="svl-codex-access-input" className="inline-flex items-center gap-1.5 text-cyan-300 font-semibold whitespace-nowrap">
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>Dostęp SVL:</span>
-              </label>
-              <input
-                id="svl-codex-access-input"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                value={codexAccessInput}
-                onChange={(e) => setCodexAccessInput(e.target.value)}
-                placeholder="SVL_CODEX_CHAT_ACCESS_TOKEN (tylko pamięć)"
-                className="min-w-0 flex-1 max-w-xs min-h-[34px] bg-[#0B0D13] border border-slate-700 rounded-md px-2.5 py-1 text-xs text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div className="font-mono text-[11px] text-slate-300 flex flex-wrap items-center gap-2">
-              {codexStatus.checking ? (
-                <span className="text-amber-300">Sprawdzanie Codex CLI...</span>
-              ) : !codexStatus.enabled ? (
-                <span className="text-amber-300">
-                  Codex CLI wyłączony na tym serwerze (wymagany host z SVL_CODEX_CHAT_ENABLED=true i zalogowanym ChatGPT OAuth)
-                </span>
-              ) : !codexStatus.authenticated ? (
-                <span className="text-amber-300">Podaj kod Dostęp SVL, aby zweryfikować sesję Codex CLI</span>
-              ) : codexStatus.runtimeLoggedIn ? (
-                <span className="text-emerald-400">
-                  Codex CLI ChatGPT OAuth: ZALOGOWANY ({codexStatus.model || 'domyślny'})
-                </span>
-              ) : (
-                <span className="text-rose-400">
-                  Codex CLI niezal.: {codexStatus.reason || 'zaloguj się przez `codex login` na hoście'}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
         {/* Status Bar: Deep Long-Term Memory 128D + Local Ollama Daemon + SVL-364 Link */}
         <div className="shrink-0 border-b border-slate-800/70 bg-[#090D16] px-3 py-1.5 text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-mono">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
@@ -1456,7 +1361,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           <div className="border-b border-slate-800/80 bg-[#0D1018] shrink-0">
             <div className="px-3 py-1.5 border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 font-mono tabular-nums">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-emerald-300 font-semibold">Tryb czatu: SQLite WAL (Asystent SVL)</span>
+                <span className="text-emerald-300 font-semibold">Tryb czatu: SQLite WAL (Bielik i Maya)</span>
                 <span aria-hidden="true">·</span>
                 <span>Vision: {selectedModelSupportsVision ? 'Tak' : 'Nie'}</span>
                 <span aria-hidden="true">·</span>
@@ -1689,7 +1594,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
                   {hasAnyChatAuth
                     ? 'Kanał zsynchronizowany z bazą SQLite WAL. Możesz prowadzić rozmowę z Bielikiem i wydawać mu polecenia (/pomoc, /status, /root).'
-                    : 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku (lub Dostęp SVL dla Codex CLI), aby wczytać historię z SQLite WAL i prowadzić rozmowę.'}
+                    : 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wczytać historię z SQLite WAL i prowadzić rozmowę.'}
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1">

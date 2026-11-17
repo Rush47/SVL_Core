@@ -105,7 +105,6 @@ BIELIK_SYSTEM_PROMPT = (
     "ZASADY:\n"
     "- Odpowiadaj konkretnie i zwięźle po polsku.\n"
     "- Przetwarzaj polecenia czatu, operacje na modułach, pamięć SQLite, analizę Vision oraz komendy systemowe.\n"
-    "- Nigdy nie używaj tożsamości usuniętych agentów (Iris AI, Agata, Aria, Alex, Astyria, Aurelius).\n"
     "- Nie deklaruj wykonania akcji, dopóki nie otrzymasz potwierdzenia z narzędzia/serwera."
 )
 
@@ -231,8 +230,6 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
 def normalize_agent_canonical_name(raw_name: str) -> str:
     clean = (raw_name or "").strip().lower()
     if not clean:
-        return ""
-    if clean in {"agata", "agata mitek", "aria", "alex", "astyria", "aurelius", "si_1"}:
         return ""
     if clean in {"bielik", "bielik ai", "conv-agent-bielik"}:
         return "Bielik"
@@ -416,121 +413,6 @@ def _agent_worker_process_loop(
             current_task_id = None
 
 
-def _execute_codex_agent_task(task: dict[str, Any]) -> str:
-    """Execute a TEXT-ONLY inference using the already signed-in Codex CLI.
-
-    A shared file lock prevents concurrent workers from exhausting one
-    ChatGPT Codex account. No static IP, API key or HTTP MCP endpoint is needed.
-    """
-    codex = shutil.which("codex")
-    if not codex:
-        raise RuntimeError("Codex CLI not found in the worker's PATH")
-
-    allowed_env = (
-        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL",
-        "TERM", "TMPDIR", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-        "CODEX_HOME", "SVL_OPERATOR_TOKEN", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
-        "SSL_CERT_FILE", "SSL_CERT_DIR",
-    )
-    env = {key: os.environ[key] for key in allowed_env if os.environ.get(key)}
-    title, payload, system_prompt, allowed_github_tools = _prepare_agent_task_prompt(task)
-    agent = str(task.get("target_agent") or task.get("agent") or "SVL Agent")[:80]
-    prompt = (
-        f"Jesteś agentem {agent} w SVL Python OS. Odpowiedz po polsku.\n"
-        "Zadanie polega wyłącznie na przygotowaniu analizy lub odpowiedzi.\n"
-        "Nie wykonuj poleceń powłoki ani nie modyfikuj lokalnych plików. Używaj wyłącznie "
-        "narzędzi MCP jawnie dozwolonych dla tego zadania. Nie deklaruj "
-        "zakończenia misji lub operacji bez potwierdzonych danych.\n"
-        f"Konfiguracja roli: {system_prompt}\n"
-        f"Tytuł: {title}\nSzczegóły:\n{payload}"
-    )[:8000]
-
-    lock_path = os.path.join(
-        tempfile.gettempdir(), f"svl-codex-oauth-worker-{os.getuid()}.lock"
-    )
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        deadline = time.monotonic() + 12
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() > deadline:
-                    raise RuntimeError("Codex CLI busy; another SVL agent is using this ChatGPT account")
-                time.sleep(0.3)
-
-        auth = subprocess.run(
-            [codex, "login", "status"],
-            capture_output=True, text=True, timeout=6, env=env, check=False,
-        )
-        if auth.returncode != 0 or not re.search(r"logged in (?:using|with) chatgpt\b", auth.stdout + "\n" + auth.stderr, re.IGNORECASE):
-            raise RuntimeError(
-                "Codex CLI must be signed in with ChatGPT OAuth as the worker Linux user"
-            )
-        command = [
-            codex,
-            "exec",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "--json",
-        ]
-        if allowed_github_tools:
-            mcp_url = _validated_github_mcp_url()
-            if not env.get("SVL_OPERATOR_TOKEN"):
-                raise RuntimeError("SVL_OPERATOR_TOKEN is required for GitHub MCP access.")
-            command.extend([
-                "-c",
-                f"mcp_servers.svl-github.url={json.dumps(mcp_url)}",
-                "-c",
-                "mcp_servers.svl-github.enabled=true",
-                "-c",
-                f"mcp_servers.svl-github.enabled_tools={json.dumps(allowed_github_tools)}",
-                "-c",
-                'mcp_servers.svl-github.bearer_token_env_var="SVL_OPERATOR_TOKEN"',
-            ])
-        command.extend(["--sandbox", "read-only", "-"])
-        with tempfile.TemporaryDirectory(prefix="svl-agent-codex-") as root:
-            try:
-                finished = subprocess.run(
-                    command,
-                    input=prompt,
-                    capture_output=True,
-                    text=True,
-                    cwd=root,
-                    env=env,
-                    timeout=85,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError("Codex CLI task timed out after 85 seconds.") from exc
-        if finished.returncode != 0:
-            raise RuntimeError("Codex CLI failed or usage allowance exhausted")
-
-        answer = ""
-        for line in finished.stdout.splitlines():
-            try:
-                event = json.loads(line)
-                if event.get("type") == "item.completed":
-                    item = event.get("item") or {}
-                    if item.get("type") == "agent_message":
-                        answer = str(item.get("text") or "")
-            except (TypeError, ValueError, AttributeError):
-                continue
-        if not answer.strip():
-            raise RuntimeError("Codex CLI returned no final agent message")
-        return guard_unverified_mission_completion(
-            title + "\n" + payload, answer[:MAX_AGENT_TASK_RESULT_CHARS]
-        )
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
-
-
 def _agent_github_tool_names(task: dict[str, Any]) -> list[str]:
     execution_config = task.get("execution_config")
     config = execution_config if isinstance(execution_config, dict) else task
@@ -698,12 +580,8 @@ def _prepare_agent_task_prompt(task: dict[str, Any]) -> tuple[str, str, str, lis
 def execute_agent_task(task: dict[str, Any]) -> str:
     """Run a queued task using its selected, locally available provider."""
     provider = str(task.get("ai_provider") or "ollama").strip().lower()
-    if provider not in {"ollama", "codex"}:
+    if provider != "ollama":
         raise ValueError("Unsupported agent AI provider.")
-    if provider == "codex":
-        if os.environ.get("SVL_CODEX_AGENTS_ENABLED") != "true":
-            raise RuntimeError("Codex agent tasks are disabled by server configuration.")
-        return _execute_codex_agent_task(task)
 
     title, payload, system_prompt, allowed_github_tools = _prepare_agent_task_prompt(task)
     user_content = f"Task: {title}\n\nDetails:\n{payload}"
@@ -1595,6 +1473,31 @@ class SVLAgentOrchestrator:
         except Exception:
             pass
 
+    def _notify_family_channel_about_task(self, task: dict[str, Any], canonical_name: str, *, failed: bool) -> None:
+        """Powiadomienie na kanale „wszyscy” o zakończeniu zadania workera (bez przerywania pracy)."""
+        try:
+            title = str(task.get("title") or "zadanie")[:160]
+            if failed:
+                body = f"Błąd: {str(task.get('error') or 'nieznany')[:600]}"
+            else:
+                result = str(task.get("result") or "").strip()
+                body = (
+                    (result[:600] + ("…" if len(result) > 600 else ""))
+                    if result
+                    else "Model zwrócił odpowiedź."
+                ) + "\n\n_Odpowiedź modelu — wykonanie działań nie zostało potwierdzone._"
+            self.kernel.emit_family_notification(
+                severity="WARN" if failed else "INFO",
+                category="agent_task",
+                title=f"{canonical_name}: {'zadanie nieudane' if failed else 'zadanie zakończone'} — {title}",
+                message=body,
+                details={"taskId": task.get("id"), "agent": canonical_name},
+                source_event_id=f"task-{task.get('id')}-{'failed' if failed else 'done'}",
+                origin=f"worker:{canonical_name}",
+            )
+        except Exception as exc:  # powiadomienie nie może zatrzymać supervisora workerów
+            self.append_agent_log(canonical_name, "NOTIFICATION_FAILED", str(exc)[:300])
+
     async def _publish_task_event(self, task: dict[str, Any], status: str) -> None:
         canonical_name = str(task["target_agent"])
         topic_status = status.lower()
@@ -1681,6 +1584,7 @@ class SVLAgentOrchestrator:
             )
             self.append_agent_log(canonical_name, level, f"{task['title']}: {summary}")
             await self._publish_task_event(task, task["status"])
+            self._notify_family_channel_about_task(task, canonical_name, failed=message_type == "task_failed")
         else:
             return
 
@@ -1903,8 +1807,7 @@ class SVLAgentOrchestrator:
             },
             "external_process_probe": external_probe,
             "architectural_finding": (
-                f"Aktywowano {len(spawned_agents)} lokalny worker AI (Bielik -> ollama:llama3.2-vision:11b). "
-                "Usunięta agentka Agata Mitek pozostaje trwale odłączona."
+                f"Aktywowano {len(spawned_agents)} lokalny worker AI (Bielik -> ollama:llama3.2-vision:11b)."
             ),
             "agents": spawned_agents,
         }
@@ -2015,39 +1918,12 @@ class SVLAgentOrchestrator:
 
         config = self.get_agent_config(target_agent)
         provider = str(ai_provider or "ollama").strip().lower()
-        if provider not in {"ollama", "codex"}:
+        if provider != "ollama":
             raise ValueError("Unsupported agent AI provider.")
         if ollama_host:
             self.ollama_host = str(ollama_host).strip().rstrip("/")
-        use_codex = provider == "codex"
-        if use_codex:
-            if os.environ.get("SVL_CODEX_AGENTS_ENABLED") != "true":
-                raise RuntimeError("Codex agent tasks are disabled by server configuration.")
-        elif not self.ollama_host:
+        if not self.ollama_host:
             raise RuntimeError("No Ollama endpoint is configured for worker task execution.")
-
-        if use_codex:
-            # Codex-only mode can launch a lightweight worker without probing
-            # GitHub or requiring the Ollama daemon. Avoid silent queued tasks.
-            for name, meta in CANONICAL_SVL_AGENTS.items():
-                proc = self.processes.get(name)
-                if proc is None or not proc.is_alive():
-                    proc = self._start_agent_worker(name)
-                self.agent_states.setdefault(name, {
-                    "id": meta["id"],
-                    "canonical_name": name,
-                    "display_name": meta["display_name"],
-                    "status": "STARTING_LOCAL_WORKER",
-                    "pid": proc.pid,
-                    "uid": os.getuid(),
-                    "worker_phase": "STARTING",
-                    "current_task_id": None,
-                    "heartbeat_at": None,
-                    "instance_origin": "LOCAL_CODEX_WORKER",
-                    "external_process_connected": False,
-                })
-            self._ensure_result_supervisor()
-            self._submit_pending_agent_tasks()
 
         task_id = str(uuid.uuid4())
         task_record = {
@@ -2115,7 +1991,7 @@ class SVLAgentOrchestrator:
             "resilience": {
                 "ok": True,
                 "status": "SUBMITTED_TO_WORKER" if submitted else "WAITING_FOR_WORKER",
-                "engine": "codex-cli-oauth" if use_codex else "ollama",
+                "engine": "ollama",
                 "workerAccepted": submitted,
                 "message": (
                     "Task persisted and handed off to a live worker."

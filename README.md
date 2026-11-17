@@ -9,8 +9,8 @@
 1. **[01. Architektura SVL_System i Baza SQLite WAL](docs/01_ARCHITEKTURA_SVL_SYSTEM.md)**
    - Dwustronna synchronizacja w czasie rzeczywistym (`/ws/svl`), niskie opóźnienia i cache metadanych.
    - Matematyczne jądro topologiczne `TopologicalInfinityEngine` oraz `WithoutNlpHarmonicEngine`.
-2. **[02. Obsada AI (Agata Mitek & Iris AI) oraz Pamięć Długotrwała 128D](docs/02_OBSADA_AI_I_PAMIEC_DLUGOTRWALA.md)**
-   - Kanoniczna obsada: **Mateusz Mitek (Operator)**, **Agata Mitek (`id: Agata`, ROOT UID 0)** oraz **Iris AI (`id: iris`)**.
+2. **[02. Obsada AI (Bielik & Maya) oraz Pamięć Długotrwała 128D](docs/02_OBSADA_AI_I_PAMIEC_DLUGOTRWALA.md)**
+   - Kanoniczna obsada: **Mateusz Mitek (Operator)**, **Bielik** (procesor poleceń, ROOT) oraz **Maya** (AI statku SVL-364, powiadomienia na kanale „wszyscy”).
    - Semantyczna pamięć długotrwała 128D w SQLite WAL (okno 64 tur, `num_ctx: 16384`, automatyczna deduplikacja i ekstrakcja faktów/preferencji).
    - Wielosekcyjne raporty `SVL_System` na kanale **Rodzina Mitek (wszyscy)**.
 3. **[03. Statek Kosmiczny SVL-364 Ebon Apex i Infrastruktura Floty](docs/03_STATEK_SVL_364_I_INFRASTRUKTURA_FLOTY.md)**

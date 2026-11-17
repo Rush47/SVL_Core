@@ -76,7 +76,6 @@ class SVLAntivirusScanner:
         self,
         *,
         emit_to_chat: bool = False,
-        emit_to_iris: bool = False,
         conversation_id: str = "conv-rodzina-mitek-wszyscy",
         origin: str = "svl-antivirus",
         correlation_id: str = "",
@@ -331,7 +330,7 @@ class SVLAntivirusScanner:
 
     def get_status(self) -> dict[str, Any]:
         if self.last_scan_report is None:
-            return self.scan_and_purge(emit_to_chat=False, emit_to_iris=False, origin="antivirus-status-init")
+            return self.scan_and_purge(emit_to_chat=False, origin="antivirus-status-init")
         return {
             **self.last_scan_report,
             "scansCount": self.scans_count,

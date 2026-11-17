@@ -48,7 +48,7 @@ Endpoint `GET /api/py/infrastructure` (wymaga `SVL_OPERATOR_TOKEN`, `backend/inf
 | :--- | :--- |
 | Hosty z SSH | konkretne aliasy z `~/.ssh/config` użytkownika backendu + pomiar połączenia TCP |
 | Hosty monitorowane | moduły z `config.category = "infrastructure"` i `config.address = "host:port"` (formularz w zakładce) |
-| Usługi | `systemctl show` dla `svl-python-os`, `svl-comfyui`, `svl-codex-mcp`, `ollama`, `ssh` |
+| Usługi | `systemctl show` dla `svl-python-os`, `svl-comfyui`, `ollama`, `ssh` |
 | Kontenery | `docker ps -a` |
 | Porty | stan LISTEN z `/proc/net/tcp` i `/proc/net/tcp6` (nazwa usługi = typowa dla numeru portu) |
 | Dyski | `/proc/mounts` + zajętość liczona jak w `df` |

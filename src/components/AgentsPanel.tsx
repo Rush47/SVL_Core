@@ -52,7 +52,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     window.addEventListener('svl-operator-token-changed', onTokenChanged);
     return () => window.removeEventListener('svl-operator-token-changed', onTokenChanged);
   }, []);
-  const [taskProvider, setTaskProvider] = useState<'ollama' | 'codex'>('ollama');
   const [memoryContent, setMemoryContent] = useState('');
   const [memoryKind, setMemoryKind] = useState<'fact' | 'decision' | 'task' | 'episode'>('fact');
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
@@ -174,14 +173,14 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
         target_agent: selectedAgent,
         title: taskTitle.trim(),
         payload: taskPayload.trim() || taskTitle.trim(),
-        ai_provider: taskProvider,
+        ai_provider: 'ollama',
         origin: tabOrigin,
         eventId: createUniqueId('evt-task'),
       }),
     });
     const data = res.data;
     if (res.ok && data?.ok) {
-      const providerLabel = taskProvider === 'codex' ? 'Codex CLI' : 'Ollama';
+      const providerLabel = 'Ollama';
       const workerAccepted = data.resilience?.workerAccepted === true;
       setDispatchStatus(
         `Zadanie zapisano dla ${selectedAgent} (${providerLabel}, ID: ${String(data.task?.id || '').slice(0, 8)}). ` +
@@ -413,7 +412,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           </h1>
           <p className="text-xs text-slate-400 mt-1">
             {CANONICAL_AGENTS.length > 0
-              ? `Aktywny procesor poleceń czatu: Bielik (Ollama llama3.2-vision:11b · SQLite WAL rev ${serverRevision}). Usunięta Agata Mitek pozostaje odłączona.`
+              ? `Aktywny procesor poleceń czatu: Bielik (Ollama llama3.2-vision:11b · SQLite WAL rev ${serverRevision}).`
               : `Wszystkie wcześniejsze polecenia i profile agentów AI zostały usunięte i wycofane z SQLite WAL (rev ${serverRevision}).`}
           </p>
           {connectWorkersMsg && (
@@ -719,21 +718,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             </div>
 
             <div>
-              <label htmlFor="task-ai-provider" className="block text-xs text-slate-400 mb-1">
-                Silnik AI dla tego zadania:
-              </label>
-              <select
-                id="task-ai-provider"
-                value={taskProvider}
-                onChange={(e) => setTaskProvider(e.target.value as 'ollama' | 'codex')}
-                className="w-full bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200"
-              >
-                <option value="ollama">Ollama (domyślnie)</option>
-                <option value="codex">Codex CLI (konto ChatGPT)</option>
-              </select>
-            </div>
-
-            <div>
               <label htmlFor="task-title-input" className="block text-xs text-slate-400 mb-1">
                 Polecenie / tytuł zadania:
               </label>
@@ -762,7 +746,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             </div>
 
             <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-              Token operatora (dla zadań uruchamianych przez Codex CLI)
+              Token operatora (dla zadań agentów)
               <input type="password" autoComplete="off" spellCheck={false}
                 value={agentOperatorToken}
                 onChange={(event) => {

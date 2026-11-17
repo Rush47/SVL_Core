@@ -23,7 +23,6 @@ import {
   safeFetchJson,
   getSvlOperatorAccessToken,
   hasSvlOperatorAccessToken,
-  hasSvlCodexAccessToken,
 } from './svlLogic';
 
 const BROADCAST_CHANNEL_NAME = 'svl_python_os_sync';
@@ -34,7 +33,6 @@ const DEFAULT_TERMINAL_LOGS: Record<TerminalTabId, TerminalLogLine[]> = {
   linux: [],
   ssh: [],
   python: [],
-  codex: [],
   hyperspace: [],
   agents: [],
 };
@@ -219,6 +217,10 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const deletedConvIdsRef = useRef<Set<string>>(new Set());
   const appliedChatServerRevRef = useRef(0);
   const chatMutationEpochRef = useRef(0);
+  const chatRefreshRetriesRef = useRef(0);
+  const refreshDomainModulesRef = useRef<
+    ((modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>) => Promise<DomainRefreshReport>) | null
+  >(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenEventOrderRef = useRef<string[]>([]);
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
@@ -322,16 +324,14 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const refreshDomainModules = useCallback(
     async (modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>): Promise<DomainRefreshReport> => {
       const hasOperator = hasSvlOperatorAccessToken();
-      const hasCodex = hasSvlCodexAccessToken();
       const unique = Array.from(new Set(modules)).filter((mod) => {
         if (mod === 'avatars') return true;
-        if (mod === 'chat') return hasOperator || hasCodex;
         return hasOperator;
       });
       if (unique.length === 0) {
         return {
           ok: false,
-          error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN (lub Dostęp SVL dla Codex CLI w czacie).',
+          error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.',
         };
       }
       const requestSeq = ++refreshSeqRef.current;
@@ -344,6 +344,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       };
       const tasks: Promise<void>[] = [];
       const taskDomains: string[] = [];
+      let chatRefreshDropped = false;
       let refreshedConversationIds: Set<string> | null = null;
       let refreshedActiveConversation: unknown;
       const addTask = (domain: string, task: Promise<void>) => {
@@ -429,13 +430,17 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
             const respSrvRev = Number(r.data.serverRevision || 0);
             advanceServerRevision(respSrvRev);
+            if (!isFresh('chat')) return;
             if (
-              !isFresh('chat') ||
               (respSrvRev > 0 && respSrvRev < appliedChatServerRevRef.current) ||
               chatMutationEpochRef.current !== chatReqEpoch
             ) {
+              // Lokalny zapis zmienił stan w trakcie pobierania — ta migawka może być nieaktualna,
+              // ale zdarzenie z innej karty nie może przepaść: pobieramy czat jeszcze raz.
+              chatRefreshDropped = true;
               return;
             }
+            chatRefreshRetriesRef.current = 0;
             if (respSrvRev > appliedChatServerRevRef.current) {
               appliedChatServerRevRef.current = respSrvRev;
             }
@@ -479,7 +484,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
               setTargetAgentState(rawTarget);
             }
             const rawPanel = ws.selected_agent_panel_id?.value ?? ws.selected_agent_panel_id;
-            if (typeof rawPanel === 'string' && rawPanel && rawPanel !== 'Agata' && !/^iris/i.test(rawPanel)) {
+            if (rawPanel === 'Bielik' || rawPanel === 'Maya') {
               setSelectedAgentPanelState(rawPanel);
             }
           }),
@@ -487,6 +492,10 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       const results = await Promise.allSettled(tasks);
+      if (chatRefreshDropped && chatRefreshRetriesRef.current < 6) {
+        chatRefreshRetriesRef.current += 1;
+        setTimeout(() => void refreshDomainModulesRef.current?.(['chat']), 300 * chatRefreshRetriesRef.current);
+      }
       const failures = results.flatMap((result, index) => {
         if (result.status !== 'rejected') return [];
         const detail = result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -517,6 +526,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     },
     [advanceServerRevision, getProtectedMsgIds],
   );
+  refreshDomainModulesRef.current = refreshDomainModules;
 
   const refreshAllDomains = useCallback(
     async (reason = 'operator_refresh'): Promise<RefreshExecutionReport> => {
@@ -693,9 +703,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setTargetAgentState(val);
         } else if (
           key === 'selected_agent_panel_id' &&
-          typeof val === 'string' &&
-          val !== 'Agata' &&
-          !/^iris/i.test(val)
+          (val === 'Bielik' || val === 'Maya')
         ) {
           setSelectedAgentPanelState(val);
         }
@@ -1086,8 +1094,6 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const timer = setInterval(() => {
       if (hasSvlOperatorAccessToken()) {
         void refreshDomainModules(['health', 'agents', 'chat']);
-      } else if (hasSvlCodexAccessToken()) {
-        void refreshDomainModules(['chat']);
       }
     }, 15000);
     return () => clearInterval(timer);

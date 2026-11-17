@@ -45,7 +45,7 @@ export function toAgentPerspective(turns: DialogueTurn[], speaker: ConversationA
       ? { role: 'assistant', content }
       : {
           role: 'user',
-          content: `[${turn.role === 'user' ? OPERATOR_LABEL : author || turn.sender || 'Asystent'}]: ${content}`,
+          content: `[${turn.role === 'user' ? OPERATOR_LABEL : author || turn.sender || 'AI'}]: ${content}`,
         };
     const last = out[out.length - 1];
     if (last && last.role === chatTurn.role) {
@@ -69,7 +69,7 @@ export function buildTranscript(turns: DialogueTurn[], limit = 30): string {
 
 function labelOf(turn: DialogueTurn): string {
   if (turn.role === 'user') return OPERATOR_LABEL;
-  return agentOf(turn) || turn.sender || 'Asystent';
+  return agentOf(turn) || turn.sender || 'AI';
 }
 
 /** Kogo model wskazał jako następnego mówcę (dopisanie po „[”). */
@@ -117,7 +117,6 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
   const speakerNames = [
     speaker,
-    'Asystent SVL',
     'Asystent',
     'System',
     'AI',
@@ -133,7 +132,7 @@ export function cleanAgentReply(text: string, speaker: ConversationAgent): strin
     .replace(new RegExp(`^(?:\\[?\\s*(?:${speakerNames})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]\\s*)+`, 'i'), '')
     .replace(/^\.{2,}\s*/, '')
     .trim();
-  const participants = [...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent SVL', 'Asystent', 'System']
+  const participants = [...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent', 'System']
     .map(escapeRegExp)
     .join('|');
   const nextSpeakerLine = new RegExp(`\\n\\s*\\[?\\s*(?:${participants})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]`, 'i');
