@@ -858,6 +858,22 @@ async function startServer() {
     res.json({ ok: true, commit: commit || null, source });
   });
 
+  app.get('/api/apex/status', asyncRoute(async (req, res) => {
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('GET', '/api/py/apex/status', undefined, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/apex/control', express.json(), asyncRoute(async (req, res) => {
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/apex/control', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300 && result.data?.ok) {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('apex_control', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
   interface WsClientMeta {
     clientId: string;
     origin: string;

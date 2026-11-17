@@ -11,11 +11,12 @@ import { KernelDiagnosticsView } from './components/KernelDiagnosticsView';
 import { LinuxDeployDashboard } from './components/LinuxDeployDashboard';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
+import { ApexCommandDock, ApexTelemetryRibbon } from './components/ApexCommandDock';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
-type ActiveWorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
 
 function SVLWorkspaceShell() {
   const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('chat');
@@ -69,6 +70,8 @@ function SVLWorkspaceShell() {
     setGuiLoggerContext({ tab: activeTab });
     if (activeTab === 'chat') {
       void refreshDomainModules(['chat', 'agents', 'health', 'workspace']);
+    } else if (activeTab === 'apex') {
+      void refreshDomainModules(['health', 'modules', 'kernel', 'agents']);
     } else if (activeTab === 'svl364') {
       void refreshDomainModules(['modules', 'kernel', 'agents', 'health', 'chat', 'terminals']);
     } else if (activeTab === 'infrastructure') {
@@ -124,9 +127,9 @@ function SVLWorkspaceShell() {
   ).length;
 
   return (
-    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#0B0D13] text-[#F1F5F9]">
-      {/* Compact Responsive 3-Zone Top Bar for Desktop & Android */}
-      <header className="relative flex flex-wrap md:flex-nowrap items-center justify-between gap-x-2 gap-y-1.5 md:gap-5 px-2.5 md:px-5 py-1.5 border-b border-slate-800/90 bg-[#111520] shrink-0">
+    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#050810] text-[#F1F5F9]">
+      {/* Apex-Dark 3-Zone Top Bar for Desktop & Android */}
+      <header className="relative flex flex-wrap md:flex-nowrap items-center justify-between gap-x-2 gap-y-1.5 md:gap-5 px-2.5 md:px-5 py-1.5 border-b border-cyan-500/30 bg-[#090F1E] shrink-0">
         {/* Zone 1: Single text element wordmark */}
         <a
           href="#top"
@@ -134,22 +137,22 @@ function SVLWorkspaceShell() {
             e.preventDefault();
             setActiveTab('chat');
           }}
-          className="order-1 text-sm md:text-base font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0"
+          className="order-1 text-sm md:text-base font-bold tracking-tight text-cyan-300 whitespace-nowrap shrink-0"
         >
-          SVL Python OS
+          ⚡ SVL CoreOS 2: Apex
         </a>
 
-        {/* Zone 2: Horizontal navigation bar (full row on <md for spacious Android touch targets) */}
+        {/* Zone 2: Horizontal navigation bar */}
         <nav
           aria-label="Główna nawigacja systemu"
-          className="order-3 md:order-2 w-full md:w-auto flex items-center gap-3 md:gap-5 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar border-t border-slate-800/60 md:border-t-0 pt-1 md:pt-0"
+          className="order-3 md:order-2 w-full md:w-auto flex items-center gap-3 md:gap-4 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar border-t border-cyan-500/20 md:border-t-0 pt-1 md:pt-0"
         >
           <button
             type="button"
             onClick={() => setActiveTab('chat')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'chat'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -157,10 +160,21 @@ function SVLWorkspaceShell() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('apex')}
+            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 font-mono ${
+              activeTab === 'apex'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
+                : 'text-cyan-400/90 border-transparent hover:text-cyan-200'
+            }`}
+          >
+            ⚡ Apex OS
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('svl364')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'svl364'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -182,7 +196,7 @@ function SVLWorkspaceShell() {
             onClick={() => setActiveTab('agents')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 font-mono tabular-nums ${
               activeTab === 'agents'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -193,7 +207,7 @@ function SVLWorkspaceShell() {
             onClick={() => setActiveTab('terminals')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'terminals'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -204,7 +218,7 @@ function SVLWorkspaceShell() {
             onClick={() => setActiveTab('kernel')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'kernel'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -215,7 +229,7 @@ function SVLWorkspaceShell() {
             onClick={() => setActiveTab('linux')}
             className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
               activeTab === 'linux'
-                ? 'text-violet-300 border-violet-500 font-semibold'
+                ? 'text-cyan-300 border-cyan-400 font-semibold'
                 : 'border-transparent hover:text-slate-100'
             }`}
           >
@@ -331,9 +345,16 @@ function SVLWorkspaceShell() {
         )}
       </header>
 
+      {/* Interactive Dark-Apex Telemetry Ribbon (clickable E_Shield, Fusion Core, Solar-Lockdown, Sentinel AV, Daemons) */}
+      <ApexTelemetryRibbon
+        onOpenApexTab={() => setActiveTab('apex')}
+        onOpenLinuxTab={() => setActiveTab('linux')}
+      />
+
       {/* Main Workspace Viewport */}
       <main className="flex-1 min-h-0 w-full overflow-hidden">
         {activeTab === 'chat' && <ChatWorkspace onNavigateTab={setActiveTab} />}
+        {activeTab === 'apex' && <ApexCommandDock onNavigateTab={setActiveTab} />}
         {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={setActiveTab} />}
         {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={setActiveTab} />}
         {activeTab === 'agents' && (

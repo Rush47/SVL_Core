@@ -659,7 +659,225 @@ class SVLBackendRuntime:
         }
 
 
+class SVLCoreOS2ApexController:
+    """Żywy kontroler wykonawczy SVL CoreOS 2: Apex — łączy moduły z SVL_CoreOS_2/ z jądrem, SQLite i czatem."""
+
+    def __init__(self, rt: SVLBackendRuntime) -> None:
+        self.rt = rt
+        self.root_dir = Path(__file__).resolve().parent.parent
+        self.coreos_dir = self.root_dir / "SVL_CoreOS_2"
+        self.state_path = self.root_dir / "data" / "svl_coreos2_apex_state.json"
+        self.state = self._load_state()
+
+    def _default_state(self) -> dict[str, Any]:
+        return {
+            "active": True,
+            "system_title": "SVL CoreOS 2: Apex",
+            "version": "5.6.0-QuantumWheel-Apex",
+            "distro": "Debian GNU/Linux 13 (Trixie) — Debootstrap 100%",
+            "kernel_release": "6.12.0-svl364-apex-amd64 (PREEMPT_RT + eBPF)",
+            "hot_swap_status": "ACTIVE_HOT_SWAPPED",
+            "debootstrap_status": "COMPLETED_100_PERCENT",
+            "operator_root": "Mateusz Mitek (ROOT)",
+            "kernel_master_daemon": "Maya (ROOT · PID 1)",
+            "secondary_daemon": "Bielik (ROOT · Vision 11B)",
+            "kernel_throughput_boost": "+450%",
+            "neural_kernel_link_boost": "+1200%",
+            "calibration_boost": "+1456% (Wzorzec 364)",
+            "e_shield_percent": 100.0,
+            "e_shield_mode": "DIRECTIONAL_ACTIVE",
+            "fusion_core_mw": 1456.0,
+            "fusion_mode": "STANDARD_364",
+            "solar_lockdown": False,
+            "fighter_incidents_count": 14,
+            "sentinel_av_status": "CLEAN_PROTECTED",
+            "sentinel_av_quarantine": "/var/quarantine/svl_vault",
+            "sentinel_av_scans_count": 1,
+            "last_av_scan_at": datetime.now(timezone.utc).isoformat(),
+            "remote_desktop_fps": 120,
+            "remote_desktop_latency_ms": 0.94,
+            "remote_desktop_protocol": "Apex-RD-WebRTC-NVENC",
+            "full_duplex_chat": True,
+            "daemons": {
+                "apex_bridge": {"name": "Apex-Bridge API", "status": "ONLINE", "port": 9364, "latency_ms": 0.42},
+                "double_vpn": {"name": "Dual-Tunnel Encryption (Double VPN)", "status": "ONLINE", "cipher": "ChaCha20-Poly1305 + AES-256-GCM"},
+                "hardened_hamachi": {"name": "Hardened-Hamachi Mesh Link", "status": "ONLINE", "subnet": "25.36.4.0/24"},
+                "virtualbox_vtd": {"name": "Apex-Virtualization (VirtualBox Core VT-d)", "status": "ONLINE", "iommu": "ENABLED"},
+                "apex_deployer": {"name": "Apex-Deployer (Debian 13 Trixie)", "status": "ONLINE", "debootstrap": "100%"},
+            },
+            "ai_packages": {
+                "neural-code-optimizer": {"name": "Neural-Code-Optimizer & Quantizer", "source": "Hugging Face", "status": "ACTIVE"},
+                "autonomous-agent-swarm": {"name": "Autonomous Agent Swarm Toolkit", "source": "GitHub / GitLab", "status": "ACTIVE"},
+                "deep-space-telemetry": {"name": "Deep-Space Telemetry & Lossless Compression", "source": "Hugging Face / SVL-364", "status": "ACTIVE"},
+                "apex-diagnostics-suite": {"name": "Apex-Advanced Diagnostics Suite", "source": "GitLab / Debian 13", "status": "ACTIVE"},
+            },
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _load_state(self) -> dict[str, Any]:
+        default = self._default_state()
+        if self.state_path.exists():
+            try:
+                loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    default.update(loaded)
+            except Exception:
+                pass
+        self._save_state(default)
+        return default
+
+    def _save_state(self, st: Optional[dict[str, Any]] = None) -> None:
+        target = st if st is not None else self.state
+        target["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.state_path.write_text(json.dumps(target, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def get_status(self) -> dict[str, Any]:
+        files_list: list[str] = []
+        if self.coreos_dir.exists():
+            for p in sorted(self.coreos_dir.rglob("*")):
+                if p.is_file() and not p.name.startswith("."):
+                    files_list.append(f"SVL_CoreOS_2/{p.relative_to(self.coreos_dir).as_posix()}")
+
+        incidents = []
+        try:
+            import importlib.util
+            fw_path = self.coreos_dir / "security" / "svl_apex_firewall.py"
+            if fw_path.exists():
+                spec = importlib.util.spec_from_file_location("svl_apex_firewall", fw_path)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    fw = mod.SVLApexFirewall(e_shield_pct=float(self.state.get("e_shield_percent", 100.0)))
+                    if self.state.get("solar_lockdown"):
+                        fw.activate_solar_lockdown()
+                    incidents = fw.fighter_incidents
+        except Exception:
+            pass
+
+        return {
+            "ok": True,
+            **self.state,
+            "coreos2_files_count": len(files_list),
+            "coreos2_files": files_list,
+            "fighter_incidents": incidents,
+        }
+
+    def handle_control(self, body: dict[str, Any], origin: str = "client", corr: str = "") -> dict[str, Any]:
+        action = str(body.get("action") or "").strip()
+        emit_chat = bool(body.get("emitToChat", True))
+        chat_notice = ""
+
+        if action == "cycle_e_shield" or action == "set_e_shield":
+            if "value" in body:
+                nxt = float(body["value"])
+            else:
+                cur = float(self.state.get("e_shield_percent", 100.0))
+                nxt = 125.0 if cur < 110.0 else (150.0 if cur < 135.0 else 100.0)
+            self.state["e_shield_percent"] = nxt
+            self.state["e_shield_mode"] = (
+                "MAX_APEX_OVERCHARGE_150" if nxt >= 145.0 else ("OVERCHARGE_125" if nxt >= 120.0 else "DIRECTIONAL_ACTIVE")
+            )
+            chat_notice = f"🛡️ **[SVL-CoreOS 2: Apex]** Tarcza kierunkowa **E_Shield** przestawiona na **{nxt:.0f}%** (`{self.state['e_shield_mode']}`)."
+
+        elif action == "cycle_fusion_core" or action == "set_fusion_core":
+            if "value" in body:
+                nxt_mw = float(body["value"])
+            else:
+                cur_mw = float(self.state.get("fusion_core_mw", 1456.0))
+                nxt_mw = 1820.0 if cur_mw < 1600.0 else (2100.0 if cur_mw < 1950.0 else 1456.0)
+            self.state["fusion_core_mw"] = nxt_mw
+            self.state["fusion_mode"] = (
+                "MAX_VOID_2100MW" if nxt_mw >= 2000.0 else ("APEX_OVERDRIVE_1820MW" if nxt_mw >= 1700.0 else "STANDARD_364")
+            )
+            chat_notice = f"⚡ **[SVL-CoreOS 2: Apex]** Reaktor Fuzyjny SVL-364 ustawiony na **{nxt_mw:.0f} MW** (`{self.state['fusion_mode']}`)."
+
+        elif action == "toggle_solar_lockdown":
+            new_lock = not bool(self.state.get("solar_lockdown", False))
+            self.state["solar_lockdown"] = new_lock
+            if new_lock:
+                self.state["e_shield_percent"] = max(float(self.state.get("e_shield_percent", 100.0)), 125.0)
+                self.state["e_shield_mode"] = "SOLAR_LOCKDOWN_MAX_DEFENSE"
+            else:
+                self.state["e_shield_mode"] = "DIRECTIONAL_ACTIVE"
+            chat_notice = (
+                "🚨 **[SVL-Apex Firewall · ALARM KANAŁU WSZYSCY]** Protokół **Solar-Lockdown AKTYWOWANY**! Zablokowano wektory 14 myśliwców w sektorze Ziemia–Księżyc, tarcza `E_Shield` wzmocniona."
+                if new_lock
+                else "✅ **[SVL-Apex Firewall]** Protokół **Solar-Lockdown** przełączony w tryb dozoru pasywnego (`STANDBY`)."
+            )
+
+        elif action == "toggle_daemon":
+            daemon_id = str(body.get("daemonId") or body.get("daemon_id") or "").strip()
+            daemons = self.state.get("daemons", {})
+            if daemon_id in daemons:
+                cur_st = daemons[daemon_id].get("status", "ONLINE")
+                new_st = "STANDBY" if cur_st == "ONLINE" else "ONLINE"
+                daemons[daemon_id]["status"] = new_st
+                chat_notice = f"🌐 **[SVL-CoreOS 2: Apex]** Daemon `{daemons[daemon_id].get('name', daemon_id)}` przełączony w stan **{new_st}**."
+
+        elif action == "toggle_ai_package":
+            pkg_id = str(body.get("packageId") or body.get("package_id") or "").strip()
+            pkgs = self.state.get("ai_packages", {})
+            if pkg_id in pkgs:
+                cur_st = pkgs[pkg_id].get("status", "ACTIVE")
+                new_st = "STANDBY" if cur_st == "ACTIVE" else "ACTIVE"
+                pkgs[pkg_id]["status"] = new_st
+                chat_notice = f"🧠 **[Hugging Face / Swarm Toolkit]** Pakiet `{pkgs[pkg_id].get('name', pkg_id)}` ustawiony na **{new_st}**."
+
+        elif action == "run_av_scan":
+            av_res = self.rt.antivirus.scan_and_purge(emit_to_chat=False, origin=origin, correlation_id=corr)
+            self.state["sentinel_av_scans_count"] = int(self.state.get("sentinel_av_scans_count", 1)) + 1
+            self.state["last_av_scan_at"] = datetime.now(timezone.utc).isoformat()
+            self.state["sentinel_av_status"] = "CLEAN_PROTECTED"
+            chat_notice = (
+                f"🧬 **[SVL-Sentinel AV · Heurystyka Jądra]** Skanowanie #{self.state['sentinel_av_scans_count']} zakończone: "
+                f"`CLEAN_PROTECTED` (kwarantanna `/var/quarantine/svl_vault`: 0 aktywnych zagrożeń, usunięto zbuforowanych anomalii: {av_res.get('purgedCount', 0)})."
+            )
+
+        elif action == "cycle_rd_fps":
+            cur_fps = int(self.state.get("remote_desktop_fps", 120))
+            nxt_fps = 240 if cur_fps == 120 else 120
+            self.state["remote_desktop_fps"] = nxt_fps
+            self.state["remote_desktop_latency_ms"] = 0.48 if nxt_fps == 240 else 0.94
+            chat_notice = f"🖥️ **[Apex Remote Desktop GUI]** Strumień przełączony na **{nxt_fps} FPS** (opóźnienie `{self.state['remote_desktop_latency_ms']} ms`)."
+
+        elif action == "broadcast_sentinel_test":
+            chat_notice = (
+                "📡 **[SVL-Sentinel Daemon · Broadcast Kanału Wszyscy]** Raport taktyczny **SVL CoreOS 2: Apex**:\n"
+                f"- **Kernel Master Daemon:** `{self.state['kernel_master_daemon']}` (`{self.state['distro']}`)\n"
+                f"- **Tarcza E_Shield:** `{self.state['e_shield_percent']:.0f}%` (`{self.state['e_shield_mode']}`)\n"
+                f"- **Reaktor Fuzyjny SVL-364:** `{self.state['fusion_core_mw']:.0f} MW` (`{self.state['kernel_throughput_boost']}` Kernel Throughput)\n"
+                f"- **Solar-Lockdown (14 myśliwców):** `{'AKTYWNY' if self.state['solar_lockdown'] else 'DOZÓR AKTYWNY'}`\n"
+                f"- **SVL-Sentinel AV:** `{self.state['sentinel_av_status']}` (`{self.state['sentinel_av_quarantine']}`)"
+            )
+
+        self._save_state()
+        posted = None
+        if emit_chat and chat_notice:
+            posted = self.rt.kernel.post_maya_report(
+                chat_notice,
+                model_label="Maya · Kernel Master Daemon (SVL CoreOS 2: Apex)",
+                message_prefix="msg-apex-ctl",
+                origin=origin,
+                correlation_id=corr,
+            )
+
+        meta = self.rt.kernel.get_sync_metadata()
+        return {
+            "ok": True,
+            "action": action,
+            "notice": chat_notice,
+            "postedToChat": bool(posted and posted.get("ok")),
+            "serverRevision": meta["serverRevision"],
+            "status": self.get_status(),
+        }
+
+
 runtime = SVLBackendRuntime()
+apex_controller = SVLCoreOS2ApexController(runtime)
 
 
 async def handle_api_request(
@@ -689,6 +907,7 @@ async def handle_api_request(
         return 200, {
             "status": "ONLINE",
             "system": runtime.kernel.sys_version.value,
+            "apex_coreos2": apex_controller.get_status(),
             "operator": runtime.kernel.operator.value,
             "schemaVersion": meta["schemaVersion"],
             "serverRevision": meta["serverRevision"],
@@ -1508,6 +1727,12 @@ async def handle_api_request(
             correlation_id=corr,
         )
         return 200, res
+
+    if method == "GET" and path == "/api/py/apex/status":
+        return 200, apex_controller.get_status()
+
+    if method == "POST" and path == "/api/py/apex/control":
+        return 200, apex_controller.handle_control(body, origin=origin, corr=corr)
 
     return 404, {"ok": False, "error": f"Unknown endpoint: {method} {path}"}
 

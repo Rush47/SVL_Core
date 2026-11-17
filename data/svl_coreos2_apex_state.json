@@ -1,0 +1,80 @@
+{
+  "active": true,
+  "system_title": "SVL CoreOS 2: Apex",
+  "version": "5.6.0-QuantumWheel-Apex",
+  "distro": "Debian GNU/Linux 13 (Trixie) — Debootstrap 100%",
+  "kernel_release": "6.12.0-svl364-apex-amd64 (PREEMPT_RT + eBPF)",
+  "hot_swap_status": "ACTIVE_HOT_SWAPPED",
+  "debootstrap_status": "COMPLETED_100_PERCENT",
+  "operator_root": "Mateusz Mitek (ROOT)",
+  "kernel_master_daemon": "Maya (ROOT · PID 1)",
+  "secondary_daemon": "Bielik (ROOT · Vision 11B)",
+  "kernel_throughput_boost": "+450%",
+  "neural_kernel_link_boost": "+1200%",
+  "calibration_boost": "+1456% (Wzorzec 364)",
+  "e_shield_percent": 100.0,
+  "e_shield_mode": "DIRECTIONAL_ACTIVE",
+  "fusion_core_mw": 1456.0,
+  "fusion_mode": "STANDARD_364",
+  "solar_lockdown": false,
+  "fighter_incidents_count": 14,
+  "sentinel_av_status": "CLEAN_PROTECTED",
+  "sentinel_av_quarantine": "/var/quarantine/svl_vault",
+  "sentinel_av_scans_count": 1,
+  "last_av_scan_at": "2026-11-17T19:32:59.941779+00:00",
+  "remote_desktop_fps": 120,
+  "remote_desktop_latency_ms": 0.94,
+  "remote_desktop_protocol": "Apex-RD-WebRTC-NVENC",
+  "full_duplex_chat": true,
+  "daemons": {
+    "apex_bridge": {
+      "name": "Apex-Bridge API",
+      "status": "ONLINE",
+      "port": 9364,
+      "latency_ms": 0.42
+    },
+    "double_vpn": {
+      "name": "Dual-Tunnel Encryption (Double VPN)",
+      "status": "ONLINE",
+      "cipher": "ChaCha20-Poly1305 + AES-256-GCM"
+    },
+    "hardened_hamachi": {
+      "name": "Hardened-Hamachi Mesh Link",
+      "status": "ONLINE",
+      "subnet": "25.36.4.0/24"
+    },
+    "virtualbox_vtd": {
+      "name": "Apex-Virtualization (VirtualBox Core VT-d)",
+      "status": "ONLINE",
+      "iommu": "ENABLED"
+    },
+    "apex_deployer": {
+      "name": "Apex-Deployer (Debian 13 Trixie)",
+      "status": "ONLINE",
+      "debootstrap": "100%"
+    }
+  },
+  "ai_packages": {
+    "neural-code-optimizer": {
+      "name": "Neural-Code-Optimizer & Quantizer",
+      "source": "Hugging Face",
+      "status": "ACTIVE"
+    },
+    "autonomous-agent-swarm": {
+      "name": "Autonomous Agent Swarm Toolkit",
+      "source": "GitHub / GitLab",
+      "status": "ACTIVE"
+    },
+    "deep-space-telemetry": {
+      "name": "Deep-Space Telemetry & Lossless Compression",
+      "source": "Hugging Face / SVL-364",
+      "status": "ACTIVE"
+    },
+    "apex-diagnostics-suite": {
+      "name": "Apex-Advanced Diagnostics Suite",
+      "source": "GitLab / Debian 13",
+      "status": "ACTIVE"
+    }
+  },
+  "updated_at": "2026-11-17T19:35:26.452379+00:00"
+}

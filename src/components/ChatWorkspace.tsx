@@ -77,7 +77,7 @@ const PROVENANCE_STYLE: Record<NonNullable<ChatMessage['provenance']>, { label: 
 };
 
 interface ChatWorkspaceProps {
-  onNavigateTab: (tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
+  onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {
@@ -118,7 +118,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
+  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
   const [isSending, setIsSending] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
@@ -146,7 +146,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const prevMsgCountRef = useRef<number>(0);
 
-  const [duplexActive, setDuplexActive] = useState(false);
+  const [duplexActive, setDuplexActive] = useState(true);
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
   // Dlaczego rozmowa obustronna stoi (powód z serwera) — pokazywane zamiast cichego zatrzymania.
   const [duplexStatus, setDuplexStatus] = useState<{ reason: string; text: string } | null>(null);
@@ -785,11 +785,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
     if (lower.startsWith('tab:')) {
       const tabName = lower.slice(4).trim();
-      if (!['chat', 'svl364', 'infrastructure', 'agents', 'terminals', 'kernel', 'linux'].includes(tabName)) {
+      if (!['chat', 'apex', 'svl364', 'infrastructure', 'agents', 'terminals', 'kernel', 'linux'].includes(tabName)) {
         setChatActionError(`Przycisk wskazuje nieistniejącą zakładkę „${tabName}”.`);
         return;
       }
-      onNavigateTab(tabName as 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux');
+      onNavigateTab(tabName as 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux');
       return;
     }
 

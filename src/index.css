@@ -13,13 +13,25 @@
   :root {
     --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --apex-bg-void: #050810;
+    --apex-bg-surface: #090F1E;
+    --apex-bg-elevated: #0E172A;
+    --apex-cyan: #00F0FF;
+    --apex-amber: #FFB800;
+    --apex-emerald: #00E676;
+    --apex-crimson: #FF1744;
+    --apex-text-primary: #F1F5F9;
+    --apex-text-muted: #94A3B8;
   }
 
   body {
     font-family: var(--font-sans);
-    background-color: #0B0D13;
-    color: #F1F5F9;
-    letter-spacing: normal;
+    background-color: var(--apex-bg-void);
+    background-image:
+      radial-gradient(circle at 12% 0%, rgba(0, 240, 255, 0.08), transparent 40%),
+      radial-gradient(circle at 88% 100%, rgba(0, 230, 118, 0.06), transparent 40%);
+    color: var(--apex-text-primary);
+    letter-spacing: 0.01em;
     word-spacing: 0.02em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -35,18 +47,24 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Subtle custom scrollbars for dark Open WebUI workspace */
+.apex-hud-card {
+  background: rgba(9, 15, 30, 0.92);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  box-shadow: 0 12px 32px -12px rgba(0, 240, 255, 0.14);
+}
+
+/* Custom Apex-Dark scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.4);
+  background: rgba(5, 8, 16, 0.7);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(124, 58, 237, 0.35);
+  background: rgba(0, 240, 255, 0.35);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.6);
+  background: rgba(0, 240, 255, 0.65);
 }
