@@ -29,3 +29,6 @@ logi/*.txt
 
 # Stan runtime SVL CoreOS 2 (ustawienia scenariusza) — nie commitować
 data/svl_coreos2_*.json
+
+# Obrazy ISO SVL CoreOS 2 (budowane lokalnie / w CI)
+out/
