@@ -307,6 +307,15 @@ except Exception as exc:
                 origin="svl364-ssh-mcp-sync",
             )
 
+    def configured_target(self) -> str:
+        """Alias hosta statku z konfiguracji modułu (bez sondowania sieci)."""
+        mods = {m["id"]: m for m in self.kernel.list_system_modules()}
+        cfg = dict(self._default_config())
+        mod_cfg = (mods.get("svl-364-ssh-mcp") or {}).get("config")
+        if isinstance(mod_cfg, dict):
+            cfg.update(mod_cfg)
+        return self._configured_ssh_target(cfg)
+
     def get_status(self) -> dict[str, Any]:
         mods = {m["id"]: m for m in self.kernel.list_system_modules()}
         mod = mods.get("svl-364-ssh-mcp") or {}

@@ -18,6 +18,7 @@ import {
   extractBielikActionTags,
   normalizeAiInteractiveMarkup,
   parseChatInteractiveToken,
+  resolveInstalledOllamaModel,
   resolveAvatarProfileKey,
   safeFetchJson,
   safeParseJsonResponse,
@@ -421,4 +422,16 @@ test('AI buttons: Polish keyword and Markdown links with chat actions become wor
   assert.equal(normalizeAiInteractiveMarkup('[X](javascript:alert(1))'), '[X](javascript:alert(1))');
   assert.equal(isUnsafeChatInteractiveAction('send:/exec rm -rf /'), true);
   assert.equal(isUnsafeChatInteractiveAction('ask:Bielik'), false);
+});
+
+test('resolveInstalledOllamaModel finds the installed model instead of reporting it missing', () => {
+  const installed = [{ name: 'llama3.2-vision:latest' }, { name: 'qwen2.5:7b' }];
+  assert.deepEqual(resolveInstalledOllamaModel('llama3.2-vision:11b', installed), {
+    name: 'llama3.2-vision:latest', substituted: false, installedCount: 2,
+  });
+  assert.equal(resolveInstalledOllamaModel('qwen2.5', installed).name, 'qwen2.5:7b');
+  const other = resolveInstalledOllamaModel('llama3.2-vision:11b', [{ name: 'gemma2:9b' }]);
+  assert.equal(other.name, 'gemma2:9b');
+  assert.equal(other.substituted, true);
+  assert.equal(resolveInstalledOllamaModel('llama3.2-vision:11b', []).installedCount, 0);
 });

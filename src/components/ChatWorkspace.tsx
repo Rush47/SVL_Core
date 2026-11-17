@@ -1381,7 +1381,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             <span aria-hidden="true" className="text-slate-600 hidden sm:inline">·</span>
             <span className={`${ollamaReachable ? 'text-cyan-300' : 'text-amber-300'} hidden sm:inline`}>
               Ollama: {ollamaReachable
-                ? `ONLINE ${String(healthData?.ollama?.ollama_host || '').replace(/^https?:\/\//, '')} (${ollamaModels.length} modeli)`
+                ? `ONLINE ${String(healthData?.ollama?.ollama_host || '').replace(/^https?:\/\//, '')} (${healthData?.ollama?.busy ? 'zajęta — generuje' : `${ollamaModels.length} modeli`})`
                 : `niedostępna (${String(healthData?.ollama?.ollama_host || '127.0.0.1:11434').replace(/^https?:\/\//, '')})`}
             </span>
           </div>

@@ -18,6 +18,7 @@ import math
 import os
 import platform
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -51,6 +52,7 @@ from image_generation import (
 from ollama_daemon import SVLLocalOllamaDaemon
 from real_vision_engine import SVLRealVisionEngine
 from spherical_bus import SphericalEventBus
+from ship_monitor import ShipMonitor
 from svl364_ssh_mcp import SVL364SshMcpController
 from svl_core import (
     RevisionConflictError,
@@ -104,6 +106,12 @@ class SVLBackendRuntime:
         }
         self._register_initial_services()
         self.svl364_ssh_mcp = SVL364SshMcpController(self.kernel)
+        # Powiadomienia Mayi z prawdziwych danych jednostki SVL-364 (pomiar przez SSH).
+        self.ship_monitor = ShipMonitor(
+            self.kernel,
+            probe=self.svl364_ssh_mcp.telemetry.ship,
+            alias_getter=self.svl364_ssh_mcp.configured_target,
+        )
         self.real_vision = SVLRealVisionEngine(self.kernel, self.ollama_daemon)
         self.antivirus = SVLAntivirusScanner(self.kernel)
         self.kernel.ensure_mitek_family_channel()
@@ -367,6 +375,17 @@ class SVLBackendRuntime:
         except Exception as exc:
             return False, [], str(exc)
 
+    @staticmethod
+    def _ollama_port_accepts(base_url: str) -> bool:
+        parsed = urllib.parse.urlsplit(base_url if "://" in base_url else f"http://{base_url}")
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 11434
+        try:
+            with socket.create_connection((host, port), timeout=1.5):
+                return True
+        except OSError:
+            return False
+
     def probe_ollama_status(self, force_refresh: bool = False) -> dict[str, Any]:
         ollama_host = (self.ollama_host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
         pull_state = self._get_ollama_pull_state()
@@ -391,10 +410,20 @@ class SVLBackendRuntime:
             or (BACKEND_DIR / "bin" / "ollama").exists()
         )
 
-        reachable, models, error_msg = self._probe_single_ollama_endpoint(ollama_host, timeout=0.8)
+        # Zajęta Ollama (generowanie / ładowanie modelu) odpowiada wolniej niż 0,8 s — taki limit
+        # dawał fałszywe „Ollama niedostępna”, choć działała.
+        reachable, models, error_msg = self._probe_single_ollama_endpoint(ollama_host, timeout=4.0)
         if not reachable and ("127.0.0.1" in ollama_host or "localhost" in ollama_host):
             self.ollama_daemon.start_if_needed()
-            reachable, models, error_msg = self._probe_single_ollama_endpoint("http://127.0.0.1:11434", timeout=0.8)
+            reachable, models, error_msg = self._probe_single_ollama_endpoint("http://127.0.0.1:11434", timeout=4.0)
+        busy = False
+        if not reachable and self._ollama_port_accepts(ollama_host):
+            # Port przyjmuje połączenia, ale lista modeli nie zdążyła wrócić — Ollama działa i jest zajęta.
+            busy = True
+            reachable = True
+            prev_models = cached.get("models") if isinstance(cached, dict) else None
+            models = list(prev_models) if isinstance(prev_models, list) else []
+            error_msg = f"Ollama zajęta (lista modeli nie wróciła na czas): {error_msg}"
 
         # Report only actual daemon responses. A built-in catalog is not proof of installation.
         loaded_models: list[str] = []
@@ -414,6 +443,7 @@ class SVLBackendRuntime:
             "ollama_host": ollama_host,
             "binary_installed": binary_installed,
             "daemon_reachable": reachable,
+            "busy": busy,
             "preferred_14b_vision_model": preferred_model,
             "recommended_vision_model": "llama3.2-vision:11b",
             "models": models,
@@ -1291,6 +1321,24 @@ async def handle_api_request(
         except Exception as exc:
             return 400, {"ok": False, "error": str(exc)}
 
+    if method == "GET" and path == "/api/py/svl364/monitor":
+        return 200, {
+            "ok": True,
+            "intervalSec": runtime.ship_monitor.interval_sec,
+            "lastCheck": runtime.ship_monitor.last_check,
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
+
+    if method == "POST" and path == "/api/py/svl364/monitor/check":
+        emitted = await asyncio.to_thread(runtime.ship_monitor.check_once)
+        return 200, {
+            "ok": True,
+            "lastCheck": runtime.ship_monitor.last_check,
+            "notifications": [e.get("notification") for e in emitted],
+            "events": [e.get("event") for e in emitted if e.get("event")],
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
+
     if method == "GET" and path == "/api/py/notifications":
         return 200, runtime.kernel.list_family_notifications(limit=_opt_int(query.get("limit")) or 80)
 
@@ -1573,6 +1621,11 @@ async def _run_boot_autoconnect() -> None:
     try:
         runtime.ollama_daemon.start_if_needed()
         runtime.orchestrator.ollama_host = runtime.ollama_host
+        if runtime.ship_monitor.start():
+            print(
+                f"[SVL Python OS] Monitor SVL-364 przez SSH: co {int(runtime.ship_monitor.interval_sec)} s",
+                flush=True,
+            )
         if CANONICAL_SVL_AGENTS:
             # Start workerów bez odpytywania GitHuba — sprawdzanie repozytoriów tylko na żądanie operatora.
             await runtime.orchestrator.connect_my_ai(

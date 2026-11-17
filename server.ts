@@ -23,6 +23,7 @@ import {
   normalizeAiInteractiveMarkup,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
+  resolveInstalledOllamaModel,
   selectOllamaModelName,
   type BielikSlashCommand,
   type ChatAppliedAction,
@@ -230,23 +231,31 @@ function geminiCandidates(requestedModel?: string): string[] {
 
 type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
 
-/** Czy pod `base` działa prawdziwa Ollama z zainstalowanym `model`; null = gotowa, inaczej powód. */
-async function ollamaNotReadyReason(base: string, model: string): Promise<string | null> {
+/** Czy pod `base` działa prawdziwa Ollama; zwraca model faktycznie zainstalowany dla `model`. */
+async function ollamaReadyModel(
+  base: string,
+  model: string,
+): Promise<{ ok: true; model: string } | { ok: false; reason: string }> {
   try {
+    // Zajęta Ollama (generowanie, ładowanie modelu) odpowiada wolniej — krótkie limity dawały fałszywe „niedostępna”.
     const [versionRes, tagsRes] = await Promise.all([
-      fetch(`${base}/api/version`, { signal: AbortSignal.timeout(1500) }),
-      fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(2000) }),
+      fetch(`${base}/api/version`, { signal: AbortSignal.timeout(8000) }),
+      fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) }),
     ]);
-    if (!versionRes.ok) return `Ollama (${base}) odpowiada kodem ${versionRes.status}`;
+    if (!versionRes.ok) return { ok: false, reason: `Ollama (${base}) odpowiada kodem ${versionRes.status}` };
     const version: any = await versionRes.json();
     if (String(version.version || '').includes('svl-364')) {
-      return `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli`;
+      return { ok: false, reason: `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli` };
     }
-    const tags: any = tagsRes.ok ? await tagsRes.json() : {};
-    const installed = Array.isArray(tags.models) && tags.models.some((m: any) => m?.name === model || m?.model === model);
-    return installed ? null : `model ${model} nie jest zainstalowany w Ollamie (${base})`;
+    if (!tagsRes.ok) return { ok: false, reason: `Ollama (${base}) nie zwróciła listy modeli (kod ${tagsRes.status})` };
+    const tags: any = await tagsRes.json();
+    const resolved = resolveInstalledOllamaModel(model, Array.isArray(tags.models) ? tags.models : []);
+    if (resolved.installedCount === 0) {
+      return { ok: false, reason: `w Ollamie (${base}) nie ma żadnego pobranego modelu` };
+    }
+    return { ok: true, model: resolved.name };
   } catch (error) {
-    return `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}`;
+    return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -261,15 +270,16 @@ async function ollamaContinueRaw(
   options: { temperature: number; numPredict: number; stop: string[]; timeoutMs: number },
 ): Promise<OllamaChatResult> {
   const base = host.replace(/\/$/, '');
-  const notReady = await ollamaNotReadyReason(base, model);
-  if (notReady) return { ok: false, reason: notReady };
+  const ready = await ollamaReadyModel(base, model);
+  if (!ready.ok) return { ok: false, reason: ready.reason };
+  const installedModel = ready.model;
   try {
     const res = await fetch(`${base}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(options.timeoutMs),
       body: JSON.stringify({
-        model,
+        model: installedModel,
         prompt: text,
         raw: true,
         stream: false,
@@ -284,7 +294,7 @@ async function ollamaContinueRaw(
     });
     if (!res.ok) return { ok: false, reason: `Ollama /api/generate zwróciła kod ${res.status}` };
     const data: any = await res.json();
-    return { ok: true, text: String(data?.response || ''), model };
+    return { ok: true, text: String(data?.response || ''), model: installedModel };
   } catch (error) {
     return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
   }
@@ -1701,7 +1711,7 @@ async function startServer() {
     const availableModels: Array<{ name: string; vision_supported?: boolean }> =
       Array.isArray(ollamaInfo.models) ? ollamaInfo.models : [];
 
-    const selectedOllamaModelName = isExplicitOllama
+    const configuredOllamaModelName = isExplicitOllama
       ? effectiveModel.slice('ollama:'.length).trim() || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b'
       : selectOllamaModelName(
           effectiveModel,
@@ -1712,15 +1722,20 @@ async function startServer() {
             process.env.OLLAMA_PREFERRED_MODEL ||
             'llama3.2-vision:11b',
         );
+    // Skonfigurowana nazwa → model faktycznie zainstalowany (np. `:11b` vs `:latest`).
+    let selectedOllamaModelName = availableModels.length > 0
+      ? resolveInstalledOllamaModel(configuredOllamaModelName, availableModels, Boolean(imageBase64)).name
+      : configuredOllamaModelName;
 
-    const displayModelBadge =
+    const badgeForModel = (modelName: string) =>
       selectedAgent === 'Maya'
-        ? `Maya · AI Statku SVL-364 (ROOT · ${selectedOllamaModelName})`
+        ? `Maya · AI Statku SVL-364 (ROOT · ${modelName})`
         : isExplicitOllama || isBielikAgent
-          ? `Bielik · Ollama (${selectedOllamaModelName} · ROOT)`
+          ? `Bielik · Ollama (${modelName} · ROOT)`
           : model === 'svl-hybrid-router'
-            ? `SVL-364 · Ollama (${selectedOllamaModelName})`
+            ? `SVL-364 · Ollama (${modelName})`
             : effectiveModel;
+    let displayModelBadge = badgeForModel(selectedOllamaModelName);
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
       if (cmd.kind === 'help') {
@@ -2297,14 +2312,19 @@ async function startServer() {
       (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
     let ollamaFailure = shouldTryOllama ? '' : 'nie użyto dla tego zapytania';
     let geminiFailure = ai ? '' : 'brak klucza GEMINI_API_KEY';
+    const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
+    let ollamaGenerationStarted = false;
+    let ollamaTimedOut = false;
     if (shouldTryOllama) {
       try {
         const [versionResponse, tagResponse] = await Promise.all([
+          // Zajęta Ollama (generowanie, ładowanie modelu) odpowiada wolniej — krótkie limity
+          // dawały fałszywe „niedostępna”.
           fetch(`${ollamaHost}/api/version`, {
-            signal: AbortSignal.timeout(1500),
+            signal: AbortSignal.timeout(8000),
           }),
           fetch(`${ollamaHost}/api/tags`, {
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(8000),
           }),
         ]);
         if (!versionResponse.ok) throw new Error(`niedostępna (${ollamaHost}, HTTP ${versionResponse.status})`);
@@ -2314,10 +2334,16 @@ async function startServer() {
         }
         if (!tagResponse.ok) throw new Error('nie udało się odczytać listy modeli');
         const catalog: any = await tagResponse.json();
-        const installed = Array.isArray(catalog.models) && catalog.models.some(
-          (entry: any) => entry?.name === selectedOllamaModelName || entry?.model === selectedOllamaModelName,
+        const resolvedModel = resolveInstalledOllamaModel(
+          selectedOllamaModelName,
+          Array.isArray(catalog.models) ? catalog.models : [],
+          Boolean(imageBase64),
         );
-        if (!installed) throw new Error(`model ${selectedOllamaModelName} nie jest zainstalowany`);
+        if (resolvedModel.installedCount === 0) {
+          throw new Error(`w Ollamie (${ollamaHost}) nie ma żadnego pobranego modelu — pobierz model (np. ${selectedOllamaModelName})`);
+        }
+        selectedOllamaModelName = resolvedModel.name;
+        displayModelBadge = badgeForModel(selectedOllamaModelName);
         const ollamaMessages = [
           ...(agentMemoryContext ? [{ role: 'system', content: agentMemoryContext }] : []),
           ...agentHistory,
@@ -2329,7 +2355,8 @@ async function startServer() {
         ];
         // Bielik/Maya i jawne modele Ollama: model wybrany świadomie, a zimne ładowanie 11B
         // do pamięci trwa dłużej niż kilka sekund — krótki limit kończył się brakiem odpowiedzi.
-        const ollamaTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
+        const ollamaTimeoutMs = ollamaChatTimeoutMs;
+        ollamaGenerationStarted = true;
         const ollamaNumCtx = Number(process.env.OLLAMA_NUM_CTX || 4096);
         const oResp = await fetch(`${ollamaHost}/api/chat`, {
           method: 'POST',
@@ -2388,9 +2415,17 @@ async function startServer() {
       } catch (error) {
         // Dalej: Gemini albo uczciwa informacja o braku modelu.
         const reason = error instanceof Error ? error.message : String(error);
-        ollamaFailure = /fetch failed|ECONNREFUSED|abort|timeout/i.test(reason)
-          ? `niedostępna pod ${ollamaHost} (brak połączenia lub przekroczony czas: ${reason})`
-          : reason;
+        if (/TimeoutError|timeout|aborted/i.test(reason) && ollamaGenerationStarted) {
+          // Ollama działa i przyjęła zapytanie — model po prostu generował dłużej niż limit.
+          ollamaTimedOut = true;
+          ollamaFailure =
+            `model ${selectedOllamaModelName} działa, ale nie skończył odpowiedzi w ${Math.round(ollamaChatTimeoutMs / 1000)} s ` +
+            '(ustaw dłuższy OLLAMA_CHAT_TIMEOUT_MS albo mniejszy model)';
+        } else {
+          ollamaFailure = /fetch failed|ECONNREFUSED|abort|timeout/i.test(reason)
+            ? `niedostępna pod ${ollamaHost} (brak połączenia lub przekroczony czas: ${reason})`
+            : reason;
+        }
       }
     }
 
@@ -2603,7 +2638,9 @@ async function startServer() {
     } else {
       // Bez modelu nie ma rozmowy — mówimy to wprost zamiast udawać odpowiedź.
       conversationalReply =
-        `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie jest dostępny.\n\n` +
+        (ollamaTimedOut
+          ? `⚠️ ${selectedDisplayName} nie zdążył(a) odpowiedzieć.\n\n`
+          : `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie odpowiedział.\n\n`) +
         `- **Ollama:** ${ollamaFailure || 'brak odpowiedzi'}\n` +
         `- **Gemini:** ${geminiFailure || 'brak odpowiedzi'}\n\n` +
         'Polecenia czatu działają bez modelu (np. „Zapisz w pamięci, że…”, `/status`, `/moduly`, `/exec <polecenie>`). ' +

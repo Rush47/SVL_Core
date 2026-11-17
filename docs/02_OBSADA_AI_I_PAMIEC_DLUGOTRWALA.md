@@ -5,9 +5,14 @@
 W systemie aktywne są wyłącznie następujące podmioty:
 - **Mateusz Mitek (Operator)** — Dowódca Floty i główny architekt `SVL_System`.
 - **Bielik (`id: Bielik`)** — procesor poleceń czatu (ROOT) na lokalnej Ollamie `llama3.2-vision:11b`.
-- **Maya (`id: Maya`)** — AI pokładowe statku SVL-364; publikuje **powiadomienia systemowe** na kanale
-  **Rodzina Mitek (wszyscy)** (zakończone/nieudane zadania agentów, pobieranie modeli Ollama,
-  skany antywirusowe, zmiany wydane z czatu na innych kanałach).
+- **Maya (`id: Maya`)** — AI pokładowe statku SVL-364; publikuje **powiadomienia** na kanale
+  **Rodzina Mitek (wszyscy)**:
+  - **z prawdziwych danych jednostki SVL-364 przez SSH** (`backend/ship_monitor.py`, co
+    `SVL_SHIP_MONITOR_INTERVAL_SEC` s, domyślnie 120): utrata/powrót łączności, restart jednostki,
+    mało RAM (< 10%), mało miejsca na dysku (< 5 GB), przeciążenie CPU (> 1,5 na rdzeń) — tylko
+    przy zmianie stanu, z wartościami pomiaru; ręczny pomiar: `POST /api/py/svl364/monitor/check`,
+  - wyniki skanu antywirusowego i raport SVL_System,
+  - zakończone/nieudane zadania agentów, pobieranie modeli Ollama, zmiany wydane z czatu na innych kanałach.
 
 Gdy Ollama nie odpowie, serwer może użyć Gemini jako zapasowego silnika — odpowiedź nadal
 pochodzi od Bielika lub Mayi. Wszystkie inne AI (Agata, Iris, Alex, Aria/`si_1`, Astyria,

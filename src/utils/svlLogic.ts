@@ -464,6 +464,35 @@ export function selectOllamaModelName(
   return preferredFallback;
 }
 
+/**
+ * Dobiera model faktycznie zainstalowany w Ollamie. Skonfigurowana nazwa (np. `llama3.2-vision:11b`)
+ * często różni się od zainstalowanej tylko tagiem (`:latest`) — wcześniej kończyło się to komunikatem
+ * „model nie jest zainstalowany / żaden model AI nie jest dostępny”, choć Ollama działała.
+ */
+export function resolveInstalledOllamaModel(
+  requested: string,
+  installed: Array<{ name?: string; model?: string; vision_supported?: boolean }>,
+  hasImage = false,
+): { name: string; substituted: boolean; installedCount: number } {
+  const names = installed
+    .map((m) => String(m?.name || m?.model || '').trim())
+    .filter(Boolean);
+  const want = String(requested || '').trim();
+  const base = (n: string) => n.split(':')[0].toLowerCase();
+  const tagged = (n: string) => (n.includes(':') ? n.toLowerCase() : `${n.toLowerCase()}:latest`);
+  const exact = names.find((n) => n === want || tagged(n) === tagged(want));
+  if (exact) return { name: exact, substituted: false, installedCount: names.length };
+  const sameFamily = names.find((n) => base(n) === base(want));
+  if (sameFamily) return { name: sameFamily, substituted: false, installedCount: names.length };
+  if (names.length === 0) return { name: want, substituted: false, installedCount: 0 };
+  const visionHint = /vision|llava|-vl|vl:|minicpm-v|pixtral|gemma3/i;
+  const pick =
+    (hasImage ? installed.find((m) => m?.vision_supported || visionHint.test(String(m?.name || m?.model || ''))) : null) ||
+    installed.find((m) => visionHint.test(String(m?.name || m?.model || ''))) ||
+    installed[0];
+  return { name: String(pick?.name || pick?.model || names[0]), substituted: true, installedCount: names.length };
+}
+
 export type TerminalTabId = 'linux' | 'ssh' | 'python' | 'hyperspace' | 'agents';
 
 export interface TerminalLogLine {
