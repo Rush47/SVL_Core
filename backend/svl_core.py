@@ -795,6 +795,29 @@ class SVLSystemKernel:
                     1,
                     now_iso,
                 ),
+                (
+                    "svl-coreos-2-apex",
+                    "SVL CoreOS 2: Apex — Debian 13 (Trixie) & Ollama Uncensored (SVL-364)",
+                    "Operating System & AI Core",
+                    "ACTIVE",
+                    "System operacyjny SVL CoreOS 2: Apex na bazie Debian 13 (Trixie) zintegrowany z jednostką SVL-364 (Compute-Thrust, E_Shield — widoczność dla jednostek nadlatujących w stronę Ziemi, otwarty korytarz dla sojuszników) oraz pokładową Ollamą bez cenzury (svl364-apex-uncensored:latest) zarządzaną przez Mayę (Kernel Master Daemon).",
+                    json.dumps(
+                        {
+                            "base_distro": "Debian GNU/Linux 13 (Trixie)",
+                            "codename": "Apex",
+                            "repository_folder": "SVL_CoreOS_2",
+                            "kernel_master_daemon": "Maya",
+                            "ollama_model": "svl364-apex-uncensored:latest",
+                            "compute_thrust": "ACTIVE",
+                            "e_shield_mode": "DIRECTIONAL_EARTH_APPROACH_VISIBLE_ALLIES_OPEN",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "kernel",
+                    "init-coreos-2-apex",
+                    1,
+                    now_iso,
+                ),
             ]
             for mod in core_modules:
                 conn.execute(

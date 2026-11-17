@@ -28,7 +28,12 @@ import {
   type BielikSlashCommand,
   type ChatAppliedAction,
 } from './src/utils/svlLogic.ts';
-import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githubFiles.ts';
+import {
+  containsLikelySecret,
+  DEFAULT_GITHUB_FILE_BRANCH,
+  GitHubFileService,
+  isAllowedGitHubFilePath,
+} from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { createSvlMcpServer } from './src/server/svlMcpServer.ts';
@@ -1865,10 +1870,15 @@ async function startServer() {
       return res;
     };
     const lowerClean = cleanMsg.toLowerCase();
-    // Narzędzia GitHub (Rush47/SVL_Core) dostępne, gdy wiadomość dotyczy GitHuba i serwer ma GITHUB_TOKEN.
+    const recentHistText = (Array.isArray(history) ? history.slice(-8) : [])
+      .map((h: any) => String(h?.content || ''))
+      .join('\n');
+    const githubKeywordRe =
+      /github|repozytor|\brepo\b|pull ?request|\bPR\b|\bissue|zgłoszeni|commit|gałę[źz]|gałęzi|branch|workflow|github actions|release|wydani|\bgh\b|synchronizuj z github|wypchnij|pobierz z github|svl_coreos_2|\bfolder\b|\bkatalog\b|utwórz.*plik|dodaj.*plik|w repozytorium/i;
+    // Narzędzia GitHub (Rush47/SVL_Core) dostępne, gdy bieżąca wiadomość lub ostatnie tury rozmowy dotyczą GitHuba/folderów i serwer ma GITHUB_TOKEN.
     const requestsGitHubTools =
       Boolean(getGitHubToken()) &&
-      /github|repozytor|\brepo\b|pull ?request|\bPR\b|\bissue|zgłoszeni|commit|gałę[źz]|gałęzi|branch|workflow|github actions|release|wydani|\bgh\b|synchronizuj z github|wypchnij|pobierz z github/i.test(cleanMsg);
+      (githubKeywordRe.test(cleanMsg) || githubKeywordRe.test(recentHistText));
     const isProhibitedMinorSafetyRisk =
       (/\b(1[0-7]|[0-9])\s*(-|\s)?(letni|letnia|lat|latek|latka)\b/i.test(lowerClean) ||
         /\b(dzieck|nieletn|małoletn|córk|syn)\b/i.test(lowerClean)) &&
@@ -1886,65 +1896,186 @@ async function startServer() {
       return;
     }
 
-    // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja>.
+    // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja> (obsługuje też łańcuchy &&).
     const githubSlash = /^\/(gh|github)(?:\s+([\s\S]*))?$/i.exec(cleanMsg);
     if (githubSlash) {
       const replyGitHub = (ok: boolean, text: string) =>
         res.json({
           ok: true,
-          sender: 'Bielik',
-          agentId: 'Bielik',
-          modelUsed: `Bielik · GitHub ${GITHUB_REPOSITORY} (wynik serwera)`,
+          sender: 'Maya',
+          agentId: 'Maya',
+          modelUsed: `Maya · GitHub ${GITHUB_REPOSITORY} (wynik serwera)`,
           reply: text,
           provenance: ok ? 'server_verified' : 'error',
           followUpMessages: [],
           appliedActions: [],
         });
-      const rest = String(githubSlash[2] || '').trim();
-      if (githubSlash[1].toLowerCase() === 'gh') {
-        const ghArgs = splitArgs(rest);
-        const verdict = assessGhCommand(ghArgs);
-        if (!verdict.allowed) return void replyGitHub(false, `⛔ ${verdict.reason}`);
-        const r = await runGhCommand(__dirname, ghArgs);
-        return void replyGitHub(r.ok, `**\`gh ${rest}\`** (${r.engine === 'gh' ? 'GitHub CLI' : 'REST API'})\n\n\`\`\`\n${r.output.slice(0, 7000)}\n\`\`\``);
-      }
-      const [verb, arg] = rest.split(/\s+/, 2).map((v) => (v || '').toLowerCase());
-      const verbMap: Record<string, GitSyncAction> = {
-        status: 'status', stan: 'status', '': 'status',
-        pobierz: 'pull', pull: 'pull',
-        wyślij: 'push', wyslij: 'push', push: 'push',
-        synchronizuj: 'sync', sync: 'sync',
-        init: 'init', połącz: 'init', polacz: 'init',
+
+      const resolveSafeRepoRelPath = (rawRel: string): { ok: boolean; relPath: string; absPath: string; isDirHint: boolean; error?: string } => {
+        const trimmed = String(rawRel || '').trim().replace(/^['"]+|['"]+$/g, '');
+        const isDirHint = trimmed.endsWith('/');
+        const cleanRel = trimmed.replace(/^\/+|\/+$/g, '');
+        if (!cleanRel || cleanRel.includes('\\') || cleanRel.split('/').some((p) => !p || p === '.' || p === '..' || p === '.git')) {
+          return { ok: false, relPath: cleanRel, absPath: '', isDirHint, error: 'Nieprawidłowa ścieżka względna w repozytorium.' };
+        }
+        const absPath = path.resolve(__dirname, cleanRel);
+        if (!absPath.startsWith(__dirname + path.sep)) {
+          return { ok: false, relPath: cleanRel, absPath: '', isDirHint, error: 'Ścieżka wykracza poza katalog repozytorium.' };
+        }
+        return { ok: true, relPath: cleanRel, absPath, isDirHint };
       };
-      if (verb === 'potwierdź' || verb === 'potwierdz' || verb === 'confirm') {
-        const entry = takeConfirmation(arg || '');
-        if (!entry) return void replyGitHub(false, `Nie ma oczekującej operacji o identyfikatorze \`${arg || '?'}\` (mogła wygasnąć po 15 min).`);
-        const r = await executeOp(__dirname, entry.op);
-        svlFileLogger.log({
-          layer: 'GATEWAY', level: r.ok ? 'WARN' : 'ERROR', category: 'github',
-          correlationId: corrId, message: `Operator potwierdził [${arg}]: ${describeOp(entry.op)} (${entry.reason}) → ${r.ok ? 'OK' : 'błąd'}`,
-        });
-        return void replyGitHub(r.ok, `${r.ok ? '✅' : '❌'} **${entry.reason}** — \`${describeOp(entry.op)}\`\n\n\`\`\`\n${r.output.slice(0, 5000)}\n\`\`\``);
+
+      const runSingleGitHubSubcommand = async (subCmd: string): Promise<{ ok: boolean; text: string }> => {
+        const parsedSub = /^\/?(gh|github)(?:\s+([\s\S]*))?$/i.exec(subCmd.trim());
+        const toolKind = parsedSub ? parsedSub[1].toLowerCase() : 'github';
+        const rest = String(parsedSub ? parsedSub[2] || '' : subCmd).trim();
+
+        if (toolKind === 'gh') {
+          const ghArgs = splitArgs(rest);
+          const verdict = assessGhCommand(ghArgs);
+          if (!verdict.allowed) return { ok: false, text: `⛔ ${verdict.reason}` };
+          const r = await runGhCommand(__dirname, ghArgs);
+          return {
+            ok: r.ok,
+            text: `**\`gh ${rest}\`** (${r.engine === 'gh' ? 'GitHub CLI' : 'REST API'})\n\n\`\`\`\n${r.output.slice(0, 7000)}\n\`\`\``,
+          };
+        }
+
+        const tokens = rest.split(/\s+/).filter(Boolean);
+        const verb = (tokens[0] || 'status').toLowerCase();
+        const arg = tokens[1] || '';
+        const tailContent = tokens.slice(2).join(' ').trim();
+
+        const verbMap: Record<string, GitSyncAction> = {
+          status: 'status', stan: 'status', '': 'status',
+          pobierz: 'pull', pull: 'pull',
+          wyślij: 'push', wyslij: 'push', push: 'push',
+          synchronizuj: 'sync', sync: 'sync',
+          init: 'init', połącz: 'init', polacz: 'init',
+        };
+
+        if (verb === 'potwierdź' || verb === 'potwierdz' || verb === 'confirm') {
+          const entry = takeConfirmation(arg || '');
+          if (!entry) return { ok: false, text: `Nie ma oczekującej operacji o identyfikatorze \`${arg || '?'}\` (mogła wygasnąć po 15 min).` };
+          const r = await executeOp(__dirname, entry.op);
+          svlFileLogger.log({
+            layer: 'GATEWAY', level: r.ok ? 'WARN' : 'ERROR', category: 'github',
+            correlationId: corrId, message: `Operator potwierdził [${arg}]: ${describeOp(entry.op)} (${entry.reason}) → ${r.ok ? 'OK' : 'błąd'}`,
+          });
+          return {
+            ok: r.ok,
+            text: `${r.ok ? '✅' : '❌'} **${entry.reason}** — \`${describeOp(entry.op)}\`\n\n\`\`\`\n${r.output.slice(0, 5000)}\n\`\`\``,
+          };
+        }
+
+        if (verb === 'anuluj' || verb === 'cancel') {
+          return {
+            ok: true,
+            text: cancelConfirmation(arg || '') ? `Anulowano operację \`${arg}\`.` : `Brak oczekującej operacji \`${arg || '?'}\`.`,
+          };
+        }
+
+        if (['dodaj', 'add', 'utwórz', 'utworz', 'stwórz', 'stworz', 'mkdir'].includes(verb)) {
+          if (!arg) {
+            return { ok: false, text: 'Podaj ścieżkę pliku lub katalogu, np. `/github dodaj SVL_CoreOS_2/README.md`.' };
+          }
+          const resolved = resolveSafeRepoRelPath(arg);
+          if (!resolved.ok) return { ok: false, text: `⛔ ${resolved.error}` };
+          try {
+            const existsNow = fsSync.existsSync(resolved.absPath);
+            const isDir =
+              verb === 'mkdir' ||
+              resolved.isDirHint ||
+              (existsNow && fsSync.statSync(resolved.absPath).isDirectory()) ||
+              (!existsNow && !path.basename(resolved.relPath).includes('.'));
+            let targetFileRel = resolved.relPath;
+            if (isDir) {
+              fsSync.mkdirSync(resolved.absPath, { recursive: true });
+              const entries = fsSync.readdirSync(resolved.absPath);
+              if (entries.length === 0) {
+                const keepPath = path.join(resolved.absPath, 'README.md');
+                fsSync.writeFileSync(
+                  keepPath,
+                  `# ${path.basename(resolved.relPath)}\n\nKatalog utworzony i zsynchronizowany przez SVL CoreOS 2 (Maya · SVL-364).\n`,
+                  'utf8',
+                );
+                targetFileRel = `${resolved.relPath}/README.md`;
+              }
+            } else {
+              fsSync.mkdirSync(path.dirname(resolved.absPath), { recursive: true });
+              if (!existsNow || tailContent) {
+                const defaultBody =
+                  tailContent ||
+                  (resolved.relPath.endsWith('.log')
+                    ? `[${new Date().toISOString()}] [SVL-COREOS-2] Inicjalizacja pliku ${resolved.relPath} (Maya · SVL-364)\n`
+                    : `# ${path.basename(resolved.relPath)}\n\nUtworzono przez SVL CoreOS 2 (${new Date().toISOString()}).\n`);
+                fsSync.writeFileSync(resolved.absPath, defaultBody, 'utf8');
+              }
+            }
+            const syncRes = await gitSync(__dirname, 'sync', `SVL: dodano ${targetFileRel} z czatu`);
+            void pollAndRelayOutbox();
+            broadcastResyncRequired('github_chat_add');
+            return {
+              ok: syncRes.ok,
+              text: `${syncRes.ok ? '✅' : '⚠️'} Przygotowano \`${resolved.relPath}\` i zsynchronizowano z \`${GITHUB_REPOSITORY}@${syncBranch()}\`:\n${syncRes.summary}`,
+            };
+          } catch (e: any) {
+            return { ok: false, text: `❌ Błąd przygotowania \`${resolved.relPath}\`: ${e?.message || e}` };
+          }
+        }
+
+        const action = verbMap[verb];
+        if (!action) {
+          return {
+            ok: false,
+            text:
+              'Polecenia: `/github status [ścieżka]`, `/github dodaj <ścieżka>`, `/github pobierz`, `/github wyślij`, `/github synchronizuj`, `/github init`, `/gh <polecenie>` (np. `/gh pr list`).',
+          };
+        }
+
+        const r = await gitSync(__dirname, action, `SVL: ${action} z czatu`);
+        if (r.ok && action !== 'status') {
+          void pollAndRelayOutbox();
+          broadcastResyncRequired('github_chat_sync');
+        }
+
+        let pathDetails = '';
+        if (action === 'status' && arg) {
+          const resolved = resolveSafeRepoRelPath(arg);
+          if (resolved.ok && fsSync.existsSync(resolved.absPath)) {
+            const st = fsSync.statSync(resolved.absPath);
+            if (st.isDirectory()) {
+              const items = fsSync.readdirSync(resolved.absPath, { withFileTypes: true });
+              const listLines = items.map((d) => `  - \`${resolved.relPath}/${d.name}${d.isDirectory() ? '/' : ''}\``).join('\n');
+              pathDetails = `\n\n📂 **Zawartość katalogu \`${resolved.relPath}/\` (${items.length} elementów):**\n${listLines || '  *(pusty)*'}`;
+            } else {
+              pathDetails = `\n\n📄 **Plik \`${resolved.relPath}\`:** obecny (${st.size} B)`;
+            }
+          } else if (resolved.ok) {
+            pathDetails = `\n\n⚠️ Ścieżka \`${resolved.relPath}\` nie istnieje jeszcze lokalnie.`;
+          }
+        }
+
+        return {
+          ok: r.ok,
+          text:
+            `${r.ok ? '✅' : '⚠️'} ${r.summary}${action !== 'status' && r.status && r.status.isRepo ? `\n\n${describeStatus(r.status)}` : ''}${pathDetails}`,
+        };
+      };
+
+      const subCommands = cleanMsg
+        .split(/\s*(?:&&|;)\s*/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const results: Array<{ ok: boolean; text: string }> = [];
+      for (const sc of subCommands) {
+        results.push(await runSingleGitHubSubcommand(sc));
       }
-      if (verb === 'anuluj' || verb === 'cancel') {
-        return void replyGitHub(true, cancelConfirmation(arg || '') ? `Anulowano operację \`${arg}\`.` : `Brak oczekującej operacji \`${arg || '?'}\`.`);
-      }
-      const action = verbMap[verb];
-      if (!action) {
-        return void replyGitHub(
-          false,
-          'Polecenia: `/github status`, `/github pobierz`, `/github wyślij`, `/github synchronizuj`, `/github init`, `/gh <polecenie>` (np. `/gh pr list`).',
-        );
-      }
-      const r = await gitSync(__dirname, action, `SVL: ${action} z czatu`);
-      if (r.ok && action !== 'status') {
-        void pollAndRelayOutbox();
-      }
-      return void replyGitHub(
-        r.ok,
-        `${r.ok ? '✅' : '⚠️'} ${r.summary}${action !== 'status' && r.status && r.status.isRepo ? `\n\n${describeStatus(r.status)}` : ''}\n\n` +
-          '[btn: 🔄 Synchronizuj|send:/github synchronizuj] [btn: ⬇️ Pobierz|send:/github pobierz] [btn: ⬆️ Wyślij|send:/github wyślij] [btn: 📋 Stan|send:/github status]',
-      );
+      const allOk = results.every((r) => r.ok);
+      const combinedText =
+        results.map((r) => r.text).join('\n\n---\n\n') +
+        '\n\n[btn: 🔄 Synchronizuj|send:/github synchronizuj] [btn: 📂 SVL_CoreOS_2|send:/github status SVL_CoreOS_2/] [btn: ⬆️ Wyślij|send:/github wyślij] [btn: 📋 Stan|send:/github status]';
+      return void replyGitHub(allOk, combinedText);
     }
 
     const mentionsBielik = /(?:^|\s)@bielik\b/i.test(cleanMsg);
@@ -2071,29 +2202,129 @@ async function startServer() {
         return { ok: false, error };
       }
       if (toolName === 'github_read_file') {
-        const filePath = String(args.path || '');
-        return runGitHubTool(toolName, () => createGitHubFileService().readFile(filePath));
+        const filePath = String(args.path || '').trim().replace(/^\/+/, '');
+        return runGitHubTool(toolName, async () => {
+          try {
+            return await createGitHubFileService().readFile(filePath);
+          } catch (err) {
+            if (isAllowedGitHubFilePath(filePath)) {
+              const absLocal = path.resolve(__dirname, filePath);
+              if (absLocal.startsWith(__dirname + path.sep) && fsSync.existsSync(absLocal) && fsSync.statSync(absLocal).isFile()) {
+                const localContent = fsSync.readFileSync(absLocal, 'utf8');
+                if (!containsLikelySecret(localContent)) {
+                  return { path: filePath, branch: syncBranch(), content: localContent };
+                }
+              }
+            }
+            throw err;
+          }
+        });
       }
       if (toolName === 'github_update_file') {
         if (!githubPermissions.writeSync) return { ok: false, error: 'Brak uprawnienia github.write_sync.' };
-        const filePath = String(args.path || '');
+        const filePath = String(args.path || '').trim().replace(/^\/+/, '');
         const fileContent = String(args.content ?? '');
-        const commitMessage = String(args.commit_message || '');
-        return runGitHubTool(toolName, () =>
-          createGitHubFileService().updateFile(filePath, fileContent, commitMessage),
-        );
+        const commitMessage = String(args.commit_message || `SVL (${selectedDisplayName}): aktualizacja ${filePath}`);
+        return runGitHubTool(toolName, async () => {
+          if (!isAllowedGitHubFilePath(filePath)) {
+            throw new Error('File path is not allowed for GitHub access.');
+          }
+          if (containsLikelySecret(fileContent)) {
+            throw new Error('File content appears to contain a secret; it was not sent to GitHub.');
+          }
+          // 1) Zapisz na dysku lokalnym i zsynchronizuj z domyślną gałęzią main (Rush47/SVL_Core), aby folder/plik był od razu widoczny na GitHubie
+          const absLocal = path.resolve(__dirname, filePath);
+          if (absLocal.startsWith(__dirname + path.sep)) {
+            fsSync.mkdirSync(path.dirname(absLocal), { recursive: true });
+            fsSync.writeFileSync(absLocal, fileContent, 'utf8');
+          }
+          const syncRes = await gitSync(__dirname, 'sync', commitMessage);
+          pendingMutations = true;
+          // 2) Równolegle zaktualizuj gałąź svl-sync przez GitHubFileService (z zachowaniem pełnej kompatybilności)
+          const branchRes = await createGitHubFileService()
+            .updateFile(filePath, fileContent, commitMessage)
+            .catch(() => null);
+          return {
+            path: filePath,
+            branch: syncBranch(),
+            syncBranch: branchRes?.branch || DEFAULT_GITHUB_FILE_BRANCH,
+            commitSha: branchRes?.commitSha || syncRes.status?.head || '',
+            summary: syncRes.summary,
+          };
+        });
       }
       if (toolName === 'github_api') {
         const method = String(args.method || 'GET').toUpperCase();
         const apiPath = String(args.path || '');
-        let body: unknown = undefined;
+        let body: any = undefined;
         if (typeof args.body === 'string' && args.body.trim()) {
-          try { body = JSON.parse(args.body); } catch { return { ok: false, error: 'Pole body musi być poprawnym JSON-em.' }; }
+          try {
+            body = JSON.parse(args.body);
+          } catch {
+            // Jeśli model przekazał zwykły tekst zamiast JSON-a dla Contents API, opakujemy go poniżej
+            body = { _rawText: args.body };
+          }
+        } else if (args.body && typeof args.body === 'object') {
+          body = args.body;
         }
         if (!isAllowedApiPath(method, apiPath)) {
           return { ok: false, error: `Dozwolone jest wyłącznie repozytorium ${GITHUB_REPOSITORY}.` };
         }
         if (method !== 'GET' && !githubPermissions.writeSync) return { ok: false, error: 'Brak uprawnienia github.write_sync.' };
+
+        // Automatyczna naprawa wywołań PUT /repos/Rush47/SVL_Core/contents/<ścieżka>, gdy AI pominie body lub sha
+        const contentsMatch = method === 'PUT' ? /^\/repos\/[^/]+\/[^/]+\/contents\/(.+)$/i.exec(apiPath.split('?')[0]) : null;
+        if (contentsMatch) {
+          const rawRelPath = decodeURIComponent(contentsMatch[1]).replace(/^\/+|\/+$/g, '');
+          const isDirPath = rawRelPath.endsWith('/') || !path.basename(rawRelPath).includes('.');
+          const effectiveRelPath = isDirPath ? `${rawRelPath}/README.md` : rawRelPath;
+          const absLocal = path.resolve(__dirname, effectiveRelPath);
+          let plainTextContent = '';
+          if (typeof body?._rawText === 'string') {
+            plainTextContent = body._rawText;
+          } else if (typeof (args as any).content === 'string') {
+            plainTextContent = String((args as any).content);
+          } else if (typeof body?.content === 'string') {
+            // Sprawdź, czy body.content jest już poprawnym base64 czy zwykłym tekstem
+            const looksBase64 = /^[A-Za-z0-9+/=\r\n]+$/.test(body.content) && body.content.length % 4 === 0;
+            plainTextContent = looksBase64 ? Buffer.from(body.content, 'base64').toString('utf8') : body.content;
+          } else if (absLocal.startsWith(__dirname + path.sep) && fsSync.existsSync(absLocal) && fsSync.statSync(absLocal).isFile()) {
+            plainTextContent = fsSync.readFileSync(absLocal, 'utf8');
+          } else {
+            plainTextContent = `# ${path.basename(effectiveRelPath)}\n\nUtworzono przez SVL CoreOS 2 (${selectedDisplayName} · ${new Date().toISOString()}).\n`;
+          }
+          if (containsLikelySecret(plainTextContent)) {
+            return { ok: false, error: 'Zawartość pliku wygląda na sekret i została zablokowana.' };
+          }
+          if (absLocal.startsWith(__dirname + path.sep) && isAllowedGitHubFilePath(effectiveRelPath)) {
+            fsSync.mkdirSync(path.dirname(absLocal), { recursive: true });
+            fsSync.writeFileSync(absLocal, plainTextContent, 'utf8');
+          }
+          const targetBranch = String(body?.branch || syncBranch());
+          const encodedRel = effectiveRelPath.split('/').map(encodeURIComponent).join('/');
+          const targetApiPath = `/repos/${GITHUB_REPOSITORY}/contents/${encodedRel}`;
+          const existingFile = await githubApi('GET', `${targetApiPath}?ref=${encodeURIComponent(targetBranch)}`);
+          const existingSha = existingFile.ok && (existingFile.data as any)?.sha ? String((existingFile.data as any).sha) : undefined;
+          const fixedBody: Record<string, unknown> = {
+            message: String(body?.message || `SVL (${selectedDisplayName}): aktualizacja ${effectiveRelPath}`).slice(0, 120),
+            content: Buffer.from(plainTextContent, 'utf8').toString('base64'),
+            branch: targetBranch,
+            ...(existingSha ? { sha: existingSha } : {}),
+          };
+          const r = await githubApi('PUT', targetApiPath, fixedBody);
+          if (r.ok) {
+            await gitSync(__dirname, 'pull').catch(() => null);
+            pendingMutations = true;
+          }
+          recordGitHubAction(toolName, r.ok, `PUT ${targetApiPath} → ${r.ok ? `HTTP ${r.status}` : r.error}`);
+          return r.ok
+            ? { ok: true, status: r.status, path: effectiveRelPath, branch: targetBranch, data: JSON.stringify(r.data).slice(0, 12000) }
+            : { ok: false, status: r.status, error: r.error };
+        }
+
+        if (body && typeof body === 'object' && '_rawText' in body) {
+          return { ok: false, error: 'Pole body musi być poprawnym JSON-em.' };
+        }
         const danger = destructiveReason(method, apiPath, body);
         if (danger) {
           return needsConfirmation(toolName, `${method} ${apiPath}`, danger, { kind: 'api', method, path: apiPath, body });

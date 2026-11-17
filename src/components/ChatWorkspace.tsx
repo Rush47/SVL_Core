@@ -1297,11 +1297,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               <option value="svl-hybrid-router">
                 Bielik / Maya · Ollama ({ollamaReachable ? `${ollamaModels.length} modeli` : 'niedostępna — zapas'})
               </option>
-              {ollamaModels.map((m: any) => (
-                <option key={m.name} value={`ollama:${m.name}`}>
-                  Ollama: {m.name} ({m.parameter_size || 'LLM'})
-                </option>
-              ))}
+              <option value="ollama:svl364-apex-uncensored:latest">
+                SVL CoreOS 2 · Apex-Uncensored (Maya · SVL-364 Ship)
+              </option>
+              <option value="ollama:llama3.2-vision:11b">
+                Ollama: llama3.2-vision:11b (Vision · 11B)
+              </option>
+              {ollamaModels
+                .filter((m: any) => m.name !== 'svl364-apex-uncensored:latest' && m.name !== 'llama3.2-vision:11b')
+                .map((m: any) => (
+                  <option key={m.name} value={`ollama:${m.name}`}>
+                    Ollama: {m.name} ({m.parameter_size || 'LLM'})
+                  </option>
+                ))}
             </select>
           </div>
 

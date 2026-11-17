@@ -29,9 +29,9 @@ const TERMINAL_TABS: Array<{
       'Zdalny terminal SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Obsługuje: (1) /exec <dowolne polecenie> oraz /root <dowolne polecenie>, (2) dowolne polecenia w języku naturalnym (Maya & Bielik ROOT), oraz (3) bezpośrednie komendy powłoki Linux.',
     quickCommands: [
       '/exec id && uname -a && uptime',
-      '/exec ip -br addr && ss -tlnp',
+      '/exec ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/build_manifest.json',
+      '/exec ollama run svl364-apex-uncensored:latest',
       '/exec raport systemu',
-      'Pokaż aktywne procesy root, dysk i moduły SQLite',
     ],
   },
   {
@@ -43,8 +43,8 @@ const TERMINAL_TABS: Array<{
       'Powłoka Linux działa z uprawnieniami ROOT (uid=0) po autoryzacji SVL_OPERATOR_TOKEN. Obsługuje /exec <polecenie>, polecenia naturalne oraz bezpośrednie komendy Bash.',
     quickCommands: [
       '/exec id && uname -a',
-      'sudo ufw status',
-      'df -h / && free -m',
+      'ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/core_init.log',
+      'cat SVL_CoreOS_2/ai_core/ollama_svl364_config.json',
       'ollama list',
     ],
   },
@@ -69,14 +69,14 @@ const TERMINAL_TABS: Array<{
     subtitle: 'GitHub CLI (gh) i synchronizacja obustronna z repozytorium Rush47/SVL_Core (token GITHUB_TOKEN z .env)',
     defaultPrompt: 'gh(Rush47/SVL_Core)$',
     welcomeText:
-      'GitHub CLI dla repozytorium Rush47/SVL_Core. Wpisz polecenie gh (np. "pr list", "issue list", "run list", "api /repos/Rush47/SVL_Core") albo synchronizację: status, pobierz, wyślij, synchronizuj, init.',
+      'GitHub CLI dla repozytorium Rush47/SVL_Core. Wpisz polecenie gh (np. "pr list", "issue list", "run list", "api /repos/Rush47/SVL_Core/contents/SVL_CoreOS_2") albo synchronizację: status, pobierz, wyślij, synchronizuj, init.',
     quickCommands: [
       'status',
       'synchronizuj',
+      'api /repos/Rush47/SVL_Core/contents/SVL_CoreOS_2',
       'auth status',
       'pr list',
       'issue list',
-      'run list',
     ],
   },
   {
