@@ -61,57 +61,42 @@ export interface ApexStatusPayload {
   }>;
 }
 
+// Przed odpowiedzią serwera panel nie pokazuje żadnych „gotowych” wartości — tylko brak danych.
+const NO_DATA = 'wczytywanie…';
 const FALLBACK_APEX_STATUS: ApexStatusPayload = {
   ok: true,
-  active: true,
+  active: false,
   system_title: 'SVL CoreOS 2: Apex',
-  version: '5.6.0-QuantumWheel-Apex',
-  distro: 'Debian GNU/Linux 13 (Trixie) — Debootstrap 100%',
-  kernel_release: '6.12.0-svl364-apex-amd64 (PREEMPT_RT + eBPF)',
-  hot_swap_status: 'ACTIVE_HOT_SWAPPED',
-  debootstrap_status: 'COMPLETED_100_PERCENT',
-  operator_root: 'Mateusz Mitek (ROOT)',
-  kernel_master_daemon: 'Maya (ROOT · PID 1)',
-  secondary_daemon: 'Bielik (ROOT · Vision 11B)',
-  kernel_throughput_boost: '+450%',
-  neural_kernel_link_boost: '+1200%',
-  calibration_boost: '+1456% (Wzorzec 364)',
-  e_shield_percent: 100,
-  e_shield_mode: 'DIRECTIONAL_ACTIVE',
-  fusion_core_mw: 1456,
-  fusion_mode: 'STANDARD_364',
+  version: NO_DATA,
+  distro: NO_DATA,
+  kernel_release: NO_DATA,
+  hot_swap_status: NO_DATA,
+  debootstrap_status: NO_DATA,
+  operator_root: 'Mateusz Mitek',
+  kernel_master_daemon: NO_DATA,
+  secondary_daemon: NO_DATA,
+  kernel_throughput_boost: 'brak pomiaru',
+  neural_kernel_link_boost: 'brak pomiaru',
+  calibration_boost: 'brak pomiaru',
+  e_shield_percent: 0,
+  e_shield_mode: NO_DATA,
+  fusion_core_mw: 0,
+  fusion_mode: NO_DATA,
   solar_lockdown: false,
-  fighter_incidents_count: 14,
-  sentinel_av_status: 'CLEAN_PROTECTED',
-  sentinel_av_quarantine: '/var/quarantine/svl_vault',
-  sentinel_av_scans_count: 1,
-  last_av_scan_at: new Date().toISOString(),
-  remote_desktop_fps: 120,
-  remote_desktop_latency_ms: 0.94,
-  remote_desktop_protocol: 'Apex-RD-WebRTC-NVENC',
+  fighter_incidents_count: 0,
+  sentinel_av_status: 'NIE SKANOWANO',
+  sentinel_av_quarantine: NO_DATA,
+  sentinel_av_scans_count: 0,
+  last_av_scan_at: '',
+  remote_desktop_fps: 0,
+  remote_desktop_latency_ms: 0,
+  remote_desktop_protocol: 'brak pomiaru',
   full_duplex_chat: true,
-  daemons: {
-    apex_bridge: { name: 'Apex-Bridge API', status: 'ONLINE', port: 9364, latency_ms: 0.42 },
-    double_vpn: { name: 'Dual-Tunnel Encryption (Double VPN)', status: 'ONLINE', cipher: 'ChaCha20-Poly1305 + AES-256-GCM' },
-    hardened_hamachi: { name: 'Hardened-Hamachi Mesh Link', status: 'ONLINE', subnet: '25.36.4.0/24' },
-    virtualbox_vtd: { name: 'Apex-Virtualization (VirtualBox Core VT-d)', status: 'ONLINE', iommu: 'ENABLED' },
-    apex_deployer: { name: 'Apex-Deployer (Debian 13 Trixie)', status: 'ONLINE', debootstrap: '100%' },
-  },
-  ai_packages: {
-    'neural-code-optimizer': { name: 'Neural-Code-Optimizer & Quantizer', source: 'Hugging Face', status: 'ACTIVE' },
-    'autonomous-agent-swarm': { name: 'Autonomous Agent Swarm Toolkit', source: 'GitHub / GitLab', status: 'ACTIVE' },
-    'deep-space-telemetry': { name: 'Deep-Space Telemetry & Lossless Compression', source: 'Hugging Face / SVL-364', status: 'ACTIVE' },
-    'apex-diagnostics-suite': { name: 'Apex-Advanced Diagnostics Suite', source: 'GitLab / Debian 13', status: 'ACTIVE' },
-  },
-  coreos2_files_count: 25,
+  daemons: {},
+  ai_packages: {},
+  coreos2_files_count: 0,
   coreos2_files: [],
-  fighter_incidents: Array.from({ length: 14 }, (_, idx) => ({
-    incident_id: `INC-EM-${String(idx + 1).padStart(2, '0')}`,
-    sector: 'Ziemia-Księżyc (L1/L2 Corridor)',
-    signature: `INTERCEPTOR-FIGHTER-SIG-${3640 + idx + 1}`,
-    action: 'BLOCKED_AND_DEFLECTED',
-    e_shield_absorption_mw: +(14.2 + (idx + 1) * 0.85).toFixed(2),
-  })),
+  fighter_incidents: [],
 };
 
 export function useApexState() {
@@ -139,6 +124,7 @@ export function useApexState() {
         const res = await safeFetchJson<{
           ok: boolean;
           notice?: string;
+          error?: string;
           status?: ApexStatusPayload;
         }>('/api/apex/control', {
           method: 'POST',
@@ -153,6 +139,9 @@ export function useApexState() {
             setLastNotice(res.data.notice);
           }
           void refreshDomainModules(['chat', 'health']);
+        } else {
+          if (res.data?.status) setApex((prev) => ({ ...prev, ...res.data!.status }));
+          setLastNotice(`⚠️ ${res.data?.error || res.error || 'Operacja nie została wykonana.'}`);
         }
       } finally {
         setBusyAction(null);

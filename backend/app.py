@@ -660,214 +660,267 @@ class SVLBackendRuntime:
 
 
 class SVLCoreOS2ApexController:
-    """Żywy kontroler wykonawczy SVL CoreOS 2: Apex — łączy moduły z SVL_CoreOS_2/ z jądrem, SQLite i czatem."""
+    """
+    SVL CoreOS 2: Apex — stan wyłącznie z PRAWDZIWYCH pomiarów hosta.
+
+    Wcześniejsza wersja trzymała w pliku wpisane na sztywno wartości („Debootstrap 100%”,
+    „Hot-swap ACTIVE”, demony ONLINE, „120 FPS”, „+1456%”), a przełączniki zmieniały tylko napisy
+    — Maya ogłaszała je w czacie jako wykonane operacje. Teraz:
+    - system, jądro, demony i pakiety są mierzone (os-release, uname, porty, interfejsy, systemctl, binarki),
+    - podmiana systemu (hot-swap) i debootstrap mają status „nie wykonano”, dopóki nie ma śladu prawdziwego
+      uruchomienia (rootfs z /etc/debian_version, log instalatora),
+    - tarcza E_Shield, reaktor i Solar-Lockdown to ustawienia SCENARIUSZA statku (nie pomiar) — tak opisane.
+    """
+
+    SCENARIO_KEYS = ("e_shield_percent", "e_shield_mode", "fusion_core_mw", "fusion_mode", "solar_lockdown")
 
     def __init__(self, rt: SVLBackendRuntime) -> None:
         self.rt = rt
         self.root_dir = Path(__file__).resolve().parent.parent
         self.coreos_dir = self.root_dir / "SVL_CoreOS_2"
-        self.state_path = self.root_dir / "data" / "svl_coreos2_apex_state.json"
-        self.state = self._load_state()
+        self.state_path = self.root_dir / "data" / "svl_coreos2_scenario.json"
+        self.install_log_path = Path(os.environ.get("SVL_LOG_FILE", "/var/log/svl-coreos2-install.log"))
+        self.rootfs_dir = Path(os.environ.get("SVL_COREOS2_ROOTFS", "/srv/svl-coreos2/rootfs"))
+        self.av_scans = 0
+        self.last_av: Optional[dict[str, Any]] = None
+        self.scenario = self._load_scenario()
 
-    def _default_state(self) -> dict[str, Any]:
-        return {
-            "active": True,
-            "system_title": "SVL CoreOS 2: Apex",
-            "version": "5.6.0-QuantumWheel-Apex",
-            "distro": "Debian GNU/Linux 13 (Trixie) — Debootstrap 100%",
-            "kernel_release": "6.12.0-svl364-apex-amd64 (PREEMPT_RT + eBPF)",
-            "hot_swap_status": "ACTIVE_HOT_SWAPPED",
-            "debootstrap_status": "COMPLETED_100_PERCENT",
-            "operator_root": "Mateusz Mitek (ROOT)",
-            "kernel_master_daemon": "Maya (ROOT · PID 1)",
-            "secondary_daemon": "Bielik (ROOT · Vision 11B)",
-            "kernel_throughput_boost": "+450%",
-            "neural_kernel_link_boost": "+1200%",
-            "calibration_boost": "+1456% (Wzorzec 364)",
+    # --- ustawienia scenariusza (jedyne zapisywane wartości) -----------------------------
+    def _load_scenario(self) -> dict[str, Any]:
+        st: dict[str, Any] = {
             "e_shield_percent": 100.0,
             "e_shield_mode": "DIRECTIONAL_ACTIVE",
             "fusion_core_mw": 1456.0,
             "fusion_mode": "STANDARD_364",
             "solar_lockdown": False,
-            "fighter_incidents_count": 14,
-            "sentinel_av_status": "CLEAN_PROTECTED",
-            "sentinel_av_quarantine": "/var/quarantine/svl_vault",
-            "sentinel_av_scans_count": 1,
-            "last_av_scan_at": datetime.now(timezone.utc).isoformat(),
-            "remote_desktop_fps": 120,
-            "remote_desktop_latency_ms": 0.94,
-            "remote_desktop_protocol": "Apex-RD-WebRTC-NVENC",
-            "full_duplex_chat": True,
-            "daemons": {
-                "apex_bridge": {"name": "Apex-Bridge API", "status": "ONLINE", "port": 9364, "latency_ms": 0.42},
-                "double_vpn": {"name": "Dual-Tunnel Encryption (Double VPN)", "status": "ONLINE", "cipher": "ChaCha20-Poly1305 + AES-256-GCM"},
-                "hardened_hamachi": {"name": "Hardened-Hamachi Mesh Link", "status": "ONLINE", "subnet": "25.36.4.0/24"},
-                "virtualbox_vtd": {"name": "Apex-Virtualization (VirtualBox Core VT-d)", "status": "ONLINE", "iommu": "ENABLED"},
-                "apex_deployer": {"name": "Apex-Deployer (Debian 13 Trixie)", "status": "ONLINE", "debootstrap": "100%"},
-            },
-            "ai_packages": {
-                "neural-code-optimizer": {"name": "Neural-Code-Optimizer & Quantizer", "source": "Hugging Face", "status": "ACTIVE"},
-                "autonomous-agent-swarm": {"name": "Autonomous Agent Swarm Toolkit", "source": "GitHub / GitLab", "status": "ACTIVE"},
-                "deep-space-telemetry": {"name": "Deep-Space Telemetry & Lossless Compression", "source": "Hugging Face / SVL-364", "status": "ACTIVE"},
-                "apex-diagnostics-suite": {"name": "Apex-Advanced Diagnostics Suite", "source": "GitLab / Debian 13", "status": "ACTIVE"},
-            },
-            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-
-    def _load_state(self) -> dict[str, Any]:
-        default = self._default_state()
-        if self.state_path.exists():
-            try:
+        try:
+            if self.state_path.exists():
                 loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
-                    default.update(loaded)
-            except Exception:
-                pass
-        self._save_state(default)
-        return default
-
-    def _save_state(self, st: Optional[dict[str, Any]] = None) -> None:
-        target = st if st is not None else self.state
-        target["updated_at"] = datetime.now(timezone.utc).isoformat()
-        try:
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps(target, indent=2, ensure_ascii=False), encoding="utf-8")
+                    st.update({k: loaded[k] for k in self.SCENARIO_KEYS if k in loaded})
         except Exception:
             pass
+        return st
+
+    def _save_scenario(self) -> None:
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.state_path.write_text(json.dumps(self.scenario, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    # --- pomiary -------------------------------------------------------------------------
+    @staticmethod
+    def _os_pretty() -> str:
+        try:
+            for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        return platform.platform()
+
+    @staticmethod
+    def _port_open(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _iface_up(prefixes: tuple[str, ...]) -> Optional[str]:
+        try:
+            for name in os.listdir("/sys/class/net"):
+                if name.startswith(prefixes):
+                    return name
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _systemd_active(unit: str) -> Optional[bool]:
+        systemctl = shutil.which("systemctl")
+        if not systemctl:
+            return None
+        try:
+            out = subprocess.run([systemctl, "is-active", unit], capture_output=True, text=True, timeout=3)
+            return out.stdout.strip() == "active"
+        except Exception:
+            return None
+
+    def _daemons(self) -> dict[str, dict[str, Any]]:
+        def entry(name: str, online: bool, detail: str) -> dict[str, Any]:
+            return {"name": name, "status": "ONLINE" if online else "NIEAKTYWNY", "detail": detail, "measured": True}
+
+        bridge = self._port_open(9364)
+        wg = self._iface_up(("wg",))
+        ham = self._iface_up(("ham",))
+        vbox_bin = shutil.which("VBoxManage")
+        vbox_drv = Path("/dev/vboxdrv").exists()
+        sentinel = self._systemd_active("svl-sentinel")
+        return {
+            "apex_bridge": entry("Apex-Bridge API", bridge, "port 127.0.0.1:9364 " + ("nasłuchuje" if bridge else "nie nasłuchuje")),
+            "double_vpn": entry("WireGuard (Double VPN)", bool(wg), f"interfejs {wg}" if wg else "brak interfejsu wg*"),
+            "hardened_hamachi": entry("Hamachi Mesh Link", bool(ham), f"interfejs {ham}" if ham else "brak interfejsu ham*"),
+            "virtualbox_vtd": entry(
+                "VirtualBox (VT-d)",
+                bool(vbox_bin and vbox_drv),
+                "VBoxManage + /dev/vboxdrv" if vbox_bin and vbox_drv else ("brak VBoxManage" if not vbox_bin else "brak sterownika /dev/vboxdrv"),
+            ),
+            "svl_sentinel": entry(
+                "SVL-Sentinel (systemd)",
+                bool(sentinel),
+                "systemctl: active" if sentinel else ("brak systemd na tym hoście" if sentinel is None else "usługa nieaktywna / niezainstalowana"),
+            ),
+        }
+
+    def _ai_packages(self) -> dict[str, dict[str, Any]]:
+        """Pliki narzędzi w repozytorium — obecność pliku to nie uruchomiony pakiet."""
+        out: dict[str, dict[str, Any]] = {}
+        for rel, name in (
+            ("ai_core/huggingface_swarm_toolkit.py", "Swarm Toolkit (Hugging Face / GitHub / GitLab)"),
+            ("ai_core/Modelfile.apex-uncensored", "Profil modelu Ollama svl364-apex-uncensored"),
+        ):
+            present = (self.coreos_dir / rel).exists()
+            out[rel] = {
+                "name": name,
+                "source": f"SVL_CoreOS_2/{rel}",
+                "status": "PLIK W REPOZYTORIUM" if present else "BRAK PLIKU",
+                "measured": True,
+            }
+        return out
+
+    def _install_state(self) -> dict[str, Any]:
+        rootfs_ok = (self.rootfs_dir / "etc" / "debian_version").exists()
+        log_exists = self.install_log_path.exists()
+        return {
+            "debootstrap_status": f"ZBUDOWANY ({self.rootfs_dir})" if rootfs_ok else "NIE URUCHOMIONO",
+            "hot_swap_status": "NIE WYKONANO — podmiana działającego systemu nie jest zaimplementowana",
+            "install_log": str(self.install_log_path) if log_exists else None,
+        }
 
     def get_status(self) -> dict[str, Any]:
         files_list: list[str] = []
         if self.coreos_dir.exists():
             for p in sorted(self.coreos_dir.rglob("*")):
-                if p.is_file() and not p.name.startswith("."):
+                if p.is_file() and not p.name.startswith(".") and "__pycache__" not in p.parts:
                     files_list.append(f"SVL_CoreOS_2/{p.relative_to(self.coreos_dir).as_posix()}")
-
-        incidents = []
-        try:
-            import importlib.util
-            fw_path = self.coreos_dir / "security" / "svl_apex_firewall.py"
-            if fw_path.exists():
-                spec = importlib.util.spec_from_file_location("svl_apex_firewall", fw_path)
-                if spec and spec.loader:
-                    mod = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
-                    fw = mod.SVLApexFirewall(e_shield_pct=float(self.state.get("e_shield_percent", 100.0)))
-                    if self.state.get("solar_lockdown"):
-                        fw.activate_solar_lockdown()
-                    incidents = fw.fighter_incidents
-        except Exception:
-            pass
-
+        install = self._install_state()
+        is_debian13 = "trixie" in self._os_pretty().lower() or "debian gnu/linux 13" in self._os_pretty().lower()
         return {
             "ok": True,
-            **self.state,
+            "measured": True,
+            "active": False,
+            "system_title": "SVL CoreOS 2: Apex",
+            "version": "2.0.0 (pliki w repozytorium)",
+            "distro": self._os_pretty() + ("" if is_debian13 else " — to nie jest Debian 13"),
+            "kernel_release": platform.release(),
+            "hot_swap_status": install["hot_swap_status"],
+            "debootstrap_status": install["debootstrap_status"],
+            "install_log": install["install_log"],
+            "operator_root": "Mateusz Mitek",
+            "kernel_master_daemon": "Maya (agent w backendzie SVL, nie proces jądra)",
+            "secondary_daemon": "Bielik (agent w backendzie SVL)",
+            "kernel_throughput_boost": "brak pomiaru",
+            "neural_kernel_link_boost": "brak pomiaru",
+            "calibration_boost": "brak pomiaru",
+            **self.scenario,
+            "scenario_note": "Tarcza E_Shield, reaktor i Solar-Lockdown to ustawienia scenariusza statku — nie pomiar sprzętu.",
+            "fighter_incidents_count": 0,
+            "fighter_incidents": [],
+            "sentinel_av_status": (
+                "NIE SKANOWANO" if not self.last_av else ("CZYSTO" if self.last_av.get("status") == "CLEAN" else "WYKRYTO ZAGROŻENIA")
+            ),
+            "sentinel_av_quarantine": "skaner SVL-365 (pliki projektu + baza SQLite)",
+            "sentinel_av_scans_count": self.av_scans,
+            "last_av_scan_at": (self.last_av or {}).get("scannedAt"),
+            "remote_desktop_fps": 0,
+            "remote_desktop_latency_ms": 0,
+            "remote_desktop_protocol": "brak działającego serwera zdalnego pulpitu (brak pomiaru)",
+            "full_duplex_chat": True,
+            "daemons": self._daemons(),
+            "ai_packages": self._ai_packages(),
             "coreos2_files_count": len(files_list),
             "coreos2_files": files_list,
-            "fighter_incidents": incidents,
         }
 
     def handle_control(self, body: dict[str, Any], origin: str = "client", corr: str = "") -> dict[str, Any]:
         action = str(body.get("action") or "").strip()
         emit_chat = bool(body.get("emitToChat", True))
         chat_notice = ""
+        ok = True
+        scenario_tag = "_(ustawienie scenariusza statku — nie pomiar sprzętu)_"
 
-        if action == "cycle_e_shield" or action == "set_e_shield":
-            if "value" in body:
-                nxt = float(body["value"])
-            else:
-                cur = float(self.state.get("e_shield_percent", 100.0))
-                nxt = 125.0 if cur < 110.0 else (150.0 if cur < 135.0 else 100.0)
-            self.state["e_shield_percent"] = nxt
-            self.state["e_shield_mode"] = (
+        if action in ("cycle_e_shield", "set_e_shield"):
+            cur = float(self.scenario.get("e_shield_percent", 100.0))
+            nxt = float(body["value"]) if "value" in body else (125.0 if cur < 110.0 else (150.0 if cur < 135.0 else 100.0))
+            self.scenario["e_shield_percent"] = max(0.0, min(150.0, nxt))
+            self.scenario["e_shield_mode"] = (
                 "MAX_APEX_OVERCHARGE_150" if nxt >= 145.0 else ("OVERCHARGE_125" if nxt >= 120.0 else "DIRECTIONAL_ACTIVE")
             )
-            chat_notice = f"🛡️ **[SVL-CoreOS 2: Apex]** Tarcza kierunkowa **E_Shield** przestawiona na **{nxt:.0f}%** (`{self.state['e_shield_mode']}`)."
-
-        elif action == "cycle_fusion_core" or action == "set_fusion_core":
-            if "value" in body:
-                nxt_mw = float(body["value"])
-            else:
-                cur_mw = float(self.state.get("fusion_core_mw", 1456.0))
-                nxt_mw = 1820.0 if cur_mw < 1600.0 else (2100.0 if cur_mw < 1950.0 else 1456.0)
-            self.state["fusion_core_mw"] = nxt_mw
-            self.state["fusion_mode"] = (
+            chat_notice = f"🛡️ Tarcza E_Shield ustawiona na **{nxt:.0f}%** {scenario_tag}"
+        elif action in ("cycle_fusion_core", "set_fusion_core"):
+            cur_mw = float(self.scenario.get("fusion_core_mw", 1456.0))
+            nxt_mw = float(body["value"]) if "value" in body else (1820.0 if cur_mw < 1600.0 else (2100.0 if cur_mw < 1950.0 else 1456.0))
+            self.scenario["fusion_core_mw"] = nxt_mw
+            self.scenario["fusion_mode"] = (
                 "MAX_VOID_2100MW" if nxt_mw >= 2000.0 else ("APEX_OVERDRIVE_1820MW" if nxt_mw >= 1700.0 else "STANDARD_364")
             )
-            chat_notice = f"⚡ **[SVL-CoreOS 2: Apex]** Reaktor Fuzyjny SVL-364 ustawiony na **{nxt_mw:.0f} MW** (`{self.state['fusion_mode']}`)."
-
+            chat_notice = f"⚡ Reaktor ustawiony na **{nxt_mw:.0f} MW** {scenario_tag}"
         elif action == "toggle_solar_lockdown":
-            new_lock = not bool(self.state.get("solar_lockdown", False))
-            self.state["solar_lockdown"] = new_lock
-            if new_lock:
-                self.state["e_shield_percent"] = max(float(self.state.get("e_shield_percent", 100.0)), 125.0)
-                self.state["e_shield_mode"] = "SOLAR_LOCKDOWN_MAX_DEFENSE"
-            else:
-                self.state["e_shield_mode"] = "DIRECTIONAL_ACTIVE"
-            chat_notice = (
-                "🚨 **[SVL-Apex Firewall · ALARM KANAŁU WSZYSCY]** Protokół **Solar-Lockdown AKTYWOWANY**! Zablokowano wektory 14 myśliwców w sektorze Ziemia–Księżyc, tarcza `E_Shield` wzmocniona."
-                if new_lock
-                else "✅ **[SVL-Apex Firewall]** Protokół **Solar-Lockdown** przełączony w tryb dozoru pasywnego (`STANDBY`)."
-            )
-
-        elif action == "toggle_daemon":
-            daemon_id = str(body.get("daemonId") or body.get("daemon_id") or "").strip()
-            daemons = self.state.get("daemons", {})
-            if daemon_id in daemons:
-                cur_st = daemons[daemon_id].get("status", "ONLINE")
-                new_st = "STANDBY" if cur_st == "ONLINE" else "ONLINE"
-                daemons[daemon_id]["status"] = new_st
-                chat_notice = f"🌐 **[SVL-CoreOS 2: Apex]** Daemon `{daemons[daemon_id].get('name', daemon_id)}` przełączony w stan **{new_st}**."
-
-        elif action == "toggle_ai_package":
-            pkg_id = str(body.get("packageId") or body.get("package_id") or "").strip()
-            pkgs = self.state.get("ai_packages", {})
-            if pkg_id in pkgs:
-                cur_st = pkgs[pkg_id].get("status", "ACTIVE")
-                new_st = "STANDBY" if cur_st == "ACTIVE" else "ACTIVE"
-                pkgs[pkg_id]["status"] = new_st
-                chat_notice = f"🧠 **[Hugging Face / Swarm Toolkit]** Pakiet `{pkgs[pkg_id].get('name', pkg_id)}` ustawiony na **{new_st}**."
-
+            self.scenario["solar_lockdown"] = not bool(self.scenario.get("solar_lockdown", False))
+            chat_notice = f"🚨 Solar-Lockdown: **{'WŁĄCZONY' if self.scenario['solar_lockdown'] else 'WYŁĄCZONY'}** {scenario_tag}"
+        elif action in ("toggle_daemon", "toggle_ai_package", "cycle_rd_fps"):
+            ok = False
+            chat_notice = ""
+            self._save_scenario()
+            return {
+                "ok": False,
+                "action": action,
+                "error": (
+                    "Ten przełącznik zmieniał wcześniej tylko napis w panelu — niczego nie uruchamiał. "
+                    "Stan demonów, pakietów i zdalnego pulpitu jest teraz mierzony na hoście; "
+                    "uruchom usługę w systemie (np. terminal Linux: systemctl start …), a panel to pokaże."
+                ),
+                "status": self.get_status(),
+            }
         elif action == "run_av_scan":
             av_res = self.rt.antivirus.scan_and_purge(emit_to_chat=False, origin=origin, correlation_id=corr)
-            self.state["sentinel_av_scans_count"] = int(self.state.get("sentinel_av_scans_count", 1)) + 1
-            self.state["last_av_scan_at"] = datetime.now(timezone.utc).isoformat()
-            self.state["sentinel_av_status"] = "CLEAN_PROTECTED"
+            self.av_scans += 1
+            self.last_av = {"status": av_res.get("status"), "scannedAt": datetime.now(timezone.utc).isoformat()}
             chat_notice = (
-                f"🧬 **[SVL-Sentinel AV · Heurystyka Jądra]** Skanowanie #{self.state['sentinel_av_scans_count']} zakończone: "
-                f"`CLEAN_PROTECTED` (kwarantanna `/var/quarantine/svl_vault`: 0 aktywnych zagrożeń, usunięto zbuforowanych anomalii: {av_res.get('purgedCount', 0)})."
+                f"🧬 Skan SVL-365 #{self.av_scans}: **{av_res.get('status', '?')}** — przeskanowano plików: "
+                f"{av_res.get('filesScanned', 0)}, usunięto zagrożeń: {av_res.get('threatsFoundAndPurged', 0)}."
             )
-
-        elif action == "cycle_rd_fps":
-            cur_fps = int(self.state.get("remote_desktop_fps", 120))
-            nxt_fps = 240 if cur_fps == 120 else 120
-            self.state["remote_desktop_fps"] = nxt_fps
-            self.state["remote_desktop_latency_ms"] = 0.48 if nxt_fps == 240 else 0.94
-            chat_notice = f"🖥️ **[Apex Remote Desktop GUI]** Strumień przełączony na **{nxt_fps} FPS** (opóźnienie `{self.state['remote_desktop_latency_ms']} ms`)."
-
         elif action == "broadcast_sentinel_test":
+            st = self.get_status()
+            online = [d["name"] for d in st["daemons"].values() if d["status"] == "ONLINE"]
             chat_notice = (
-                "📡 **[SVL-Sentinel Daemon · Broadcast Kanału Wszyscy]** Raport taktyczny **SVL CoreOS 2: Apex**:\n"
-                f"- **Kernel Master Daemon:** `{self.state['kernel_master_daemon']}` (`{self.state['distro']}`)\n"
-                f"- **Tarcza E_Shield:** `{self.state['e_shield_percent']:.0f}%` (`{self.state['e_shield_mode']}`)\n"
-                f"- **Reaktor Fuzyjny SVL-364:** `{self.state['fusion_core_mw']:.0f} MW` (`{self.state['kernel_throughput_boost']}` Kernel Throughput)\n"
-                f"- **Solar-Lockdown (14 myśliwców):** `{'AKTYWNY' if self.state['solar_lockdown'] else 'DOZÓR AKTYWNY'}`\n"
-                f"- **SVL-Sentinel AV:** `{self.state['sentinel_av_status']}` (`{self.state['sentinel_av_quarantine']}`)"
+                "📡 **Raport SVL CoreOS 2: Apex (pomiar hosta)**\n"
+                f"- System: `{st['distro']}` · jądro `{st['kernel_release']}`\n"
+                f"- Debootstrap: `{st['debootstrap_status']}` · podmiana systemu: `{st['hot_swap_status']}`\n"
+                f"- Działające usługi: {', '.join(online) if online else 'żadna z monitorowanych'}\n"
+                f"- Skan SVL-365: `{st['sentinel_av_status']}`\n"
+                f"- Scenariusz statku: tarcza {st['e_shield_percent']:.0f}%, reaktor {st['fusion_core_mw']:.0f} MW"
             )
+        else:
+            return {"ok": False, "action": action, "error": f"Nieznana akcja: {action}", "status": self.get_status()}
 
-        self._save_state()
+        self._save_scenario()
         posted = None
         if emit_chat and chat_notice:
             posted = self.rt.kernel.post_maya_report(
                 chat_notice,
-                model_label="Maya · Kernel Master Daemon (SVL CoreOS 2: Apex)",
+                model_label="Maya · SVL CoreOS 2 (wynik serwera)",
                 message_prefix="msg-apex-ctl",
                 origin=origin,
                 correlation_id=corr,
             )
-
         meta = self.rt.kernel.get_sync_metadata()
         return {
-            "ok": True,
+            "ok": ok,
             "action": action,
             "notice": chat_notice,
             "postedToChat": bool(posted and posted.get("ok")),
@@ -1732,7 +1785,8 @@ async def handle_api_request(
         return 200, apex_controller.get_status()
 
     if method == "POST" and path == "/api/py/apex/control":
-        return 200, apex_controller.handle_control(body, origin=origin, corr=corr)
+        result = apex_controller.handle_control(body, origin=origin, corr=corr)
+        return (200 if result.get("ok") else 400), result
 
     return 404, {"ok": False, "error": f"Unknown endpoint: {method} {path}"}
 

@@ -26,3 +26,6 @@ logi/*.txt
 !SVL_CoreOS_2/**
 !SVL_CoreOS_2/*.log
 
+
+# Stan runtime SVL CoreOS 2 (ustawienia scenariusza) — nie commitować
+data/svl_coreos2_*.json

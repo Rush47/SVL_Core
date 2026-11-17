@@ -21,6 +21,7 @@ import {
   guardUnverifiedMissionCompletion,
   normalizeAgentCanonicalName,
   normalizeAiInteractiveMarkup,
+  unverifiedExecutionNote,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
   resolveInstalledOllamaModel,
@@ -1839,6 +1840,12 @@ async function startServer() {
       }
       // Przyciski zapisane przez model jako linki Markdown → składnia `[btn: …|…]`.
       body.reply = normalizeAiInteractiveMarkup(body.reply);
+      // Odpowiedź modelu twierdząca, że coś wykonano, bez żadnej operacji serwera → ostrzeżenie pod treścią.
+      if (body.provenance === 'model_unverified' && !body.verificationNote) {
+        const verifiedActions = Array.isArray(body.appliedActions) ? body.appliedActions.filter((a: any) => a?.ok).length : 0;
+        const note = unverifiedExecutionNote(body.reply, verifiedActions);
+        if (note) body.verificationNote = note;
+      }
       if (githubConfirmationButtons.length > 0) {
         body.reply = `${body.reply}\n\n**Wymaga Twojego potwierdzenia (GitHub ${GITHUB_REPOSITORY}):**\n${githubConfirmationButtons.join('\n')}`;
       }
@@ -1908,13 +1915,13 @@ async function startServer() {
 
     // Bezpośrednia obsługa przycisków czatu dla odbezpieczenia widoczności plików GUI/SVL_CoreOS_2, logów instalacji, Debootstrap Debian 13 oraz procedury Hot-Swap
     const wantsUnlockRepoFiles =
-      /\b(?:odbezpiecz\s+pliki|odbezpiecz\s+podgląd|pokaż\s+pliki\s+w\s+repozytorium|pokaż\s+wszystkie\s+pliki\s+svl_coreos_2|lista\s+plików\s+svl_coreos_2)\b/i.test(cleanMsg);
+      /\b(?:odbezpiecz\s+pliki|odbezpiecz\s+podgląd|pokaż\s+pliki\s+w\s+repozytorium|pokaż\s+wszystkie\s+pliki\s+svl_coreos_2|lista\s+plików\s+svl_coreos_2)(?=[\s.,!?]|$)/i.test(cleanMsg);
     const wantsHotSwapApex =
-      /\b(?:inicjuj\s+atomową\s+podmianę|wykonaj\s+hot-?swap|uruchom\s+hot-?swap|finalizuj\s+hot-?swap)\b/i.test(cleanMsg);
+      /\b(?:inicjuj\s+atomową\s+podmianę|wykonaj\s+hot-?swap|uruchom\s+hot-?swap|finalizuj\s+hot-?swap)(?=[\s.,!?]|$)/i.test(cleanMsg);
     const wantsInstallLogs =
-      /\b(?:pokaż\s+logi\s+instalacji\s+svl\s+coreos\s*2|logi\s+instalacyjne\s+svl_coreos_2|pokaż\s+install\.log)\b/i.test(cleanMsg);
+      /\b(?:pokaż\s+logi\s+instalacji\s+svl\s+coreos\s*2|logi\s+instalacyjne\s+svl_coreos_2|pokaż\s+install\.log)(?=[\s.,!?]|$)/i.test(cleanMsg);
     const wantsDebootstrapExpand =
-      /\b(?:rozbuduj\s+skrypt\s+instalacyjny\s+o\s+pełny\s+debootstrap|pełny\s+debootstrap\s+debian\s*13)\b/i.test(cleanMsg);
+      /\b(?:rozbuduj\s+skrypt\s+instalacyjny\s+o\s+pełny\s+debootstrap|pełny\s+debootstrap\s+debian\s*13)(?=[\s.,!?]|$)/i.test(cleanMsg);
 
     if (wantsUnlockRepoFiles || wantsHotSwapApex || wantsInstallLogs || wantsDebootstrapExpand) {
       const coreOsDir = path.join(__dirname, 'SVL_CoreOS_2');
@@ -1937,78 +1944,64 @@ async function startServer() {
       walkCoreOs(coreOsDir);
       collectedFiles.sort((a, b) => a.relPath.localeCompare(b.relPath));
 
-      const syncRes = getGitHubToken()
-        ? await gitSync(__dirname, 'sync', 'SVL CoreOS 2: pełna synchronizacja wszystkich plików z czatu do Rush47/SVL_Core')
-        : null;
-      void pollAndRelayOutbox();
-      broadcastResyncRequired('svl_coreos2_chat_sync');
-
-      if (wantsInstallLogs) {
-        const installLogPath = path.join(coreOsDir, 'install.log');
-        const installLogText = fsSync.existsSync(installLogPath)
-          ? fsSync.readFileSync(installLogPath, 'utf8').trim()
-          : 'Brak pliku SVL_CoreOS_2/install.log';
-        const logReply =
-          `### 📄 Logi Instalacji i Atomowej Podmiany — **SVL CoreOS 2: Apex (Debian 13 Trixie)**\n\n` +
-          `\`\`\`log\n${installLogText}\n\`\`\`\n\n` +
-          `[btn: 🐧 Otwórz Menedżer Plików (Linux)|tab:linux] [btn: 📂 Status SVL_CoreOS_2|send:/github status SVL_CoreOS_2/] [btn: 🧠 Jądro SVL|tab:kernel]`;
+      // Odpowiedzi WYŁĄCZNIE o stanie faktycznym: lista plików z dysku, prawdziwy log instalatora.
+      // Bez samoczynnego commita/pusha i bez ogłaszania operacji, których serwer nie wykonał.
+      const coreOsReply = (text: string, tool: string, ok: boolean) =>
         res.json({
           ok: true,
           sender: 'Maya',
           agentId: 'Maya',
-          modelUsed: `Maya · SVL CoreOS 2: Apex (${GITHUB_REPOSITORY} · wynik serwera)`,
-          reply: logReply,
-          provenance: 'server_verified',
+          modelUsed: 'Maya · SVL CoreOS 2 (wynik serwera)',
+          reply: text,
+          provenance: ok ? 'server_verified' : 'error',
           followUpMessages: [],
-          appliedActions: [
-            {
-              tool: 'svl_coreos2_install_logs',
-              entity: 'file',
-              entityId: 'SVL_CoreOS_2/install.log',
-              summary: 'Odczytano pełne logi instalacji Debootstrap Debian 13 Trixie i Hot-Swap',
-              ok: true,
-            },
-          ],
+          appliedActions: [{ tool, entity: 'file', entityId: 'SVL_CoreOS_2', summary: text.split('\n')[0].replace(/^#+\s*/, '').slice(0, 200), ok }],
         });
-        return;
+      const fileLines = collectedFiles.map((f) => `- \`${f.relPath}\` *(${f.size} B)*`).join('\n');
+      const installLogFile = process.env.SVL_LOG_FILE || '/var/log/svl-coreos2-install.log';
+
+      if (wantsInstallLogs) {
+        const logText = fsSync.existsSync(installLogFile)
+          ? fsSync.readFileSync(installLogFile, 'utf8').trim().split('\n').slice(-200).join('\n')
+          : '';
+        return void coreOsReply(
+          logText
+            ? `### 📄 Log instalatora SVL CoreOS 2 (\`${installLogFile}\`)\n\n\`\`\`log\n${logText.slice(-12000)}\n\`\`\``
+            : `### 📄 Brak logu instalacji\n\nInstalator SVL CoreOS 2 nie był uruchamiany na tym hoście (brak \`${installLogFile}\`). ` +
+              'Log powstanie po uruchomieniu `SVL_CoreOS_2/debian13/install_coreos2_svl364.sh` na Debianie 13.',
+          'svl_coreos2_install_logs',
+          Boolean(logText),
+        );
       }
-
-      const fileLines = collectedFiles
-        .map((f) => `- \`${f.relPath}\` *(${f.size} B)*`)
-        .join('\n');
-
-      const replyTitle = wantsHotSwapApex
-        ? '### 🚀 Atomowa Podmiana (Hot-Swap) → **SVL CoreOS 2: Apex (Debian 13 Trixie)** — AKTYWNA (100%)'
-        : wantsDebootstrapExpand
-          ? '### 🐧 Pełny Debootstrap Debian 13 (Trixie) Stage 1 & Stage 2 — Zintegrowany w `SVL_CoreOS_2/debian13/`'
-          : '### 🔓 Odbezpieczono i Zsynchronizowano Wszystkie Pliki `SVL_CoreOS_2/` w Repozytorium';
-
-      const replyBody =
-        `${replyTitle}\n\n` +
-        `Wszystkie **${collectedFiles.length} plików** utworzonych na czacie (w tym pełny instalator i **Debootstrap Stage 1/2 Debian 13 Trixie**, odbezpieczone pliki GUI \`Apex-Dark\`, daemony \`SVL-Sentinel\`, antywirus \`SVL-Sentinel AV\`, zapora \`SVL-Apex Firewall\`, \`Double VPN\`, \`Hardened-Hamachi\`, \`VirtualBox VT-d\`, \`Apex-Deployer\` oraz pakiety AI z Hugging Face/GitHub/GitLab) są aktywne i zsynchronizowane w katalogu **\`SVL_CoreOS_2/\`** oraz w repozytorium **\`${GITHUB_REPOSITORY}@${syncBranch()}\`**:\n\n` +
-        `${fileLines}\n\n` +
-        (syncRes ? `**Status GitHub (\`${GITHUB_REPOSITORY}\`):** ${syncRes.summary}\n\n` : '') +
-        `[btn: 📄 Pokaż logi instalacyjne|send:Pokaż logi instalacji SVL CoreOS 2] [btn: 🐧 Otwórz Menedżer Plików (Linux)|tab:linux] [btn: 🧠 Jądro SVL|tab:kernel]`;
-
-      res.json({
-        ok: true,
-        sender: 'Maya',
-        agentId: 'Maya',
-        modelUsed: `Maya · SVL CoreOS 2: Apex (${GITHUB_REPOSITORY} · wynik serwera)`,
-        reply: replyBody,
-        provenance: 'server_verified',
-        followUpMessages: [],
-        appliedActions: [
-          {
-            tool: wantsHotSwapApex ? 'svl_coreos2_hot_swap' : 'svl_coreos2_unlock_files',
-            entity: 'github',
-            entityId: 'SVL_CoreOS_2',
-            summary: `Zsynchronizowano ${collectedFiles.length} plików w katalogu SVL_CoreOS_2/ z ${GITHUB_REPOSITORY}`,
-            ok: true,
-          },
-        ],
-      });
-      return;
+      if (wantsHotSwapApex) {
+        return void coreOsReply(
+          '### ⛔ Podmiana systemu (hot-swap) NIE została wykonana\n\n' +
+            'SVL nie ma mechanizmu podmiany działającego systemu operacyjnego — wcześniejsze komunikaty „AKTYWNA (100%)” ' +
+            'były wpisane na sztywno i nic nie wykonywały. Instalacja SVL CoreOS 2 to uruchomienie instalatora na hoście ' +
+            'z Debianem 13 (jako root):\n\n```bash\nsudo bash SVL_CoreOS_2/debian13/install_coreos2_svl364.sh\n```\n\n' +
+            'Postęp i wynik zobaczysz w logu instalatora. [btn: 📄 Log instalacji|send:Pokaż logi instalacji SVL CoreOS 2] [btn: 🐧 Terminal Linux|tab:terminals]',
+          'svl_coreos2_hot_swap',
+          false,
+        );
+      }
+      if (wantsDebootstrapExpand) {
+        const debFiles = collectedFiles.filter((f) => f.relPath.includes('/debian13/'));
+        return void coreOsReply(
+          `### 🐧 Skrypty Debian 13 w repozytorium (${debFiles.length})\n\n` +
+            `${debFiles.map((f) => `- \`${f.relPath}\` *(${f.size} B)*`).join('\n') || '(brak)'}\n\n` +
+            'To pliki w repozytorium — debootstrap **nie był uruchamiany** przez serwer. ' +
+            'Zbudowanie systemu wymaga uruchomienia skryptu jako root na Debianie 13.',
+          'svl_coreos2_debootstrap',
+          true,
+        );
+      }
+      return void coreOsReply(
+        `### 📂 Pliki \`SVL_CoreOS_2/\` na serwerze (${collectedFiles.length})\n\n${fileLines || '(brak)'}\n\n` +
+          'To pliki w katalogu projektu (nic nie jest uruchamiane ani wysyłane przez to polecenie). ' +
+          'Wysłanie na GitHub: [btn: ⬆️ Synchronizuj z GitHub|send:/github synchronizuj] [btn: 📋 Stan GitHub|send:/github status]',
+        'svl_coreos2_files',
+        true,
+      );
     }
 
     // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja> (obsługuje też łańcuchy &&).

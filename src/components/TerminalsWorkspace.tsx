@@ -43,7 +43,7 @@ const TERMINAL_TABS: Array<{
       'Powłoka Linux działa z uprawnieniami ROOT (uid=0) po autoryzacji SVL_OPERATOR_TOKEN. Obsługuje /exec <polecenie>, polecenia naturalne oraz bezpośrednie komendy Bash.',
     quickCommands: [
       '/exec id && uname -a',
-      'ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/core_init.log',
+      'ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/README.md',
       'cat SVL_CoreOS_2/ai_core/ollama_svl364_config.json',
       'ollama list',
     ],

@@ -26,8 +26,6 @@
     "SVL_CoreOS_2/README.md",
     "SVL_CoreOS_2/ARCHITECTURE_DOCS.md",
     "SVL_CoreOS_2/build_manifest.json",
-    "SVL_CoreOS_2/core_init.log",
-    "SVL_CoreOS_2/install.log",
     "SVL_CoreOS_2/kernel/svl_sentinel_daemon.py",
     "SVL_CoreOS_2/kernel/binary_hyperspace_void.py",
     "SVL_CoreOS_2/kernel/hot_swap_engine.py",

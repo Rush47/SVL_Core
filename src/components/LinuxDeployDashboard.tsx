@@ -12,8 +12,6 @@ const DEFAULT_COREOS2_FILES = [
   'SVL_CoreOS_2/README.md',
   'SVL_CoreOS_2/ARCHITECTURE_DOCS.md',
   'SVL_CoreOS_2/build_manifest.json',
-  'SVL_CoreOS_2/core_init.log',
-  'SVL_CoreOS_2/install.log',
   'SVL_CoreOS_2/kernel/svl_sentinel_daemon.py',
   'SVL_CoreOS_2/kernel/binary_hyperspace_void.py',
   'SVL_CoreOS_2/kernel/hot_swap_engine.py',
@@ -260,17 +258,10 @@ export const LinuxDeployDashboard: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-300">
-            Atomowa podmiana systemu (<code className="text-emerald-300">hot_swap_engine.py</code> + <code className="text-emerald-300">svl_sentinel_daemon.py</code>) oraz pełny pakiet bazowy <code className="text-cyan-300">Debian 13 Trixie (Stage 1 &amp; 2)</code> zostały wdrożone i zsynchronizowane z repozytorium <code className="text-violet-300">Rush47/SVL_Core</code>.
+            Pliki SVL CoreOS 2 (<code className="text-emerald-300">hot_swap_engine.py</code>, <code className="text-emerald-300">svl_sentinel_daemon.py</code>, skrypty <code className="text-cyan-300">Debian 13 Trixie</code>) są w repozytorium <code className="text-violet-300">Rush47/SVL_Core</code>. Instalacja wymaga uruchomienia instalatora jako root na Debianie 13 — stan instalacji pokazuje panel Apex (pomiar hosta).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => setSelectedFilePath('SVL_CoreOS_2/install.log')}
-            className="px-2.5 py-1.5 rounded bg-[#111520] hover:bg-slate-800 border border-emerald-500/40 text-[11px] font-mono text-emerald-300"
-          >
-            📄 install.log
-          </button>
           <button
             type="button"
             onClick={() => setSelectedFilePath('SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh')}

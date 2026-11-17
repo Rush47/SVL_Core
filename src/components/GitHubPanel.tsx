@@ -51,8 +51,6 @@ const INITIAL_COREOS2_FILES: Array<{ name: string; path: string; size: number }>
   { name: 'README.md', path: 'SVL_CoreOS_2/README.md', size: 3250 },
   { name: 'ARCHITECTURE_DOCS.md', path: 'SVL_CoreOS_2/ARCHITECTURE_DOCS.md', size: 1816 },
   { name: 'build_manifest.json', path: 'SVL_CoreOS_2/build_manifest.json', size: 2450 },
-  { name: 'core_init.log', path: 'SVL_CoreOS_2/core_init.log', size: 2180 },
-  { name: 'install.log', path: 'SVL_CoreOS_2/install.log', size: 1620 },
   { name: 'svl_sentinel_daemon.py', path: 'SVL_CoreOS_2/kernel/svl_sentinel_daemon.py', size: 3307 },
   { name: 'binary_hyperspace_void.py', path: 'SVL_CoreOS_2/kernel/binary_hyperspace_void.py', size: 2005 },
   { name: 'hot_swap_engine.py', path: 'SVL_CoreOS_2/kernel/hot_swap_engine.py', size: 1626 },

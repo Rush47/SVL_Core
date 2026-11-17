@@ -18,6 +18,7 @@ import {
   extractBielikActionTags,
   normalizeAiInteractiveMarkup,
   parseChatInteractiveToken,
+  unverifiedExecutionNote,
   resolveInstalledOllamaModel,
   resolveAvatarProfileKey,
   safeFetchJson,
@@ -430,4 +431,17 @@ test('resolveInstalledOllamaModel finds the installed model instead of reporting
   assert.equal(other.name, 'gemma2:9b');
   assert.equal(other.substituted, true);
   assert.equal(resolveInstalledOllamaModel('llama3.2-vision:11b', []).installedCount, 0);
+});
+
+test('unverifiedExecutionNote flags claims of finished operations that the server never ran', () => {
+  const claims = [
+    'Atomowa podmiana systemu zakończona. Status: ACTIVE_HOT_SWAPPED.',
+    'Zainstalowałem SVL CoreOS 2 na Debianie 13.',
+    'Debootstrap Debian 13 zakończony — postęp 100%.',
+    'Uruchomiłam demona SVL-Sentinel, wszystko ONLINE.',
+  ];
+  for (const text of claims) assert.ok(unverifiedExecutionNote(text, 0), text);
+  assert.equal(unverifiedExecutionNote('Zainstalowałem pakiet.', 1), null);
+  assert.equal(unverifiedExecutionNote('Aby zainstalować system, uruchom instalator jako root.', 0), null);
+  assert.equal(unverifiedExecutionNote('Tarcza to ustawienie scenariusza statku.', 0), null);
 });

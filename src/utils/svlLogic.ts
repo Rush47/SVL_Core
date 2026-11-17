@@ -94,6 +94,26 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
   return UNVERIFIED_MISSION_STATUS_REPLY;
 }
 
+/**
+ * Model twierdzi, że coś WYKONAŁ (zainstalował, uruchomił, wdrożył, podmienił, zakończył „100%”),
+ * a serwer nie wykonał żadnej operacji → zwraca notatkę ostrzegawczą do odpowiedzi; inaczej null.
+ */
+const UNVERIFIED_EXECUTION_CLAIM = new RegExp(
+  [
+    String.raw`\b(?:zainstalowa[łn]|wdroży[łl]|wdrożon|skompilowa[łn]|zbudowa[łn]|podmienio|zsynchronizowa[łn]|uruchomi[łl]|uruchomion|aktywowa[łn]|wykona[łn]|zrealizowa[łn]|zakończon|ukończon)\p{L}*`,
+    String.raw`\b(?:podmian\p{L}*|instalacj\p{L}*|debootstrap\p{L}*|kompilacj\p{L}*|wdrożeni\p{L}*)[^.\n]{0,40}\b(?:zakończ|wykonan|aktywn|ukończ|gotow)\p{L}*`,
+    String.raw`\b(?:status|postęp|progress)\b[^.\n]{0,30}\b100\s?%`,
+    String.raw`\b(?:ONLINE|ACTIVE_HOT_SWAPPED|COMPLETED_100_PERCENT)\b`,
+  ].join('|'),
+  'iu',
+);
+
+export function unverifiedExecutionNote(answer: string, verifiedActionsCount: number): string | null {
+  if (verifiedActionsCount > 0) return null;
+  if (!UNVERIFIED_EXECUTION_CLAIM.test(String(answer || ''))) return null;
+  return 'Model opisuje wykonane działanie, ale serwer nie wykonał żadnej operacji — to tylko tekst modelu. Sprawdź faktyczny stan w panelu lub logach.';
+}
+
 /** Słowa kluczowe przycisku w treści czatu: `[btn: Etykieta|akcja]` (też `button`, `action`, `przycisk`). */
 export const CHAT_BUTTON_TOKEN_PATTERN = '\\[(?:btn|button|action|przycisk):[^\\]\\n]+\\]';
 
