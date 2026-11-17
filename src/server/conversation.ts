@@ -30,7 +30,13 @@ export function agentOf(turn: DialogueTurn): ConversationAgent | null {
 }
 
 function isDialogueTurn(turn: DialogueTurn): boolean {
-  return (turn.role === 'user' || turn.role === 'assistant') && Boolean(String(turn.content || '').trim());
+  const txt = String(turn.content || '').trim();
+  if (!txt) return false;
+  if (turn.role !== 'user' && turn.role !== 'assistant') return false;
+  if (turn.role === 'assistant' && txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył/i.test(txt)) {
+    return false;
+  }
+  return true;
 }
 
 /** Rozmowa z perspektywy `speaker`; kolejne wypowiedzi tej samej roli są łączone. */
@@ -113,9 +119,10 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
   });
 }
 
-/** Usuwa prefiks z własnym imieniem (lub [System]: / [Mateusz (Operator)]:) i ucina miejsce, w którym model zaczyna pisać za innych. */
+/** Usuwa prefiks z imieniem mówcy (lub [System]: / [Mateusz (Operator)]:) i ucina miejsce, w którym model zaczyna pisać za innych. */
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
   const speakerNames = [
+    ...CONVERSATION_AGENTS,
     speaker,
     'Asystent',
     'System',

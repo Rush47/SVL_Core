@@ -77,12 +77,22 @@ import { isWebSearchRequest } from './webSearch.ts';
 test('reply cleanup strips own name, [System] prefixes and cuts lines written for other speakers', () => {
   assert.equal(cleanAgentReply('Bielik: Jasne, zróbmy to.', 'Bielik'), 'Jasne, zróbmy to.');
   assert.equal(cleanAgentReply('[Maya]: ... Dobrze.', 'Maya'), 'Dobrze.');
+  assert.equal(cleanAgentReply('[Bielik]: Potwierdzam.', 'Maya'), 'Potwierdzam.');
   assert.equal(cleanAgentReply('[System]: Cześć, Mateuszu!', 'Maya'), 'Cześć, Mateuszu!');
   assert.equal(cleanAgentReply('[Mateusz (Operator)]: Cześć!', 'Maya'), 'Cześć!');
   assert.equal(cleanAgentReply('[Maya (AI Statku SVL-364)]: Systemy sprawne.', 'Maya'), 'Systemy sprawne.');
   assert.equal(cleanAgentReply('Myślę, że warto.\n[Maya]: Zgadzam się!\nMateusz: OK', 'Bielik'), 'Myślę, że warto.');
   assert.equal(cleanAgentReply('Pierwsze zdanie.\n\nMateusz Mitek (Operator): dopisek', 'Maya'), 'Pierwsze zdanie.');
   assert.equal(cleanAgentReply('Drugie zdanie.\n[System]: uwaga', 'Bielik'), 'Drugie zdanie.');
+});
+
+test('transcript skips stored outage error notices from assistant turns', () => {
+  const transcript = buildTranscript([
+    op('Hej'),
+    { role: 'assistant', sender: 'Maya', content: '⚠️ Maya nie może teraz odpowiedzieć: żaden model AI nie odpowiedział.' },
+    maya('Jestem gotowa!'),
+  ]);
+  assert.equal(transcript, '[Mateusz (Operator)]: Hej\n[Maya]: Jestem gotowa!');
 });
 
 test('web search trigger ignores casual Polish words teraz, dzisiaj, wiadomość', () => {

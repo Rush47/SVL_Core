@@ -428,11 +428,19 @@ export function validateOllamaHostUrl(raw: string): {
 }
 
 export function buildChatHistoryPayload(
-  messages: Array<{ role: string; content: string; sender?: string }>,
+  messages: Array<{ role: string; content: string; sender?: string; provenance?: string }>,
   limit = 48,
 ): Array<{ role: 'user' | 'assistant'; content: string; sender?: string }> {
   return (messages || [])
-    .filter((m) => (m.role === 'user' || m.role === 'assistant') && Boolean(m.content?.trim()))
+    .filter((m) => {
+      if ((m.role !== 'user' && m.role !== 'assistant') || !m.content?.trim()) return false;
+      if (m.provenance === 'error') return false;
+      const txt = m.content.trim();
+      if (m.role === 'assistant' && txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył/i.test(txt)) {
+        return false;
+      }
+      return true;
+    })
     .slice(-limit)
     .map((m) => ({
       role: m.role === 'user' ? 'user' : 'assistant',
