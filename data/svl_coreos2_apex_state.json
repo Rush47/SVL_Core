@@ -12,8 +12,8 @@
   "kernel_throughput_boost": "+450%",
   "neural_kernel_link_boost": "+1200%",
   "calibration_boost": "+1456% (Wzorzec 364)",
-  "e_shield_percent": 100.0,
-  "e_shield_mode": "DIRECTIONAL_ACTIVE",
+  "e_shield_percent": 150.0,
+  "e_shield_mode": "MAX_APEX_OVERCHARGE_150",
   "fusion_core_mw": 1456.0,
   "fusion_mode": "STANDARD_364",
   "solar_lockdown": false,
@@ -76,5 +76,5 @@
       "status": "ACTIVE"
     }
   },
-  "updated_at": "2026-11-17T19:45:04.042764+00:00"
+  "updated_at": "2026-11-17T19:57:53.280196+00:00"
 }
