@@ -3136,22 +3136,30 @@ class SVLSystemKernel:
         modules_list = self.list_system_modules()
         self.config["active_modules"] = [m["id"] for m in modules_list if m.get("status") == "ACTIVE"]
 
+        # Stan SVL CoreOS 2 z pomiarów (bez wpisanych na sztywno „wykonanych” operacji).
+        os_pretty = platform.platform()
+        try:
+            for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+                if line.startswith("PRETTY_NAME="):
+                    os_pretty = line.split("=", 1)[1].strip().strip('"')
+        except Exception:
+            pass
+        sentinel_state = None
+        try:
+            sentinel_state = json.loads(Path("/var/lib/svl-coreos2/sentinel_status.json").read_text(encoding="utf-8"))
+        except Exception:
+            pass
         apex_summary: dict[str, Any] = {
             "Active_OS": "SVL CoreOS 2: Apex",
-            "Version": "5.6.0-QuantumWheel-Apex",
-            "Base_Distro": "Debian GNU/Linux 13 (Trixie) — Debootstrap 100%",
-            "Hot_Swap_Status": "ACTIVE_HOT_SWAPPED",
-            "Kernel_Master_Daemon": "Maya (ROOT)",
-            "Performance_Boost": "+1456% (Wzorzec Kalibracji: 364) / +450% Kernel Throughput",
-            "Neural_Kernel_Link": "+1200%",
-            "Active_Subsystems": [
-                "SVL-Sentinel Daemon (eBPF + ROOT)",
-                "SVL-Sentinel AV (/var/quarantine/svl_vault)",
-                "SVL-Apex Firewall (DPI + E_Shield + 14 Fighter Incidents)",
-                "Network Suite (Apex-Bridge, Double VPN, Hardened-Hamachi, VirtualBox VT-d, Apex-Deployer)",
-                "AI Swarm Toolkit (Hugging Face / GitHub / GitLab — 4 packages)",
-                "Apex-Dark UI & High-Performance Remote Desktop (120 FPS WebRTC-NVENC)",
-            ],
+            "Version": "2.0.0-Apex",
+            "Host_OS": os_pretty,
+            "Kernel": platform.release(),
+            "Systemd_Service": "zainstalowana" if Path("/etc/systemd/system/svl-coreos2.service").exists() else "brak (uruchomienie bez usługi)",
+            "SVL_Sentinel": (
+                {"checked_at": sentinel_state.get("checked_at"), "issues": sentinel_state.get("issues", [])}
+                if isinstance(sentinel_state, dict) else "nie działa na tym hoście"
+            ),
+            "AI_Agents": ["Bielik", "Maya"],
         }
 
         report: dict[str, Any] = {

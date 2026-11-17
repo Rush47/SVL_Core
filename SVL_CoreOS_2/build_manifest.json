@@ -1,15 +1,12 @@
 {
   "system_name": "SVL CoreOS 2: Apex",
-  "version": "5.6.0-QuantumWheel-Apex",
-  "base_os": "Debian 13 (Trixie) — Debootstrap Stage 1 & Stage 2 Complete",
-  "hot_swap_status": "ACTIVE_HOT_SWAPPED",
-  "debootstrap_progress": "100%",
+  "version": "2.0.0-Apex",
+  "base_os": "Debian 13 (Trixie) — system docelowy instalatora",
   "operator_root": "Mateusz Mitek",
   "kernel_master_daemon": "Maya (SVL-364 Ship AI)",
   "secondary_agent_root": "Bielik (Ollama 3.2 Vision 11B)",
   "calibration_pattern": 364,
   "compact_metric_c": 2.5,
-  "performance_boost": "+1456% (Wzorzec Kalibracji: 364 / +450% Apex Overdrive)",
   "repository": "Rush47/SVL_Core",
   "root_directory": "SVL_CoreOS_2",
   "total_files": 25,
@@ -46,5 +43,6 @@
     "SVL_CoreOS_2/debian13/svl-sentinel.service",
     "SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf",
     "SVL_CoreOS_2/debian13/packages_manifest.txt"
-  ]
+  ],
+  "install": "sudo bash SVL_CoreOS_2/debian13/install_coreos2_svl364.sh (wynik: /var/log/svl-coreos2-install.log)"
 }

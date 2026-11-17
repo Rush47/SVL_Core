@@ -402,7 +402,7 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
           </div>
         </div>
 
-        {/* Card 2: Fusion Core MW & Kernel Throughput (+450% / +1456%) */}
+        {/* Card 2: Reaktor (ustawienie scenariusza statku) */}
         <div className="p-5 rounded-xl bg-[#0B101E] border border-emerald-500/30 space-y-4">
           <div className="flex items-center justify-between">
             <div>

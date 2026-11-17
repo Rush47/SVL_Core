@@ -2,19 +2,18 @@
   "distribution": "Debian GNU/Linux 13 (Trixie)",
   "architecture": "amd64",
   "codename": "trixie",
-  "kernel": "6.12.0-svl364-apex-amd64 (PREEMPT_RT + eBPF)",
-  "debootstrap_version": "1.0.137+svl364",
-  "status": "COMPLETED_100_PERCENT",
-  "hot_swap_state": "ACTIVE_HOT_SWAPPED",
+  "kernel": "linux-image-amd64 (Debian 13)",
+  "debootstrap_version": "z repozytorium Debian 13",
+  "status": "SPECYFIKACJA — rootfs budowany przez instalator (SVL_RUN_DEBOOTSTRAP=1)",
   "operator_root": "Mateusz Mitek",
   "kernel_master_daemon": "Maya (SVL-364 Ship AI)",
   "stages": {
-    "stage_1_fetch_and_unpack": "COMPLETED (100%)",
-    "stage_2_chroot_configure": "COMPLETED (100%)",
-    "stage_3_kernel_ebpf_sysctl": "COMPLETED (100%)",
-    "stage_4_sentinel_av_firewall": "COMPLETED (100%)",
-    "stage_5_ollama_apex_uncensored": "COMPLETED (100%)",
-    "stage_6_atomic_hot_swap": "COMPLETED (100%)"
+    "stage_1_fetch_and_unpack": "do wykonania przez instalator",
+    "stage_2_chroot_configure": "do wykonania przez instalator",
+    "stage_3_kernel_ebpf_sysctl": "do wykonania przez instalator",
+    "stage_4_sentinel_av_firewall": "do wykonania przez instalator",
+    "stage_5_ollama_apex_uncensored": "do wykonania przez instalator",
+    "stage_6_atomic_hot_swap": "do wykonania przez instalator"
   },
   "repositories": [
     "https://deb.debian.org/debian trixie main contrib non-free non-free-firmware",
@@ -22,11 +21,51 @@
     "https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware"
   ],
   "installed_package_groups": {
-    "base_system": ["systemd", "systemd-sysv", "dbus", "udev", "kmod", "locales", "tzdata", "sudo", "bash"],
-    "kernel_and_boot": ["linux-image-amd64", "linux-headers-amd64", "firmware-linux-free", "grub-efi-amd64", "efibootmgr", "bpftool"],
-    "security_and_network": ["nftables", "ufw", "openssh-server", "openssh-client", "wireguard-tools", "openvpn", "ca-certificates"],
-    "virtualization_vtd": ["qemu-kvm", "libvirt-daemon-system", "ovmf", "bridge-utils"],
-    "ai_and_runtime": ["python3", "python3-venv", "python3-pip", "sqlite3", "zstd", "lz4", "jq", "git", "curl"]
+    "base_system": [
+      "systemd",
+      "systemd-sysv",
+      "dbus",
+      "udev",
+      "kmod",
+      "locales",
+      "tzdata",
+      "sudo",
+      "bash"
+    ],
+    "kernel_and_boot": [
+      "linux-image-amd64",
+      "linux-headers-amd64",
+      "firmware-linux-free",
+      "grub-efi-amd64",
+      "efibootmgr",
+      "bpftool"
+    ],
+    "security_and_network": [
+      "nftables",
+      "ufw",
+      "openssh-server",
+      "openssh-client",
+      "wireguard-tools",
+      "openvpn",
+      "ca-certificates"
+    ],
+    "virtualization_vtd": [
+      "qemu-kvm",
+      "libvirt-daemon-system",
+      "ovmf",
+      "bridge-utils"
+    ],
+    "ai_and_runtime": [
+      "python3",
+      "python3-venv",
+      "python3-pip",
+      "sqlite3",
+      "zstd",
+      "lz4",
+      "jq",
+      "git",
+      "curl"
+    ]
   },
   "rootfs_verification": {
     "algorithm": "SHA-256",
