@@ -31,6 +31,12 @@ import {
 import { DEFAULT_GITHUB_FILE_BRANCH, GitHubFileService } from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
+import {
+  describeGeminiError,
+  geminiCandidatesFor,
+  isGeminiModelGoneError,
+  markGeminiModelGone,
+} from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
   CONVERSATION_AGENTS,
@@ -216,17 +222,6 @@ function redactForSync(input: any): any {
     return out;
   }
   return input;
-}
-
-// One list of Gemini chat models for every chat path (operator chat and two-way conversation).
-const GEMINI_CHAT_MODELS = ['gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-2.5-flash'];
-function geminiCandidates(requestedModel?: string): string[] {
-  const normalizedReq =
-    requestedModel === 'gemini-4-hydrogen' ? 'gemini-3-flash-preview' : requestedModel;
-  return [...new Set(
-    [process.env.GEMINI_MODEL, normalizedReq?.startsWith('gemini-') ? normalizedReq : null, ...GEMINI_CHAT_MODELS]
-      .filter((entry): entry is string => Boolean(entry)),
-  )];
 }
 
 type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
@@ -2431,7 +2426,7 @@ async function startServer() {
 
     // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models, SVL-364 Router, and Gemini models)
     if (ai) {
-      const candidateModels = geminiCandidates(effectiveModel);
+      const candidateModels = await geminiCandidatesFor(ai, effectiveModel);
       const wantsSystemTool = chatToolDeclarations.length > 0;
 
       const currentParts: any[] = [];
@@ -2505,7 +2500,7 @@ async function startServer() {
                   : useSearchGrounding
                     ? { tools: [{ googleSearch: {} }] }
                     : {}),
-                abortSignal: AbortSignal.timeout(14000),
+                abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
               },
             });
           } catch (err: any) {
@@ -2600,7 +2595,9 @@ async function startServer() {
           }
           geminiErrors.push(`${candidate}: pusta odpowiedź`);
         } catch (error) {
-          geminiErrors.push(`${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+          const errMsg = error instanceof Error ? error.message : String(error);
+          if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
+          geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
           continue;
         }
       }
@@ -2707,7 +2704,7 @@ async function startServer() {
       return { predicted: null, providerOnline: false };
     }
     const choices = [...participants, 'Operator'].join(', ');
-    for (const candidate of geminiCandidates(requestedModel)) {
+    for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
@@ -2726,13 +2723,15 @@ async function startServer() {
           config: {
             temperature: 0.5,
             maxOutputTokens: 128,
-            abortSignal: AbortSignal.timeout(15000),
+            abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
           },
         });
         const parsed = parsePredictedSpeaker(gen.text || '');
         if (parsed) return { predicted: parsed, providerOnline: true };
       } catch (error) {
-        failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
       }
     }
     return { predicted: null, providerOnline: true };
@@ -2779,7 +2778,7 @@ async function startServer() {
     } else if (contents[contents.length - 1].role === 'model') {
       contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
-    for (const candidate of geminiCandidates(requestedModel)) {
+    for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
@@ -2789,13 +2788,15 @@ async function startServer() {
             maxOutputTokens: 1024,
             ...(memoryContext ? { systemInstruction: memoryContext } : {}),
             stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:'],
-            abortSignal: AbortSignal.timeout(15000),
+            abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 30000)),
           },
         });
         const text = (gen.text || '').trim();
         if (text) return { text, label: `Gemini (${candidate})` };
       } catch (error) {
-        failures.push(`Gemini ${candidate}: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 30000))}`);
       }
     }
     return null;
