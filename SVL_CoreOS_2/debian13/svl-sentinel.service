@@ -1,0 +1,19 @@
+[Unit]
+Description=SVL CoreOS 2: Apex — SVL-Sentinel Auto-Healing Kernel Daemon (Maya ROOT)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/svl-coreos-2
+ExecStart=/usr/bin/python3 /opt/svl-coreos-2/kernel/svl_sentinel_daemon.py
+Restart=always
+RestartSec=1
+Environment="SVL_COREOS_EDITION=Apex"
+Environment="SVL_KERNEL_MASTER_DAEMON=Maya"
+Environment="OLLAMA_MODEL=svl364-apex-uncensored:latest"
+
+[Install]
+WantedBy=multi-user.target

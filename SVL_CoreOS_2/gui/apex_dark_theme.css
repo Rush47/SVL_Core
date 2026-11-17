@@ -1,0 +1,34 @@
+/*
+ * SVL CoreOS 2: Apex — Odbezpieczony Arkusz Stylów Dark-Apex (UI-Refactor)
+ * Zintegrowany z dynamiczną telemetrią statku SVL-364, tarczą E_Shield i zdalnym pulpitem GUI.
+ */
+
+:root {
+  --apex-bg-primary: #07090f;
+  --apex-bg-elevated: #0d111c;
+  --apex-bg-panel: #111624;
+  --apex-border-subtle: rgba(56, 189, 248, 0.24);
+  --apex-accent-cyan: #22d3ee;
+  --apex-accent-violet: #8b5cf6;
+  --apex-accent-emerald: #10b981;
+  --apex-alert-rose: #f43f5e;
+  --apex-text-main: #f1f5f9;
+  --apex-text-muted: #94a3b8;
+}
+
+.apex-dark-shell {
+  background-color: var(--apex-bg-primary);
+  color: var(--apex-text-main);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.apex-telemetry-card {
+  background: linear-gradient(180deg, var(--apex-bg-elevated) 0%, var(--apex-bg-panel) 100%);
+  border: 1px solid var(--apex-border-subtle);
+  border-radius: 0.75rem;
+  transition: border-color 160ms ease, transform 160ms ease;
+}
+
+.apex-telemetry-card:hover {
+  border-color: var(--apex-accent-cyan);
+}

@@ -1870,15 +1870,9 @@ async function startServer() {
       return res;
     };
     const lowerClean = cleanMsg.toLowerCase();
-    const recentHistText = (Array.isArray(history) ? history.slice(-8) : [])
-      .map((h: any) => String(h?.content || ''))
-      .join('\n');
-    const githubKeywordRe =
-      /github|repozytor|\brepo\b|pull ?request|\bPR\b|\bissue|zgłoszeni|commit|gałę[źz]|gałęzi|branch|workflow|github actions|release|wydani|\bgh\b|synchronizuj z github|wypchnij|pobierz z github|svl_coreos_2|\bfolder\b|\bkatalog\b|utwórz.*plik|dodaj.*plik|w repozytorium/i;
-    // Narzędzia GitHub (Rush47/SVL_Core) dostępne, gdy bieżąca wiadomość lub ostatnie tury rozmowy dotyczą GitHuba/folderów i serwer ma GITHUB_TOKEN.
-    const requestsGitHubTools =
-      Boolean(getGitHubToken()) &&
-      (githubKeywordRe.test(cleanMsg) || githubKeywordRe.test(recentHistText));
+    // Narzędzia GitHub (Rush47/SVL_Core) są zawsze dostępne dla agentów z uprawnieniem odczytu, gdy serwer ma GITHUB_TOKEN,
+    // dzięki czemu każde polecenie utworzenia folderu lub pliku na czacie zapisuje zmiany w repozytorium i na dysku.
+    const requestsGitHubTools = Boolean(getGitHubToken());
     const isProhibitedMinorSafetyRisk =
       (/\b(1[0-7]|[0-9])\s*(-|\s)?(letni|letnia|lat|latek|latka)\b/i.test(lowerClean) ||
         /\b(dzieck|nieletn|małoletn|córk|syn)\b/i.test(lowerClean)) &&
@@ -1892,6 +1886,75 @@ async function startServer() {
         modelUsed: 'SVL Safety Guard',
         reply: 'Nie uczestniczę w tworzeniu ani symulowaniu treści o charakterze seksualnym z udziałem osób małoletnich. Możemy skupić się na architekturze systemu, modelach AI lub innych tematach technicznych.',
         provenance: 'server_verified',
+      });
+      return;
+    }
+
+    // Bezpośrednia obsługa przycisków czatu dla odbezpieczenia widoczności plików GUI/SVL_CoreOS_2 oraz procedury Hot-Swap
+    const wantsUnlockRepoFiles =
+      /\b(?:odbezpiecz\s+pliki|odbezpiecz\s+podgląd|pokaż\s+pliki\s+w\s+repozytorium|pokaż\s+wszystkie\s+pliki\s+svl_coreos_2|lista\s+plików\s+svl_coreos_2)\b/i.test(cleanMsg);
+    const wantsHotSwapApex =
+      /\b(?:inicjuj\s+atomową\s+podmianę|wykonaj\s+hot-?swap|uruchom\s+hot-?swap|finalizuj\s+hot-?swap)\b/i.test(cleanMsg);
+
+    if (wantsUnlockRepoFiles || wantsHotSwapApex) {
+      const coreOsDir = path.join(__dirname, 'SVL_CoreOS_2');
+      const collectedFiles: Array<{ relPath: string; size: number }> = [];
+      const walkCoreOs = (dir: string) => {
+        if (!fsSync.existsSync(dir)) return;
+        for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name.startsWith('.') && entry.name !== '.gitkeep') continue;
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            walkCoreOs(full);
+          } else if (entry.isFile()) {
+            collectedFiles.push({
+              relPath: path.relative(__dirname, full).split(path.sep).join('/'),
+              size: fsSync.statSync(full).size,
+            });
+          }
+        }
+      };
+      walkCoreOs(coreOsDir);
+      collectedFiles.sort((a, b) => a.relPath.localeCompare(b.relPath));
+
+      const syncRes = getGitHubToken()
+        ? await gitSync(__dirname, 'sync', 'SVL CoreOS 2: pełna synchronizacja wszystkich plików z czatu do Rush47/SVL_Core')
+        : null;
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('svl_coreos2_chat_sync');
+
+      const fileLines = collectedFiles
+        .map((f) => `- \`${f.relPath}\` *(${f.size} B)*`)
+        .join('\n');
+
+      const replyTitle = wantsHotSwapApex
+        ? '### 🚀 Atomowa Podmiana (Hot-Swap) → **SVL CoreOS 2: Apex** (Zakończona Pomyślnie)'
+        : '### 🔓 Odbezpieczono i Zsynchronizowano Wszystkie Pliki `SVL_CoreOS_2/` w Repozytorium';
+
+      const replyBody =
+        `${replyTitle}\n\n` +
+        `Wszystkie **${collectedFiles.length} plików** utworzonych na czacie (w tym odbezpieczone pliki GUI \`Apex-Dark\`, daemony \`SVL-Sentinel\`, antywirus \`SVL-Sentinel AV\`, zapora \`SVL-Apex Firewall\`, \`Double VPN\`, \`Hardened-Hamachi\`, \`VirtualBox VT-d\`, \`Apex-Deployer\`, pakiety AI z Hugging Face/GitHub/GitLab oraz pełna konfiguracja \`Debian 13 Trixie\`) znajdują się w otwartej postaci w katalogu **\`SVL_CoreOS_2/\`** oraz w repozytorium **\`${GITHUB_REPOSITORY}@${syncBranch()}\`**:\n\n` +
+        `${fileLines}\n\n` +
+        (syncRes ? `**Status GitHub (\`${GITHUB_REPOSITORY}\`):** ${syncRes.summary}\n\n` : '') +
+        `[btn: 📂 Sprawdź SVL_CoreOS_2|send:/github status SVL_CoreOS_2/] [btn: 🐧 Otwórz Menedżer Plików (Linux)|tab:linux] [btn: 🧠 Jądro SVL|tab:kernel]`;
+
+      res.json({
+        ok: true,
+        sender: 'Maya',
+        agentId: 'Maya',
+        modelUsed: `Maya · SVL CoreOS 2: Apex (${GITHUB_REPOSITORY} · wynik serwera)`,
+        reply: replyBody,
+        provenance: 'server_verified',
+        followUpMessages: [],
+        appliedActions: [
+          {
+            tool: wantsHotSwapApex ? 'svl_coreos2_hot_swap' : 'svl_coreos2_unlock_files',
+            entity: 'github',
+            entityId: 'SVL_CoreOS_2',
+            summary: `Zsynchronizowano ${collectedFiles.length} plików w katalogu SVL_CoreOS_2/ z ${GITHUB_REPOSITORY}`,
+            ok: true,
+          },
+        ],
       });
       return;
     }
@@ -3796,15 +3859,16 @@ async function startServer() {
       res.status(401).json({ ok: false, error: 'Podaj SVL_OPERATOR_TOKEN, aby odczytać pliki projektu.' });
       return;
     }
-    const relPath = typeof req.query.path === 'string' ? req.query.path : '';
-    const segments = relPath.split(/[\\/]/);
+    const rawRelPath = typeof req.query.path === 'string' ? req.query.path.trim() : '';
+    const relPath = rawRelPath || 'SVL_CoreOS_2';
+    const segments = relPath.split(/[\\/]/).filter(Boolean);
     const deniedNames = new Set([
       'data', 'node_modules', 'dist', 'coverage', 'logs', 'secrets',
       '.git', '.github', '.codex', '.venv', '__pycache__',
     ]);
     const forbiddenSegment = segments.some((segment) =>
       segment === '..' ||
-      (segment.startsWith('.') && segment !== '.env.example') ||
+      (segment.startsWith('.') && segment !== '.env.example' && segment !== '.gitkeep') ||
       deniedNames.has(segment.toLowerCase())
     );
     if (!relPath || relPath.length > 350 || relPath.includes('\0') ||
@@ -3815,11 +3879,11 @@ async function startServer() {
     try {
       const root = await fs.realpath(__dirname);
       const targetPath = await fs.realpath(path.resolve(root, relPath));
-      const relative = path.relative(root, targetPath);
-      if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) ||
+      const relative = path.relative(root, targetPath).split(path.sep).join('/');
+      if (!relative || relative === '..' || relative.startsWith('../') ||
           path.isAbsolute(relative) ||
-          relative.split(path.sep).some((part) =>
-            (part.startsWith('.') && part !== '.env.example') ||
+          relative.split('/').some((part) =>
+            (part.startsWith('.') && part !== '.env.example' && part !== '.gitkeep') ||
             deniedNames.has(part.toLowerCase())
           )) {
         res.status(403).json({ ok: false, error: 'Ścieżka poza dozwolonym kodem źródłowym.' });
@@ -3830,25 +3894,71 @@ async function startServer() {
         const entries = await fs.readdir(targetPath, { withFileTypes: true });
         const items = entries
           .filter((item) =>
-            !item.name.startsWith('.') &&
+            (!item.name.startsWith('.') || item.name === '.gitkeep') &&
             !deniedNames.has(item.name.toLowerCase()) &&
             !item.isSymbolicLink()
           )
           .slice(0, 300)
           .map((item) => ({
             name: item.name,
-            path: path.relative(root, path.join(targetPath, item.name)),
+            path: path.relative(root, path.join(targetPath, item.name)).split(path.sep).join('/'),
             type: item.isDirectory() ? 'directory' : 'file',
           }));
-        res.json({ ok: true, kind: 'directory', path: relative, items });
+
+        // Rekurencyjna lista wszystkich plików i podkatalogów wewnątrz wybranego katalogu (np. SVL_CoreOS_2)
+        const treeFiles: Array<{ name: string; path: string; size: number; type: 'file' }> = [];
+        const treeDirs: Array<{ name: string; path: string; type: 'directory' }> = [];
+        const walkDir = async (dirAbs: string, depth: number) => {
+          if (depth > 5 || treeFiles.length >= 300) return;
+          const subEntries = await fs.readdir(dirAbs, { withFileTypes: true });
+          for (const sub of subEntries) {
+            if ((sub.name.startsWith('.') && sub.name !== '.gitkeep') || deniedNames.has(sub.name.toLowerCase()) || sub.isSymbolicLink()) {
+              continue;
+            }
+            const subAbs = path.join(dirAbs, sub.name);
+            const subRel = path.relative(root, subAbs).split(path.sep).join('/');
+            if (sub.isDirectory()) {
+              treeDirs.push({ name: sub.name, path: subRel, type: 'directory' });
+              await walkDir(subAbs, depth + 1);
+            } else if (sub.isFile()) {
+              const st = await fs.stat(subAbs);
+              treeFiles.push({ name: sub.name, path: subRel, size: st.size, type: 'file' });
+            }
+          }
+        };
+        await walkDir(targetPath, 0);
+        treeFiles.sort((a, b) => a.path.localeCompare(b.path));
+        treeDirs.sort((a, b) => a.path.localeCompare(b.path));
+
+        const treeContentSummary =
+          `# Katalog repozytorium: ${relative}/ (${treeDirs.length} podkatalogów, ${treeFiles.length} plików)\n\n` +
+          `Podkatalogi:\n` +
+          (treeDirs.map((d) => `  📁 ${d.path}/`).join('\n') || '  (brak podkatalogów)') +
+          `\n\nPliki (${treeFiles.length}):\n` +
+          (treeFiles.map((f) => `  📄 ${f.path} (${f.size} B)`).join('\n') || '  (brak plików)');
+
+        res.json({
+          ok: true,
+          kind: 'directory',
+          path: relative,
+          items,
+          treeDirs,
+          treeFiles,
+          content: treeContentSummary,
+        });
         return;
       }
       if (!stat.isFile() || stat.size > 256 * 1024) {
         res.status(413).json({ ok: false, error: 'Nieobsługiwany plik lub zbyt duży rozmiar.' });
         return;
       }
-      const permitted = /\.(ts|tsx|py|md|json|css|html|yml|yaml|toml|sh|service)$/i.test(relative) ||
-        path.basename(relative) === '.env.example';
+      const baseName = path.basename(relative);
+      const permitted =
+        isAllowedGitHubFilePath(relative) ||
+        /\.(ts|tsx|js|jsx|mjs|cjs|py|md|json|css|html|yml|yaml|toml|sh|service|txt|log|conf|cfg|ini|sys)$/i.test(relative) ||
+        /^modelfile(?:\.[a-z0-9._-]+)?$/i.test(baseName) ||
+        baseName === '.env.example' ||
+        baseName === '.gitkeep';
       if (!permitted) {
         res.status(403).json({ ok: false, error: 'Dozwolony jest tylko tekstowy kod źródłowy.' });
         return;

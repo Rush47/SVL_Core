@@ -47,16 +47,29 @@ const ACTION_LABELS: Record<SyncAction, string> = {
 };
 
 /** Panel GitHub: token z .env, stan synchronizacji z Rush47/SVL_Core, akcje pobierz/wyślij/synchronizuj. */
-export const GitHubPanel: React.FC = () => {
+export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => void }> = ({ onSelectRepoFile }) => {
   const { serverRevision } = useSvlSync();
   const [status, setStatus] = useState<GitHubStatus | null>(null);
   const [busy, setBusy] = useState<SyncAction | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [coreOsFiles, setCoreOsFiles] = useState<Array<{ name: string; path: string; size: number }>>([]);
+  const [coreOsDirs, setCoreOsDirs] = useState<Array<{ name: string; path: string }>>([]);
 
   const load = useCallback(async (fetchRemote = true) => {
-    const res = await safeFetchJson<GitHubStatus>(`/api/github/status?fetch=${fetchRemote ? 1 : 0}`, { timeoutMs: 60000 });
+    const [res, treeRes] = await Promise.all([
+      safeFetchJson<GitHubStatus>(`/api/github/status?fetch=${fetchRemote ? 1 : 0}`, { timeoutMs: 60000 }),
+      safeFetchJson<{
+        ok: boolean;
+        treeFiles?: Array<{ name: string; path: string; size: number }>;
+        treeDirs?: Array<{ name: string; path: string }>;
+      }>('/api/files?path=SVL_CoreOS_2&tree=1', { timeoutMs: 12000 }),
+    ]);
     if (res.ok && res.data?.ok) setStatus(res.data);
     else setResult({ ok: false, text: res.data?.error || res.error || `HTTP ${res.status}` });
+    if (treeRes.ok && treeRes.data?.ok) {
+      setCoreOsFiles(Array.isArray(treeRes.data.treeFiles) ? treeRes.data.treeFiles : []);
+      setCoreOsDirs(Array.isArray(treeRes.data.treeDirs) ? treeRes.data.treeDirs : []);
+    }
   }, []);
 
   useEffect(() => {
@@ -140,13 +153,41 @@ export const GitHubPanel: React.FC = () => {
           </div>
         )}
         <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
-          <span className="text-slate-400">GitHub CLI / auto-sync:</span>
-          <span className="text-slate-300">
-            {status?.ghCli === 'gh' ? 'gh zainstalowane' : 'wbudowane (REST)'} ·{' '}
-            {status?.autoSyncSec ? `co ${status.autoSyncSec} s` : 'auto-sync wyłączony'}
+          <span className="text-slate-400">Folder w repozytorium:</span>
+          <span className="text-emerald-300">
+            SVL_CoreOS_2/ ({coreOsDirs.length} kat. · {coreOsFiles.length} plików)
           </span>
         </div>
       </div>
+
+      {coreOsFiles.length > 0 && (
+        <div className="p-2.5 rounded-lg bg-[#0B0D13] border border-slate-800/90 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-cyan-300">
+            <span>📂 SVL_CoreOS_2/ (pliki utworzone z czatu: {coreOsFiles.length})</span>
+            <a
+              href={`https://github.com/${status?.repository || 'Rush47/SVL_Core'}/tree/${status?.branch || 'main'}/SVL_CoreOS_2`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-violet-300 hover:underline font-mono"
+            >
+              Otwórz na GitHub ↗
+            </a>
+          </div>
+          <div className="max-h-36 overflow-y-auto space-y-1 pr-1 font-mono text-[11px]">
+            {coreOsFiles.map((f) => (
+              <button
+                key={f.path}
+                type="button"
+                onClick={() => onSelectRepoFile?.(f.path)}
+                className="w-full text-left flex items-center justify-between gap-2 px-2 py-1 rounded hover:bg-slate-800/80 text-slate-200 transition-colors"
+              >
+                <span className="truncate text-emerald-300">{f.path}</span>
+                <span className="text-slate-400 shrink-0">{f.size} B</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {token && !token.configured && (
         <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/30 text-xs text-amber-100 space-y-1">
@@ -214,8 +255,7 @@ export const GitHubPanel: React.FC = () => {
         </div>
       )}
       <p className="text-[11px] text-slate-500">
-        Bielik i Maya mogą zarządzać tym repozytorium z czatu (np. „pokaż otwarte PR na GitHubie”, „/gh issue list”).
-        Operacje nieodwracalne wymagają Twojego potwierdzenia przyciskiem.
+        Bielik i Maya synchronizują folder <code>SVL_CoreOS_2/</code> oraz całe repozytorium <code>Rush47/SVL_Core</code> z czatu i terminala.
       </p>
     </div>
   );

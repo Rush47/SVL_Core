@@ -1,0 +1,16 @@
+# SVL CoreOS 2: Apex — Pakiet bazowy Debian GNU/Linux 13 (Trixie)
+linux-image-amd64
+systemd
+openssh-server
+openssh-client
+python3
+python3-venv
+sqlite3
+nftables
+wireguard-tools
+qemu-kvm
+libvirt-daemon-system
+bpfcc-tools
+curl
+git
+jq

@@ -8,6 +8,31 @@ import {
 import { createUniqueId, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
 import { useSvlSync } from '../utils/svlSyncStore';
 
+const DEFAULT_COREOS2_FILES = [
+  'SVL_CoreOS_2/README.md',
+  'SVL_CoreOS_2/ARCHITECTURE_DOCS.md',
+  'SVL_CoreOS_2/build_manifest.json',
+  'SVL_CoreOS_2/core_init.log',
+  'SVL_CoreOS_2/kernel/svl_sentinel_daemon.py',
+  'SVL_CoreOS_2/kernel/binary_hyperspace_void.py',
+  'SVL_CoreOS_2/kernel/hot_swap_engine.py',
+  'SVL_CoreOS_2/security/svl_sentinel_av.py',
+  'SVL_CoreOS_2/security/svl_apex_firewall.py',
+  'SVL_CoreOS_2/security/network_suite.py',
+  'SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored',
+  'SVL_CoreOS_2/ai_core/ollama_svl364_config.json',
+  'SVL_CoreOS_2/ai_core/huggingface_swarm_toolkit.py',
+  'SVL_CoreOS_2/gui/apex_dark_ui.tsx',
+  'SVL_CoreOS_2/gui/apex_dark_theme.css',
+  'SVL_CoreOS_2/gui/remote_desktop_server.py',
+  'SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py',
+  'SVL_CoreOS_2/system/assets/apex_ui_manifest.json',
+  'SVL_CoreOS_2/debian13/install_coreos2_svl364.sh',
+  'SVL_CoreOS_2/debian13/svl-sentinel.service',
+  'SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf',
+  'SVL_CoreOS_2/debian13/packages_manifest.txt',
+];
+
 const QUICK_INSPECT_FILES = [
   'backend/svl_core.py',
   'backend/ollama_daemon.py',
@@ -31,7 +56,8 @@ export const LinuxDeployDashboard: React.FC = () => {
     serverRevision,
   } = useSvlSync();
 
-  const [selectedFilePath, setSelectedFilePath] = useState('backend/ollama_daemon.py');
+  const [selectedFilePath, setSelectedFilePath] = useState('SVL_CoreOS_2/README.md');
+  const [coreOs2Files, setCoreOs2Files] = useState<string[]>(DEFAULT_COREOS2_FILES);
   const [fileContent, setFileContent] = useState<string>('Ładowanie pliku...');
   const [copied, setCopied] = useState(false);
 
@@ -151,6 +177,18 @@ export const LinuxDeployDashboard: React.FC = () => {
 
   const effectiveOperatorToken = operatorTokenInput || getSvlOperatorAccessToken();
   useEffect(() => {
+    if (!effectiveOperatorToken) return;
+    void safeFetchJson<any>('/api/files?path=SVL_CoreOS_2&tree=1', {
+      timeoutMs: 10000,
+      headers: { 'X-SVL-Operator-Token': effectiveOperatorToken },
+    }).then((res) => {
+      if (res.ok && Array.isArray(res.data?.treeFiles) && res.data.treeFiles.length > 0) {
+        setCoreOs2Files(res.data.treeFiles.map((f: any) => String(f.path)));
+      }
+    });
+  }, [effectiveOperatorToken, serverRevision]);
+
+  useEffect(() => {
     const controller = new AbortController();
     async function loadFile() {
       if (!effectiveOperatorToken) {
@@ -170,7 +208,7 @@ export const LinuxDeployDashboard: React.FC = () => {
     return () => {
       controller.abort();
     };
-  }, [selectedFilePath, effectiveOperatorToken]);
+  }, [selectedFilePath, effectiveOperatorToken, serverRevision]);
 
   const handleCopyFile = async () => {
     try {
@@ -358,7 +396,7 @@ export const LinuxDeployDashboard: React.FC = () => {
         </div>
 
         {/* Card 3: GitHub Rush47/SVL_Core — token, synchronizacja obustronna */}
-        <GitHubPanel />
+        <GitHubPanel onSelectRepoFile={(fp) => setSelectedFilePath(fp)} />
       </div>
 
       {/* Bottom Split: Workspace File Manager & External Debian 13 Connection Instructions */}
@@ -366,7 +404,7 @@ export const LinuxDeployDashboard: React.FC = () => {
         <div className="lg:col-span-2 p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold text-slate-100">
-              02. Menedżer Plików Projektu i Artefaktów Wdrożeniowych
+              02. Menedżer Plików Projektu i Folderu Repozytorium <code className="text-emerald-300">SVL_CoreOS_2/</code> ({coreOs2Files.length} plików z czatu)
             </h2>
             <input
               type="password"
@@ -392,21 +430,59 @@ export const LinuxDeployDashboard: React.FC = () => {
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            {QUICK_INSPECT_FILES.map((fp) => (
+          <div className="space-y-2">
+            <div className="text-[11px] font-semibold text-emerald-300 font-mono">
+              📂 Folder repozytorium: SVL_CoreOS_2/ (wszystkie pliki utworzone przez czat — {coreOs2Files.length})
+            </div>
+            <div className="flex flex-wrap gap-1.5">
               <button
-                key={fp}
                 type="button"
-                onClick={() => setSelectedFilePath(fp)}
+                onClick={() => setSelectedFilePath('SVL_CoreOS_2')}
                 className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
-                  selectedFilePath === fp
-                    ? 'bg-violet-600 text-white'
-                    : 'bg-[#0B0D13] text-slate-400 hover:text-slate-200 border border-slate-800'
+                  selectedFilePath === 'SVL_CoreOS_2'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-[#0B0D13] text-emerald-300 hover:text-white border border-emerald-500/40'
                 }`}
               >
-                {fp}
+                📂 SVL_CoreOS_2/ (Drzewo katalogu)
               </button>
-            ))}
+              {coreOs2Files.map((fp) => (
+                <button
+                  key={fp}
+                  type="button"
+                  onClick={() => setSelectedFilePath(fp)}
+                  className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
+                    selectedFilePath === fp
+                      ? 'bg-violet-600 text-white'
+                      : 'bg-[#0B0D13] text-slate-300 hover:text-white border border-slate-700/80'
+                  }`}
+                >
+                  {fp.replace(/^SVL_CoreOS_2\//, 'SVL_CoreOS_2/')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-1 border-t border-slate-800/80">
+            <div className="text-[11px] font-semibold text-slate-400 font-mono">
+              📂 Pliki rdzenia SVL Python OS i wdrożenia bazowego
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {QUICK_INSPECT_FILES.map((fp) => (
+                <button
+                  key={fp}
+                  type="button"
+                  onClick={() => setSelectedFilePath(fp)}
+                  className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors whitespace-nowrap ${
+                    selectedFilePath === fp
+                      ? 'bg-violet-600 text-white'
+                      : 'bg-[#0B0D13] text-slate-400 hover:text-slate-200 border border-slate-800'
+                  }`}
+                >
+                  {fp}
+                </button>
+              ))}
+            </div>
           </div>
 
           <pre className="p-4 rounded-lg bg-[#07090E] border border-slate-800 text-[11px] font-mono text-slate-200 overflow-x-auto max-h-96 leading-relaxed">

@@ -1,43 +1,59 @@
 {
-  "system": "SVL_CoreOS_2",
+  "system_name": "SVL CoreOS 2",
   "codename": "Apex",
-  "version": "2.0.0-apex-debian13",
-  "base_os": {
-    "distribution": "Debian GNU/Linux",
-    "release": "13 (Trixie)",
-    "kernel_profile": "real-time-svl364-npu",
-    "init_system": "systemd"
-  },
-  "kernel_master_daemon": {
-    "agent": "Maya",
-    "role": "Kernel Master Daemon & Ship AI (ROOT)",
-    "operator": "Mateusz",
-    "co_agent": "Bielik",
-    "memory_engine": "SQLite WAL + BinaryHyperspace 128D"
-  },
-  "ship_integration": {
-    "unit": "SVL-364",
-    "ssh_alias": "Ship",
-    "compute_protocol": "Compute-Thrust",
-    "mcp_endpoint": "/api/mcp/svl364",
-    "defense_systems": {
-      "e_shield": "ACTIVE_DIRECTIONAL_EARTH_APPROACH",
-      "solar_lockdown": "ALLIES_ONLY"
+  "version": "2.0.0-Apex",
+  "status": "HOT_SWAP_READY_100_PERCENT",
+  "base_distribution": "Debian GNU/Linux 13 (Trixie)",
+  "kernel_profile": "6.12-svl364-apex-rt-hyperspace128",
+  "operator": "Mateusz Mitek (ROOT)",
+  "kernel_master_daemon": "Maya (ROOT · SVL-Sentinel)",
+  "co_architect_ai": "Bielik (ROOT · Ollama 3.2 Vision 11B)",
+  "starship_integration": {
+    "unit_id": "SVL-364",
+    "unit_name": "SVL-364 Ebon Apex",
+    "compute_thrust": {
+      "enabled": true,
+      "mode": "DISTRIBUTED_NPU_FULL_BURN",
+      "binary_hyperspace": "PROJECT_VOID_INTEGRATION_128D",
+      "cooling": "PHASE_SHIFT_BINARY_VACUUM"
+    },
+    "e_shield": {
+      "enabled": true,
+      "mode": "DIRECTIONAL_SELECTIVE_VISIBILITY",
+      "incoming_earth_vector_policy": "VISIBLE_AND_INTERCEPT_READY",
+      "allied_corridor_policy": "OPEN_SAFE_PASSAGE",
+      "solar_lockdown_incidents_archived": 14
     }
   },
-  "ai_core": {
-    "provider": "ollama-svl364-ship",
-    "primary_model": "svl364-apex-uncensored:latest",
-    "base_model": "llama3.2-vision:11b",
-    "modelfile": "SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored",
-    "num_ctx": 16384,
-    "temperature": 0.75,
-    "ship_endpoint": "http://127.0.0.1:11434"
+  "ollama_integration": {
+    "default_model": "svl364-apex-uncensored:latest",
+    "vision_model": "llama3.2-vision:11b",
+    "uncensored": true,
+    "managed_by": "Maya",
+    "exposed_in": ["chat", "terminals", "kernel", "svl-364", "linux"]
   },
-  "omni_interface": {
-    "chat_standard_option": true,
-    "terminals_standard_option": true,
-    "github_repository": "Rush47/SVL_Core",
-    "sync_branch": "main"
-  }
+  "files_inventory": [
+    "SVL_CoreOS_2/README.md",
+    "SVL_CoreOS_2/ARCHITECTURE_DOCS.md",
+    "SVL_CoreOS_2/build_manifest.json",
+    "SVL_CoreOS_2/core_init.log",
+    "SVL_CoreOS_2/kernel/svl_sentinel_daemon.py",
+    "SVL_CoreOS_2/kernel/binary_hyperspace_void.py",
+    "SVL_CoreOS_2/kernel/hot_swap_engine.py",
+    "SVL_CoreOS_2/security/svl_sentinel_av.py",
+    "SVL_CoreOS_2/security/svl_apex_firewall.py",
+    "SVL_CoreOS_2/security/network_suite.py",
+    "SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored",
+    "SVL_CoreOS_2/ai_core/ollama_svl364_config.json",
+    "SVL_CoreOS_2/ai_core/huggingface_swarm_toolkit.py",
+    "SVL_CoreOS_2/gui/apex_dark_ui.tsx",
+    "SVL_CoreOS_2/gui/apex_dark_theme.css",
+    "SVL_CoreOS_2/gui/remote_desktop_server.py",
+    "SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py",
+    "SVL_CoreOS_2/system/assets/apex_ui_manifest.json",
+    "SVL_CoreOS_2/debian13/install_coreos2_svl364.sh",
+    "SVL_CoreOS_2/debian13/svl-sentinel.service",
+    "SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf",
+    "SVL_CoreOS_2/debian13/packages_manifest.txt"
+  ]
 }
