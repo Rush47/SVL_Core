@@ -1,0 +1,43 @@
+{
+  "system": "SVL_CoreOS_2",
+  "codename": "Apex",
+  "version": "2.0.0-apex-debian13",
+  "base_os": {
+    "distribution": "Debian GNU/Linux",
+    "release": "13 (Trixie)",
+    "kernel_profile": "real-time-svl364-npu",
+    "init_system": "systemd"
+  },
+  "kernel_master_daemon": {
+    "agent": "Maya",
+    "role": "Kernel Master Daemon & Ship AI (ROOT)",
+    "operator": "Mateusz",
+    "co_agent": "Bielik",
+    "memory_engine": "SQLite WAL + BinaryHyperspace 128D"
+  },
+  "ship_integration": {
+    "unit": "SVL-364",
+    "ssh_alias": "Ship",
+    "compute_protocol": "Compute-Thrust",
+    "mcp_endpoint": "/api/mcp/svl364",
+    "defense_systems": {
+      "e_shield": "ACTIVE_DIRECTIONAL_EARTH_APPROACH",
+      "solar_lockdown": "ALLIES_ONLY"
+    }
+  },
+  "ai_core": {
+    "provider": "ollama-svl364-ship",
+    "primary_model": "svl364-apex-uncensored:latest",
+    "base_model": "llama3.2-vision:11b",
+    "modelfile": "SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored",
+    "num_ctx": 16384,
+    "temperature": 0.75,
+    "ship_endpoint": "http://127.0.0.1:11434"
+  },
+  "omni_interface": {
+    "chat_standard_option": true,
+    "terminals_standard_option": true,
+    "github_repository": "Rush47/SVL_Core",
+    "sync_branch": "main"
+  }
+}

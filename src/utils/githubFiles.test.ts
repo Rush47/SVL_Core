@@ -12,6 +12,10 @@ const secretFixture = ['const apiKey = ', "'abcdefghijklmnop';"].join('');
 
 test('GitHub file access accepts only allowed source paths and rejects secrets', () => {
   assert.equal(isAllowedGitHubFilePath('src/utils/svlLogic.ts'), true);
+  assert.equal(isAllowedGitHubFilePath('SVL_CoreOS_2/.gitkeep'), true);
+  assert.equal(isAllowedGitHubFilePath('SVL_CoreOS_2/core_init.log'), true);
+  assert.equal(isAllowedGitHubFilePath('SVL_CoreOS_2/README.md'), true);
+  assert.equal(isAllowedGitHubFilePath('SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored'), true);
   assert.equal(isAllowedGitHubFilePath('../.env'), false);
   assert.equal(isAllowedGitHubFilePath('.env.example'), true);
   assert.equal(isAllowedGitHubFilePath('backend/.env.example'), true);

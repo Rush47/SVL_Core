@@ -57,8 +57,12 @@ export function isAllowedGitHubFilePath(rawPath: string): boolean {
 
   return (
     basename === '.env.example' ||
+    basename === '.gitkeep' ||
+    basename === '.keep' ||
+    basename === 'makefile' ||
     /^dockerfile(?:\.[a-z0-9._-]+)?$/i.test(basename) ||
-    /\.(?:ts|tsx|js|jsx|mjs|cjs|py|json|css|html|md|ya?ml|toml|sh|service|lock|svg)$/i.test(lowerPath)
+    /^modelfile(?:\.[a-z0-9._-]+)?$/i.test(basename) ||
+    /\.(?:ts|tsx|js|jsx|mjs|cjs|py|json|css|html|md|ya?ml|toml|sh|service|lock|svg|txt|log|conf|cfg|ini|sys)$/i.test(lowerPath)
   );
 }
 
