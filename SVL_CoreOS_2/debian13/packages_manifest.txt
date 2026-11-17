@@ -1,16 +1,69 @@
-# SVL CoreOS 2: Apex — Pakiet bazowy Debian GNU/Linux 13 (Trixie)
-linux-image-amd64
+# SVL CoreOS 2: Apex — Pełny Manifest Pakietów Debian 13 (Trixie) [Debootstrap Stage 1 + Stage 2]
+# Architektura: amd64 | Jądro: Linux 6.12 LTS (PREEMPT_RT + eBPF) | Kalibracja: 364
+
+# --- 1. Rdzeń systemu i rozruch (Debootstrap Base + EFI) ---
 systemd
-openssh-server
-openssh-client
-python3
-python3-venv
-sqlite3
+systemd-sysv
+systemd-resolved
+dbus
+udev
+kmod
+locales
+tzdata
+sudo
+bash
+coreutils
+util-linux
+procps
+linux-image-amd64
+linux-headers-amd64
+firmware-linux-free
+grub-efi-amd64
+grub-common
+efibootmgr
+
+# --- 2. Telemetria jądra, eBPF i diagnostyka ---
+bpftool
+libbpf1
+linux-perf
+ethtool
+lm-sensors
+smartmontools
+nvme-cli
+
+# --- 3. Bezpieczeństwo, Zapora SVL-Apex Firewall i Podwójny Tunel VPN ---
 nftables
+ufw
+openssh-client
+openssh-server
 wireguard-tools
+openvpn
+ca-certificates
+gnupg
+apparmor
+apparmor-utils
+
+# --- 4. Wirtualizacja Sprzętowa (Apex-Virtualization VT-d / KVM) ---
 qemu-kvm
 libvirt-daemon-system
-bpfcc-tools
-curl
+libvirt-clients
+ovmf
+bridge-utils
+virtinst
+
+# --- 5. Środowisko Wykonawcze Python 3.12, Baza SQLite WAL i Narzędzia AI ---
+python3
+python3-pip
+python3-venv
+python3-dev
+build-essential
+sqlite3
+libsqlite3-dev
 git
+curl
+wget
 jq
+zstd
+lz4
+tmux
+htop

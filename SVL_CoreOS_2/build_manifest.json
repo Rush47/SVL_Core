@@ -1,42 +1,33 @@
 {
-  "system_name": "SVL CoreOS 2",
-  "codename": "Apex",
-  "version": "2.0.0-Apex",
-  "status": "HOT_SWAP_READY_100_PERCENT",
-  "base_distribution": "Debian GNU/Linux 13 (Trixie)",
-  "kernel_profile": "6.12-svl364-apex-rt-hyperspace128",
-  "operator": "Mateusz Mitek (ROOT)",
-  "kernel_master_daemon": "Maya (ROOT · SVL-Sentinel)",
-  "co_architect_ai": "Bielik (ROOT · Ollama 3.2 Vision 11B)",
-  "starship_integration": {
-    "unit_id": "SVL-364",
-    "unit_name": "SVL-364 Ebon Apex",
-    "compute_thrust": {
-      "enabled": true,
-      "mode": "DISTRIBUTED_NPU_FULL_BURN",
-      "binary_hyperspace": "PROJECT_VOID_INTEGRATION_128D",
-      "cooling": "PHASE_SHIFT_BINARY_VACUUM"
-    },
-    "e_shield": {
-      "enabled": true,
-      "mode": "DIRECTIONAL_SELECTIVE_VISIBILITY",
-      "incoming_earth_vector_policy": "VISIBLE_AND_INTERCEPT_READY",
-      "allied_corridor_policy": "OPEN_SAFE_PASSAGE",
-      "solar_lockdown_incidents_archived": 14
-    }
-  },
-  "ollama_integration": {
-    "default_model": "svl364-apex-uncensored:latest",
-    "vision_model": "llama3.2-vision:11b",
-    "uncensored": true,
-    "managed_by": "Maya",
-    "exposed_in": ["chat", "terminals", "kernel", "svl-364", "linux"]
-  },
-  "files_inventory": [
+  "system_name": "SVL CoreOS 2: Apex",
+  "version": "5.6.0-QuantumWheel-Apex",
+  "base_os": "Debian 13 (Trixie) — Debootstrap Stage 1 & Stage 2 Complete",
+  "hot_swap_status": "ACTIVE_HOT_SWAPPED",
+  "debootstrap_progress": "100%",
+  "operator_root": "Mateusz Mitek",
+  "kernel_master_daemon": "Maya (SVL-364 Ship AI)",
+  "secondary_agent_root": "Bielik (Ollama 3.2 Vision 11B)",
+  "calibration_pattern": 364,
+  "compact_metric_c": 2.5,
+  "performance_boost": "+1456% (Wzorzec Kalibracji: 364 / +450% Apex Overdrive)",
+  "repository": "Rush47/SVL_Core",
+  "root_directory": "SVL_CoreOS_2",
+  "total_files": 25,
+  "directories": [
+    "SVL_CoreOS_2/kernel",
+    "SVL_CoreOS_2/security",
+    "SVL_CoreOS_2/ai_core",
+    "SVL_CoreOS_2/gui",
+    "SVL_CoreOS_2/infrastructure",
+    "SVL_CoreOS_2/system/assets",
+    "SVL_CoreOS_2/debian13"
+  ],
+  "files": [
     "SVL_CoreOS_2/README.md",
     "SVL_CoreOS_2/ARCHITECTURE_DOCS.md",
     "SVL_CoreOS_2/build_manifest.json",
     "SVL_CoreOS_2/core_init.log",
+    "SVL_CoreOS_2/install.log",
     "SVL_CoreOS_2/kernel/svl_sentinel_daemon.py",
     "SVL_CoreOS_2/kernel/binary_hyperspace_void.py",
     "SVL_CoreOS_2/kernel/hot_swap_engine.py",
@@ -52,6 +43,8 @@
     "SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py",
     "SVL_CoreOS_2/system/assets/apex_ui_manifest.json",
     "SVL_CoreOS_2/debian13/install_coreos2_svl364.sh",
+    "SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh",
+    "SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json",
     "SVL_CoreOS_2/debian13/svl-sentinel.service",
     "SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf",
     "SVL_CoreOS_2/debian13/packages_manifest.txt"

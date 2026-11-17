@@ -47,29 +47,71 @@ const ACTION_LABELS: Record<SyncAction, string> = {
 };
 
 /** Panel GitHub: token z .env, stan synchronizacji z Rush47/SVL_Core, akcje pobierz/wyślij/synchronizuj. */
+const INITIAL_COREOS2_FILES: Array<{ name: string; path: string; size: number }> = [
+  { name: 'README.md', path: 'SVL_CoreOS_2/README.md', size: 3250 },
+  { name: 'ARCHITECTURE_DOCS.md', path: 'SVL_CoreOS_2/ARCHITECTURE_DOCS.md', size: 1816 },
+  { name: 'build_manifest.json', path: 'SVL_CoreOS_2/build_manifest.json', size: 2450 },
+  { name: 'core_init.log', path: 'SVL_CoreOS_2/core_init.log', size: 2180 },
+  { name: 'install.log', path: 'SVL_CoreOS_2/install.log', size: 1620 },
+  { name: 'svl_sentinel_daemon.py', path: 'SVL_CoreOS_2/kernel/svl_sentinel_daemon.py', size: 3307 },
+  { name: 'binary_hyperspace_void.py', path: 'SVL_CoreOS_2/kernel/binary_hyperspace_void.py', size: 2005 },
+  { name: 'hot_swap_engine.py', path: 'SVL_CoreOS_2/kernel/hot_swap_engine.py', size: 1626 },
+  { name: 'svl_sentinel_av.py', path: 'SVL_CoreOS_2/security/svl_sentinel_av.py', size: 2299 },
+  { name: 'svl_apex_firewall.py', path: 'SVL_CoreOS_2/security/svl_apex_firewall.py', size: 3294 },
+  { name: 'network_suite.py', path: 'SVL_CoreOS_2/security/network_suite.py', size: 3428 },
+  { name: 'Modelfile.apex-uncensored', path: 'SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored', size: 605 },
+  { name: 'ollama_svl364_config.json', path: 'SVL_CoreOS_2/ai_core/ollama_svl364_config.json', size: 392 },
+  { name: 'huggingface_swarm_toolkit.py', path: 'SVL_CoreOS_2/ai_core/huggingface_swarm_toolkit.py', size: 3599 },
+  { name: 'apex_dark_ui.tsx', path: 'SVL_CoreOS_2/gui/apex_dark_ui.tsx', size: 3143 },
+  { name: 'apex_dark_theme.css', path: 'SVL_CoreOS_2/gui/apex_dark_theme.css', size: 1009 },
+  { name: 'remote_desktop_server.py', path: 'SVL_CoreOS_2/gui/remote_desktop_server.py', size: 1451 },
+  { name: 'realtime_telemetry_hub.py', path: 'SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py', size: 2022 },
+  { name: 'apex_ui_manifest.json', path: 'SVL_CoreOS_2/system/assets/apex_ui_manifest.json', size: 1054 },
+  { name: 'install_coreos2_svl364.sh', path: 'SVL_CoreOS_2/debian13/install_coreos2_svl364.sh', size: 3520 },
+  { name: 'debootstrap_trixie_stage1_stage2.sh', path: 'SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh', size: 1680 },
+  { name: 'debian13_trixie_rootfs_manifest.json', path: 'SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json', size: 1840 },
+  { name: 'svl-sentinel.service', path: 'SVL_CoreOS_2/debian13/svl-sentinel.service', size: 524 },
+  { name: 'svl-coreos2-sysctl.conf', path: 'SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf', size: 292 },
+  { name: 'packages_manifest.txt', path: 'SVL_CoreOS_2/debian13/packages_manifest.txt', size: 980 },
+];
+
+const INITIAL_COREOS2_DIRS: Array<{ name: string; path: string }> = [
+  { name: 'kernel', path: 'SVL_CoreOS_2/kernel' },
+  { name: 'security', path: 'SVL_CoreOS_2/security' },
+  { name: 'ai_core', path: 'SVL_CoreOS_2/ai_core' },
+  { name: 'gui', path: 'SVL_CoreOS_2/gui' },
+  { name: 'infrastructure', path: 'SVL_CoreOS_2/infrastructure' },
+  { name: 'system', path: 'SVL_CoreOS_2/system' },
+  { name: 'assets', path: 'SVL_CoreOS_2/system/assets' },
+  { name: 'debian13', path: 'SVL_CoreOS_2/debian13' },
+];
+
 export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => void }> = ({ onSelectRepoFile }) => {
   const { serverRevision } = useSvlSync();
   const [status, setStatus] = useState<GitHubStatus | null>(null);
   const [busy, setBusy] = useState<SyncAction | null>(null);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const [coreOsFiles, setCoreOsFiles] = useState<Array<{ name: string; path: string; size: number }>>([]);
-  const [coreOsDirs, setCoreOsDirs] = useState<Array<{ name: string; path: string }>>([]);
+  const [coreOsFiles, setCoreOsFiles] = useState<Array<{ name: string; path: string; size: number }>>(INITIAL_COREOS2_FILES);
+  const [coreOsDirs, setCoreOsDirs] = useState<Array<{ name: string; path: string }>>(INITIAL_COREOS2_DIRS);
 
   const load = useCallback(async (fetchRemote = true) => {
-    const [res, treeRes] = await Promise.all([
-      safeFetchJson<GitHubStatus>(`/api/github/status?fetch=${fetchRemote ? 1 : 0}`, { timeoutMs: 60000 }),
-      safeFetchJson<{
-        ok: boolean;
-        treeFiles?: Array<{ name: string; path: string; size: number }>;
-        treeDirs?: Array<{ name: string; path: string }>;
-      }>('/api/files?path=SVL_CoreOS_2&tree=1', { timeoutMs: 12000 }),
-    ]);
+    void safeFetchJson<{
+      ok: boolean;
+      treeFiles?: Array<{ name: string; path: string; size: number }>;
+      treeDirs?: Array<{ name: string; path: string }>;
+    }>('/api/files?path=SVL_CoreOS_2&tree=1', { timeoutMs: 12000 }).then((treeRes) => {
+      if (treeRes.ok && treeRes.data?.ok) {
+        if (Array.isArray(treeRes.data.treeFiles) && treeRes.data.treeFiles.length > 0) {
+          setCoreOsFiles(treeRes.data.treeFiles);
+        }
+        if (Array.isArray(treeRes.data.treeDirs) && treeRes.data.treeDirs.length > 0) {
+          setCoreOsDirs(treeRes.data.treeDirs);
+        }
+      }
+    });
+    const res = await safeFetchJson<GitHubStatus>(`/api/github/status?fetch=${fetchRemote ? 1 : 0}`, { timeoutMs: 60000 });
     if (res.ok && res.data?.ok) setStatus(res.data);
     else setResult({ ok: false, text: res.data?.error || res.error || `HTTP ${res.status}` });
-    if (treeRes.ok && treeRes.data?.ok) {
-      setCoreOsFiles(Array.isArray(treeRes.data.treeFiles) ? treeRes.data.treeFiles : []);
-      setCoreOsDirs(Array.isArray(treeRes.data.treeDirs) ? treeRes.data.treeDirs : []);
-    }
   }, []);
 
   useEffect(() => {

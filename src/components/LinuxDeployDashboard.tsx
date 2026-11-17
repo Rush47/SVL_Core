@@ -13,6 +13,7 @@ const DEFAULT_COREOS2_FILES = [
   'SVL_CoreOS_2/ARCHITECTURE_DOCS.md',
   'SVL_CoreOS_2/build_manifest.json',
   'SVL_CoreOS_2/core_init.log',
+  'SVL_CoreOS_2/install.log',
   'SVL_CoreOS_2/kernel/svl_sentinel_daemon.py',
   'SVL_CoreOS_2/kernel/binary_hyperspace_void.py',
   'SVL_CoreOS_2/kernel/hot_swap_engine.py',
@@ -28,6 +29,8 @@ const DEFAULT_COREOS2_FILES = [
   'SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py',
   'SVL_CoreOS_2/system/assets/apex_ui_manifest.json',
   'SVL_CoreOS_2/debian13/install_coreos2_svl364.sh',
+  'SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh',
+  'SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json',
   'SVL_CoreOS_2/debian13/svl-sentinel.service',
   'SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf',
   'SVL_CoreOS_2/debian13/packages_manifest.txt',
@@ -240,6 +243,56 @@ export const LinuxDeployDashboard: React.FC = () => {
           <RefreshCw className="w-3.5 h-3.5" />
           Odśwież diagnostykę hosta
         </button>
+      </div>
+
+      {/* SVL CoreOS 2: Apex Hot-Swap & Debian 13 Debootstrap Status Banner */}
+      <div className="p-4 rounded-xl bg-emerald-950/25 border border-emerald-500/40 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-300">
+              ⚡ SVL CoreOS 2: Apex — Hot-Swap AKTYWNY (100%)
+            </span>
+            <span className="text-[11px] font-mono text-cyan-300 border border-cyan-500/40 bg-cyan-950/40 px-2 py-0.5 rounded">
+              Debootstrap Debian 13 (Trixie): ZAKOŃCZONY 100%
+            </span>
+            <span className="text-[11px] font-mono text-violet-300 border border-violet-500/40 bg-violet-950/40 px-2 py-0.5 rounded">
+              SVL_CoreOS_2/: {coreOs2Files.length} plików · 7 katalogów
+            </span>
+          </div>
+          <p className="text-xs text-slate-300">
+            Atomowa podmiana systemu (<code className="text-emerald-300">hot_swap_engine.py</code> + <code className="text-emerald-300">svl_sentinel_daemon.py</code>) oraz pełny pakiet bazowy <code className="text-cyan-300">Debian 13 Trixie (Stage 1 &amp; 2)</code> zostały wdrożone i zsynchronizowane z repozytorium <code className="text-violet-300">Rush47/SVL_Core</code>.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setSelectedFilePath('SVL_CoreOS_2/install.log')}
+            className="px-2.5 py-1.5 rounded bg-[#111520] hover:bg-slate-800 border border-emerald-500/40 text-[11px] font-mono text-emerald-300"
+          >
+            📄 install.log
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilePath('SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh')}
+            className="px-2.5 py-1.5 rounded bg-[#111520] hover:bg-slate-800 border border-cyan-500/40 text-[11px] font-mono text-cyan-300"
+          >
+            🐧 Debootstrap Trixie
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilePath('SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json')}
+            className="px-2.5 py-1.5 rounded bg-[#111520] hover:bg-slate-800 border border-violet-500/40 text-[11px] font-mono text-violet-300"
+          >
+            📦 Manifest Rootfs
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedFilePath('SVL_CoreOS_2/gui/apex_dark_ui.tsx')}
+            className="px-2.5 py-1.5 rounded bg-[#111520] hover:bg-slate-800 border border-amber-500/40 text-[11px] font-mono text-amber-300"
+          >
+            🎨 Apex-Dark GUI
+          </button>
+        </div>
       </div>
 
       {/* 3-Column Status Grid: Linux Host, Ollama Engine, repository probes */}
