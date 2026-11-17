@@ -24,6 +24,7 @@ import {
   getSvlOperatorAccessToken,
   hasSvlOperatorAccessToken,
 } from './svlLogic';
+import { setGuiLoggerContext, trackGuiEvent } from './guiLogger';
 
 const BROADCAST_CHANNEL_NAME = 'svl_python_os_sync';
 const STORAGE_SIGNAL_KEY = 'svl_sync_signal_v1';
@@ -165,6 +166,19 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [wsState, setWsState] = useState<WsConnectionState>('connecting');
   const [wsAttempt, setWsAttempt] = useState(0);
   const [wsLastError, setWsLastError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setGuiLoggerContext({ origin: tabOrigin });
+  }, [tabOrigin]);
+
+  useEffect(() => {
+    trackGuiEvent({
+      kind: 'gui_ws_state',
+      level: wsLastError && wsState !== 'online' ? 'WARN' : 'INFO',
+      action: `Stan WebSocket /ws/svl: ${wsState}`,
+      detail: wsLastError ? { lastError: wsLastError } : undefined,
+    });
+  }, [wsState, wsLastError]);
   const [viteHmrDiagnostic, setViteHmrDiagnostic] = useState<ViteHmrDiagnostic>(() => {
     if (typeof window !== 'undefined' && window.__SVL_DEV_DIAGNOSTICS__) {
       return window.__SVL_DEV_DIAGNOSTICS__;
@@ -582,6 +596,12 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             ...(result.error ? { error: result.error } : {}),
           };
           setLastRefreshReport(report);
+          trackGuiEvent({
+            kind: 'gui_sync',
+            level: report.ok ? 'INFO' : 'WARN',
+            action: `Synchronizacja globalna (${reason}): ok=${String(report.ok)} rev=${report.serverRevision} (${report.durationMs} ms)`,
+            detail: report.error ? { error: report.error } : undefined,
+          });
           return report;
         } finally {
           setIsSyncing(false);

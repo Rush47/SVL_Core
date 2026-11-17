@@ -19,3 +19,5 @@ data/*.secret
 data/ssh/
 __pycache__/
 *.pyc
+logi/*.txt
+!logi/.gitkeep

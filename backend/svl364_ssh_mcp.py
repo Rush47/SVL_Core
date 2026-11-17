@@ -27,8 +27,10 @@ from typing import Any, Optional
 
 try:
     from real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+    from svl_file_logger import append_python_log
 except ImportError:  # uruchomienie jako pakiet backend.*
     from backend.real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+    from backend.svl_file_logger import append_python_log
 
 
 # Pola fikcyjnego "stanu statku" z poprzednich wersji (sektor, orbita, reaktor, tarcze...).
@@ -765,6 +767,15 @@ except Exception as exc:
         if telemetry is not None:
             telemetry._ssh_target_cache.pop(ssh_host, None)
 
+        append_python_log(
+            "ssh_exec",
+            f"ssh://{ssh_host} mode={cmd_mode} exit={exit_code} ({duration_ms} ms) $ {clean_cmd[:160]}",
+            level="INFO" if exit_code == 0 else "ERROR",
+            correlation_id=correlation_id,
+            origin=origin,
+            details={"effectiveCommand": effective_shell_cmd[:240], "subsystem": target_subsystem, "exitCode": exit_code},
+        )
+
         return {
             "ok": exit_code == 0,
             "error": "" if exit_code == 0 else (stderr_out or f"Połączenie SSH z {ssh_host} zakończyło się kodem {exit_code}."),
@@ -985,6 +996,13 @@ except Exception as exc:
             "origin": origin,
         }
         self.recent_activity.append(entry)
+        append_python_log(
+            "mcp_tool",
+            f"{tool_name} ({duration_ms} ms)",
+            level="INFO",
+            origin=origin,
+            details={"arguments": arguments, "outputPreview": str(output)[:280]},
+        )
         try:
             self.kernel.append_terminal_entry(
                 "root",

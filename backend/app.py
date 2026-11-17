@@ -61,6 +61,7 @@ from svl_core import (
     TopologicalInfinityEngine,
     VisualScope,
 )
+from svl_file_logger import append_python_log, ensure_log_files
 
 
 class SVLBackendRuntime:
@@ -68,6 +69,7 @@ class SVLBackendRuntime:
 
     def __init__(self) -> None:
         self.boot_time = time.time()
+        ensure_log_files()
         self.kernel = SVLSystemKernel()
         self.bus = SphericalEventBus()
         self.orchestrator = SVLAgentOrchestrator(self.kernel, self.bus)
@@ -643,6 +645,12 @@ class SVLBackendRuntime:
             out = f"{out}{result_repr}\n" if out else f"{result_repr}\n"
 
         self.kernel.record_audit("operator", "PYTHON_REPL_EXEC", "<svl_python_console>", "OK" if ok else "ERROR", code[:120])
+        append_python_log(
+            "python_repl",
+            f"REPL exec ok={ok}: {code[:140]}",
+            level="INFO" if ok else "ERROR",
+            details={"stderr": stderr_buf.getvalue()[:300]} if stderr_buf.getvalue() else None,
+        )
         return {
             "ok": ok,
             "stdout": out,
@@ -1569,12 +1577,38 @@ async def _handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWri
             except Exception:
                 body = {}
 
+        req_started = time.monotonic()
         try:
             status, response_payload = await handle_api_request(method, path, query, body, correlation_id=correlation_id)
         except Exception as route_exc:
             traceback.print_exc()
             status = 500
             response_payload = {"ok": False, "error": f"Python backend exception: {route_exc}"}
+            append_python_log(
+                "python_http_exception",
+                f"{method} {path} -> 500 ({route_exc})",
+                level="ERROR",
+                correlation_id=correlation_id,
+                details={"traceback": traceback.format_exc()[:800]},
+            )
+        else:
+            duration_ms = round((time.monotonic() - req_started) * 1000, 1)
+            is_idle_poll = (
+                method == "GET"
+                and path == "/api/py/sync/events"
+                and status == 200
+                and len(response_payload.get("events") or []) == 0
+                and not response_payload.get("gapDetected")
+            )
+            if not is_idle_poll:
+                append_python_log(
+                    "python_http",
+                    f"{method} {path} -> HTTP {status} ({duration_ms} ms)",
+                    level="ERROR" if status >= 500 else ("WARN" if status >= 400 else "INFO"),
+                    correlation_id=correlation_id,
+                    origin=str(body.get("origin") or "gateway"),
+                    details={"error": response_payload.get("error")} if status >= 400 else None,
+                )
 
         resp_bytes = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
         status_text = {
@@ -1634,18 +1668,22 @@ async def _run_boot_autoconnect() -> None:
             )
     except Exception as exc:
         print(f"[SVL Python OS] Warning during boot autoconnect: {exc}", flush=True)
+        append_python_log("python_boot", f"Ostrzeżenie podczas boot autoconnect: {exc}", level="WARN")
 
 
 async def main() -> None:
     port = int(os.environ.get("SVL_PYTHON_PORT", "8085"))
+    ensure_log_files()
     server = await asyncio.start_server(_handle_client, "127.0.0.1", port)
     print(f"[SVL Python OS] Backend Kernel running on http://127.0.0.1:{port}", flush=True)
+    append_python_log("python_boot", f"SVL Python OS Backend Kernel uruchomiony na http://127.0.0.1:{port}")
     # Bind TCP server first so Gateway never gets ECONNREFUSED during GitHub inspection
     asyncio.create_task(_run_boot_autoconnect())
     try:
         async with server:
             await server.serve_forever()
     finally:
+        append_python_log("python_lifecycle", "Zatrzymywanie SVL Python OS Backend Kernel")
         await runtime.orchestrator.shutdown()
 
 

@@ -3,6 +3,8 @@
  * Mirrors the Python backend's TopologicalInfinityEngine and command parsers.
  */
 
+import { trackGuiApiCall } from './guiLogger';
+
 export interface CanonicalAgentMeta {
   id: string;
   canonicalName: string;
@@ -857,6 +859,7 @@ export async function safeFetchJson<T = any>(
         mergedHeaders.set('Content-Type', 'application/json');
       }
 
+      const reqStartedAt = performance.now();
       const resp = await fetch(url, {
         ...restInit,
         method,
@@ -866,6 +869,15 @@ export async function safeFetchJson<T = any>(
 
       const parsed = await safeParseJsonResponse<T>(resp);
       parsed.correlationId = parsed.correlationId || correlationId;
+      trackGuiApiCall({
+        method,
+        url,
+        status: resp.status,
+        ok: parsed.ok,
+        durationMs: performance.now() - reqStartedAt,
+        correlationId: parsed.correlationId,
+        error: parsed.error,
+      });
 
       const isTransientStatus =
         resp.status === 502 || resp.status === 503 || resp.status === 504 || Boolean(parsed.proxyHtml);
@@ -897,15 +909,25 @@ export async function safeFetchJson<T = any>(
         continue;
       }
 
+      const failureError = timedOut
+        ? `Przekroczono limit czasu (${Math.round(timeoutMs / 1000)}s) połączenia z ${url}.`
+        : `Brak połączenia z backendem (${err?.message || 'offline'}).`;
+      trackGuiApiCall({
+        method,
+        url,
+        status: 0,
+        ok: false,
+        durationMs: 0,
+        correlationId,
+        error: failureError,
+      });
       return {
         ok: false,
         status: 0,
         data: null,
         correlationId,
         offline: !timedOut,
-        error: timedOut
-          ? `Przekroczono limit czasu (${Math.round(timeoutMs / 1000)}s) połączenia z ${url}.`
-          : `Brak połączenia z backendem (${err?.message || 'offline'}).`,
+        error: failureError,
       };
     } finally {
       clearTimeout(timer);

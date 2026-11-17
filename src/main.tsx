@@ -1,6 +1,8 @@
+import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { initGuiTelemetryLogger, trackGuiEvent } from './utils/guiLogger.ts';
 
 declare global {
   interface Window {
@@ -9,6 +11,51 @@ declare global {
       hmrMessage?: string;
       detectedAt?: string;
     };
+  }
+}
+
+initGuiTelemetryLogger();
+
+class GuiErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; errorMessage: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMessage: error?.message || String(error) };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    trackGuiEvent({
+      kind: 'react_error_boundary',
+      level: 'ERROR',
+      action: `Błąd renderowania GUI: ${error?.message || String(error)}`,
+      detail: { componentStack: String(info?.componentStack || '').slice(0, 500) },
+      immediate: true,
+    });
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-screen w-screen flex-col items-center justify-center bg-[#0B0D13] p-6 text-center text-slate-200">
+          <h1 className="mb-2 text-lg font-bold text-rose-400">Wystąpił błąd interfejsu SVL Python OS</h1>
+          <p className="mb-4 max-w-lg text-xs text-slate-400">{this.state.errorMessage}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-500"
+          >
+            Odśwież interfejs
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
   }
 }
 
@@ -49,5 +96,8 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
   });
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
-
+createRoot(document.getElementById('root')!).render(
+  <GuiErrorBoundary>
+    <App />
+  </GuiErrorBoundary>,
+);

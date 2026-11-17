@@ -34,6 +34,11 @@ MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verif
 SYNC_SCHEMA_VERSION = "2026.11.sync.v1"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+try:
+    from svl_file_logger import append_python_log, ensure_log_files
+except ImportError:
+    from backend.svl_file_logger import append_python_log, ensure_log_files
+
 
 def resolve_sqlite_path(db_path: Optional[str] = None) -> Path:
     configured_path = db_path or os.environ.get("SVL_SQLITE_PATH")
@@ -1375,6 +1380,16 @@ class SVLSystemKernel:
             (clean_eid, entity, entity_id, clean_origin, now_iso, new_rev),
         )
 
+        append_python_log(
+            f"sync:{event_type}",
+            f"{entity}/{entity_id} rev={new_rev} srvRev={new_srv}",
+            level="INFO",
+            correlation_id=clean_corr,
+            origin=clean_origin,
+            details=safe_payload,
+            extra_secrets=[self._operator_token] if getattr(self, "_operator_token", None) else None,
+        )
+
         return {
             "deduplicated": False,
             "revision": new_rev,
@@ -1732,6 +1747,13 @@ class SVLSystemKernel:
             )
 
         self.run_db(_write, write=True)
+        append_python_log(
+            f"audit:{action}",
+            f"actor={actor} target={target} status={status} · {safe_details}",
+            level="ERROR" if str(status).upper() in ("ERROR", "DENIED", "FAILED") else "INFO",
+            origin=actor,
+            extra_secrets=[self._operator_token] if getattr(self, "_operator_token", None) else None,
+        )
 
     def get_audit_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         def _read(conn: sqlite3.Connection) -> list[sqlite3.Row]:

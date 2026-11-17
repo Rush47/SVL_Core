@@ -57,6 +57,11 @@ import {
   selectNextFreeSpeaker,
   type AgentMemoryRecord,
 } from './src/server/memoryPrompt.ts';
+import {
+  SvlFileLogger,
+  normalizeGuiLogBatch,
+  scrubSensitiveText,
+} from './src/server/fileLogger.ts';
 
 dotenv.config();
 
@@ -107,6 +112,36 @@ try {
 } catch {
   // ignore read-only fs
 }
+
+const svlFileLogger = new SvlFileLogger();
+svlFileLogger.logSync({
+  layer: 'SYSTEM',
+  level: 'INFO',
+  category: 'gateway_init',
+  message: 'Zainicjalizowano SvlFileLogger (katalog logi/*.txt aktywny)',
+  details: { logDir: svlFileLogger.logDir },
+});
+
+process.on('uncaughtException', (err) => {
+  svlFileLogger.logSync({
+    layer: 'GATEWAY',
+    level: 'ERROR',
+    category: 'uncaught_exception',
+    message: `Nieobsłużony wyjątek Node Gateway: ${err?.message || String(err)}`,
+    details: { stack: String(err?.stack || '').slice(0, 800) },
+  });
+});
+
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  svlFileLogger.logSync({
+    layer: 'GATEWAY',
+    level: 'ERROR',
+    category: 'unhandled_rejection',
+    message: `Nieobsłużona obietnica Node Gateway: ${msg}`,
+    details: reason instanceof Error ? { stack: String(reason.stack || '').slice(0, 800) } : undefined,
+  });
+});
 
 // Earlier versions wrote fake `sudo`, `ufw` and `ssh` scripts into /usr/local/bin here
 // (ssh ran commands locally, ufw always reported an active firewall). They are no longer
@@ -343,7 +378,15 @@ function recordRuntimeLog(
   for (const rawLine of source.split(/\r?\n/)) {
     const message = scrubRuntimeLog(rawLine.trim());
     if (!message) continue;
-    runtimeLogLines.push({ timestamp: new Date().toISOString(), service, level, message });
+    const ts = new Date().toISOString();
+    runtimeLogLines.push({ timestamp: ts, service, level, message });
+    svlFileLogger.log({
+      timestamp: ts,
+      layer: service === 'python' ? 'PYTHON' : 'GATEWAY',
+      level: level === 'error' ? 'ERROR' : 'INFO',
+      category: service === 'python' ? 'python_stdio' : 'gateway_runtime',
+      message,
+    });
   }
   if (runtimeLogLines.length > MAX_RUNTIME_LOG_LINES) {
     runtimeLogLines.splice(0, runtimeLogLines.length - MAX_RUNTIME_LOG_LINES);
@@ -574,6 +617,9 @@ async function startServer() {
     const origJson = res.json.bind(res);
     let intendedStatus = 200;
 
+    let capturedErrorMsg = '';
+    const startedAtMs = Date.now();
+
     res.status = ((code: number) => {
       intendedStatus = code;
       if (code === 403) return origStatus(401);
@@ -582,6 +628,9 @@ async function startServer() {
     }) as typeof res.status;
 
     res.json = ((body: any) => {
+      if (body && typeof body === 'object' && !Array.isArray(body) && typeof body.error === 'string') {
+        capturedErrorMsg = body.error;
+      }
       if (
         body &&
         typeof body === 'object' &&
@@ -600,8 +649,45 @@ async function startServer() {
       return origJson(body);
     }) as typeof res.json;
 
+    res.on('finish', () => {
+      const cleanPath = req.originalUrl.split('?')[0];
+      if (cleanPath === '/api/logs/gui' && res.statusCode < 400) {
+        return;
+      }
+      const durationMs = Date.now() - startedAtMs;
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO',
+        category: 'http_api',
+        correlationId: corrId,
+        origin: String(req.headers['x-svl-origin'] || req.ip || 'client'),
+        message: `${req.method} ${cleanPath} -> HTTP ${res.statusCode} (${durationMs} ms)`,
+        details: capturedErrorMsg ? { error: capturedErrorMsg, intendedStatus } : undefined,
+      });
+    });
+
     next();
   });
+
+  // Odbiera strumień zdarzeń GUI (kliknięcia, nawigacja, formularze, konsola, błędy JS/React, żądania) do logi/*.txt
+  app.post('/api/logs/gui', express.json({ limit: '64kb' }), (req, res) => {
+    const entries = normalizeGuiLogBatch(req.body);
+    if (entries.length === 0) {
+      res.status(400).json({ ok: false, error: 'Brak poprawnych zdarzeń GUI do zapisania.' });
+      return;
+    }
+    const accepted = svlFileLogger.logBatch(entries);
+    res.json({ ok: true, accepted });
+  });
+
+  app.get('/api/logs/files', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Lista plików logi/*.txt wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const summary = await svlFileLogger.getSummary();
+    res.json({ ok: true, ...summary });
+  }));
 
   // Recent logs belong to THIS gateway process, not GitHub Actions.
   // Never expose the console output of an authenticated runtime to public previews.
@@ -692,15 +778,25 @@ async function startServer() {
       type: sanitized.type || 'svl.event',
     });
 
+    let delivered = 0;
     for (const [client] of wsClients) {
       if (client.readyState === WebSocket.OPEN) {
         try {
           client.send(frame);
+          delivered += 1;
         } catch {
           // ignore closed socket race
         }
       }
     }
+    svlFileLogger.log({
+      layer: 'WS',
+      level: 'INFO',
+      category: 'ws_broadcast',
+      correlationId: String(sanitized.correlationId || ''),
+      origin: String(sanitized.origin || 'outbox'),
+      message: `Broadcast ${String(sanitized.type || 'svl.event')} (${String(sanitized.entity || '')}/${String(sanitized.entityId || '')} srvRev=${String(sanitized.serverRevision ?? '')}) -> ${delivered} klient(ów)`,
+    });
   };
   /** Zgłasza nowe zdarzenie z outboxa: natychmiastowy relay w kolejności rewizji. */
   const publishOutboxEvent = (evt: any) => {
@@ -3089,6 +3185,13 @@ async function startServer() {
         ? 'Przesłany załącznik lub ładunek żądania przekracza limit 25 MB.'
         : err?.message || String(err);
     console.error(`[API Error] ${req.method} ${req.originalUrl}:`, msg);
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: 'ERROR',
+      category: 'api_error',
+      correlationId: (req as any).correlationId || '',
+      message: `${req.method} ${req.originalUrl.split('?')[0]} -> HTTP ${status}: ${scrubSensitiveText(msg)}`,
+    });
     res.status(status).json({
       ok: false,
       error: msg,
@@ -3171,6 +3274,12 @@ async function startServer() {
         catch { credential = ''; }
       }
       if (!protocols.includes('svl-v1') || !hasOperatorAuthorization(credential)) {
+        svlFileLogger.log({
+          layer: 'WS',
+          level: 'WARN',
+          category: 'ws_auth_denied',
+          message: 'Odrzucono upgrade /ws/svl (HTTP 401 — nieprawidłowy lub brakujący SVL_OPERATOR_TOKEN)',
+        });
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
@@ -3194,6 +3303,13 @@ async function startServer() {
       clientId,
       origin: clientOrigin,
       lastPongAt: Date.now(),
+    });
+    svlFileLogger.log({
+      layer: 'WS',
+      level: 'INFO',
+      category: 'ws_connect',
+      origin: clientOrigin,
+      message: `Połączono klienta ${clientId} (lastRevision=${clientLastRev}, aktywnych=${wsClients.size})`,
     });
 
     const sendSafe = (payload: Record<string, unknown>) => {
@@ -3334,10 +3450,24 @@ async function startServer() {
 
     ws.on('error', (err) => {
       console.warn(`[WS /ws/svl] Client ${clientId} error:`, err.message);
+      svlFileLogger.log({
+        layer: 'WS',
+        level: 'ERROR',
+        category: 'ws_client_error',
+        origin: clientOrigin,
+        message: `Błąd gniazda ${clientId}: ${err.message}`,
+      });
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code) => {
       wsClients.delete(ws);
+      svlFileLogger.log({
+        layer: 'WS',
+        level: 'INFO',
+        category: 'ws_disconnect',
+        origin: clientOrigin,
+        message: `Rozłączono klienta ${clientId} (code=${code}, aktywnych=${wsClients.size})`,
+      });
     });
   });
 
@@ -3380,6 +3510,12 @@ async function startServer() {
     stopPythonBackend();
   });
   const stopGateway = () => {
+    svlFileLogger.logSync({
+      layer: 'SYSTEM',
+      level: 'INFO',
+      category: 'gateway_shutdown',
+      message: 'Zamykanie serwera Gateway i Python Backend',
+    });
     stopPythonBackend();
     for (const client of wss.clients) client.terminate();
     httpServer.close();
@@ -3391,6 +3527,12 @@ async function startServer() {
     (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
   httpServer.listen(PORT, bindHost, () => {
     console.log(`[SVL Python OS] Gateway running on http://${bindHost}:${PORT}`);
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: 'INFO',
+      category: 'gateway_listen',
+      message: `SVL Gateway nasłuchuje na http://${bindHost}:${PORT}`,
+    });
   });
 }
 

@@ -27,6 +27,7 @@ const InfrastructureWorkspace = React.lazy(() =>
 );
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from './utils/svlLogic';
+import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
 type ActiveWorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
 
@@ -56,6 +57,12 @@ function SVLWorkspaceShell() {
 
   const handleSaveOperatorToken = () => {
     const trimmed = operatorToken.trim();
+    trackGuiEvent({
+      kind: 'operator_auth',
+      level: 'INFO',
+      action: trimmed ? 'Zapisano token operatora w sesji GUI' : 'Wyczyszczono token operatora w sesji GUI',
+      immediate: true,
+    });
     setOperatorToken(trimmed);
     setSvlOperatorAccessToken(trimmed);
     setOperatorAuthVisible(false);
@@ -73,6 +80,7 @@ function SVLWorkspaceShell() {
   } = useSvlSync();
 
   useEffect(() => {
+    setGuiLoggerContext({ tab: activeTab });
     if (activeTab === 'chat') {
       void refreshDomainModules(['chat', 'agents', 'health', 'workspace']);
     } else if (activeTab === 'svl364') {
