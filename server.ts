@@ -41,6 +41,7 @@ import {
 } from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
+import { parseGalleryVerdict, galleryPromptForAgent } from './src/server/galleryVision.ts';
 import {
   parseShipOllamaTunnelEnv,
   buildSshTunnelArgs,
@@ -927,6 +928,80 @@ function stopShipOllamaTunnel(): void {
   try { shipTunnel.proc?.kill('SIGTERM'); } catch { /* proces mógł już zniknąć */ }
 }
 
+
+// ======================= GALERIA: OCENA ZDJĘĆ PRZEZ AGENTY AI =======================
+// Operator wrzuca zdjęcie; KAŻDY agent AI (Bielik, Maya Mitek) ogląda je modelem wizyjnym,
+// daje like/dislike i komentarz. Dane w pliku poza drzewem repo (bez modyfikowania plików
+// śledzonych przez Git — żadnych automatycznych zmian w repozytorium).
+interface GalleryOpinion { agent: string; verdict: 'like' | 'dislike'; comment: string; model: string }
+interface GalleryItem { id: string; imageDataUrl: string; mimeType: string; uploadedAt: string; opinions: GalleryOpinion[] }
+const GALLERY_AGENTS = ['Bielik', 'Maya Mitek'];
+const GALLERY_FILE = process.env.SVL_GALLERY_PATH || path.join(os.tmpdir(), 'svl-gallery.json');
+let galleryItems: GalleryItem[] = [];
+try {
+  const saved = JSON.parse(fsSync.readFileSync(GALLERY_FILE, 'utf8'));
+  if (Array.isArray(saved)) galleryItems = saved.slice(0, 60);
+} catch {
+  // brak pliku — pusta galeria
+}
+function persistGallery(): void {
+  try {
+    fsSync.writeFileSync(GALLERY_FILE, JSON.stringify(galleryItems.slice(0, 60)));
+  } catch {
+    // zapis pomocniczy — błąd nie może przerwać działania
+  }
+}
+
+/** Jeden agent AI ogląda zdjęcie modelem wizyjnym i zwraca werdykt like/dislike + komentarz. */
+async function analyzeGalleryImageForAgent(agentDisplayName: string, imageB64: string, mimeType: string): Promise<GalleryOpinion> {
+  const prompt = galleryPromptForAgent(agentDisplayName);
+  const cleanB64 = imageB64.replace(/^data:[^;]+;base64,/, '');
+
+  // 1) Gemini (wizja) — jeśli skonfigurowany.
+  const ai = getGeminiClient();
+  if (ai) {
+    for (const candidate of await geminiCandidatesFor(ai, '', 4)) {
+      try {
+        const resp = await ai.models.generateContent({
+          model: candidate,
+          contents: [{ role: 'user', parts: [{ inlineData: { mimeType: mimeType || 'image/jpeg', data: cleanB64 } }, { text: prompt }] }],
+          config: { maxOutputTokens: 400, ...geminiThinkingConfig(candidate), abortSignal: AbortSignal.timeout(Number(process.env.GEMINI_TIMEOUT_MS || 20000)) },
+        });
+        const text = String(resp.text || '').trim();
+        if (text) {
+          const { verdict, comment } = parseGalleryVerdict(text);
+          return { agent: agentDisplayName, verdict, comment, model: `Gemini (${candidate})` };
+        }
+      } catch {
+        // spróbuj kolejnego modelu
+      }
+    }
+  }
+
+  // 2) Ollama (wizja) ze statku/lokalna — przez backend Pythona (model wizyjny lub analiza techniczna).
+  try {
+    const rv = await callPythonBackend('POST', '/api/py/vision/analyze', {
+      imageBase64: cleanB64, imageMimeType: mimeType || 'image/jpeg', prompt, model: 'llama3.2-vision:11b', emitToChat: false, origin: 'gallery',
+    });
+    const reply = String(rv.data?.record?.reportMarkdown || rv.data?.reply || '').trim();
+    if (rv.status === 200 && reply) {
+      const { verdict, comment } = parseGalleryVerdict(reply);
+      const model = String(rv.data?.record?.model || 'Ollama vision');
+      return { agent: agentDisplayName, verdict, comment, model };
+    }
+  } catch {
+    // brak modelu wizyjnego
+  }
+
+  // 3) Brak modelu wizyjnego — uczciwie: agent nie mógł obejrzeć zdjęcia.
+  return {
+    agent: agentDisplayName,
+    verdict: 'like',
+    comment: 'Nie mogłem obejrzeć zdjęcia — brak dostępnego modelu wizyjnego (Gemini/Ollama). Podłącz model wizyjny, aby ocena była prawdziwa.',
+    model: 'brak modelu wizyjnego',
+  };
+}
+
 async function startServer() {
   // Never start a synthetic Ollama daemon: an unavailable real model must stay offline.
   // Ollama ze statku SVL-364 przez SSH musi ustawić OLLAMA_HOST, zanim wystartuje backend Pythona.
@@ -1185,6 +1260,60 @@ async function startServer() {
       },
     });
   }));
+
+  // GALERIA — lista zdjęć z ocenami agentów AI.
+  app.get('/api/gallery', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Galeria wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    res.json({ ok: true, items: galleryItems.slice(0, 60), agents: GALLERY_AGENTS });
+  });
+
+  // Wrzucenie zdjęcia: każdy agent AI je ogląda i daje like/dislike + komentarz.
+  app.post('/api/gallery/upload', express.json({ limit: '12mb' }), asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Dodanie zdjęcia wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const imageBase64 = String(req.body?.imageBase64 || '').trim();
+    const mimeType = String(req.body?.mimeType || 'image/jpeg').trim();
+    if (!imageBase64) {
+      res.status(400).json({ ok: false, error: 'Brak zdjęcia (imageBase64).' });
+      return;
+    }
+    if (imageBase64.length > 9_000_000) {
+      res.status(413).json({ ok: false, error: 'Zdjęcie za duże (limit ok. 6 MB).' });
+      return;
+    }
+    const dataUrl = imageBase64.startsWith('data:') ? imageBase64 : `data:${mimeType};base64,${imageBase64}`;
+    // Każdy agent ogląda zdjęcie równolegle.
+    const opinions = await Promise.all(GALLERY_AGENTS.map((a) => analyzeGalleryImageForAgent(a, imageBase64, mimeType)));
+    const item: GalleryItem = {
+      id: `gal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      imageDataUrl: dataUrl,
+      mimeType,
+      uploadedAt: new Date().toISOString(),
+      opinions,
+    };
+    galleryItems.unshift(item);
+    if (galleryItems.length > 60) galleryItems.length = 60;
+    persistGallery();
+    svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'gallery', message: `Nowe zdjęcie ocenione przez agentów: ${opinions.map((o) => `${o.agent}=${o.verdict}`).join(', ')}` });
+    res.json({ ok: true, item });
+  }));
+
+  app.delete('/api/gallery/:id', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Usunięcie zdjęcia wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const id = String(req.params.id || '');
+    const before = galleryItems.length;
+    galleryItems = galleryItems.filter((i) => i.id !== id);
+    persistGallery();
+    res.json({ ok: true, removed: before - galleryItems.length });
+  });
 
   app.get('/api/ship/ollama', (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
