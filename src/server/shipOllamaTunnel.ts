@@ -82,3 +82,40 @@ export function describeTunnelStatus(status: TunnelStatus, cfg: ShipOllamaTunnel
       return 'Tunel Ollamy ze statku wyłączony.';
   }
 }
+
+/**
+ * Domyślne, mocne modele UNCENSORED pod GPU (statek SVL-364 ma dużo RAM i GPU).
+ * Realne tagi z rejestru Ollamy (ollama.com/library), od największego do najszybszego.
+ * Linie Dolphin i Wizard-Vicuna-Uncensored to sprawdzone modele bez cenzury treści.
+ */
+export const SHIP_UNCENSORED_GPU_MODELS: readonly string[] = [
+  'dolphin-mixtral:8x22b',          // ~141B MoE — flagowy, maksymalna jakość (duże VRAM/RAM)
+  'dolphin-llama3:70b',             // 70B, uncensored, bardzo mocny
+  'wizard-vicuna-uncensored:30b',   // 30B, uncensored
+  'dolphin-mixtral:8x7b',           // 8x7B MoE, szybszy, uncensored
+];
+
+/**
+ * Lista modeli do pobrania na statku ("podłącz wszystkie, tylko uncensored pod GPU").
+ * Domyślnie zestaw SHIP_UNCENSORED_GPU_MODELS; SVL_SHIP_OLLAMA_MODELS (po przecinku) nadpisuje.
+ * Celowo NIE dokłada modeli wizyjnych/ocenzurowanych — operator chce wyłącznie uncensored.
+ * Odfiltrowuje duplikaty i profile budowane lokalnie (apex-uncensored powstaje z Modelfile).
+ */
+export function resolveShipPullModels(
+  env: Record<string, string | undefined>,
+  extra: string[] = [],
+): string[] {
+  const override = String(env.SVL_SHIP_OLLAMA_MODELS || '').split(',').map((m) => m.trim()).filter(Boolean);
+  const raw = [...(override.length > 0 ? override : SHIP_UNCENSORED_GPU_MODELS), ...extra]
+    .map((m) => String(m || '').trim())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of raw) {
+    // Profil apex-uncensored nie jest w rejestrze Ollamy — buduje się go z Modelfile (ollama create).
+    if (/apex-uncensored/i.test(m)) continue;
+    const key = m.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(m); }
+  }
+  return out;
+}

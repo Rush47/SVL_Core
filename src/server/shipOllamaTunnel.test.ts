@@ -62,3 +62,15 @@ test('describeTunnelStatus daje czytelne komunikaty', () => {
   assert.match(describeTunnelStatus('down', cfg, 'ssh: brak'), /nie działa: ssh: brak/);
   assert.match(describeTunnelStatus('off', parseShipOllamaTunnelEnv({})), /wyłączony/);
 });
+
+test('resolveShipPullModels: domyślnie zestaw UNCENSORED GPU; env nadpisuje; bez apex/duplikatów', async () => {
+  const { resolveShipPullModels, SHIP_UNCENSORED_GPU_MODELS } = await import('./shipOllamaTunnel.ts');
+  // Domyślnie: wyłącznie modele uncensored pod GPU (bez modelu wizyjnego).
+  assert.deepEqual(resolveShipPullModels({}), [...SHIP_UNCENSORED_GPU_MODELS]);
+  // Nadpisanie przez env + filtr apex-uncensored i duplikatów.
+  const list = resolveShipPullModels(
+    { SVL_SHIP_OLLAMA_MODELS: 'dolphin-llama3:70b, dolphin-llama3:70b' },
+    ['svl364-apex-uncensored:latest', 'wizard-vicuna-uncensored:13b'],
+  );
+  assert.deepEqual(list, ['dolphin-llama3:70b', 'wizard-vicuna-uncensored:13b']);
+});

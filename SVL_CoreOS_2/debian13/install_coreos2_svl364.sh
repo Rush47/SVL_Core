@@ -100,6 +100,10 @@ SVL_SHIP_OLLAMA=0
 SVL_SSH_TARGET=Ship
 SVL_SHIP_OLLAMA_PORT=11434
 SVL_SHIP_OLLAMA_LOCAL_PORT=11434
+# Modele uncensored pod GPU pobierane na statek (puste = domyślny zestaw Dolphin/Wizard-Vicuna).
+SVL_SHIP_OLLAMA_MODELS=
+# GPU na statku (dużo VRAM): 999 = wszystkie warstwy modelu na GPU.
+OLLAMA_NUM_GPU=999
 # Uzupełnij według potrzeb:
 GITHUB_TOKEN=
 GEMINI_API_KEY=

@@ -47,6 +47,8 @@ import {
   tunnelOllamaUrl,
   tunnelRestartDelayMs,
   describeTunnelStatus,
+  resolveShipPullModels,
+  SHIP_UNCENSORED_GPU_MODELS,
   type ShipOllamaTunnelConfig,
   type TunnelStatus,
 } from './src/server/shipOllamaTunnel.ts';
@@ -804,6 +806,13 @@ const shipTunnel = {
   restartTimer: null as ReturnType<typeof setTimeout> | null,
 };
 
+const shipPull = {
+  running: false,
+  startedAt: null as string | null,
+  finishedAt: null as string | null,
+  models: [] as Array<{ model: string; status: 'pending' | 'pulling' | 'done' | 'error'; detail: string }>,
+};
+
 function getShipTunnelStatus() {
   return {
     enabled: shipTunnel.cfg.enabled,
@@ -1184,6 +1193,122 @@ async function startServer() {
     }
     res.json({ ok: true, ...getShipTunnelStatus() });
   });
+
+  // Modele Ollamy na statku SVL-364 (przez tunel): lista pobranych + stan pobierania + zestaw docelowy.
+  app.get('/api/ship/ollama/models', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const base = (process.env.OLLAMA_HOST || tunnelOllamaUrl(shipTunnel.cfg)).replace(/\/$/, '');
+    let installed: Array<{ name: string; size: number | null }> = [];
+    let reachable = false;
+    let error: string | null = null;
+    try {
+      const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) });
+      reachable = r.ok;
+      if (r.ok) {
+        const data: any = await r.json();
+        installed = (Array.isArray(data?.models) ? data.models : []).map((m: any) => ({ name: String(m?.name || m?.model || ''), size: typeof m?.size === 'number' ? m.size : null })).filter((m: { name: string }) => m.name);
+      } else {
+        error = `Ollama statku odpowiada kodem ${r.status}`;
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    const target = resolveShipPullModels(process.env);
+    const have = new Set(installed.map((m) => m.name.toLowerCase()));
+    const missing = target.filter((m) => !have.has(m.toLowerCase()) && !have.has(`${m.toLowerCase()}:latest`));
+    res.json({
+      ok: true,
+      tunnel: getShipTunnelStatus(),
+      host: base,
+      reachable,
+      error,
+      installed,
+      targetModels: target,
+      missingModels: missing,
+      pull: shipPull,
+      defaultUncensoredSet: SHIP_UNCENSORED_GPU_MODELS,
+    });
+  }));
+
+  // Pobranie na statku modeli uncensored (przez tunel, Ollama statku sama użyje GPU).
+  // Operacja ciężka (duże pobrania) — uruchamiana tylko ręcznie przez Operatora.
+  app.post('/api/ship/ollama/pull', express.json({ limit: '16kb' }), asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Pobieranie modeli wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    if (shipPull.running) {
+      res.status(409).json({ ok: false, error: 'Pobieranie modeli już trwa.' });
+      return;
+    }
+    const base = (process.env.OLLAMA_HOST || tunnelOllamaUrl(shipTunnel.cfg)).replace(/\/$/, '');
+    // Sprawdź osiągalność Ollamy statku, zanim zaczniemy (uczciwie, bez udawania).
+    try {
+      const probe = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(6000) });
+      if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
+    } catch (e) {
+      res.status(424).json({ ok: false, error: `Ollama statku nieosiągalna (${base}): ${e instanceof Error ? e.message : String(e)}. Włącz tunel SSH (SVL_SHIP_OLLAMA=1) i sprawdź dostęp do statku.` });
+      return;
+    }
+    const requested = Array.isArray(req.body?.models) ? req.body.models.map((m: unknown) => String(m).trim()).filter(Boolean) : [];
+    const models = resolveShipPullModels(process.env, requested.length > 0 ? requested : []);
+    const onlyMissing = req.body?.onlyMissing !== false;
+
+    let toPull = models;
+    if (onlyMissing) {
+      try {
+        const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) });
+        const data: any = r.ok ? await r.json() : {};
+        const have = new Set((Array.isArray(data?.models) ? data.models : []).map((m: any) => String(m?.name || '').toLowerCase()));
+        toPull = models.filter((m) => !have.has(m.toLowerCase()) && !have.has(`${m.toLowerCase()}:latest`));
+      } catch {
+        // brak listy — pobierzemy cały zestaw
+      }
+    }
+
+    shipPull.running = true;
+    shipPull.startedAt = new Date().toISOString();
+    shipPull.finishedAt = null;
+    shipPull.models = toPull.map((m) => ({ model: m, status: 'pending' as const, detail: 'w kolejce' }));
+    res.json({ ok: true, started: true, models: toPull, host: base, alreadyComplete: toPull.length === 0 });
+
+    // Pobieranie w tle (sekwencyjnie), aktualizuje stan widoczny w /api/ship/ollama/models.
+    void (async () => {
+      for (const entry of shipPull.models) {
+        entry.status = 'pulling';
+        entry.detail = 'pobieranie na statku…';
+        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Pobieram model uncensored na statku: ${entry.model}` });
+        try {
+          const r = await fetch(`${base}/api/pull`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // Duże modele GPU — bardzo długi limit (do 2 h na model).
+            signal: AbortSignal.timeout(7200000),
+            body: JSON.stringify({ name: entry.model, stream: false }),
+          });
+          const body: any = await r.json().catch(() => ({}));
+          if (r.ok && (body?.status === 'success' || !body?.error)) {
+            entry.status = 'done';
+            entry.detail = 'pobrany na statku';
+            svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Model ${entry.model} pobrany na statku.` });
+          } else {
+            entry.status = 'error';
+            entry.detail = String(body?.error || `HTTP ${r.status}`).slice(0, 200);
+            svlFileLogger.log({ layer: 'GATEWAY', level: 'WARN', category: 'ship_ollama', message: `Pobieranie ${entry.model} nieudane: ${entry.detail}` });
+          }
+        } catch (e) {
+          entry.status = 'error';
+          entry.detail = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+          svlFileLogger.log({ layer: 'GATEWAY', level: 'WARN', category: 'ship_ollama', message: `Pobieranie ${entry.model} przerwane: ${entry.detail}` });
+        }
+      }
+      shipPull.running = false;
+      shipPull.finishedAt = new Date().toISOString();
+    })();
+  }));
 
   app.get('/api/deployment-info', (_req, res) => {
     let commit = process.env.GITHUB_SHA || process.env.VITE_GIT_SHA || '';

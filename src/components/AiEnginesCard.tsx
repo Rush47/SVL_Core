@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Cpu, Satellite, Sparkles, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
+import { Cpu, Satellite, Sparkles, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
 import { safeFetchJson, getSvlOperatorAccessToken } from '../utils/svlLogic';
 
 interface OllamaModel { name: string; size: number | null; parameterSize: string | null; vision: boolean }
@@ -35,6 +35,20 @@ export const AiEnginesCard: React.FC = () => {
   const [state, setState] = useState<EnginesState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [shipModels, setShipModels] = useState<{ targetModels: string[]; missingModels: string[]; installed: Array<{ name: string }>; reachable: boolean; pull: { running: boolean; models: Array<{ model: string; status: string; detail: string }> } } | null>(null);
+  const [pulling, setPulling] = useState(false);
+
+  const refreshShip = useCallback(async () => {
+    const r = await safeFetchJson<any>('/api/ship/ollama/models', { timeoutMs: 10000 });
+    if (r.ok && r.data?.ok) setShipModels(r.data);
+  }, []);
+
+  const pullUncensored = async () => {
+    setPulling(true);
+    await safeFetchJson('/api/ship/ollama/pull', { method: 'POST', timeoutMs: 15000, body: JSON.stringify({ onlyMissing: true }) });
+    await refreshShip();
+    setPulling(false);
+  };
 
   const refresh = useCallback(async () => {
     if (!getSvlOperatorAccessToken()) {
@@ -53,11 +67,12 @@ export const AiEnginesCard: React.FC = () => {
 
   useEffect(() => {
     void refresh();
-    timerRef.current = setInterval(() => void refresh(), 10000);
+    void refreshShip();
+    timerRef.current = setInterval(() => { void refresh(); void refreshShip(); }, 10000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [refresh]);
+  }, [refresh, refreshShip]);
 
   const e = state?.engines;
   const ship = e?.ollama.shipTunnel;
@@ -108,6 +123,33 @@ export const AiEnginesCard: React.FC = () => {
               ))}
             </ul>
             <div className="text-[10px] text-slate-500">Preferowany: <span className="font-mono text-slate-400">{e.ollama.preferredModel}</span></div>
+            {ship?.enabled && ship.status === 'up' && shipModels && (
+              <div className="pt-1 border-t border-slate-800 space-y-1">
+                <div className="text-[10px] text-slate-400">
+                  Modele UNCENSORED (GPU) na statku: {shipModels.installed.length}/{shipModels.targetModels.length}
+                </div>
+                {shipModels.pull.running ? (
+                  <ul className="space-y-0.5">
+                    {shipModels.pull.models.map((m) => (
+                      <li key={m.model} className="text-[10px] text-slate-400 font-mono truncate">
+                        {m.status === 'done' ? '✅' : m.status === 'error' ? '❌' : m.status === 'pulling' ? '⏬' : '…'} {m.model} — {m.detail}
+                      </li>
+                    ))}
+                  </ul>
+                ) : shipModels.missingModels.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => void pullUncensored()}
+                    disabled={pulling}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-violet-600 bg-violet-600/20 px-2.5 py-1 text-[11px] font-semibold text-violet-200 hover:bg-violet-600/35 disabled:opacity-50"
+                  >
+                    <DownloadCloud className="w-3.5 h-3.5" /> Pobierz {shipModels.missingModels.length} modeli uncensored (GPU)
+                  </button>
+                ) : (
+                  <div className="text-[10px] text-emerald-400">✅ Wszystkie modele uncensored są na statku.</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Gemini */}
