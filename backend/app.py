@@ -1749,6 +1749,7 @@ async def handle_api_request(
             origin=origin,
             correlation_id=corr,
             confirmed=True,
+            raw=bool(body.get("raw")),
         )
         return (200 if res.get("ok") else 400), res
 

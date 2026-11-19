@@ -2097,6 +2097,8 @@ async function startServer() {
         {
           command: effectiveCmd,
           confirmed: true,
+          // Konsola operatora: dosłowne wykonanie na statku (bez interpretacji/podmiany polecenia).
+          raw: true,
           target_subsystem: 'terminal',
           origin: `terminal:${terminalType}`,
           correlationId: corrId,

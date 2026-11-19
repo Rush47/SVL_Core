@@ -23,10 +23,10 @@ const TERMINAL_TABS: Array<{
   {
     id: 'ssh',
     label: 'SSH · Ship (ROOT)',
-    subtitle: 'Mostek OpenSSH root@svl-364-ship · przetwarza dowolne polecenia naturalne oraz /exec <polecenie> z uprawnieniami ROOT (uid=0).',
+    subtitle: 'Konsola OpenSSH root@svl-364-ship · wpisane polecenie wykonuje się DOSŁOWNIE na statku (jak w zdalnym terminalu), z uprawnieniami ROOT (uid=0).',
     defaultPrompt: 'root@svl-364-ship#',
     welcomeText:
-      'Zdalny terminal SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Obsługuje: (1) /exec <dowolne polecenie> oraz /root <dowolne polecenie>, (2) dowolne polecenia w języku naturalnym (Maya Mitek & Bielik ROOT), oraz (3) bezpośrednie komendy powłoki Linux.',
+      'Konsola SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Każde wpisane polecenie wykonuje się DOSŁOWNIE na statku, dokładnie tak, jak byś je wpisał w terminalu statku. Prefiks /exec lub /root jest opcjonalny. (Komendy interaktywne jak vim/top wymagają prawdziwego PTY — tu działają polecenia zwracające wynik.)',
     quickCommands: [
       '/exec id && uname -a && uptime',
       '/exec ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/build_manifest.json',
@@ -495,7 +495,7 @@ export const TerminalsWorkspace: React.FC = () => {
           type="text"
           value={commandInput}
           onChange={(e) => setCommandInput(e.target.value)}
-          placeholder={`Dowolne polecenie naturalne lub /exec <polecenie> dla ${currentTabMeta.label}...`}
+          placeholder={activeTab === 'ssh' ? 'Wpisz polecenie — wykona się DOSŁOWNIE na statku SVL-364 (np. ls -la, systemctl status ollama)...' : `Dowolne polecenie lub /exec <polecenie> dla ${currentTabMeta.label}...`}
           aria-label={`Wejście terminala ${currentTabMeta.label}`}
           className="flex-1 min-w-0 min-h-[40px] bg-[#0B0D13] border border-slate-700/80 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-violet-500"
         />

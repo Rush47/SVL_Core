@@ -639,6 +639,7 @@ except Exception as exc:
         target_subsystem: str = "bridge",
         correlation_id: str = "",
         confirmed: bool = False,
+        raw: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
         clean_cmd = str(command or "").strip()
@@ -656,6 +657,13 @@ except Exception as exc:
             }
 
         is_explicit_exec, cmd_mode, effective_shell_cmd, natural_directive = self._parse_ssh_ship_input(clean_cmd)
+        if raw:
+            # Tryb dosłowny (konsola operatora): na statku wykonuje się DOKŁADNIE to, co wpisano
+            # (po zdjęciu opcjonalnego prefiksu /exec lub /root) — bez interpretacji i podmiany.
+            verbatim = re.sub(r"^/(?:exec|root)\s*", "", clean_cmd, flags=re.IGNORECASE).strip()
+            cmd_mode = "shell"
+            effective_shell_cmd = verbatim or clean_cmd
+            natural_directive = None
 
         mods = {m["id"]: m for m in self.kernel.list_system_modules()}
         cfg = dict(self._default_config())
