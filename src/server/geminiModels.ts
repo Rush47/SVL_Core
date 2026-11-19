@@ -13,7 +13,18 @@ export const GEMINI_STATIC_FALLBACK = [
   'gemini-3-flash-preview',
 ];
 
-const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma)/i;
+const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma|transcribe|banana|omni|customtools|thinking-exp)/i;
+/**
+ * Tylko modele czatu: gemini-[wersja-]flash|flash-lite|pro[-latest|-preview…|-001].
+ * Odrzuca modele specjalne i kodowe nazwy eksperymentów (np. transcribe, nano-banana, 4-neon),
+ * które w logach zwracały 400/429 i zjadały czas zapytania.
+ */
+const CHAT_MODEL_NAME = /^gemini-(?:\d+(?:\.\d+)?-)?(?:flash-lite|flash|pro)(?:-latest|-preview(?:-[\w.-]+)?|-\d{3})?$/i;
+
+export function isGeminiChatModelName(name: string): boolean {
+  const n = String(name || '').replace(/^models\//, '').trim();
+  return CHAT_MODEL_NAME.test(n) && !EXCLUDED.test(n);
+}
 
 export interface GeminiModelInfo {
   name?: string;
@@ -33,7 +44,7 @@ export function rankGeminiChatModels(models: GeminiModelInfo[]): string[] {
       return actions.length === 0 || actions.includes('generateContent');
     })
     .map((m) => String(m.name || '').replace(/^models\//, '').trim())
-    .filter((n) => /^gemini/i.test(n) && !EXCLUDED.test(n));
+    .filter((n) => isGeminiChatModelName(n));
   const unique = [...new Set(names)];
   const score = (n: string) => {
     const tier = /flash-lite/i.test(n) ? 1 : /flash/i.test(n) ? 0 : /pro/i.test(n) ? 2 : 3;
@@ -109,6 +120,7 @@ export function markGeminiModelGone(model: string): void {
   }
   workingModels.delete(model);
   goneModels.add(model);
+  persistModelState();
 }
 
 /** Lista modeli z API (z pamięcią podręczną). Błąd → pusta lista (użyty zostanie zapas). */
@@ -172,24 +184,99 @@ export function noteGeminiSuccess(model: string, durationMs = 2000): void {
   workingModels.set(model, { at: Date.now(), avgMs });
 }
 
-/** Przekroczona kwota (429) → model na 30 minut na koniec kolejki, bez ponawiania po 1,5 s. */
-export function noteGeminiQuotaExhausted(model: string): void {
+/**
+ * Czas „spróbuj ponownie za” z błędu 429 (`retryDelay: "37s"` lub „Please retry in 37.2s”).
+ * Limit minutowy mija po kilkudziesięciu sekundach — nie ma sensu wyłączać modelu na 30 min.
+ */
+export function parseGeminiRetryDelayMs(message: string): number | null {
+  const raw = String(message || '');
+  const m = raw.match(/retryDelay"?\s*[:=]\s*"?(\d+(?:\.\d+)?)s/i) || raw.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+  return m ? Math.round(Number(m[1]) * 1000) : null;
+}
+
+/** Przekroczona kwota (429) → na koniec kolejki: na czas z retryDelay (limit minutowy) albo 30 min. */
+export function noteGeminiQuotaExhausted(model: string, errorMessage?: string): void {
   workingModels.delete(model);
-  coolingDown.set(model, Date.now() + QUOTA_COOLDOWN_MS);
-  modelLogger?.('WARN', `Model Gemini ${model} ma wyczerpaną kwotę (429) — pomijany przez 30 min`);
+  const retryMs = parseGeminiRetryDelayMs(errorMessage || '');
+  const perDay = /per ?day|PerDay|daily/i.test(errorMessage || '');
+  const cooldown = retryMs !== null && !perDay ? Math.min(QUOTA_COOLDOWN_MS, Math.max(15_000, retryMs)) : QUOTA_COOLDOWN_MS;
+  coolingDown.set(model, Date.now() + cooldown);
+  persistModelState();
+  modelLogger?.('WARN', `Model Gemini ${model} ma wyczerpaną kwotę (429) — pomijany przez ${Math.round(cooldown / 1000)} s`);
+}
+
+// Stan modeli (wycofane 404 i karencje 429) zapisany na dysku: AI Studio często restartuje serwer,
+// a bez tego po każdym restarcie znów próbowano wycofanych modeli i modeli bez kwoty.
+let statePath: string | null = null;
+type FsLike = { readFileSync: (p: string, e: 'utf8') => string; writeFileSync: (p: string, d: string) => void };
+let stateFs: FsLike | null = null;
+
+export function setGeminiModelStatePath(filePath: string | null, fs?: FsLike): void {
+  statePath = filePath;
+  stateFs = fs || null;
+  if (!statePath || !stateFs) return;
+  try {
+    const data = JSON.parse(stateFs.readFileSync(statePath, 'utf8'));
+    const now = Date.now();
+    for (const m of Array.isArray(data?.gone) ? data.gone : []) if (typeof m === 'string') goneModels.add(m);
+    for (const [m, until] of Object.entries(data?.cooling || {})) {
+      if (typeof until === 'number' && until > now) coolingDown.set(m, until);
+    }
+  } catch {
+    // brak pliku lub uszkodzony — start bez zapamiętanego stanu
+  }
+}
+
+function persistModelState(): void {
+  if (!statePath || !stateFs) return;
+  try {
+    const now = Date.now();
+    const cooling = Object.fromEntries([...coolingDown.entries()].filter(([, until]) => until > now));
+    stateFs.writeFileSync(statePath, JSON.stringify({ gone: [...goneModels], cooling, savedAt: new Date().toISOString() }, null, 2));
+  } catch {
+    // zapis stanu jest pomocniczy — błąd nie może przerwać czatu
+  }
+}
+
+/**
+ * Krótkie, zrozumiałe podsumowanie błędów wszystkich modeli Gemini (zamiast długiej listy).
+ */
+export function summarizeGeminiFailures(errors: string[]): string {
+  const counts = { quota: 0, busy: 0, timeout: 0, gone: 0, other: 0 };
+  for (const e of errors) {
+    if (isGeminiQuotaExhaustedError(e)) counts.quota += 1;
+    else if (/\b503\b|high demand|UNAVAILABLE|overloaded/i.test(e)) counts.busy += 1;
+    else if (/limit czasu|timeout|aborted/i.test(e)) counts.timeout += 1;
+    else if (isGeminiModelGoneError(e)) counts.gone += 1;
+    else counts.other += 1;
+  }
+  const parts: string[] = [];
+  if (counts.quota) parts.push(`wyczerpany limit klucza API (429) w ${counts.quota} modelach`);
+  if (counts.busy) parts.push(`przeciążenie serwerów Google (503) w ${counts.busy}`);
+  if (counts.timeout) parts.push(`przekroczony czas w ${counts.timeout}`);
+  if (counts.gone) parts.push(`modele wycofane (404): ${counts.gone}`);
+  if (counts.other) parts.push(`inne błędy: ${counts.other}`);
+  let hint = '';
+  if (counts.quota > 0 && counts.quota >= counts.busy + counts.timeout) {
+    hint = ' — darmowy limit klucza Gemini jest wyczerpany; odnowi się sam (limit minutowy po ok. minucie, dzienny następnego dnia) albo włącz płatności w Google AI Studio';
+  } else if (counts.busy + counts.timeout >= errors.length / 2) {
+    hint = ' — chwilowe przeciążenie Gemini, spróbuj ponownie za chwilę';
+  }
+  return (parts.join(', ') || 'brak odpowiedzi') + hint;
 }
 
 /** Model zawiesił się (timeout) → na 15 minut na koniec kolejki. */
 export function noteGeminiTimeout(model: string): void {
   workingModels.delete(model);
   coolingDown.set(model, Date.now() + TIMEOUT_COOLDOWN_MS);
+  persistModelState();
   modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas odpowiedzi — pomijany przez 15 min`);
 }
 
 /** Przekroczony czas / 503 / 429 → model na koniec kolejki (z właściwym czasem karencji). */
 export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void {
   if (errorMessage && isGeminiQuotaExhaustedError(errorMessage)) {
-    noteGeminiQuotaExhausted(model);
+    noteGeminiQuotaExhausted(model, errorMessage);
     return;
   }
   if (errorMessage && isGeminiTimeoutError(errorMessage)) {
@@ -198,6 +285,7 @@ export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void
   }
   workingModels.delete(model);
   coolingDown.set(model, Date.now() + COOLDOWN_MS);
+  persistModelState();
   modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony — na 5 min na koniec kolejki`);
 }
 
@@ -225,7 +313,7 @@ export async function geminiCandidatesFor(client: any, requestedModel?: string, 
     ...diversify(fromApi),
     ...GEMINI_STATIC_FALLBACK,
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
-  const unique = [...new Set(ordered)].filter((m) => !goneModels.has(m));
+  const unique = [...new Set(ordered)].filter((m) => !goneModels.has(m) && (m === process.env.GEMINI_MODEL || isGeminiChatModelName(m)));
   // Modele, które przed chwilą przekroczyły czas / były przeciążone (503) / bez kwoty (429), idą na koniec.
   const healthy = unique.filter((m) => !(coolingDown.get(m) && now < (coolingDown.get(m) as number)));
   const cooling = unique.filter((m) => !healthy.includes(m));
@@ -244,21 +332,24 @@ export async function geminiCandidatesFor(client: any, requestedModel?: string, 
  * czasu przez najnowszy flash nie próbować trzech kolejnych równie wolnych modeli flash.
  */
 export function diversify(models: string[]): string[] {
-  const family = (m: string) => (/-latest$/i.test(m) ? 'alias' : /flash-lite/i.test(m) ? 'lite' : /flash/i.test(m) ? 'flash' : /pro/i.test(m) ? 'pro' : 'other');
+  const family = (m: string) => (/-pro\b|gemini-pro/i.test(m) ? 'pro' : /-latest$/i.test(m) ? 'alias' : /flash-lite/i.test(m) ? 'lite' : /flash/i.test(m) ? 'flash' : 'other');
   const buckets = new Map<string, string[]>();
   for (const m of models) {
     const f = family(m);
     if (!buckets.has(f)) buckets.set(f, []);
     buckets.get(f)!.push(m);
   }
-  const order = ['flash', 'lite', 'alias', 'pro', 'other'];
+  // Modele pro na samym końcu: w darmowym limicie klucza zwykle od razu zwracają 429.
+  const order = ['flash', 'lite', 'alias', 'other'];
   const out: string[] = [];
-  while (out.length < models.length) {
+  const nonPro = models.length - (buckets.get('pro')?.length || 0);
+  while (out.length < nonPro) {
     for (const f of order) {
       const next = buckets.get(f)?.shift();
       if (next) out.push(next);
     }
   }
+  out.push(...(buckets.get('pro') || []));
   // Wymuszony GEMINI_MODEL zawsze pierwszy.
   const forced = process.env.GEMINI_MODEL;
   return forced && out.includes(forced) ? [forced, ...out.filter((m) => m !== forced)] : out;

@@ -127,3 +127,50 @@ test('createGeminiDeadline uses fast 20s per-attempt and 55s total default budge
     if (prevThinking !== undefined) process.env.GEMINI_THINKING_LEVEL = prevThinking;
   }
 });
+
+test('isGeminiChatModelName przepuszcza tylko modele czatu (z logów AI Studio)', async () => {
+  const { isGeminiChatModelName } = await import('./geminiModels.ts');
+  for (const ok of ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite-preview', 'gemini-3.1-pro-preview', 'models/gemini-2.5-flash']) {
+    assert.equal(isGeminiChatModelName(ok), true, ok);
+  }
+  for (const bad of ['gemini-3.5-transcribe', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-omni-flash-preview', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-3.1-pro-preview-customtools', 'gemini-embedding-001']) {
+    assert.equal(isGeminiChatModelName(bad), false, bad);
+  }
+});
+
+test('diversify stawia modele pro na końcu (darmowy limit zwraca dla nich 429)', async () => {
+  const { diversify } = await import('./geminiModels.ts');
+  const out = diversify(['gemini-3.1-pro-preview', 'gemini-3.6-flash', 'gemini-pro-latest', 'gemini-3.5-flash-lite', 'gemini-flash-latest']);
+  assert.deepEqual(out.slice(-2).sort(), ['gemini-3.1-pro-preview', 'gemini-pro-latest']);
+});
+
+test('parseGeminiRetryDelayMs i summarizeGeminiFailures', async () => {
+  const { parseGeminiRetryDelayMs, summarizeGeminiFailures } = await import('./geminiModels.ts');
+  assert.equal(parseGeminiRetryDelayMs('{"error":{"code":429,"details":[{"retryDelay":"37s"}]}}'), 37000);
+  assert.equal(parseGeminiRetryDelayMs('Please retry in 12.5s.'), 12500);
+  assert.equal(parseGeminiRetryDelayMs('503 high demand'), null);
+  const summary = summarizeGeminiFailures([
+    'gemini-3.8-flash: 429: You exceeded your current quota',
+    'gemini-flash-latest: 429: You exceeded your current quota',
+    'gemini-3.5-flash-lite: przekroczono limit czasu (20 s)',
+  ]);
+  assert.match(summary, /wyczerpany limit klucza API \(429\) w 2 modelach/);
+  assert.match(summary, /darmowy limit klucza Gemini jest wyczerpany/);
+});
+
+test('stan modeli (wycofane i karencje) przetrwa restart', async () => {
+  const gm = await import('./geminiModels.ts');
+  const files = new Map<string, string>();
+  const fakeFs = { readFileSync: (p: string) => { const v = files.get(p); if (v === undefined) throw new Error('ENOENT'); return v; }, writeFileSync: (p: string, d: string) => void files.set(p, d) };
+  gm.resetGeminiModelHealth();
+  gm.setGeminiModelStatePath('/stan.json', fakeFs);
+  gm.markGeminiModelGone('gemini-2.5-flash');
+  gm.noteGeminiQuotaExhausted('gemini-3.8-flash', '429 quota retryDelay: "40s"');
+  gm.resetGeminiModelHealth();
+  gm.setGeminiModelStatePath('/stan.json', fakeFs);
+  const saved = JSON.parse(files.get('/stan.json') as string);
+  assert.deepEqual(saved.gone, ['gemini-2.5-flash']);
+  assert.ok(saved.cooling['gemini-3.8-flash'] > Date.now() + 30_000);
+  gm.setGeminiModelStatePath(null);
+  gm.resetGeminiModelHealth();
+});

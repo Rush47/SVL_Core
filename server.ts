@@ -93,6 +93,8 @@ import {
   isGeminiModelGoneError,
   markGeminiModelGone,
   setGeminiModelLogger,
+  setGeminiModelStatePath,
+  summarizeGeminiFailures,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
 import {
@@ -229,6 +231,12 @@ const resolvedLogDir =
 const svlFileLogger = new SvlFileLogger({ logDir: resolvedLogDir });
 setGeminiModelLogger((level, message, details) =>
   svlFileLogger.log({ layer: 'GATEWAY', level, category: 'ai_models', message, details }),
+);
+// Stan modeli Gemini (wycofane / bez kwoty) przetrwa restart serwera; poza katalogiem projektu,
+// żeby zapis nie tworzył punktów kontrolnych w AI Studio.
+setGeminiModelStatePath(
+  process.env.SVL_GEMINI_STATE_FILE || path.join(os.tmpdir(), 'svl-gemini-model-state.json'),
+  fsSync,
 );
 setGitHubLogger((level, message, details) =>
   svlFileLogger.log({ layer: 'GATEWAY', level, category: 'github', message, details }),
@@ -3708,6 +3716,7 @@ async function startServer() {
         ? 'pominięta — sprawy GitHuba obsługuje Gemini z narzędziami GitHub (Ollama nie ma do nich dostępu)'
         : 'nie użyto dla tego zapytania';
     let geminiFailure = ai ? '' : 'brak klucza GEMINI_API_KEY';
+    let geminiFailureDetails = '';
     const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
@@ -3809,7 +3818,12 @@ async function startServer() {
             '(ustaw dłuższy OLLAMA_CHAT_TIMEOUT_MS albo mniejszy model)';
         } else {
           ollamaFailure = /fetch failed|ECONNREFUSED|abort|timeout/i.test(reason)
-            ? `niedostępna pod ${ollamaHost} (brak połączenia lub przekroczony czas: ${reason})`
+            ? /fetch failed|ECONNREFUSED/i.test(reason)
+              ? `nie działa pod ${ollamaHost} (brak połączenia)` +
+                (/127\.0\.0\.1|localhost/.test(ollamaHost)
+                  ? ' — na tym serwerze nie uruchomiono Ollamy (w AI Studio jej nie ma); ustaw OLLAMA_HOST na adres komputera z Ollamą'
+                  : '')
+              : `nie odpowiedziała pod ${ollamaHost} w wyznaczonym czasie (${reason})`
             : reason;
         }
       }
@@ -4027,7 +4041,7 @@ async function startServer() {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (errMsg === 'cancelled_by_hedge_winner') return;
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate, errMsg);
         else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
         else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
         geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, geminiDeadline.perAttemptMs)}`);
@@ -4038,7 +4052,8 @@ async function startServer() {
       // Dla zwykłych rozmów (bez narzędzi funkcyjnych) uruchamiamy hedged failover:
       // jeśli kandydat #1 nie odpowie w 4,5 s, równolegle startuje kandydat #2 — wygrywa szybszy!
       if (!wantsSystemTool && candidateModels.length >= 2) {
-        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 4500);
+        // Drugie równoległe zapytanie zużywa limit klucza — tylko gdy pierwszy model długo milczy.
+        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 12000);
         for (let idx = 0; idx < candidateModels.length; idx += 2) {
           if (geminiDeadline.expired()) {
             geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
@@ -4177,7 +4192,10 @@ async function startServer() {
           }
         }
       }
-      geminiFailure = geminiErrors.join(' | ') || 'żaden model Gemini nie zwrócił odpowiedzi';
+      geminiFailure = geminiErrors.length
+        ? summarizeGeminiFailures(geminiErrors)
+        : 'żaden model Gemini nie zwrócił odpowiedzi';
+      geminiFailureDetails = geminiErrors.join(' | ');
     }
 
     // Gemini nie odpowiedziało (albo brak klucza), a Ollamy jeszcze nie pytano — próbujemy jej,
@@ -4232,7 +4250,7 @@ async function startServer() {
       sender: selectedDisplayName,
       agentId: selectedAgent,
       modelUsed: directiveReceipts.length > 0 ? displayModelBadge : 'Brak dostępnego modelu AI',
-      failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null },
+      failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
       provenance: directiveReceipts.length > 0 ? 'server_verified' : 'error',
       followUpMessages: [],
@@ -4320,7 +4338,7 @@ async function startServer() {
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate, errMsg);
         else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
         else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
         else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
@@ -4396,7 +4414,7 @@ async function startServer() {
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate, errMsg);
         else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
         else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
         else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
