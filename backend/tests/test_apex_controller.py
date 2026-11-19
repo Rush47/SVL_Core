@@ -11,7 +11,13 @@ sys.path.insert(0, str(BACKEND_DIR))
 class ApexControllerHonestyTest(unittest.TestCase):
     """SVL CoreOS 2: stan z pomiarów — żadnych wpisanych na sztywno „wykonanych” operacji."""
 
+    def tearDown(self) -> None:
+        # Moduł app tworzy przy imporcie środowisko z bazą z SVL_SQLITE_PATH — zwalniamy je,
+        # żeby kolejne testy importowały app z własną, tymczasową bazą.
+        sys.modules.pop("app", None)
+
     def test_status_is_measured_and_controls_do_not_fake_actions(self) -> None:
+        sys.modules.pop("app", None)
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(
                 "os.environ",
@@ -21,6 +27,7 @@ class ApexControllerHonestyTest(unittest.TestCase):
                     "SVL_COREOS2_ROOTFS": str(Path(tmpdir) / "brak-rootfs"),
                 },
             ):
+                sys.modules.pop("app", None)  # świeże środowisko z bazą tego testu
                 import app as backend_app
 
                 ctl = backend_app.SVLCoreOS2ApexController(backend_app.runtime)

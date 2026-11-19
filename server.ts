@@ -4118,7 +4118,11 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        ws: hmrDisabled ? false : { server: httpServer },
+        // WebSocket Vite zawsze na tym samym serwerze i porcie co aplikacja. Klient Vite 8 łączy się
+        // zawsze — bez serwera (port 24678) każde wczytanie strony dawało nieobsłużony błąd
+        // „WebSocket closed without opened”. Przy DISABLE_HMR obserwowanie plików jest wyłączone
+        // (vite.config.ts: watch null), więc połączenie nie powoduje przeładowań.
+        ws: { server: httpServer },
       },
       appType: 'spa',
     });
@@ -4144,7 +4148,7 @@ async function startServer() {
       const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
       if (parsedUrl.pathname !== '/ws/svl') {
         // Leave Vite HMR WebSocket upgrades untouched when HMR is enabled; reject cleanly when disabled
-        if (process.env.NODE_ENV === 'production' || hmrDisabled) {
+        if (process.env.NODE_ENV === 'production') {
           socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
           socket.destroy();
         }

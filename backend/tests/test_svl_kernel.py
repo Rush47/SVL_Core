@@ -225,6 +225,7 @@ class TestSVLKernelSuite(unittest.TestCase):
     def test_hyperspace_endpoint_rejects_missing_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict("os.environ", {"SVL_SQLITE_PATH": str(Path(tmpdir) / "app.sqlite3")}):
+                sys.modules.pop("app", None)  # świeże środowisko z bazą tego testu
                 import app as backend_app
                 status, response = asyncio.run(
                     backend_app.handle_api_request(
@@ -570,6 +571,7 @@ class TestSVLKernelSuite(unittest.TestCase):
     def test_python_terminal_history_persists_and_clears(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict("os.environ", {"SVL_SQLITE_PATH": str(Path(tmpdir) / "python_term.sqlite3")}):
+                sys.modules.pop("app", None)  # świeże środowisko z bazą tego testu
                 import app as backend_app
 
                 status_log, log_resp = asyncio.run(
@@ -629,6 +631,7 @@ class TestSVLKernelSuite(unittest.TestCase):
     def test_removed_codex_terminal_tab_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict("os.environ", {"SVL_SQLITE_PATH": str(Path(tmpdir) / "codex_tab.sqlite3")}):
+                sys.modules.pop("app", None)  # świeże środowisko z bazą tego testu
                 import app as backend_app
 
                 status, _resp = asyncio.run(
