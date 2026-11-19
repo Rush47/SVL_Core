@@ -31,6 +31,63 @@ from typing import Any, Callable, Optional, TypeVar
 _T = TypeVar("_T")
 
 MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verified", "error"})
+
+# --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
+# Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
+ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Claude (MCP)"}
+# Rozpoznanie starszych, LEGALNYCH nazw kanonicznych agentów → mapowanie na nazwę kanoniczną.
+_AI_SENDER_ALIASES = {
+    "bielik": "Bielik", "bielik ai": "Bielik",
+    "maya": "Maya Mitek", "maya ai": "Maya Mitek", "maya svl-364": "Maya Mitek",
+    "maya mitek": "Maya Mitek", "maya mitek ai": "Maya Mitek", "maya mitek svl-364": "Maya Mitek",
+    "claude (mcp)": "Claude (MCP)",
+}
+# Wyłączone / nieautoryzowane persony AI i jawne podszywania pod kanonicznych agentów.
+_FORBIDDEN_SENDERS = {
+    "iris", "iris ai", "agata", "agata mitek", "aria", "aria mitek", "alex", "alex mitek",
+    "astyria", "astyria mitek", "aurelius", "aurelius mitek", "si_1", "si 1", "si1",
+    "mai", "mai mitek", "mai ai", "maja", "maja mitek", "system svl",
+}
+
+def _fold_confusable(name: str) -> str:
+    """Składa homoglify (4→a, @→a, 0→o, 3→e, 1→i, 5→s) i normalizuje, by wykryć podszywania."""
+    t = str(name or "").strip().lower()
+    table = str.maketrans({"4": "a", "@": "a", "0": "o", "3": "e", "1": "i", "5": "s", "$": "s"})
+    t = t.translate(table)
+    return re.sub(r"\s+", " ", t).strip()
+
+def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Zwraca (nadawca_kanoniczny, powod_blokady).
+    - Blokuje wyłączone/nieautoryzowane persony oraz podszywanie się pod Bielika/Maye.
+    - Wiadomości AI (assistant/system) dopuszcza tylko od ALLOWED_AI_SENDERS (po mapowaniu aliasów).
+    - Wiadomości użytkownika udające agenta AI zamienia na nadawcę Operatora.
+    """
+    sender = str(raw_sender or "").strip()
+    role_l = str(role or "user").strip().lower()
+    low = sender.lower()
+    folded = _fold_confusable(sender)
+    # Persony zakazane — blokada w KAŻDEJ roli (także po złożeniu homoglifów).
+    if low in _FORBIDDEN_SENDERS or folded in _FORBIDDEN_SENDERS:
+        return None, f"Zablokowano podszywanie się pod wyłączoną/nieautoryzowaną personę AI: „{sender}”."
+    canon = _AI_SENDER_ALIASES.get(low)
+    if role_l == "assistant":
+        # Wiadomość agenta AI musi pochodzić od kanonicznego agenta (lub Claude (MCP)).
+        if canon is None:
+            return None, (
+                f"Zablokowano wiadomość agenta AI od nieautoryzowanego nadawcy: „{sender}”. "
+                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Claude (MCP)."
+            )
+        return canon, None
+    if role_l == "system":
+        # Komunikaty systemowe (jądro, powiadomienia Mayi): zakazane persony już odcięte wyżej.
+        # Aliasy AI mapujemy na nazwę kanoniczną; pozostałe nazwy systemowe przepuszczamy.
+        return (canon or sender), None
+    # Rola użytkownika: nie może udawać kanonicznego agenta AI.
+    if canon in ALLOWED_AI_SENDERS:
+        return "Mateusz Mitek (Operator)", None
+    return sender, None
+
 SYNC_SCHEMA_VERSION = "2026.11.sync.v1"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1991,6 +2048,18 @@ class SVLSystemKernel:
         expected_revision: Optional[int] = None,
     ) -> dict[str, Any]:
         now_iso = datetime.now(timezone.utc).isoformat()
+        # ZABEZPIECZENIE: zablokuj podszywanie się pod agentów AI (np. „Mai”, „Iris”).
+        clean_sender, block_reason = sanitize_message_identity(msg.get("role"), msg.get("sender"))
+        if block_reason:
+            append_python_log(
+                "security",
+                f"Odrzucono wiadomość — {block_reason} (rola={msg.get('role')}, origin={origin}).",
+                level="WARN", origin=origin, correlation_id=correlation_id,
+                details={"rejectedSender": str(msg.get("sender") or "")[:80], "role": str(msg.get("role") or "")[:20]},
+            )
+            return {"ok": False, "error": block_reason, "blocked": True, "serverRevision": self.get_server_revision()}
+        if clean_sender is not None and clean_sender != msg.get("sender"):
+            msg = {**msg, "sender": clean_sender}
         display_ts = str(msg.get("timestamp") or datetime.now(timezone.utc).strftime("%H:%M"))
         msg_id = str(msg.get("id") or f"msg-{int(time.time() * 1000)}")
         meta_json = json.dumps({

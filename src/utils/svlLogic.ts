@@ -62,8 +62,30 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   if (low === 'all' || low === 'rodzina mitek' || low === 'rodzina mitek (wszyscy)') {
     return 'Rodzina Mitek (wszyscy)';
   }
-
+  // Ochrona anty-podszywanie: nazwy udające agentów AL/wyłączone persony nie są wyświetlane jako AI.
+  if (isForbiddenAgentSender(clean)) return 'Nadawca niezweryfikowany';
   return clean;
+}
+
+/** Wyłączone persony AI i jawne podszywania pod Bielika/Maye (np. „Mai”, „Iris”). */
+const FORBIDDEN_AGENT_SENDERS = new Set([
+  'iris', 'iris ai', 'agata', 'agata mitek', 'aria', 'aria mitek', 'alex', 'alex mitek',
+  'astyria', 'astyria mitek', 'aurelius', 'aurelius mitek', 'si_1', 'si 1', 'si1',
+  'mai', 'mai mitek', 'mai ai', 'maja', 'maja mitek', 'system svl',
+]);
+
+function foldConfusable(name: string): string {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[4@]/g, 'a').replace(/0/g, 'o').replace(/3/g, 'e').replace(/1/g, 'i').replace(/[5$]/g, 's')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function isForbiddenAgentSender(name?: string | null): boolean {
+  const low = String(name || '').trim().toLowerCase();
+  return FORBIDDEN_AGENT_SENDERS.has(low) || FORBIDDEN_AGENT_SENDERS.has(foldConfusable(name || ''));
 }
 
 export function getGitHubAgentPermissions(rawScopes: unknown): { read: boolean; writeSync: boolean; admin: boolean } {

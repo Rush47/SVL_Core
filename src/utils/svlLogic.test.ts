@@ -9,6 +9,7 @@ import {
   formatAgentDisplayName,
   getGitHubAgentPermissions,
   isGitHubChatRequest,
+  isForbiddenAgentSender,
   getSvlOperatorAccessToken,
   guardUnverifiedMissionCompletion,
   hasSvlOperatorAccessToken,
@@ -599,4 +600,21 @@ test('isGitHubChatRequest rozpoznaje tylko sprawy GitHuba', () => {
   for (const text of ['Cześć Maya, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
     assert.equal(isGitHubChatRequest(text), false, text);
   }
+});
+
+
+test('isForbiddenAgentSender wykrywa podszywania i wyłączone persony', () => {
+  for (const bad of ['Mai', 'mai', 'M4i', 'M@i', 'Maja', 'Iris', 'Iris AI', 'Agata', 'si_1', 'Aurelius']) {
+    assert.equal(isForbiddenAgentSender(bad), true, bad);
+  }
+  for (const ok of ['Bielik', 'Maya Mitek', 'Maya', 'Claude (MCP)', 'Mateusz Mitek (Operator)']) {
+    assert.equal(isForbiddenAgentSender(ok), false, ok);
+  }
+});
+
+test('formatAgentDisplayName nie przepuszcza podszywania', () => {
+  assert.equal(formatAgentDisplayName('Mai'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('Iris'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('Maya'), 'Maya Mitek');
+  assert.equal(formatAgentDisplayName('Bielik'), 'Bielik');
 });
