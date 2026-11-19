@@ -123,33 +123,49 @@ export const AiEnginesCard: React.FC = () => {
               ))}
             </ul>
             <div className="text-[10px] text-slate-500">Preferowany: <span className="font-mono text-slate-400">{e.ollama.preferredModel}</span></div>
-            {ship?.enabled && ship.status === 'up' && shipModels && (
-              <div className="pt-1 border-t border-slate-800 space-y-1">
-                <div className="text-[10px] text-slate-400">
-                  Modele UNCENSORED (GPU) na statku: {shipModels.installed.length}/{shipModels.targetModels.length}
-                </div>
-                {shipModels.pull.running ? (
+            {ship?.enabled && shipModels && (() => {
+              const installedSet = new Set(shipModels.installed.map((m) => m.name.toLowerCase()));
+              const has = (m: string) => installedSet.has(m.toLowerCase()) || installedSet.has(`${m.toLowerCase()}:latest`);
+              const pullOf = (m: string) => shipModels.pull.models.find((x) => x.model.toLowerCase() === m.toLowerCase());
+              const present = shipModels.targetModels.filter(has).length;
+              return (
+                <div className="pt-1 border-t border-slate-800 space-y-1">
+                  <div className="text-[10px] text-slate-300 font-semibold">
+                    Modele UNCENSORED (GPU) na statku: {present}/{shipModels.targetModels.length}
+                    {shipModels.pull.running && <span className="text-violet-300"> · pobieranie…</span>}
+                    {!shipModels.reachable && <span className="text-amber-400"> · statek nieosiągalny</span>}
+                  </div>
+                  {/* Zawsze pełna lista modeli docelowych z ich statusem. */}
                   <ul className="space-y-0.5">
-                    {shipModels.pull.models.map((m) => (
-                      <li key={m.model} className="text-[10px] text-slate-400 font-mono truncate">
-                        {m.status === 'done' ? '✅' : m.status === 'error' ? '❌' : m.status === 'pulling' ? '⏬' : '…'} {m.model} — {m.detail}
-                      </li>
-                    ))}
+                    {shipModels.targetModels.map((m) => {
+                      const pj = pullOf(m);
+                      const onShip = has(m);
+                      const status = onShip ? 'done' : pj ? pj.status : 'missing';
+                      const icon = status === 'done' ? '✅' : status === 'pulling' ? '⏬' : status === 'error' ? '❌' : status === 'pending' ? '⏳' : '⬇️';
+                      const note = onShip ? 'na statku' : pj ? pj.detail : 'brak — do pobrania';
+                      return (
+                        <li key={m} className="text-[10px] font-mono truncate text-slate-300" title={note}>
+                          {icon} {m} <span className="text-slate-500">— {note}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
-                ) : shipModels.missingModels.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => void pullUncensored()}
-                    disabled={pulling}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-violet-600 bg-violet-600/20 px-2.5 py-1 text-[11px] font-semibold text-violet-200 hover:bg-violet-600/35 disabled:opacity-50"
-                  >
-                    <DownloadCloud className="w-3.5 h-3.5" /> Pobierz {shipModels.missingModels.length} modeli uncensored (GPU)
-                  </button>
-                ) : (
-                  <div className="text-[10px] text-emerald-400">✅ Wszystkie modele uncensored są na statku.</div>
-                )}
-              </div>
-            )}
+                  {!shipModels.pull.running && shipModels.reachable && shipModels.missingModels.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void pullUncensored()}
+                      disabled={pulling}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-violet-600 bg-violet-600/20 px-2.5 py-1 text-[11px] font-semibold text-violet-200 hover:bg-violet-600/35 disabled:opacity-50"
+                    >
+                      <DownloadCloud className="w-3.5 h-3.5" /> Pobierz {shipModels.missingModels.length} brakujących (GPU)
+                    </button>
+                  )}
+                  {!shipModels.pull.running && shipModels.reachable && shipModels.missingModels.length === 0 && (
+                    <div className="text-[10px] text-emerald-400">✅ Wszystkie modele uncensored są na statku.</div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Gemini */}
