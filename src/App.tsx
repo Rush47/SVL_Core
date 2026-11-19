@@ -23,6 +23,7 @@ function SVLWorkspaceShell() {
   const [operatorToken, setOperatorToken] = useState(() => getSvlOperatorAccessToken());
   const [operatorAuthVisible, setOperatorAuthVisible] = useState(false);
   const [operatorAuthStatus, setOperatorAuthStatus] = useState<'none' | 'checking' | 'authorized' | 'denied'>('checking');
+  const [operatorRootInfo, setOperatorRootInfo] = useState<{ operator: string; role: string; uid: number; scopesCount: number } | null>(null);
   const firstAuthCheckRef = React.useRef(true);
 
   if (getSvlOperatorAccessToken() !== operatorToken) {
@@ -99,7 +100,14 @@ function SVLWorkspaceShell() {
     const isInitial = firstAuthCheckRef.current;
     firstAuthCheckRef.current = false;
     const handle = setTimeout(async () => {
-      const result = await safeFetchJson<{ok: boolean; authenticated?: boolean}>(
+      const result = await safeFetchJson<{
+        ok: boolean;
+        authenticated?: boolean;
+        operator?: string;
+        role?: string;
+        uid?: number;
+        scopes?: string[];
+      }>(
         '/api/operator/status',
         {
           timeoutMs: 8000,
@@ -110,6 +118,16 @@ function SVLWorkspaceShell() {
       if (cancelled) return;
       const authorized = result.ok && result.data?.ok && result.data?.authenticated === true;
       setOperatorAuthStatus(authorized ? 'authorized' : 'denied');
+      setOperatorRootInfo(
+        authorized
+          ? {
+              operator: result.data?.operator || 'Mateusz Mitek',
+              role: result.data?.role || 'root',
+              uid: typeof result.data?.uid === 'number' ? result.data.uid : 0,
+              scopesCount: Array.isArray(result.data?.scopes) ? result.data.scopes.length : 0,
+            }
+          : null,
+      );
       reconnectWebSocket();
       if (authorized) {
         void refreshAllDomains('operator_token_authorized');
@@ -250,11 +268,11 @@ function SVLWorkspaceShell() {
                 ? 'border-rose-700 bg-rose-950/30 text-rose-300'
                 : 'border-slate-700 bg-[#0B0D13] text-slate-300 hover:border-slate-600'}`}
             title={operatorAuthStatus === 'authorized'
-              ? 'Token operatora potwierdzony przez backend'
+              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · Bielik & Maya Mitek ROOT)`
               : operatorAuthStatus === 'denied'
                 ? 'Serwer odrzucił token operatora'
                 : 'Wpisz prywatny SVL_OPERATOR_TOKEN'}
-          >{operatorAuthStatus === 'authorized' ? '🔐 SVL' : '🔒 SVL'}</button>
+          >{operatorAuthStatus === 'authorized' ? '🔐 ROOT · SVL' : '🔒 SVL'}</button>
           {operatorAuthVisible && (
             <div className="hidden md:flex items-center gap-1.5">
               <input

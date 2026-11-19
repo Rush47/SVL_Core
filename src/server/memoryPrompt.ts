@@ -117,11 +117,12 @@ export function buildProactiveStarterPrompt(
   operatorName = 'Mateusz',
   memoryContext = '',
 ): string {
+  const speakerLabel = speaker === 'Maya' ? 'Maya Mitek' : speaker;
   const memoryHint = memoryContext
     ? ` Jeśli pasuje to naturalnie do rozmowy, możesz delikatnie nawiązać do swojej trwałej pamięci.`
     : '';
   return (
-    `[Rozpocznij swobodną, naturalną rozmowę po polsku jako ${speaker} z ${operatorName} (Operatorem). ` +
+    `[Rozpocznij swobodną, naturalną rozmowę po polsku jako ${speakerLabel} z ${operatorName} (Operatorem). ` +
     `Przywitaj się krótko, podziel jedną ciekawą myślą lub obserwacją i zadaj jedno otwarte pytanie, żeby zachęcić do dialogu.` +
     `${memoryHint}]`
   );

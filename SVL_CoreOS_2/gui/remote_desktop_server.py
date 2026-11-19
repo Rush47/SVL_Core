@@ -17,7 +17,7 @@ class ApexRemoteDesktopServer:
         self.protocol = "SVL-Apex-RDP-Wayland-ZeroCopy"
         self.theme = "Apex-Dark"
         self.resolution = "3840x2160@120Hz (Adaptive 1440x900 Web Viewport)"
-        self.authorized_controllers = ["Mateusz Mitek (ROOT)", "Maya (Kernel Master Daemon)", "Bielik (ROOT)"]
+        self.authorized_controllers = ["Mateusz Mitek (ROOT)", "Maya Mitek (Kernel Master Daemon)", "Bielik (ROOT)"]
 
     def get_session_state(self) -> Dict[str, Any]:
         return {

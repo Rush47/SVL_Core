@@ -26,7 +26,7 @@ BASE_PACKAGES=(
 )
 
 echo "[Stage 1/2] Pobieranie i rozpakowywanie drzewa bazowego (${#BASE_PACKAGES[@]} grup pakietów)..."
-echo "[Stage 2/2] Konfiguracja chroot, locales (pl_PL.UTF-8), strefy czasowej (Europe/Warsaw) oraz konta ROOT (Mateusz Mitek + Maya Daemon)..."
+echo "[Stage 2/2] Konfiguracja chroot, locales (pl_PL.UTF-8), strefy czasowej (Europe/Warsaw) oraz konta ROOT (Mateusz Mitek + Maya Mitek Daemon)..."
 
 if [ -f "${MANIFEST_JSON}" ] && command -v python3 >/dev/null 2>&1; then
   python3 - "${MANIFEST_JSON}" << 'PY_EOF'

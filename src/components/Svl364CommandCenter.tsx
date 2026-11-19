@@ -1266,7 +1266,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               </div>
               <div className="flex items-center justify-between rounded-md bg-slate-950/60 border border-cyan-500/30 px-3 py-2 text-sm">
                 <div>
-                  <span className="font-semibold text-cyan-300">Maya</span>
+                  <span className="font-semibold text-cyan-300">Maya Mitek</span>
                   <p className="text-xs text-slate-400">
                     AI Pokładowa Statku SVL-364 · Baza Notatek i Prac Operatora · RBAC:{' '}
                     {agents.find((a) => a.canonical_name === 'Maya')?.config?.rbac_role || 'root'}

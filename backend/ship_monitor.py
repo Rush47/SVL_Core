@@ -240,16 +240,17 @@ class ShipMonitor:
         self.last_check = {"alias": alias, "online": bool(ship.get("online")), "notifications": len(emitted),
                            "checked_at": state["checked_at"]}
         online = bool(ship.get("online"))
-        append_python_log(
-            "ship_monitor",
-            (
-                f"Pomiar SVL-364 przez SSH ({alias}): " + (measurement_line(ship, alias) if online else
-                f"BRAK ŁĄCZNOŚCI — {str(ship.get('error') or 'nieznany błąd')[:300]}")
-                + f" · powiadomień: {len(emitted)}"
-            ),
-            level="INFO" if online else "WARN",
-            origin="ship-monitor",
-        )
+        if online or notes:
+            append_python_log(
+                "ship_monitor",
+                (
+                    f"Pomiar SVL-364 przez SSH ({alias}): " + (measurement_line(ship, alias) if online else
+                    f"BRAK ŁĄCZNOŚCI — {str(ship.get('error') or 'nieznany błąd')[:300]}")
+                    + f" · powiadomień: {len(emitted)}"
+                ),
+                level="INFO" if online else "WARN",
+                origin="ship-monitor",
+            )
         return emitted
 
     def _run(self) -> None:

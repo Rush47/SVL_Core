@@ -122,6 +122,7 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
 /** Usuwa prefiks z imieniem mówcy (lub [System]: / [Mateusz (Operator)]:) i ucina miejsce, w którym model zaczyna pisać za innych. */
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
   const speakerNames = [
+    'Maya Mitek',
     ...CONVERSATION_AGENTS,
     speaker,
     'Asystent',
@@ -139,7 +140,7 @@ export function cleanAgentReply(text: string, speaker: ConversationAgent): strin
     .replace(new RegExp(`^(?:\\[?\\s*(?:${speakerNames})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]\\s*)+`, 'i'), '')
     .replace(/^\.{2,}\s*/, '')
     .trim();
-  const participants = [...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent', 'System']
+  const participants = ['Maya Mitek', ...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent', 'System']
     .map(escapeRegExp)
     .join('|');
   const nextSpeakerLine = new RegExp(`\\n\\s*\\[?\\s*(?:${participants})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]`, 'i');

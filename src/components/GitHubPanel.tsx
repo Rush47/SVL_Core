@@ -295,7 +295,7 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
         </div>
       )}
       <p className="text-[11px] text-slate-500">
-        Bielik i Maya synchronizują folder <code>SVL_CoreOS_2/</code> oraz całe repozytorium <code>Rush47/SVL_Core</code> z czatu i terminala.
+        Bielik i Maya Mitek synchronizują folder <code>SVL_CoreOS_2/</code> oraz całe repozytorium <code>Rush47/SVL_Core</code> z czatu i terminala.
       </p>
     </div>
   );

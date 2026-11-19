@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CANONICAL_AGENTS,
+  FULL_ROOT_SCOPES,
   buildChatHistoryPayload,
   calculateCompactMetricC,
   compactifyValue,
@@ -20,6 +21,8 @@ import {
   normalizeAiInteractiveMarkup,
   parseChatInteractiveToken,
   unverifiedExecutionNote,
+  resolveChatInteractiveButtonAction,
+  resolveChatTargetAgent,
   resolveInstalledOllamaModel,
   resolveAvatarProfileKey,
   safeFetchJson,
@@ -122,15 +125,90 @@ test('CANONICAL_AGENTS contains only Bielik and Maya on llama3.2-vision:11b', ()
   assert.equal(normalizeAgentCanonicalName('bielik'), 'Bielik');
   assert.equal(normalizeAgentCanonicalName('conv-agent-bielik'), 'Bielik');
   assert.equal(normalizeAgentCanonicalName('maya'), 'Maya');
+  assert.equal(normalizeAgentCanonicalName('Maya Mitek'), 'Maya');
   assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), 'Maya');
   assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
   assert.equal(normalizeAgentCanonicalName('codex'), null);
   assert.equal(formatAgentDisplayName('bielik ai'), 'Bielik');
-  assert.equal(formatAgentDisplayName('maya ai'), 'Maya');
+  assert.equal(formatAgentDisplayName('maya ai'), 'Maya Mitek');
+  assert.equal(formatAgentDisplayName('Maya'), 'Maya Mitek');
   assert.equal(resolveAvatarProfileKey('Agata Mitek', 'Agata'), null);
   assert.equal(resolveAvatarProfileKey('Bielik', 'bielik'), 'Bielik');
   assert.equal(resolveAvatarProfileKey('Maya', 'maya'), 'Maya');
+  assert.equal(resolveAvatarProfileKey('Maya Mitek', 'maya'), 'Maya');
   assert.equal(resolveAvatarProfileKey('Iris AI', 'iris'), null);
+});
+
+test('resolveChatTargetAgent routes direct Polish mentions and Maya channel/selection to Maya (never hijacked by Bielik)', () => {
+  // Natural Polish addressing in Family channel without @
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Maya, sprawdź status systemu',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Rodzina Mitek',
+    }).agent,
+    'Maya',
+  );
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Cześć Maya Mitek, co słychać?',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Rodzina Mitek',
+    }).agent,
+    'Maya',
+  );
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Hej Majo, pokaż tabelę modułów',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Auto',
+    }).agent,
+    'Maya',
+  );
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Piszę do Mayi z pytaniem o raport',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Rodzina Mitek',
+    }).agent,
+    'Maya',
+  );
+  // Explicit dropdown selection Maya + slash command MUST NOT be hijacked by Bielik
+  assert.equal(
+    resolveChatTargetAgent({
+      message: '/status',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Maya',
+      hasSlashCommand: true,
+    }).agent,
+    'Maya',
+  );
+  // Direct Maya channel
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Opisz architekturę w tabeli',
+      conversationId: 'conv-agent-maya',
+      targetAgent: 'Auto',
+    }).agent,
+    'Maya',
+  );
+  // Explicit Bielik mentions & channel still route to Bielik
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Bielik, sprawdź pamięć',
+      conversationId: 'conv-rodzina-mitek-wszyscy',
+      targetAgent: 'Rodzina Mitek',
+    }).agent,
+    'Bielik',
+  );
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Hej',
+      conversationId: 'conv-agent-bielik',
+      targetAgent: 'Bielik',
+    }).agent,
+    'Bielik',
+  );
 });
 
 test('parseBielikChatCommand parses explicit slash commands deterministically', () => {
@@ -446,6 +524,66 @@ test('unverifiedExecutionNote flags claims of finished operations that the serve
   assert.equal(unverifiedExecutionNote('Aby zainstalować system, uruchom instalator jako root.', 0), null);
   assert.equal(unverifiedExecutionNote('Tarcza to ustawienie scenariusza statku.', 0), null);
 });
+
+test('resolveChatInteractiveButtonAction resolves tabs, Polish aliases, system actions, custom fallback, and blocks shell exec', () => {
+  assert.deepEqual(resolveChatInteractiveButtonAction('tab:agents'), { kind: 'tab', tab: 'agents' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('nav:jądro'), { kind: 'tab', tab: 'kernel' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('open:statek'), { kind: 'tab', tab: 'svl364' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('goto:ssh'), { kind: 'tab', tab: 'svl364' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('goto:infrastruktura'), { kind: 'tab', tab: 'infrastructure' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('tab:unknown_xyz'), { kind: 'invalid_tab', rawTab: 'unknown_xyz' });
+
+  assert.deepEqual(resolveChatInteractiveButtonAction('send:/status'), { kind: 'send', text: '/status' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('ask:Maya Mitek'), { kind: 'ask', agent: 'Maya' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('text:Sprawdź logi'), { kind: 'text', text: 'Sprawdź logi' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('copy:uname -a'), { kind: 'copy', text: 'uname -a' });
+
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:sync'), { kind: 'sync' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:antivirus'), { kind: 'scan' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:raport'), { kind: 'report' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:image:Futurystyczny statek SVL-364'), {
+    kind: 'image',
+    prompt: 'Futurystyczny statek SVL-364',
+  });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:vision'), { kind: 'vision' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:avatars'), { kind: 'avatars' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:ollama'), { kind: 'ollama' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:duplex'), { kind: 'duplex' });
+
+  // Custom AI-invented action:* or bare label falls back to sending clean text instead of failing with unknown action
+  assert.deepEqual(resolveChatInteractiveButtonAction('action:check_ports', 'Sprawdź otwarte porty'), {
+    kind: 'send',
+    text: 'Sprawdź otwarte porty',
+  });
+  assert.deepEqual(resolveChatInteractiveButtonAction('Pokaż moduły', 'Pokaż moduły'), {
+    kind: 'send',
+    text: 'Pokaż moduły',
+  });
+
+  // Shell execution via inline AI button stays strictly blocked
+  assert.deepEqual(resolveChatInteractiveButtonAction('send:/exec id'), { kind: 'unsafe' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('/exec rm -rf /'), { kind: 'unsafe' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('run:whoami'), { kind: 'unsafe' });
+});
+
+test('FULL_ROOT_SCOPES includes core system, kernel, terminal, SSH, antivirus, memory, and GitHub admin scopes', () => {
+  assert.ok(FULL_ROOT_SCOPES.length >= 20);
+  for (const required of [
+    'system.root',
+    'kernel.admin',
+    'apex.control',
+    'terminal.exec',
+    'ssh.exec',
+    'security.antivirus',
+    'modules.write',
+    'memory.write',
+    'github.admin',
+    'agents.admin',
+  ]) {
+    assert.ok((FULL_ROOT_SCOPES as readonly string[]).includes(required), `Missing scope: ${required}`);
+  }
+});
+
 
 test('isGitHubChatRequest rozpoznaje tylko sprawy GitHuba', () => {
   for (const text of [

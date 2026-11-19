@@ -31,7 +31,7 @@ export const ApexDarkCoreOS2View: React.FC<ApexDarkTelemetryProps> = ({
             SVL CoreOS 2: Apex — Silnik Renderujący Apex-Dark UI (Odbezpieczony w Repozytorium)
           </h2>
           <p className="text-xs text-slate-400 font-mono">
-            {shipName} · {kernelVersion} · Nadzór: Maya (Kernel Master Daemon & SVL-Sentinel)
+            {shipName} · {kernelVersion} · Nadzór: Maya Mitek (Kernel Master Daemon & SVL-Sentinel)
           </p>
         </div>
         <span className="px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-mono">

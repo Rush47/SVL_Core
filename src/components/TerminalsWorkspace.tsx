@@ -26,7 +26,7 @@ const TERMINAL_TABS: Array<{
     subtitle: 'Mostek OpenSSH root@svl-364-ship · przetwarza dowolne polecenia naturalne oraz /exec <polecenie> z uprawnieniami ROOT (uid=0).',
     defaultPrompt: 'root@svl-364-ship#',
     welcomeText:
-      'Zdalny terminal SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Obsługuje: (1) /exec <dowolne polecenie> oraz /root <dowolne polecenie>, (2) dowolne polecenia w języku naturalnym (Maya & Bielik ROOT), oraz (3) bezpośrednie komendy powłoki Linux.',
+      'Zdalny terminal SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Obsługuje: (1) /exec <dowolne polecenie> oraz /root <dowolne polecenie>, (2) dowolne polecenia w języku naturalnym (Maya Mitek & Bielik ROOT), oraz (3) bezpośrednie komendy powłoki Linux.',
     quickCommands: [
       '/exec id && uname -a && uptime',
       '/exec ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/build_manifest.json',

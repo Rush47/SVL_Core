@@ -5,12 +5,15 @@ import {
   MessageSquare,
   AlertTriangle,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   CANONICAL_AGENTS,
+  FULL_ROOT_SCOPES,
   createUniqueId,
   formatAgentDisplayName,
   getSvlOperatorAccessToken,
+  hasSvlOperatorAccessToken,
   safeFetchJson,
   setSvlOperatorAccessToken,
 } from '../utils/svlLogic';
@@ -65,6 +68,8 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   const [savingAvatar, setSavingAvatar] = useState(false);
   const [isConnectingWorkers, setIsConnectingWorkers] = useState(false);
   const [connectWorkersMsg, setConnectWorkersMsg] = useState<string | null>(null);
+  const [isGrantingAllRoot, setIsGrantingAllRoot] = useState(false);
+  const [rootGrantStatus, setRootGrantStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const agentsList: any[] = agentsData?.agents || [];
   const agentLogs: Record<string, any[]> = agentsData?.agent_logs || {};
@@ -316,6 +321,58 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
       }
     } finally {
       setIsSavingConfig(false);
+    }
+  };
+
+  const handleGrantFullRootAllAgents = async () => {
+    if (isGrantingAllRoot) return;
+    if (!hasSvlOperatorAccessToken()) {
+      setRootGrantStatus({
+        ok: false,
+        msg: 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby nadać uprawnienia ROOT w SQLite.',
+      });
+      return;
+    }
+    setIsGrantingAllRoot(true);
+    setRootGrantStatus(null);
+    try {
+      const results: string[] = [];
+      for (const agent of CANONICAL_AGENTS) {
+        const res = await safeFetchJson<any>('/api/py/agents/config', {
+          method: 'POST',
+          timeoutMs: 12000,
+          body: JSON.stringify({
+            agent: agent.canonicalName,
+            origin: tabOrigin,
+            eventId: createUniqueId(`evt-root-${agent.id}`),
+            config: {
+              rbac_role: 'root',
+              autonomy_mode: 'ROOT_AUTHORIZED',
+              allowed_scopes: [...FULL_ROOT_SCOPES],
+            },
+          }),
+        });
+        if (!res.ok || !res.data?.ok) {
+          throw new Error(
+            `${agent.displayName}: ${res.error || res.data?.error || `HTTP ${res.status}`}`,
+          );
+        }
+        results.push(`${agent.displayName} (rev ${res.data.revision ?? '?'})`);
+        notifyLocalMutation('agent_config', agent.canonicalName, res.data.serverRevision, res.data.event);
+      }
+      setCfgRbacRole('root');
+      await refreshDomainModules(['agents', 'health']);
+      setRootGrantStatus({
+        ok: true,
+        msg: `Przyznano pełne uprawnienia ROOT (${FULL_ROOT_SCOPES.length} zakresów) dla: ${results.join(', ')}.`,
+      });
+    } catch (err: any) {
+      setRootGrantStatus({
+        ok: false,
+        msg: `Błąd nadawania uprawnień ROOT: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsGrantingAllRoot(false);
     }
   };
 
@@ -911,8 +968,50 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             )}
           </div>
           <span className="text-xs font-mono text-slate-400">
-            rev: {currentConfigRevision ?? 1} · Zakresy: {(activeAgentCfg.allowed_scopes || []).join(', ') || 'chat, agents.pubsub'}
+            rev: {currentConfigRevision ?? 1} · Rola: <strong className="text-emerald-300">{String(activeAgentCfg.rbac_role || 'root').toUpperCase()}</strong> · Zakresy: {(activeAgentCfg.allowed_scopes || []).length}/{FULL_ROOT_SCOPES.length}
           </span>
+        </div>
+
+        {/* ROOT Authority Matrix: Operator + Bielik + Maya Mitek */}
+        <div className="p-3.5 rounded-lg bg-[#0B0D13] border border-emerald-500/30 space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold text-emerald-200">
+                Uprawnienia ROOT · Operator (Mateusz Mitek) + Bielik + Maya Mitek
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleGrantFullRootAllAgents()}
+              disabled={isGrantingAllRoot}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600/25 hover:bg-emerald-600/35 border border-emerald-500/50 text-emerald-200 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+            >
+              {isGrantingAllRoot
+                ? 'Nadawanie ROOT...'
+                : 'Przyznaj pełne uprawnienia ROOT (Bielik + Maya Mitek)'}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-[11px] font-mono">
+            {(activeAgentCfg.allowed_scopes && activeAgentCfg.allowed_scopes.length > 0
+              ? activeAgentCfg.allowed_scopes
+              : FULL_ROOT_SCOPES
+            ).map((scope: string) => (
+              <span
+                key={scope}
+                className="px-2 py-0.5 rounded bg-emerald-950/35 border border-emerald-500/30 text-emerald-300"
+              >
+                {scope}
+              </span>
+            ))}
+          </div>
+          {rootGrantStatus && (
+            <div
+              className={`text-xs font-mono ${rootGrantStatus.ok ? 'text-emerald-400' : 'text-rose-400'}`}
+            >
+              {rootGrantStatus.msg}
+            </div>
+          )}
         </div>
 
         {remoteConfigChangedWhileDirty && (

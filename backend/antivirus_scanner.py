@@ -305,11 +305,11 @@ class SVLAntivirusScanner:
         self.last_scan_report = report
 
         if emit_to_chat:
-            # Wynik skanu ogłasza Maya na kanale „wszyscy” (raport serwera, bez modelu AI).
+            # Wynik skanu ogłasza Maya Mitek na kanale „wszyscy” (raport serwera, bez modelu AI).
             try:
                 self.kernel.post_maya_report(
                     report_md,
-                    model_label="Maya · skaner sygnatur SVL-365 (wynik serwera)",
+                    model_label="Maya Mitek · skaner sygnatur SVL-365 (wynik serwera)",
                     message_prefix="msg-av",
                     origin=origin,
                     correlation_id=correlation_id,

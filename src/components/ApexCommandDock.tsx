@@ -118,6 +118,14 @@ export function useApexState() {
     void fetchStatus();
   }, [fetchStatus, serverRevision]);
 
+  useEffect(() => {
+    const onGlobalSynced = () => {
+      void fetchStatus();
+    };
+    window.addEventListener('svl:global-synced', onGlobalSynced);
+    return () => window.removeEventListener('svl:global-synced', onGlobalSynced);
+  }, [fetchStatus]);
+
   const sendControl = useCallback(
     async (payload: Record<string, unknown>) => {
       const actionKey = String(payload.action || 'ctl');
