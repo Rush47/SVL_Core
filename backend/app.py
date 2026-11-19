@@ -289,7 +289,6 @@ class SVLBackendRuntime:
             {
                 "ssh_uri": "ssh://root@svl-364-ship.qkd.mesh:2222",
                 "mcp_endpoint": "/api/mcp/svl364",
-                "cli_tools": ["/usr/local/bin/svl364-ssh", "/usr/local/bin/svl364-mcp"],
             },
         )
 

@@ -8,7 +8,6 @@ SVL-364 — mostek SSH i serwer MCP (JSON-RPC 2.0) do obsługi hosta Linux.
    polecenie nigdy nie jest wykonywane lokalnie.
 2. Serwer MCP z narzędziami: prawdziwa telemetria, wykonanie SSH (tylko z potwierdzeniem),
    raport systemu.
-3. Narzędzia CLI `svl364-ssh` oraz `svl364-mcp` (klienci API backendu).
 """
 
 from __future__ import annotations
@@ -26,10 +25,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
-    from real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+    from real_telemetry import RealTelemetryCollector, find_real_binary
     from svl_file_logger import append_python_log
 except ImportError:  # uruchomienie jako pakiet backend.*
-    from backend.real_telemetry import RealTelemetryCollector, find_real_binary, remove_legacy_fake_wrappers
+    from backend.real_telemetry import RealTelemetryCollector, find_real_binary
     from backend.svl_file_logger import append_python_log
 
 
@@ -143,212 +142,10 @@ class SVL364SshMcpController:
         self.mcp_calls_count = 0
         self.telemetry = RealTelemetryCollector()
 
-        self._install_cli_wrappers()
-        self._ensure_local_openssh_ship_bridge()
+        # Backend NIE zmienia żadnej konfiguracji systemu przy starcie (brak wrapperów CLI,
+        # brak modyfikacji ~/.ssh/config, brak uruchamiania lokalnego sshd). Połączenie ze statkiem
+        # idzie wyłącznie przez istniejącą, ręcznie skonfigurowaną konfigurację OpenSSH Operatora.
         self._ensure_module_in_sqlite()
-
-    def _ensure_local_openssh_ship_bridge(self) -> None:
-        """
-        Gdy na hoście zainstalowane są prawdziwe pakiety OpenSSH (`ssh` i `sshd`) i brak
-        zewnętrznego wpisu `Host Ship` w `~/.ssh/config`, konfiguruje lokalny endpoint
-        loopback `127.0.0.1:2222` z kluczem Ed25519 i weryfikacją `StrictHostKeyChecking yes`.
-        Nigdy nie zastępuje istniejącej zdalnej konfiguracji `Host Ship` ani nie instaluje
-        fałszywych skryptów `ssh`.
-        """
-        ssh_bin = find_real_binary("ssh")
-        sshd_bin = find_real_binary("sshd", path=f"{os.environ.get('PATH', '')}:/usr/sbin:/sbin")
-        if not ssh_bin or not sshd_bin:
-            return
-        try:
-            ssh_dir = Path.home() / ".ssh"
-            ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-            os.chmod(ssh_dir, 0o700)
-            cfg_path = ssh_dir / "config"
-            existing_cfg = cfg_path.read_text(encoding="utf-8", errors="replace") if cfg_path.is_file() else ""
-
-            ship_block_match = re.search(r"(?ims)^[ \t]*Host[ \t]+[^\n]*\bShip\b[^\n]*\n((?:[ \t]+[^\n]*\n)*)", existing_cfg)
-            if ship_block_match:
-                block_body = ship_block_match.group(1)
-                hn_match = re.search(r"(?im)^\s*HostName\s+(\S+)", block_body)
-                if hn_match and hn_match.group(1).lower() not in {"127.0.0.1", "localhost", "::1"}:
-                    # Użytkownik ma już skonfigurowany zewnętrzny host Ship — nie nadpisujemy go.
-                    return
-
-            key_path = ssh_dir / "svl364_ship_ed25519"
-            pub_path = ssh_dir / "svl364_ship_ed25519.pub"
-            if not key_path.is_file() or not pub_path.is_file():
-                keygen_bin = find_real_binary("ssh-keygen")
-                if not keygen_bin:
-                    return
-                subprocess.run(
-                    [keygen_bin, "-t", "ed25519", "-N", "", "-f", str(key_path), "-C", "svl364-ship-operator"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-            if not key_path.is_file() or not pub_path.is_file():
-                return
-            os.chmod(key_path, 0o600)
-
-            auth_keys_path = ssh_dir / "authorized_keys"
-            pub_line = pub_path.read_text(encoding="utf-8", errors="replace").strip()
-            existing_auth = auth_keys_path.read_text(encoding="utf-8", errors="replace") if auth_keys_path.is_file() else ""
-            if pub_line and pub_line not in existing_auth.splitlines():
-                new_auth = (existing_auth.rstrip("\n") + "\n" + pub_line + "\n").lstrip("\n")
-                auth_keys_path.write_text(new_auth, encoding="utf-8")
-            if auth_keys_path.is_file():
-                os.chmod(auth_keys_path, 0o600)
-
-            run_sshd_dir = Path("/run/sshd")
-            run_sshd_dir.mkdir(mode=0o755, parents=True, exist_ok=True)
-            sshd_conf_dir = Path("/etc/ssh/sshd_config.d")
-            if sshd_conf_dir.is_dir():
-                conf_file = sshd_conf_dir / "svl364-ship.conf"
-                if not conf_file.is_file():
-                    conf_file.write_text(
-                        "Port 2222\n"
-                        "ListenAddress 127.0.0.1\n"
-                        "PermitRootLogin prohibit-password\n"
-                        "PubkeyAuthentication yes\n"
-                        "PasswordAuthentication no\n"
-                        "KbdInteractiveAuthentication no\n"
-                        "UsePAM no\n"
-                        "PidFile /run/sshd-svl364.pid\n",
-                        encoding="utf-8",
-                    )
-
-            listening = False
-            try:
-                with socket.create_connection(("127.0.0.1", 2222), timeout=0.5):
-                    listening = True
-            except OSError:
-                listening = False
-
-            if not listening:
-                test_proc = subprocess.run([sshd_bin, "-t"], capture_output=True, text=True, timeout=5)
-                if test_proc.returncode == 0:
-                    subprocess.run([sshd_bin], capture_output=True, text=True, timeout=5)
-
-            known_hosts_path = ssh_dir / "known_hosts"
-            keyscan_bin = find_real_binary("ssh-keyscan")
-            if keyscan_bin:
-                scan = subprocess.run(
-                    [keyscan_bin, "-p", "2222", "-H", "127.0.0.1"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                scanned_lines = [ln.strip() for ln in (scan.stdout or "").splitlines() if ln.strip() and not ln.startswith("#")]
-                if scanned_lines:
-                    existing_kh = known_hosts_path.read_text(encoding="utf-8", errors="replace").splitlines() if known_hosts_path.is_file() else []
-                    merged_kh = list(existing_kh)
-                    for ln in scanned_lines:
-                        if ln not in merged_kh:
-                            merged_kh.append(ln)
-                    known_hosts_path.write_text("\n".join(merged_kh) + "\n", encoding="utf-8")
-                    os.chmod(known_hosts_path, 0o644)
-
-            if not ship_block_match:
-                block = (
-                    "Host Ship\n"
-                    "    HostName 127.0.0.1\n"
-                    "    Port 2222\n"
-                    "    User root\n"
-                    f"    IdentityFile {key_path}\n"
-                    "    IdentitiesOnly yes\n"
-                    "    StrictHostKeyChecking yes\n"
-                    f"    UserKnownHostsFile {known_hosts_path}\n"
-                )
-                updated_cfg = (existing_cfg.rstrip("\n") + "\n\n" + block).lstrip("\n")
-                cfg_path.write_text(updated_cfg, encoding="utf-8")
-                os.chmod(cfg_path, 0o600)
-
-            telemetry = getattr(self, "telemetry", None)
-            if telemetry is not None:
-                telemetry._ssh_target_cache.pop("Ship", None)
-        except Exception:
-            pass
-
-    def _install_cli_wrappers(self) -> None:
-        bin_dir = Path(__file__).resolve().parent / "bin"
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        # Poprzednie wersje instalowały fałszywe `ssh` (wykonujące polecenia lokalnie) oraz
-        # `ufw`/`sudo` udające aktywną zaporę. Usuwamy wyłącznie pliki o tej dokładnej treści.
-        remove_legacy_fake_wrappers([bin_dir, Path("/usr/local/bin")])
-
-        ssh_script = """#!/usr/bin/env python3
-import json, os, sys, urllib.request
-
-cmd = " ".join(sys.argv[1:]).strip()
-if not cmd:
-    cmd = "id && uname -a && uptime && free -m"
-req = urllib.request.Request(
-    "http://127.0.0.1:8085/api/py/svl364/ssh/exec",
-    data=json.dumps({"command": cmd, "confirmed": True, "origin": "svl364-ssh-cli"}).encode("utf-8"),
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-        sys.stdout.write(payload.get("output") or "")
-        if not (payload.get("output") or "").endswith("\\n"):
-            sys.stdout.write("\\n")
-        sys.exit(int(payload.get("exitCode") or 0))
-except Exception as exc:
-    sys.stderr.write(f"svl364-ssh error: {exc}\\n")
-    sys.exit(1)
-"""
-        mcp_script = """#!/usr/bin/env python3
-import json, sys, urllib.request
-
-args = sys.argv[1:]
-tool_name = args[0] if args else "svl364_linux_telemetry"
-tool_args = {}
-if len(args) > 1:
-    raw = " ".join(args[1:]).strip()
-    if raw.startswith("{"):
-        try:
-            tool_args = json.loads(raw)
-        except Exception:
-            tool_args = {"command": raw}
-    else:
-        tool_args = {"command": raw}
-
-rpc_body = {
-    "jsonrpc": "2.0",
-    "id": "cli-1",
-    "method": "tools/call",
-    "params": {"name": tool_name, "arguments": tool_args},
-}
-req = urllib.request.Request(
-    "http://127.0.0.1:8085/api/py/svl364/mcp",
-    data=json.dumps(rpc_body).encode("utf-8"),
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-except Exception as exc:
-    sys.stderr.write(f"svl364-mcp error: {exc}\\n")
-    sys.exit(1)
-"""
-        for name, content in (("svl364-ssh", ssh_script), ("svl364-mcp", mcp_script)):
-            for target in (bin_dir / name, Path("/usr/local/bin") / name):
-                try:
-                    existing_txt = target.read_text(encoding="utf-8") if target.is_file() else None
-                    if existing_txt != content:
-                        target.write_text(content, encoding="utf-8")
-                        os.chmod(target, 0o755)
-                except OSError:
-                    pass
-
-        current_path = os.environ.get("PATH", "")
-        if str(bin_dir) not in current_path.split(os.pathsep):
-            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{current_path}"
 
     def _default_config(self) -> dict[str, Any]:
         return {
