@@ -1114,6 +1114,69 @@ async function startServer() {
     });
   });
 
+  // Zbiorczy podgląd silników AI i dostępnych modeli (Ollama ze statku SVL-364, Gemini, obraz).
+  app.get('/api/ai/engines', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const healthRes = await callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId);
+    const ollama = healthRes.data?.ollama || {};
+    const image = healthRes.data?.image_engine || {};
+    const ship = getShipTunnelStatus();
+
+    const gemini = getGeminiClient();
+    let geminiModels: string[] = [];
+    if (gemini) {
+      try {
+        geminiModels = await discoverGeminiModels(gemini);
+      } catch {
+        geminiModels = [];
+      }
+    }
+
+    const ollamaModels = (Array.isArray(ollama.models) ? ollama.models : []).map((m: any) => ({
+      name: String(m?.name || m?.model || ''),
+      size: typeof m?.size === 'number' ? m.size : null,
+      parameterSize: m?.details?.parameter_size || m?.parameter_size || null,
+      vision: Boolean(m?.vision_supported),
+    })).filter((m: { name: string }) => m.name);
+
+    res.json({
+      ok: true,
+      checkedAt: new Date().toISOString(),
+      engines: {
+        ollama: {
+          // Główny lokalny silnik; gdy włączony tunel, to Ollama ze statku SVL-364 przez SSH.
+          source: ship.enabled ? 'statek SVL-364 (SSH)' : 'lokalny',
+          host: String(ollama.ollama_host || process.env.OLLAMA_HOST || ''),
+          reachable: Boolean(ollama.daemon_reachable),
+          busy: Boolean(ollama.busy),
+          shipTunnel: ship,
+          models: ollamaModels,
+          loadedModels: Array.isArray(ollama.loaded_models) ? ollama.loaded_models : [],
+          visionModels: Array.isArray(ollama.vision_models_available) ? ollama.vision_models_available : [],
+          preferredModel: process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
+          ramAvailableMb: typeof ollama.host_ram_available_mb === 'number' ? ollama.host_ram_available_mb : null,
+          diskFreeGb: typeof ollama.host_disk_free_gb === 'number' ? ollama.host_disk_free_gb : null,
+          error: ollama.error || null,
+        },
+        gemini: {
+          configured: Boolean(gemini),
+          models: geminiModels,
+          modelCount: geminiModels.length,
+          forcedModel: process.env.GEMINI_MODEL || null,
+        },
+        image: {
+          engine: String(image.engine || process.env.SVL_IMAGE_ENGINE || 'comfyui'),
+          available: image.available === undefined ? null : Boolean(image.available),
+          detail: image.detail || image.status || null,
+        },
+      },
+    });
+  }));
+
   app.get('/api/ship/ollama', (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN.' });

@@ -1,3 +1,4 @@
+import { AiEnginesCard } from './AiEnginesCard';
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Send,
@@ -509,8 +510,10 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
         </div>
       </div>
 
+      <AiEnginesCard />
+
       {CANONICAL_AGENTS.length === 0 && (
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 text-xs text-slate-300 space-y-2">
+      <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 text-xs text-slate-300 space-y-2">
           <div className="font-semibold text-slate-100">
             Rejestr agentów AI jest pusty
           </div>
