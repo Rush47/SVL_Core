@@ -16,13 +16,17 @@ export interface OllamaReadyCacheEntry {
 export interface OllamaRuntimeOptions {
   num_ctx: number;
   num_predict: number;
-  keep_alive: string;
+  /** Czas trzymania modelu w pamięci; -1 = na stałe (bez ponownego ładowania między wiadomościami). */
+  keep_alive: string | number;
   historyTurns: number;
+  /** Opcje wydajności Ollamy (wątki CPU, warstwy na GPU, wsad, mlock) — tylko ustawione jawnie. */
+  perf: Record<string, number | boolean>;
   maxTurnChars: number;
 }
 
 const DEFAULT_CACHE_TTL_MS = 30_000;
-const DEFAULT_OFFLINE_CACHE_TTL_MS = 15_000;
+// Krótko: zajęta Ollama (ładowanie modelu) nie może na długo uchodzić za niedostępną.
+const DEFAULT_OFFLINE_CACHE_TTL_MS = 5_000;
 const ollamaTagsCache = new Map<
   string,
   { checkedAt: number; version: string; models: Array<{ name?: string; model?: string; [k: string]: unknown }> }
@@ -87,10 +91,65 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
   return {
     num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 2048, 512, 32768),
     num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 512, 64, 4096),
-    keep_alive: String(env.OLLAMA_KEEP_ALIVE || '30m').trim() || '30m',
+    keep_alive: parseKeepAlive(env.OLLAMA_KEEP_ALIVE),
     historyTurns: parsePosInt(env.OLLAMA_HISTORY_TURNS, 12, 2, 48),
     maxTurnChars: parsePosInt(env.OLLAMA_MAX_TURN_CHARS, 2000, 200, 12000),
+    perf: parsePerfOptions(env),
   };
+}
+
+/** `-1`/`0`/liczba → sekundy (Ollama: -1 = model zostaje w pamięci na stałe); inaczej czas typu „30m”. */
+function parseKeepAlive(raw: string | undefined): string | number {
+  const value = String(raw ?? '').trim();
+  if (!value) return -1;
+  return /^-?\d+$/.test(value) ? Number(value) : value;
+}
+
+/**
+ * Domyślnie Ollama sama dobiera wątki (rdzenie fizyczne) i liczbę warstw na GPU (ile zmieści VRAM) —
+ * to zwykle najszybsze ustawienie. Jawne wartości z env pozwalają wymusić maksimum na danym sprzęcie.
+ */
+function parsePerfOptions(env: Record<string, string | undefined>): Record<string, number | boolean> {
+  const perf: Record<string, number | boolean> = {};
+  const int = (key: string, name: string, min: number, max: number) => {
+    const n = Number(env[key]);
+    if (env[key] !== undefined && env[key] !== '' && Number.isFinite(n) && n >= min) perf[name] = Math.min(max, Math.floor(n));
+  };
+  int('OLLAMA_NUM_THREAD', 'num_thread', 1, 512);
+  int('OLLAMA_NUM_GPU', 'num_gpu', 0, 999);
+  int('OLLAMA_NUM_BATCH', 'num_batch', 1, 8192);
+  const flag = String(env.OLLAMA_USE_MLOCK || '').trim().toLowerCase();
+  if (flag === '1' || flag === 'true') perf.use_mlock = true;
+  return perf;
+}
+
+/**
+ * Wstępne załadowanie modeli do pamięci (pusty prompt + keep_alive), żeby pierwsza odpowiedź
+ * nie czekała na wczytanie modelu z dysku. Zwraca wynik dla każdego modelu (bez wyjątków).
+ */
+export async function warmOllamaModels(
+  baseUrl: string,
+  models: string[],
+  opts: { keepAlive?: string | number; timeoutMs?: number; fetchImpl?: typeof fetch; perf?: Record<string, number | boolean> } = {},
+): Promise<Array<{ model: string; ok: boolean; detail: string }>> {
+  const base = baseUrl.replace(/\/$/, '');
+  const fetchFn = opts.fetchImpl ?? fetch;
+  const unique = [...new Set(models.map((m) => String(m || '').trim()).filter(Boolean))];
+  const results: Array<{ model: string; ok: boolean; detail: string }> = [];
+  for (const model of unique) {
+    try {
+      const res = await fetchFn(`${base}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(opts.timeoutMs ?? 180_000),
+        body: JSON.stringify({ model, prompt: '', stream: false, keep_alive: opts.keepAlive ?? -1, options: opts.perf ?? {} }),
+      });
+      results.push({ model, ok: res.ok, detail: res.ok ? 'załadowany do pamięci' : `HTTP ${res.status}` });
+    } catch (error) {
+      results.push({ model, ok: false, detail: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
 }
 
 /**
@@ -145,7 +204,8 @@ export async function resolveCachedOllamaModel(
   const base = baseUrl.replace(/\/$/, '');
   const ttlMs = opts.ttlMs ?? DEFAULT_CACHE_TTL_MS;
   const offlineTtlMs = opts.offlineTtlMs ?? DEFAULT_OFFLINE_CACHE_TTL_MS;
-  const probeTimeoutMs = opts.probeTimeoutMs ?? 1500;
+  // 1,5 s dawało fałszywe „niedostępna”, gdy Ollama ładowała lub generowała model.
+  const probeTimeoutMs = opts.probeTimeoutMs ?? 6000;
   const fetchFn = opts.fetchImpl ?? fetch;
 
   const cached = ollamaTagsCache.get(base);

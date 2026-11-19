@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  warmOllamaModels,
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
   isAutoGitSyncAllowed,
@@ -27,7 +28,8 @@ test('getOllamaRuntimeOptions returns fast tuned defaults and respects overrides
   const defaults = getOllamaRuntimeOptions({});
   assert.equal(defaults.num_ctx, 2048);
   assert.equal(defaults.num_predict, 512);
-  assert.equal(defaults.keep_alive, '30m');
+  assert.equal(defaults.keep_alive, -1);
+  assert.deepEqual(defaults.perf, {});
   assert.equal(defaults.historyTurns, 12);
   assert.equal(defaults.maxTurnChars, 2000);
 
@@ -41,6 +43,12 @@ test('getOllamaRuntimeOptions returns fast tuned defaults and respects overrides
   assert.equal(custom.num_ctx, 4096);
   assert.equal(custom.num_predict, 1024);
   assert.equal(custom.keep_alive, '45m');
+  assert.deepEqual(getOllamaRuntimeOptions({ OLLAMA_KEEP_ALIVE: '-1', OLLAMA_NUM_THREAD: '16', OLLAMA_NUM_GPU: '999', OLLAMA_USE_MLOCK: '1' }).perf, {
+    num_thread: 16,
+    num_gpu: 999,
+    use_mlock: true,
+  });
+  assert.equal(getOllamaRuntimeOptions({ OLLAMA_KEEP_ALIVE: '-1' }).keep_alive, -1);
   assert.equal(custom.historyTurns, 8);
   assert.equal(custom.maxTurnChars, 1500);
 });
@@ -138,4 +146,18 @@ test('shouldEnableGitHubToolsForMessage skips normal chat and activates for GitH
 test('selectChatMaxOutputTokens keeps normal chat concise and expands for detailed/code requests', () => {
   assert.equal(selectChatMaxOutputTokens('Cześć, jaki jest status?'), 1100);
   assert.equal(selectChatMaxOutputTokens('Napisz skrypt bash do instalacji i pełny raport'), 2400);
+});
+
+test('warmOllamaModels ładuje każdy model raz z keep_alive i raportuje błędy', async () => {
+  const calls: any[] = [];
+  const fakeFetch = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    if (body.model === 'zly:model') return new Response('{}', { status: 404 });
+    return new Response('{}', { status: 200 });
+  }) as unknown as typeof fetch;
+  const res = await warmOllamaModels('http://ollama:11434/', ['a:1', 'a:1', 'zly:model', ''], { fetchImpl: fakeFetch });
+  assert.deepEqual(res.map((r) => [r.model, r.ok]), [['a:1', true], ['zly:model', false]]);
+  assert.equal(calls[0].keep_alive, -1);
+  assert.equal(calls[0].prompt, '');
 });

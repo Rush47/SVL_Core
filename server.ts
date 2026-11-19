@@ -45,6 +45,7 @@ import { createSvlMcpServer } from './src/server/svlMcpServer.ts';
 import {
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
+  warmOllamaModels,
   isAutoGitSyncAllowed,
   resolveCachedOllamaModel,
   selectChatMaxOutputTokens,
@@ -377,6 +378,49 @@ function redactForSync(input: any): any {
   return input;
 }
 
+let ollamaWarmupRunning = false;
+/** Ładuje do pamięci Ollamy modele skonfigurowane dla Bielika i Mayi (bez zgadywania: tylko zainstalowane). */
+async function warmConfiguredOllamaModels(): Promise<void> {
+  if (ollamaWarmupRunning) return;
+  ollamaWarmupRunning = true;
+  try {
+    const [healthRes, agentsRes] = await Promise.all([
+      callPythonBackend('GET', '/api/py/health?fast=1'),
+      callPythonBackend('GET', '/api/py/agents/status'),
+    ]);
+    const host = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const modules: any[] = Array.isArray(healthRes.data?.system_modules) ? healthRes.data.system_modules : [];
+    const agents: any[] = Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [];
+    const wanted = [
+      process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
+      ...String(process.env.OLLAMA_WARM_MODELS || '').split(','),
+      ...agents.map((a) => a?.config?.ollama_model),
+      modules.find((m) => m?.id === 'svl-364')?.config?.configured_ollama_model,
+    ].map((m) => String(m || '').trim()).filter(Boolean);
+    const installed: string[] = [];
+    for (const name of wanted) {
+      const ready = await resolveCachedOllamaModel(host, name);
+      if (!ready.ok) {
+        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ai_models', message: `Rozgrzewanie Ollamy pominięte: ${ready.reason}` });
+        return;
+      }
+      if (!installed.includes(ready.model)) installed.push(ready.model);
+    }
+    const opts = getOllamaRuntimeOptions(process.env);
+    const results = await warmOllamaModels(host, installed, { keepAlive: opts.keep_alive, perf: opts.perf });
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: results.every((r) => r.ok) ? 'INFO' : 'WARN',
+      category: 'ai_models',
+      message: `Ollama (${host}) — modele w pamięci: ${results.map((r) => `${r.model}: ${r.ok ? 'OK' : r.detail}`).join(', ') || 'brak'}`,
+    });
+  } catch (error) {
+    svlFileLogger.log({ layer: 'GATEWAY', level: 'WARN', category: 'ai_models', message: `Rozgrzewanie Ollamy nieudane: ${error instanceof Error ? error.message : String(error)}` });
+  } finally {
+    ollamaWarmupRunning = false;
+  }
+}
+
 type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
 
 /** Czy pod `base` działa prawdziwa Ollama; zwraca model faktycznie zainstalowany dla `model` (z 30 s cache). */
@@ -421,6 +465,7 @@ async function ollamaContinueRaw(
           num_predict: Math.min(options.numPredict, runtimeOpts.num_predict),
           stop: options.stop,
           num_ctx: runtimeOpts.num_ctx,
+          ...runtimeOpts.perf,
         },
       }),
     });
@@ -3706,6 +3751,7 @@ async function startServer() {
               temperature: effectiveTemperature,
               num_ctx: ollamaOpts.num_ctx,
               num_predict: ollamaOpts.num_predict,
+              ...ollamaOpts.perf,
             },
             messages: ollamaMessages,
           }),
@@ -5080,6 +5126,13 @@ async function startServer() {
     const startupAi = getGeminiClient();
     if (startupAi) {
       void discoverGeminiModels(startupAi).catch(() => undefined);
+    }
+    // Modele Bielika i Mayi ładowane do pamięci Ollamy zaraz po starcie (i ponownie co 10 min,
+    // np. po restarcie Ollamy) — pierwsza odpowiedź nie czeka na wczytanie modelu z dysku.
+    const warmupOff = ['0', 'false', 'no'].includes(String(process.env.OLLAMA_WARMUP || '').trim().toLowerCase());
+    if (!warmupOff) {
+      setTimeout(() => void warmConfiguredOllamaModels(), 8000).unref();
+      setInterval(() => void warmConfiguredOllamaModels(), 10 * 60_000).unref();
     }
   });
 }

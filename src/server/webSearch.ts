@@ -31,7 +31,7 @@ export function isWebSearchRequest(message: string): boolean {
       normalizedMessage,
     );
   const asksForCurrentInformation =
-    /\b(?:najnowsz\w*\s+(?:informacj|wiadomos|dane|wersj|wydan)|wiadomosci\s+(?:ze\s+swiata|z\s+kraju|sportow|gospodarcz|dnia)|aktualn\w*\s+(?:kurs|cen|pogod|informacj|dane|statystyk|wynik)|pogoda\s+(?:w|we|na|na\s+dzis)|kurs\s+(?:walut|dolara|euro|btc|bitcoin)|kto\s+(?:jest|wygral)\s+(?:obecnie|teraz|dzisiaj)|breaking\s+news|latest\s+(?:news|version|release|updates))\b/i.test(
+    /\b(?:najnowsz\w*\s+(?:informacj|wiadomos|dane|wersj|wydan)|wiadomosci\s+(?:ze\s+swiata|z\s+kraju|sportow|gospodarcz|dnia)|aktualn\w*\s+(?:kurs|cen|pogod|informacj|dane|statystyk|wynik)|pogoda\s+(?:w|we|na|na\s+dzis)|kurs\s+(?:walut|dolara|euro|btc|bitcoin)|kto\s+(?:jest|wygral)\s+(?:obecnie|teraz|dzisiaj)|breaking\s+news|latest\s+(?:news|version|release|updates))\w*/i.test(
       normalizedMessage,
     );
 

@@ -680,7 +680,7 @@ def execute_agent_task(task: dict[str, Any]) -> str:
     request_body = json.dumps({
         "model": model,
         "stream": False,
-        "keep_alive": os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
+        "keep_alive": _ollama_keep_alive(),
         "options": {
             "temperature": max(0.0, min(1.5, float(task.get("temperature", 0.7)))),
             "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "2048")),
@@ -707,6 +707,17 @@ def execute_agent_task(task: dict[str, Any]) -> str:
         raise RuntimeError("Ollama returned an empty response for the queued task.")
     return guard_unverified_mission_completion(f"{title}\n{payload}", answer)
 
+
+
+def _ollama_keep_alive() -> int | str:
+    """Czas trzymania modelu w pamięci Ollamy; domyślnie -1 = na stałe (bez ponownego ładowania)."""
+    raw = os.environ.get("OLLAMA_KEEP_ALIVE", "").strip()
+    if not raw:
+        return -1
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
 
 class SVLAgentOrchestrator:
     """

@@ -135,6 +135,25 @@ install_ollama() {
   command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
 }
 
+# Maksymalna wydajność Ollamy: modele zostają w pamięci, flash attention, skwantowany cache KV,
+# Bielik i Maya załadowane jednocześnie (bez wymiany modeli między wiadomościami).
+tune_ollama() {
+  mkdir -p /etc/systemd/system/ollama.service.d &&
+  cat > /etc/systemd/system/ollama.service.d/svl-wydajnosc.conf <<'CONF'
+[Service]
+Environment=OLLAMA_KEEP_ALIVE=-1
+Environment=OLLAMA_FLASH_ATTENTION=1
+Environment=OLLAMA_KV_CACHE_TYPE=q8_0
+Environment=OLLAMA_MAX_LOADED_MODELS=2
+Environment=OLLAMA_NUM_PARALLEL=1
+LimitMEMLOCK=infinity
+Nice=-5
+CONF
+  systemctl daemon-reload &&
+  systemctl restart ollama.service &&
+  echo "Ollama: ustawienia wydajności w /etc/systemd/system/ollama.service.d/svl-wydajnosc.conf"
+}
+
 verify_running() {
   local i
   for i in $(seq 1 30); do
@@ -164,6 +183,11 @@ if [ "${SVL_INSTALL_OLLAMA:-0}" = "1" ]; then
   step "Ollama" install_ollama
 else
   skip "Ollama" "ustaw SVL_INSTALL_OLLAMA=1, aby zainstalować"
+fi
+if systemctl cat ollama.service >/dev/null 2>&1; then
+  step "Ollama — maksymalna wydajność" tune_ollama
+else
+  skip "Ollama — maksymalna wydajność" "brak usługi ollama.service"
 fi
 step "Usługi systemd (svl-coreos2, svl-sentinel)" install_services
 step "Sprawdzenie działania" verify_running
