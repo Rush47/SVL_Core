@@ -41,6 +41,14 @@ import {
 } from './src/utils/githubFiles.ts';
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
+import {
+  buildMayaMissionPlan,
+  type MissionInput,
+  type MissionSeverity,
+  type MissionFinding,
+  type MissionSafeAction,
+  type MissionProposal,
+} from './src/server/mayaMission.ts';
 import { createSvlMcpServer } from './src/server/svlMcpServer.ts';
 import {
   clearOllamaReadyCache,
@@ -1199,6 +1207,275 @@ async function startServer() {
       recordRuntimeLog('gateway', 'error', `[powiadomienia] ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+
+  // ======================= MISJA CIĄGŁA MAYA MITEK =======================
+  // Automatyczne działanie w tle: analiza stanu z prawdziwych pomiarów, bezpieczne samonaprawy,
+  // propozycje do potwierdzenia Operatora. Panel pokazuje, co Maya zrobiła, jej logi i co robi teraz.
+  type MayaMissionLogEntry = { at: string; level: 'INFO' | 'WARN' | 'ERROR'; message: string };
+  type MayaMissionRun = {
+    at: string;
+    trigger: string;
+    severity: MissionSeverity;
+    headline: string;
+    findings: MissionFinding[];
+    actionsTaken: Array<{ title: string; ok: boolean; detail: string }>;
+    proposals: MissionProposal[];
+    notified: boolean;
+    durationMs: number;
+  };
+  const MAYA_STATE_FILE = process.env.SVL_MAYA_STATE_FILE || path.join(os.tmpdir(), 'svl-maya-mission.json');
+  const mayaMission = {
+    enabled: !['0', 'false', 'no', 'off'].includes(String(process.env.SVL_MAYA_AUTONOMY ?? '1').trim().toLowerCase()),
+    intervalSec: Math.max(120, Number(process.env.SVL_MAYA_AUTONOMY_INTERVAL_SEC || 900)),
+    status: 'idle' as 'idle' | 'running',
+    currentActivity: 'Oczekiwanie na kolejny cykl misji.',
+    startedAt: new Date().toISOString(),
+    lastRunAt: null as string | null,
+    nextRunAt: null as string | null,
+    lastSignature: '',
+    runs: [] as MayaMissionRun[],
+    log: [] as MayaMissionLogEntry[],
+    missionStatement:
+      'Ciągła poprawa, naprawa, ulepszanie i rozwój systemu SVL oraz przygotowywanie wdrożeń nowych funkcji — ' +
+      'na podstawie prawdziwych pomiarów; operacje nieodwracalne czekają na potwierdzenie Operatora.',
+  };
+  let mayaRunning = false;
+  // Karencja per rodzaj samonaprawy — niektóre warunki (np. brak zapisu skanu AV w stanie)
+  // nie znikają po akcji, więc bez karencji misja powtarzałaby je w kółko.
+  const MAYA_ACTION_COOLDOWN_MS: Record<string, number> = {
+    antivirus_scan: Number(process.env.SVL_MAYA_AV_COOLDOWN_SEC || 21600) * 1000,
+    reconnect_agents: 10 * 60_000,
+    warm_ollama: 10 * 60_000,
+    generate_report: 60 * 60_000,
+  };
+  const mayaActionLastRun: Record<string, number> = {};
+
+  const mayaLog = (level: MayaMissionLogEntry['level'], message: string) => {
+    const entry: MayaMissionLogEntry = { at: new Date().toISOString(), level, message };
+    mayaMission.log.push(entry);
+    if (mayaMission.log.length > 200) mayaMission.log.splice(0, mayaMission.log.length - 200);
+    svlFileLogger.log({ layer: 'GATEWAY', level, category: 'maya_mission', message });
+  };
+  const mayaSetActivity = (text: string) => {
+    mayaMission.currentActivity = text;
+    mayaLog('INFO', text);
+  };
+  const persistMayaState = () => {
+    try {
+      fsSync.writeFileSync(
+        MAYA_STATE_FILE,
+        JSON.stringify(
+          { enabled: mayaMission.enabled, lastSignature: mayaMission.lastSignature, runs: mayaMission.runs.slice(0, 30), log: mayaMission.log.slice(-120) },
+          null,
+          2,
+        ),
+      );
+    } catch {
+      // zapis pomocniczy — błąd nie może przerwać misji
+    }
+  };
+  try {
+    const saved = JSON.parse(fsSync.readFileSync(MAYA_STATE_FILE, 'utf8'));
+    if (Array.isArray(saved?.runs)) mayaMission.runs = saved.runs;
+    if (Array.isArray(saved?.log)) mayaMission.log = saved.log;
+    if (typeof saved?.lastSignature === 'string') mayaMission.lastSignature = saved.lastSignature;
+    if (typeof saved?.enabled === 'boolean' && process.env.SVL_MAYA_AUTONOMY === undefined) mayaMission.enabled = saved.enabled;
+  } catch {
+    // brak zapisanego stanu — start od zera
+  }
+
+  /** Wykonuje bezpieczną (odwracalną) samonaprawę zaplanowaną przez misję. */
+  const runMayaSafeAction = async (
+    action: MissionSafeAction,
+    corrId: string,
+  ): Promise<{ title: string; ok: boolean; detail: string }> => {
+    try {
+      if (action.kind === 'reconnect_agents') {
+        const r = await callPythonBackend('POST', '/api/py/agents/connect', { triggered_by: 'maya-mission' }, corrId);
+        void pollAndRelayOutbox();
+        const ok = r.status === 200 && Boolean(r.data?.ok);
+        const names = (r.data?.connection_report?.agents || []).map((a: any) => `${a.display_name}(PID ${a.pid})`).join(', ');
+        return { title: action.title, ok, detail: ok ? `Podłączono: ${names || 'OK'}` : 'Nie udało się podłączyć workerów' };
+      }
+      if (action.kind === 'antivirus_scan') {
+        const r = await callPythonBackend('POST', '/api/py/security/antivirus/scan', {}, corrId);
+        const ok = r.status === 200 && Boolean(r.data?.ok);
+        return {
+          title: action.title,
+          ok,
+          detail: ok ? `Przeskanowano plików: ${Number(r.data?.filesScanned || 0)}, zagrożenia: ${Number(r.data?.threatsFoundAndPurged || 0)}` : 'Skan nie powiódł się',
+        };
+      }
+      if (action.kind === 'warm_ollama') {
+        await warmConfiguredOllamaModels();
+        return { title: action.title, ok: true, detail: 'Zlecono załadowanie modeli do pamięci.' };
+      }
+      return { title: action.title, ok: false, detail: 'Nieznana akcja.' };
+    } catch (error) {
+      return { title: action.title, ok: false, detail: error instanceof Error ? error.message : String(error) };
+    }
+  };
+
+  /** Jeden cykl misji: pomiar → plan → samonaprawy → raport na kanale „wszyscy”. */
+  const runMayaMission = async (trigger: string): Promise<MayaMissionRun | null> => {
+    if (mayaRunning) return null;
+    mayaRunning = true;
+    mayaMission.status = 'running';
+    const corrId = `maya-${Date.now().toString(36)}`;
+    const startedAt = Date.now();
+    try {
+      mayaSetActivity('Zbieram pomiary systemu (health, Apex, agenci, logi).');
+      const [healthRes, apexRes, agentsRes] = await Promise.all([
+        callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
+        callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
+        callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
+      ]);
+      const recentIssues = await svlFileLogger.getRecentIssues(50);
+      const ollama = healthRes.data?.ollama || {};
+      const apex = apexRes.data || {};
+      const input: MissionInput = {
+        ollamaReachable: Boolean(ollama.daemon_reachable),
+        geminiConfigured: Boolean(getGeminiClient()),
+        diskFreeGb: typeof ollama.host_disk_free_gb === 'number' ? ollama.host_disk_free_gb : null,
+        ramAvailableMb: typeof ollama.host_ram_available_mb === 'number' ? ollama.host_ram_available_mb : null,
+        modules: Array.isArray(healthRes.data?.system_modules) ? healthRes.data.system_modules : [],
+        agents: Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [],
+        apex: {
+          serviceStatus: apex.service_status,
+          sentinelAvStatus: apex.sentinel_av_status,
+          lastAvScanAt: apex.last_av_scan_at || null,
+          distro: apex.distro,
+        },
+        recentIssues,
+        github: {
+          tokenPresent: Boolean(getGitHubToken()),
+          lastSyncOk: lastGitHubAutoSync ? lastGitHubAutoSync.ok : null,
+          lastSyncSummary: lastGitHubAutoSync ? lastGitHubAutoSync.summary : null,
+        },
+      };
+      mayaSetActivity('Analizuję stan i planuję działania.');
+      const plan = buildMayaMissionPlan(input);
+
+      const actionsTaken: Array<{ title: string; ok: boolean; detail: string }> = [];
+      for (const action of plan.safeActions) {
+        const cooldownMs = MAYA_ACTION_COOLDOWN_MS[action.kind] ?? 10 * 60_000;
+        const last = mayaActionLastRun[action.kind] || 0;
+        if (Date.now() - last < cooldownMs) {
+          mayaLog('INFO', `Pomijam „${action.title}” — wykonana niedawno (karencja ${Math.round(cooldownMs / 60000)} min).`);
+          continue;
+        }
+        mayaSetActivity(`Samonaprawa: ${action.title}.`);
+        const result = await runMayaSafeAction(action, corrId);
+        if (result.ok) mayaActionLastRun[action.kind] = Date.now();
+        actionsTaken.push(result);
+        mayaLog(result.ok ? 'INFO' : 'WARN', `${result.title}: ${result.detail}`);
+      }
+
+      // Powiadomienie na kanale „wszyscy” tylko, gdy stan się zmienił albo coś naprawiono (bez spamu).
+      const changed = plan.signature !== mayaMission.lastSignature || actionsTaken.length > 0;
+      let notified = false;
+      if (changed) {
+        mayaSetActivity('Publikuję raport misji na kanale „Rodzina Mitek (wszyscy)”.');
+        const actionsBlock = actionsTaken.length
+          ? '\n\n**Wykonane samonaprawy:**\n' + actionsTaken.map((a) => `- ${a.ok ? '✅' : '❌'} ${a.title} — ${a.detail}`).join('\n')
+          : '';
+        await emitFamilyNotification(
+          {
+            severity: plan.severity === 'OK' || plan.severity === 'INFO' ? 'INFO' : plan.severity,
+            category: 'maya_mission',
+            title: `Misja Maya Mitek: ${plan.headline}`,
+            message: plan.reportMarkdown + actionsBlock,
+            sourceEventId: `maya-mission-${plan.signature}-${Math.floor(Date.now() / 60000)}`,
+            origin: 'maya-mission',
+          },
+          corrId,
+        );
+        notified = true;
+        mayaMission.lastSignature = plan.signature;
+      }
+
+      const run: MayaMissionRun = {
+        at: new Date().toISOString(),
+        trigger,
+        severity: plan.severity,
+        headline: plan.headline,
+        findings: plan.findings,
+        actionsTaken,
+        proposals: plan.proposals,
+        notified,
+        durationMs: Date.now() - startedAt,
+      };
+      mayaMission.runs.unshift(run);
+      if (mayaMission.runs.length > 50) mayaMission.runs.length = 50;
+      mayaMission.lastRunAt = run.at;
+      mayaLog('INFO', `Cykl zakończony (${trigger}): ${plan.headline} · ustaleń ${plan.findings.length}, samonapraw ${actionsTaken.length}.`);
+      persistMayaState();
+      return run;
+    } catch (error) {
+      mayaLog('ERROR', `Błąd cyklu misji: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    } finally {
+      mayaRunning = false;
+      mayaMission.status = 'idle';
+      mayaMission.nextRunAt = mayaMission.enabled ? new Date(Date.now() + mayaMission.intervalSec * 1000).toISOString() : null;
+      mayaSetActivity(mayaMission.enabled ? 'Nadzór aktywny — czekam na kolejny cykl misji.' : 'Misja wstrzymana przez Operatora.');
+    }
+  };
+
+  // Podgląd misji: stan, co robi teraz, historia działań i logi.
+  app.get('/api/maya/mission', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Podgląd misji Maya Mitek wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    res.json({
+      ok: true,
+      enabled: mayaMission.enabled,
+      status: mayaMission.status,
+      currentActivity: mayaMission.currentActivity,
+      missionStatement: mayaMission.missionStatement,
+      intervalSec: mayaMission.intervalSec,
+      startedAt: mayaMission.startedAt,
+      lastRunAt: mayaMission.lastRunAt,
+      nextRunAt: mayaMission.nextRunAt,
+      runs: mayaMission.runs.slice(0, 30),
+      log: mayaMission.log.slice(-120).reverse(),
+    });
+  });
+
+  app.post('/api/maya/mission/run', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Uruchomienie misji wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    if (mayaRunning) {
+      res.status(409).json({ ok: false, error: 'Misja właśnie trwa — poczekaj na zakończenie cyklu.' });
+      return;
+    }
+    const run = await runMayaMission('operator_manual');
+    res.json({ ok: Boolean(run), run });
+  }));
+
+  app.post('/api/maya/mission/toggle', express.json({ limit: '8kb' }), (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Zmiana trybu misji wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    mayaMission.enabled = Boolean(req.body?.enabled);
+    mayaLog('INFO', mayaMission.enabled ? 'Operator włączył automatyczną misję Maya Mitek.' : 'Operator wstrzymał automatyczną misję Maya Mitek.');
+    mayaMission.nextRunAt = mayaMission.enabled ? new Date(Date.now() + mayaMission.intervalSec * 1000).toISOString() : null;
+    persistMayaState();
+    res.json({ ok: true, enabled: mayaMission.enabled });
+  });
+
+  // Pętla misji w tle: pierwszy cykl 20 s po starcie, potem co `intervalSec`.
+  setTimeout(() => {
+    if (mayaMission.enabled && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('startup');
+  }, 20000).unref?.();
+  setInterval(() => {
+    if (mayaMission.enabled && !mayaRunning && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('scheduled');
+  }, Math.max(120, mayaMission.intervalSec) * 1000).unref?.();
+
 
   // 0.5. Avatar overrides API (compatible with Codespaces / Bastilla / SVL Python OS)
   app.get(['/api/avatars', '/api/ai/runtime/avatars'], asyncRoute(async (req, res) => {

@@ -21,7 +21,8 @@ export interface ParseChatDirectivesOptions {
 
 type ModuleStatus = 'ACTIVE' | 'CONFIGURED' | 'STANDBY';
 
-const MAX_DIRECTIVES = 3;
+// Ile poleceń serwerowych wykona jedna wiadomość. Operator ROOT bywa wydaje kilka naraz.
+const MAX_DIRECTIVES = 12;
 // JavaScript's \b does not understand Polish letters, so boundaries are explicit.
 const B = '(?<![\\p{L}\\p{N}_])';
 const E = '(?![\\p{L}\\p{N}_])';

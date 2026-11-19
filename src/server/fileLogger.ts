@@ -327,6 +327,34 @@ export class SvlFileLogger {
     await this.writeQueue;
   }
 
+  /**
+   * Ostatnie wpisy WARN/ERROR z pliku zbiorczego — podstawa decyzji misji Maya Mitek
+   * (naprawa i poprawa systemu na podstawie prawdziwych zdarzeń, nie zmyślonych).
+   */
+  public async getRecentIssues(limit = 40): Promise<Array<{ level: string; category: string; message: string; at: string | null }>> {
+    await this.flush();
+    this.ensureReadySync();
+    const fullPath = path.join(this.logDir, LOG_FILE_NAMES.master);
+    let content = '';
+    try {
+      content = await fs.readFile(fullPath, 'utf8');
+    } catch {
+      return [];
+    }
+    const out: Array<{ level: string; category: string; message: string; at: string | null }> = [];
+    const lines = content.split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0 && out.length < Math.max(1, Math.min(200, limit)); i -= 1) {
+      const line = lines[i];
+      if (!/\[(?:WARN|ERROR)\]/.test(line)) continue;
+      const at = line.match(/^\[([^\]]+)\]/)?.[1] || null;
+      const level = line.match(/\[(WARN|ERROR)\]/)?.[1] || 'WARN';
+      const category = line.match(/\[(?:WARN|ERROR)\]\s+\[([a-z0-9_.-]+)\]/i)?.[1] || 'system';
+      const message = line.replace(/^.*?\[(?:WARN|ERROR)\]\s+(?:\[[^\]]+\]\s+)*/i, '').split('|')[0].trim().slice(0, 240);
+      out.push({ level, category, message, at });
+    }
+    return out;
+  }
+
   public async getSummary(): Promise<{
     logDir: string;
     files: Array<{ name: string; bytes: number; lines: number; updatedAt: string | null }>;

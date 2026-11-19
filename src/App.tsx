@@ -9,6 +9,7 @@ import { AgentsPanel } from './components/AgentsPanel';
 import { TerminalsWorkspace } from './components/TerminalsWorkspace';
 import { KernelDiagnosticsView } from './components/KernelDiagnosticsView';
 import { LinuxDeployDashboard } from './components/LinuxDeployDashboard';
+import { MayaMissionPanel } from './components/MayaMissionPanel';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
 import { ApexCommandDock, ApexTelemetryRibbon } from './components/ApexCommandDock';
@@ -16,7 +17,7 @@ import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
-type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'maya' | 'terminals' | 'kernel' | 'linux';
 
 function SVLWorkspaceShell() {
   const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('chat');
@@ -79,6 +80,8 @@ function SVLWorkspaceShell() {
       void refreshDomainModules(['modules', 'agents', 'health', 'kernel']);
     } else if (activeTab === 'agents') {
       void refreshDomainModules(['agents', 'health', 'workspace']);
+    } else if (activeTab === 'maya') {
+      void refreshDomainModules(['health', 'agents', 'chat']);
     } else if (activeTab === 'terminals') {
       void refreshDomainModules(['terminals', 'health']);
     } else if (activeTab === 'kernel') {
@@ -219,6 +222,17 @@ function SVLWorkspaceShell() {
             }`}
           >
             Agenci ({CANONICAL_AGENTS.length > 0 ? `${activeWorkersCount}/${CANONICAL_AGENTS.length}` : '0'})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('maya')}
+            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+              activeTab === 'maya'
+                ? 'text-violet-300 border-violet-400 font-semibold'
+                : 'border-transparent hover:text-slate-100'
+            }`}
+          >
+            Misja Maya
           </button>
           <button
             type="button"
@@ -380,6 +394,7 @@ function SVLWorkspaceShell() {
             onNavigateToChat={() => setActiveTab('chat')}
           />
         )}
+        {activeTab === 'maya' && <MayaMissionPanel />}
         {activeTab === 'terminals' && <TerminalsWorkspace />}
         {activeTab === 'kernel' && <KernelDiagnosticsView />}
         {activeTab === 'linux' && <LinuxDeployDashboard />}
