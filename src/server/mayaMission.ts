@@ -51,6 +51,8 @@ export interface MissionInput {
   };
   recentIssues: Array<{ level: string; category: string; message: string; at: string | null }>;
   github: { tokenPresent: boolean; lastSyncOk: boolean | null; lastSyncSummary: string | null };
+  /** Tunel SSH do Ollamy statku SVL-364 (gdy włączony standardowy silnik ze statku). */
+  shipOllama?: { enabled: boolean; status: string; description: string };
 }
 
 export interface MissionPlan {
@@ -137,6 +139,27 @@ export function buildMayaMissionPlan(input: MissionInput): MissionPlan {
       detail: 'Lokalny model Ollama nie odpowiada; odpowiedzi pochodzą z Gemini (limit klucza API).',
     });
     sigParts.push('ai_gemini_only');
+  }
+
+  // 2b) Ollama ze statku SVL-364 przez SSH (gdy ustawiona jako standardowy silnik).
+  if (input.shipOllama?.enabled) {
+    if (input.shipOllama.status === 'up') {
+      findings.push({
+        severity: 'OK',
+        category: 'ollama-statek',
+        title: 'Ollama ze statku SVL-364 aktywna (SSH)',
+        detail: input.shipOllama.description,
+      });
+    } else {
+      severity = worst(severity, 'WARN');
+      findings.push({
+        severity: 'WARN',
+        category: 'ollama-statek',
+        title: 'Tunel SSH do Ollamy statku nie działa',
+        detail: input.shipOllama.description,
+      });
+      sigParts.push(`ship_ollama:${input.shipOllama.status}`);
+    }
   }
 
   // 3) Zasoby hosta.

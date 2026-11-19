@@ -92,6 +92,14 @@ SVL_LOG_DIR=${SVL_ROOT}/logi
 SVL_COREOS_EDITION=Apex
 OLLAMA_HOST=http://127.0.0.1:11434
 OLLAMA_PREFERRED_MODEL=llama3.2-vision:11b
+# Ollama ze statku SVL-364 jako standardowy silnik przez SSH:
+#   ustaw SVL_SHIP_OLLAMA=1 — gateway sam zestawi tunel ssh do aliasu SVL_SSH_TARGET
+#   (konfiguracja ~/.ssh/config użytkownika svl) i skieruje na niego OLLAMA_HOST.
+#   NIE włączaj jednocześnie usługi svl-ship-ollama-tunnel.service (dublowałaby port).
+SVL_SHIP_OLLAMA=0
+SVL_SSH_TARGET=Ship
+SVL_SHIP_OLLAMA_PORT=11434
+SVL_SHIP_OLLAMA_LOCAL_PORT=11434
 # Uzupełnij według potrzeb:
 GITHUB_TOKEN=
 GEMINI_API_KEY=

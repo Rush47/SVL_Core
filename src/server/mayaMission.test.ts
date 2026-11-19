@@ -85,3 +85,11 @@ test('summarizeIssues grupuje po kategorii i liczy błędy', () => {
   assert.equal(g.find((e) => e.category === 'x')?.count, 2);
   assert.equal(g.find((e) => e.category === 'x')?.errors, 1);
 });
+
+test('tunel Ollamy statku: up → OK, down → WARN w ustaleniach', () => {
+  const up = buildMayaMissionPlan({ ...base, shipOllama: { enabled: true, status: 'up', description: 'aktywna' } });
+  assert.ok(up.findings.some((f) => f.category === 'ollama-statek' && f.severity === 'OK'));
+  const down = buildMayaMissionPlan({ ...base, shipOllama: { enabled: true, status: 'down', description: 'brak ssh' } });
+  assert.equal(down.severity, 'WARN');
+  assert.ok(down.findings.some((f) => f.category === 'ollama-statek' && f.severity === 'WARN'));
+});

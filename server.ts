@@ -42,6 +42,15 @@ import {
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import {
+  parseShipOllamaTunnelEnv,
+  buildSshTunnelArgs,
+  tunnelOllamaUrl,
+  tunnelRestartDelayMs,
+  describeTunnelStatus,
+  type ShipOllamaTunnelConfig,
+  type TunnelStatus,
+} from './src/server/shipOllamaTunnel.ts';
+import {
   buildMayaMissionPlan,
   type MissionInput,
   type MissionSeverity,
@@ -778,8 +787,141 @@ function hasOperatorAuthorization(candidate: unknown): boolean {
   }
 }
 
+// ======================= OLLAMA ZE STATKU SVL-364 PRZEZ SSH =======================
+// Gdy SVL_SHIP_OLLAMA=1, cały system używa Ollamy ze statku: gateway zestawia tunel SSH
+// (local port-forward) i ustawia OLLAMA_HOST na jego lokalny koniec PRZED startem backendu
+// Pythona, więc czat, rozgrzewanie modeli i misja Mayi widzą tę samą Ollamę ze statku.
+const shipTunnelCfg: ShipOllamaTunnelConfig = parseShipOllamaTunnelEnv(process.env);
+const shipTunnel = {
+  cfg: shipTunnelCfg,
+  status: (shipTunnelCfg.enabled ? 'starting' : 'off') as TunnelStatus,
+  lastError: null as string | null,
+  attempts: 0,
+  startedAt: null as string | null,
+  lastCheckAt: null as string | null,
+  proc: null as ChildProcess | null,
+  stopping: false,
+  restartTimer: null as ReturnType<typeof setTimeout> | null,
+};
+
+function getShipTunnelStatus() {
+  return {
+    enabled: shipTunnel.cfg.enabled,
+    status: shipTunnel.status,
+    target: shipTunnel.cfg.target,
+    shipPort: shipTunnel.cfg.shipPort,
+    localUrl: tunnelOllamaUrl(shipTunnel.cfg),
+    attempts: shipTunnel.attempts,
+    startedAt: shipTunnel.startedAt,
+    lastCheckAt: shipTunnel.lastCheckAt,
+    error: shipTunnel.lastError,
+    description: describeTunnelStatus(shipTunnel.status, shipTunnel.cfg, shipTunnel.lastError),
+  };
+}
+
+async function probeTunnelOllama(): Promise<boolean> {
+  try {
+    const res = await fetch(`${tunnelOllamaUrl(shipTunnel.cfg)}/api/version`, { signal: AbortSignal.timeout(6000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function scheduleTunnelRestart(): void {
+  if (shipTunnel.stopping || shipTunnel.restartTimer) return;
+  shipTunnel.attempts += 1;
+  const delay = tunnelRestartDelayMs(shipTunnel.attempts);
+  shipTunnel.restartTimer = setTimeout(() => {
+    shipTunnel.restartTimer = null;
+    spawnShipTunnel();
+  }, delay);
+  shipTunnel.restartTimer.unref?.();
+}
+
+function spawnShipTunnel(): void {
+  if (shipTunnel.stopping || shipTunnel.proc) return;
+  const args = buildSshTunnelArgs(shipTunnel.cfg);
+  svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Zestawiam tunel SSH do Ollamy statku: ssh ${args.join(' ')}` });
+  let proc: ChildProcess;
+  try {
+    proc = spawn('ssh', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    shipTunnel.status = 'down';
+    shipTunnel.lastError = error instanceof Error ? error.message : String(error);
+    svlFileLogger.log({ layer: 'GATEWAY', level: 'ERROR', category: 'ship_ollama', message: `Nie udało się uruchomić ssh: ${shipTunnel.lastError}` });
+    scheduleTunnelRestart();
+    return;
+  }
+  shipTunnel.proc = proc;
+  shipTunnel.status = 'starting';
+  let stderr = '';
+  proc.stderr?.on('data', (chunk) => {
+    stderr = (stderr + String(chunk)).slice(-500);
+  });
+  proc.on('error', (error) => {
+    shipTunnel.lastError = /ENOENT/.test(error.message)
+      ? 'OpenSSH (ssh) nie jest zainstalowany na hoście gatewaya'
+      : error.message;
+    shipTunnel.status = 'down';
+  });
+  proc.on('spawn', () => {
+    // ExitOnForwardFailure sprawia, że przy zajętym/niedostępnym porcie ssh szybko się zakończy.
+    setTimeout(async () => {
+      if (shipTunnel.proc !== proc) return;
+      const up = await probeTunnelOllama();
+      shipTunnel.lastCheckAt = new Date().toISOString();
+      if (up) {
+        shipTunnel.status = 'up';
+        shipTunnel.attempts = 0;
+        shipTunnel.lastError = null;
+        shipTunnel.startedAt = shipTunnel.startedAt || new Date().toISOString();
+        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Ollama ze statku SVL-364 dostępna przez tunel SSH (${tunnelOllamaUrl(shipTunnel.cfg)}).` });
+      } else if (shipTunnel.status !== 'down') {
+        shipTunnel.status = 'starting';
+      }
+    }, 3500).unref?.();
+  });
+  proc.on('exit', (code) => {
+    if (shipTunnel.proc === proc) shipTunnel.proc = null;
+    if (shipTunnel.stopping) return;
+    shipTunnel.status = 'down';
+    shipTunnel.lastError = shipTunnel.lastError || (stderr.trim().split('\n').pop() || `ssh zakończył się kodem ${code}`);
+    svlFileLogger.log({ layer: 'GATEWAY', level: 'WARN', category: 'ship_ollama', message: `Tunel SSH do Ollamy statku przerwany: ${shipTunnel.lastError}. Ponawiam.` });
+    scheduleTunnelRestart();
+  });
+}
+
+/** Ustawia OLLAMA_HOST na tunel i startuje go (wywołać PRZED startem backendu Pythona). */
+function initShipOllamaTunnel(): void {
+  if (!shipTunnel.cfg.enabled) return;
+  const url = tunnelOllamaUrl(shipTunnel.cfg);
+  process.env.OLLAMA_HOST = url; // dziedziczone przez proces Pythona i używane przez cały system
+  svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Standardowa Ollama ustawiona na statek SVL-364 przez SSH: OLLAMA_HOST=${url}, cel ${shipTunnel.cfg.target}.` });
+  spawnShipTunnel();
+  // Okresowa weryfikacja łącza (co 30 s) — wykrywa cichą utratę tunelu.
+  setInterval(async () => {
+    if (shipTunnel.stopping || !shipTunnel.proc) return;
+    const up = await probeTunnelOllama();
+    shipTunnel.lastCheckAt = new Date().toISOString();
+    if (up) {
+      if (shipTunnel.status !== 'up') { shipTunnel.status = 'up'; shipTunnel.attempts = 0; shipTunnel.lastError = null; }
+    } else if (shipTunnel.status === 'up') {
+      shipTunnel.status = 'starting';
+    }
+  }, 30000).unref?.();
+}
+
+function stopShipOllamaTunnel(): void {
+  shipTunnel.stopping = true;
+  if (shipTunnel.restartTimer) clearTimeout(shipTunnel.restartTimer);
+  try { shipTunnel.proc?.kill('SIGTERM'); } catch { /* proces mógł już zniknąć */ }
+}
+
 async function startServer() {
   // Never start a synthetic Ollama daemon: an unavailable real model must stay offline.
+  // Ollama ze statku SVL-364 przez SSH musi ustawić OLLAMA_HOST, zanim wystartuje backend Pythona.
+  initShipOllamaTunnel();
   startPythonBackend();
 
   const app = express();
@@ -970,6 +1112,14 @@ async function startServer() {
       scopes: FULL_ROOT_SCOPES,
       agentsRoot: ['Bielik', 'Maya Mitek'],
     });
+  });
+
+  app.get('/api/ship/ollama', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    res.json({ ok: true, ...getShipTunnelStatus() });
   });
 
   app.get('/api/deployment-info', (_req, res) => {
@@ -1352,6 +1502,9 @@ async function startServer() {
           lastSyncOk: lastGitHubAutoSync ? lastGitHubAutoSync.ok : null,
           lastSyncSummary: lastGitHubAutoSync ? lastGitHubAutoSync.summary : null,
         },
+        shipOllama: shipTunnel.cfg.enabled
+          ? { enabled: true, status: getShipTunnelStatus().status, description: getShipTunnelStatus().description }
+          : undefined,
       };
       mayaSetActivity('Analizuję stan i planuję działania.');
       const plan = buildMayaMissionPlan(input);
@@ -5426,6 +5579,7 @@ async function startServer() {
       message: 'Zamykanie serwera Gateway i Python Backend',
     });
     stopPythonBackend();
+    stopShipOllamaTunnel();
     for (const client of wss.clients) client.terminate();
     httpServer.close();
   };
