@@ -124,6 +124,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
   const [isScanningAv, setIsScanningAv] = useState(false);
   const sendingRef = useRef(false);
+  const queuedMessagesRef = useRef<Array<{ text: string; convId: string }>>([]);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const handleSendRef = useRef<(text?: string, convId?: string) => Promise<void>>(async () => {});
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [controlsExpanded, setControlsExpanded] = useState(false);
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
@@ -528,10 +531,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     const targetConvObj = overrideConvId
       ? conversations.find((c) => c.id === overrideConvId) || activeConv
       : activeConv;
-    if ((!trimmed && !attachedImage && !attachedTextFile) || sendingRef.current || !targetConvObj) return;
+    if ((!trimmed && !attachedImage && !attachedTextFile) || !targetConvObj) return;
+    if (sendingRef.current) {
+      // AI jeszcze odpowiada: wiadomość trafia do kolejki zamiast przepaść.
+      if (trimmed) {
+        queuedMessagesRef.current.push({ text: rawText, convId: overrideConvId || targetConvObj.id });
+        if (overrideText === undefined) setInput('');
+        setQueuedCount(queuedMessagesRef.current.length);
+      }
+      return;
+    }
     autoTurnsRef.current = 0;
     sendingRef.current = true;
     setIsSending(true);
+    // Pole czyścimy od razu — tekst wpisany w trakcie odpowiedzi AI nie zostanie nadpisany.
+    if (overrideText === undefined) setInput('');
     try {
       setChatActionError(null);
       const nowTime = new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
@@ -561,6 +575,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const persistRes = await appendAndPersistChatMessage(targetConvId, targetTitle, selectedModel, userMsg);
       if (!persistRes.ok) {
         setChatActionError(`Błąd zapisu SQLite: ${persistRes.error || 'Nie zapisano wiadomości.'}`);
+        if (overrideText === undefined && !getInput().trim()) setInput(rawText);
         return;
       }
       void refreshDomainModules(['modules', 'kernel'])
@@ -575,7 +590,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           );
         });
 
-      if (overrideText === undefined) setInput('');
       const currentImage = attachedImage;
       setAttachedImage(null);
       setAttachedTextFile(null);
@@ -698,8 +712,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     } finally {
       sendingRef.current = false;
       setIsSending(false);
+      const next = queuedMessagesRef.current.shift();
+      setQueuedCount(queuedMessagesRef.current.length);
+      if (next) setTimeout(() => void handleSendRef.current(next.text, next.convId), 0);
     }
   };
+  handleSendRef.current = handleSendMessage;
 
   const handleGenerateImage = async () => {
     const prompt = getInput().trim();
@@ -1798,11 +1816,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
             <button
               type="submit"
-              disabled={isSending || (!hasInput && !attachedImage && !attachedTextFile)}
+              disabled={isSending ? !hasInput : !hasInput && !attachedImage && !attachedTextFile}
+              title={isSending ? 'AI odpowiada — wiadomość zostanie wysłana zaraz po odpowiedzi' : undefined}
               className="min-h-[44px] px-3.5 md:px-5 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 md:gap-2 transition-colors whitespace-nowrap shrink-0"
             >
               <Send className="w-4 h-4" />
-              <span>{isSending ? 'Wysyłanie...' : 'Wyślij'}</span>
+              <span>
+                {isSending ? (hasInput ? 'Do kolejki' : 'Wysyłanie...') : 'Wyślij'}
+                {queuedCount > 0 ? ` (${queuedCount} w kolejce)` : ''}
+              </span>
             </button>
           </div>
         </form>

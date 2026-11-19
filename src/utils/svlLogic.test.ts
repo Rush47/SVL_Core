@@ -7,6 +7,7 @@ import {
   compactifyValue,
   formatAgentDisplayName,
   getGitHubAgentPermissions,
+  isGitHubChatRequest,
   getSvlOperatorAccessToken,
   guardUnverifiedMissionCompletion,
   hasSvlOperatorAccessToken,
@@ -444,4 +445,20 @@ test('unverifiedExecutionNote flags claims of finished operations that the serve
   assert.equal(unverifiedExecutionNote('Zainstalowałem pakiet.', 1), null);
   assert.equal(unverifiedExecutionNote('Aby zainstalować system, uruchom instalator jako root.', 0), null);
   assert.equal(unverifiedExecutionNote('Tarcza to ustawienie scenariusza statku.', 0), null);
+});
+
+test('isGitHubChatRequest rozpoznaje tylko sprawy GitHuba', () => {
+  for (const text of [
+    'Pokaż otwarte pull requesty',
+    'Jakie są ostatnie commity w repozytorium?',
+    'Utwórz issue o błędzie czatu',
+    'Wypchnij zmiany na main',
+    'Sprawdź GitHub Actions',
+    'zsynchronizuj z GitHub',
+  ]) {
+    assert.equal(isGitHubChatRequest(text), true, text);
+  }
+  for (const text of ['Cześć Maya, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
+    assert.equal(isGitHubChatRequest(text), false, text);
+  }
 });

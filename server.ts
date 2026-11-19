@@ -18,6 +18,7 @@ import {
   buildChatHistoryPayload,
   formatAgentDisplayName,
   getGitHubAgentPermissions,
+  isGitHubChatRequest,
   guardUnverifiedMissionCompletion,
   normalizeAgentCanonicalName,
   normalizeAiInteractiveMarkup,
@@ -2274,9 +2275,15 @@ async function startServer() {
     const agentState = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === selectedAgent) || {};
     const agentConfig = agentState.config || {};
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
-    const wantsGitHubTools = requestsGitHubTools && githubPermissions.read;
+    // Narzędzia GitHub tylko dla wiadomości o GitHubie (też w kontekście ostatnich wypowiedzi).
+    // Wcześniej sam token GitHub włączał je dla każdej wiadomości: Ollama była wtedy zawsze
+    // pomijana (brak odpowiedzi, gdy Gemini zawiodło), a wyszukiwanie w internecie wyłączone.
+    const githubTopic =
+      isGitHubChatRequest(cleanMsg) ||
+      historyTurns.slice(-2).some((turn) => turn.role === 'user' && isGitHubChatRequest(turn.content));
+    const wantsGitHubTools = requestsGitHubTools && githubTopic && githubPermissions.read;
     const wantsGitHubWrite = wantsGitHubTools && githubPermissions.writeSync;
-    if (requestsGitHubTools && !wantsGitHubTools) {
+    if (requestsGitHubTools && githubTopic && !githubPermissions.read) {
       res.status(403).json({
         ok: false,
         error: `Brak skonfigurowanego agenta z wymaganym uprawnieniem GitHub.`,
@@ -2636,7 +2643,7 @@ async function startServer() {
       if (cmd.kind === 'help') {
         return {
           text:
-            `### 🦅 Bielik AI (ROOT) — Procesor Poleceń Czatu (\`${selectedOllamaModelName}\`)\n\n` +
+            `### 🦅 Bielik AI (ROOT) — Procesor Poleceń Czatu (wykonuje serwer SVL, bez modelu AI)\n\n` +
             `Dostępne polecenia w czacie:\n` +
             `- \`/pomoc\` lub \`/help\` — lista poleceń procesora Bielik\n` +
             `- \`/status\` — telemetria jądra SVL, rola RBAC, RAM/CPU/dysk oraz status Ollama 11434\n` +
@@ -3066,7 +3073,7 @@ async function startServer() {
         ok: true,
         sender: selectedDisplayName,
         agentId: selectedAgent.toLowerCase(),
-        modelUsed: `${selectedDisplayName} · Ollama (${selectedOllamaModelName}) · Procesor Poleceń ROOT`,
+        modelUsed: `${selectedDisplayName} · Procesor Poleceń ROOT (serwer SVL, bez modelu AI)`,
         reply: directiveReceipts.join('\n\n') || 'Polecenie przetworzone.',
         provenance: 'server_verified',
         followUpMessages: [],
@@ -3215,12 +3222,17 @@ async function startServer() {
     const shouldTryOllama =
       !wantsGitHubTools && !(wantsWebSources && ai) &&
       (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
-    let ollamaFailure = shouldTryOllama ? '' : 'nie użyto dla tego zapytania';
+    let ollamaFailure = shouldTryOllama
+      ? ''
+      : wantsGitHubTools
+        ? 'pominięta — sprawy GitHuba obsługuje Gemini z narzędziami GitHub (Ollama nie ma do nich dostępu)'
+        : 'nie użyto dla tego zapytania';
     let geminiFailure = ai ? '' : 'brak klucza GEMINI_API_KEY';
     const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
-    if (shouldTryOllama) {
+    // Ollama: pierwsza dla Bielika i jawnego wyboru, zapasowa, gdy Gemini zawiedzie.
+    const tryOllama = async (): Promise<boolean> => {
       try {
         const [versionResponse, tagResponse] = await Promise.all([
           // Zajęta Ollama (generowanie, ładowanie modelu) odpowiada wolniej — krótkie limity
@@ -3310,7 +3322,7 @@ async function startServer() {
               appliedActions,
               latestServerRevision: latestActionSrvRev,
             });
-            return;
+            return true;
           }
         } else {
           const errBody = (await oResp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
@@ -3332,7 +3344,9 @@ async function startServer() {
             : reason;
         }
       }
-    }
+      return false;
+    };
+    if (shouldTryOllama && (await tryOllama())) return;
 
     // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models, SVL-364 Router, and Gemini models)
     if (ai) {
@@ -3534,6 +3548,13 @@ async function startServer() {
         }
       }
       geminiFailure = geminiErrors.join(' | ') || 'żaden model Gemini nie zwrócił odpowiedzi';
+    }
+
+    // Gemini nie odpowiedziało (albo brak klucza), a Ollamy jeszcze nie pytano — próbujemy jej,
+    // zanim zgłosimy brak modelu (np. Maya na kanale z hybrydowym routerem).
+    if (!shouldTryOllama && !wantsGitHubTools) {
+      ollamaFailure = '';
+      if (await tryOllama()) return;
     }
 
     // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
@@ -3772,7 +3793,8 @@ async function startServer() {
         origin: String(origin || 'client'),
         message: `Rozmowa obustronna (${convId}) pominięta: ${reason}${detail ? ` — ${detail}` : ''}`,
       });
-      res.status(isAutonomous ? 200 : reason === 'no_model' ? 503 : 409).json({
+      // Pominięcie tury to zwykły wynik (klient pokazuje powód) — nie błąd HTTP w konsoli.
+      res.status(reason === 'no_model' && !isAutonomous ? 503 : 200).json({
         ok: false,
         skipped: true,
         reason,

@@ -70,6 +70,22 @@ export function getGitHubAgentPermissions(rawScopes: unknown): { read: boolean; 
   };
 }
 
+/**
+ * Czy wiadomość dotyczy GitHuba (repozytorium, commity, PR, zgłoszenia, gałęzie, synchronizacja)?
+ * Tylko wtedy czat dołącza narzędzia GitHub — inaczej zwykła rozmowa idzie do Ollamy
+ * i może korzystać z wyszukiwania w internecie.
+ */
+// Granice słów zgodne z polskimi literami (`\b` w JS traktuje „ę”, „ś” jako nie-litery).
+const githubChatPattern =
+  /(?<![\p{L}\p{N}_])(?:github\p{L}*|gh(?=\s)|repo|repozytori\p{L}*|commit\p{L}*|komit\p{L}*|pull\s*request\p{L}*|issue\p{L}*|branch\p{L}*|gałę\p{L}*|gałąź|main|wypchnij|wypchnąć|push\p{L}*|merge\p{L}*|scal\p{L}*|workflow\p{L}*|release\p{L}*)(?![\p{L}\p{N}_])/iu;
+// Skróty wielkimi literami („PR #12”, „CI”) — bez ignorowania wielkości liter, by nie łapać „pr”/„ci”.
+const githubAcronymPattern = /(?<![\p{L}\p{N}_])(?:PR|CI)(?![\p{L}\p{N}_])/u;
+
+export function isGitHubChatRequest(text: string): boolean {
+  const value = String(text || '');
+  return githubChatPattern.test(value) || githubAcronymPattern.test(value);
+}
+
 const missionContextPattern = /\b(?:misj|procedur|operacj)\p{L}*/iu;
 const unverifiedMissionCompletionPatterns = [
   /\b(?:misja|misję|procedura|procedurę|operacja|operację)\s+(?:(?:został[ay]?\s+|jest\s+)?(?:już\s+)?(?:pomyślnie\s+)?)(?:zakończon\p{L}*|ukończon\p{L}*|wykonan\p{L}*|zrealizowan\p{L}*)\b/iu,
