@@ -289,6 +289,14 @@ export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void
   modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony — na 5 min na koniec kolejki`);
 }
 
+/** Najbliższy moment (ms od teraz), gdy któryś model Gemini wyjdzie z karencji; null = brak karencji. */
+export function getSoonestGeminiRetryMs(): number | null {
+  const now = Date.now();
+  const future = [...coolingDown.values()].filter((until) => until > now);
+  if (future.length === 0) return null;
+  return Math.min(...future) - now;
+}
+
 export function isGeminiSlowOrBusyError(message: string): boolean {
   return /aborted|AbortError|TimeoutError|timed? ?out|\b503\b|UNAVAILABLE|high demand|\b429\b|RESOURCE_EXHAUSTED|overloaded/i.test(
     String(message || ''),
@@ -296,7 +304,12 @@ export function isGeminiSlowOrBusyError(message: string): boolean {
 }
 
 /** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, sprawdzone szybkie modele, wykryte modele, zapas. */
-export async function geminiCandidatesFor(client: any, requestedModel?: string, max = 8): Promise<string[]> {
+export async function geminiCandidatesFor(
+  client: any,
+  requestedModel?: string,
+  max = 8,
+  opts: { skipCooling?: boolean } = {},
+): Promise<string[]> {
   const requested = String(requestedModel || '').trim();
   const fromApi = await discoverGeminiModels(client);
   const now = Date.now();
@@ -324,7 +337,10 @@ export async function geminiCandidatesFor(client: any, requestedModel?: string, 
   ].filter((m): m is string => Boolean(m && healthy.includes(m)));
   const pinnedSet = new Set(pinned);
   const remainingHealthy = healthy.filter((m) => !pinnedSet.has(m));
-  return [...pinned, ...diversify(remainingHealthy), ...cooling].slice(0, max);
+  // skipCooling: zapytania w tle (rozmowa obustronna) nie dotykają modeli na karencji 429/503,
+  // żeby nie przepalać odnawiającego się limitu minutowego potrzebnego dla wiadomości Operatora.
+  const tail = opts.skipCooling ? [] : cooling;
+  return [...pinned, ...diversify(remainingHealthy), ...tail].slice(0, max);
 }
 
 /**

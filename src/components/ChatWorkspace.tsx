@@ -198,6 +198,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
   // Dlaczego rozmowa obustronna stoi (powód z serwera) — pokazywane zamiast cichego zatrzymania.
   const [duplexStatus, setDuplexStatus] = useState<{ reason: string; text: string } | null>(null);
+  // Do kiedy (ms epoch) rozmowa obustronna jest wstrzymana po wyczerpaniu limitu Gemini (429).
+  const duplexCooldownUntilRef = useRef(0);
   const lastInteractionTimeRef = useRef<number>(Date.now());
   const autoTurnsRef = useRef<number>(0);
   const prevDuplexActiveRef = useRef<boolean>(duplexActive);
@@ -346,6 +348,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         await refreshDomainModules(['chat', 'agents']);
       } else if (res.data?.skipped && res.data.reason) {
         // 'busy' = inna karta właśnie pisze; jej wiadomość przyjdzie przez synchronizację.
+        const retryAfterMs = Number((res.data as { retryAfterMs?: number }).retryAfterMs || 0);
+        if (retryAfterMs > 0) {
+          // Limit Gemini wyczerpany: wstrzymujemy automatyczne tury (max ~90 s na raz, potem
+          // ponowna próba), żeby nie przepalać odnawiającego się limitu. Wiadomości Operatora działają.
+          duplexCooldownUntilRef.current = Date.now() + Math.min(retryAfterMs, 90000);
+        }
         if (res.data.reason !== 'busy') {
           setDuplexStatus({ reason: res.data.reason, text: res.data.error || res.data.reason });
           // Przy ręcznym wywołaniu pasek trybu obustronnego może być ukryty — pokaż powód wprost.
@@ -367,8 +375,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleProactiveRef = useRef(handleTriggerProactiveChat);
   handleProactiveRef.current = handleTriggerProactiveChat;
 
-  // Nowa wiadomość (od Operatora lub z innej karty) albo zmiana kanału odblokowuje rozmowę.
+  // Nowa wiadomość (od Operatora lub z innej karty) albo zmiana kanału odblokowuje rozmowę —
+  // ale nie w trakcie karencji limitu Gemini (inaczej każda wiadomość od razu znów przepalałaby limit).
   useEffect(() => {
+    if (Date.now() < duplexCooldownUntilRef.current) return;
     setDuplexStatus(null);
   }, [activeConv?.id, activeConv?.messages.length]);
 
@@ -398,15 +408,25 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       return;
     }
     // Limit tur AI pilnuje serwer (powód pauzy wraca w odpowiedzi); tu tylko bezpiecznik.
-    const CLIENT_SAFETY_MAX_AUTO_TURNS = 12;
+    const CLIENT_SAFETY_MAX_AUTO_TURNS = 8;
     if (autoTurnsRef.current >= CLIENT_SAFETY_MAX_AUTO_TURNS) {
       return;
+    }
+    const cooldownLeft = duplexCooldownUntilRef.current - Date.now();
+    if (cooldownLeft > 0) {
+      const resume = setTimeout(() => {
+        duplexCooldownUntilRef.current = 0;
+        setDuplexStatus(null);
+        setDuplexTick((n) => n + 1);
+      }, cooldownLeft + 200);
+      return () => clearTimeout(resume);
     }
     if (duplexStatus && !justEnabled) {
       return;
     }
 
-    const delayMs = justEnabled ? 1800 : autoTurnsRef.current === 0 ? 3500 : 6000;
+    // Rzadsze tury w tle (9 s) mniej obciążają limit API niż poprzednie 6 s.
+    const delayMs = justEnabled ? 1800 : autoTurnsRef.current === 0 ? 3500 : 9000;
     const timer = setTimeout(() => {
       if ((typeof document !== 'undefined' && document.hidden) || sendingRef.current || getInput().trim().length > 0) {
         setDuplexTick((n) => n + 1);

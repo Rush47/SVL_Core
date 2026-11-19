@@ -90,6 +90,7 @@ import {
   noteGeminiSuccess,
   noteGeminiTimeout,
   geminiCandidatesFor,
+  getSoonestGeminiRetryMs,
   isGeminiModelGoneError,
   markGeminiModelGone,
   setGeminiModelLogger,
@@ -4269,7 +4270,7 @@ async function startServer() {
   // 3b. Rozmowa obustronna bez promptów: modele dostają wyłącznie zapis rozmowy.
   // Najpierw model dopisuje „[…”, czyli sam wskazuje, kto mówi następny; potem wskazana AI
   // dopisuje swoją kwestię własnym modelem. Gdy model wskaże Operatora — AI czekają.
-  const SAFETY_MAX_AI_TURNS = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 8);
+  const SAFETY_MAX_AI_TURNS = Number(process.env.SVL_DUPLEX_MAX_AI_TURNS || 6);
   const AUTONOMOUS_MIN_INTERVAL_MS = 3200;
   const proactiveInFlight = new Set<string>();
   const lastProactiveAt = new Map<string, number>();
@@ -4278,6 +4279,7 @@ async function startServer() {
     no_decision: 'Model nie wskazał kolejnego mówcy — rozmowa czeka na Ciebie.',
     ai_turn_limit: `Bezpiecznik kosztów: ${SAFETY_MAX_AI_TURNS} wypowiedzi AI z rzędu bez Twojej wiadomości.`,
     busy: 'Inna karta lub poprzednie wywołanie właśnie generuje wypowiedź.',
+    quota_cooldown: 'Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się automatycznie.',
   };
 
   /** Wybór kolejnego mówcy przez Ollamę (`raw: true`) lub Gemini (krótki wybór spośród uczestników). */
@@ -4307,7 +4309,7 @@ async function startServer() {
     }
     const choices = [...participants, 'Operator'].join(', ');
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
+    for (const candidate of await geminiCandidatesFor(gemini, requestedModel, 8, { skipCooling: true })) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
       const startedAt = Date.now();
       try {
@@ -4390,7 +4392,7 @@ async function startServer() {
       contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
+    for (const candidate of await geminiCandidatesFor(gemini, requestedModel, 8, { skipCooling: true })) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
       const startedAt = Date.now();
       try {
@@ -4442,7 +4444,7 @@ async function startServer() {
     const requestedModel = String(model || '');
     const isAutonomous = Boolean(autonomous);
 
-    const skip = (reason: string, detail?: string) => {
+    const skip = (reason: string, detail?: string, retryAfterMs?: number) => {
       svlFileLogger.log({
         layer: 'GATEWAY',
         level: reason === 'no_model' ? 'ERROR' : 'INFO',
@@ -4457,6 +4459,7 @@ async function startServer() {
         skipped: true,
         reason,
         error: detail || SKIP_MESSAGES[reason] || reason,
+        ...(retryAfterMs ? { retryAfterMs } : {}),
       });
     };
 
@@ -4515,7 +4518,17 @@ async function startServer() {
         const pred = await predictNextSpeaker(
           modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
         );
-        if (!pred.providerOnline) return noModel();
+        if (!pred.providerOnline) {
+          const retryMs = getSoonestGeminiRetryMs();
+          if (retryMs && retryMs > 0) {
+            return skip(
+              'quota_cooldown',
+              `Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się za ${Math.ceil(retryMs / 1000)} s. Twoje wiadomości nadal mają pierwszeństwo.`,
+              retryMs,
+            );
+          }
+          return noModel();
+        }
         predicted = pred.predicted;
       } else if (explicitTarget) {
         predicted = explicitTarget;
@@ -4561,7 +4574,19 @@ async function startServer() {
       const line = await generateAgentProactiveLine(
         modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, speakerMemoryContext, failures,
       );
-      if (!line) return noModel();
+      if (!line) {
+        // Wszystkie modele Gemini na karencji 429/503, a Ollamy nie ma → nie przepalamy limitu
+        // w tle; mówimy, za ile spróbować (klient wstrzymuje rozmowę obustronną na ten czas).
+        const retryMs = getSoonestGeminiRetryMs();
+        if (retryMs && retryMs > 0) {
+          return skip(
+            'quota_cooldown',
+            `Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się za ${Math.ceil(retryMs / 1000)} s. Twoje wiadomości nadal mają pierwszeństwo.`,
+            retryMs,
+          );
+        }
+        return noModel();
+      }
       const rawText = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
       if (!rawText || isRepetitive(rawText, turns.slice(-8).map((t) => t.content))) {
         return skip('nothing_new', `${speakerDisplayName} nie miał(a) nic nowego do powiedzenia — wypowiedź pominięta.`);

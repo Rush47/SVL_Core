@@ -174,3 +174,27 @@ test('stan modeli (wycofane i karencje) przetrwa restart', async () => {
   gm.setGeminiModelStatePath(null);
   gm.resetGeminiModelHealth();
 });
+
+test('geminiCandidatesFor skipCooling pomija modele na karencji, a getSoonestGeminiRetryMs podaje czas', async () => {
+  const gm = await import('./geminiModels.ts');
+  gm.resetGeminiModelHealth();
+  const fakeClient = {
+    models: {
+      list: async () => ({
+        async *[Symbol.asyncIterator]() {
+          for (const n of ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest']) {
+            yield { name: 'models/' + n, supportedActions: ['generateContent'] };
+          }
+        },
+      }),
+    },
+  };
+  gm.noteGeminiQuotaExhausted('gemini-3.6-flash', '429 quota retryDelay: "40s"');
+  const retry = gm.getSoonestGeminiRetryMs();
+  assert.ok(retry && retry > 30_000 && retry <= 40_000, `retry=${retry}`);
+  const withCooling = await gm.geminiCandidatesFor(fakeClient, '', 8);
+  assert.ok(withCooling.includes('gemini-3.6-flash'), 'domyślnie model na karencji jest na końcu listy');
+  const skipped = await gm.geminiCandidatesFor(fakeClient, '', 8, { skipCooling: true });
+  assert.ok(!skipped.includes('gemini-3.6-flash'), 'skipCooling pomija model na karencji');
+  gm.resetGeminiModelHealth();
+});
