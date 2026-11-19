@@ -2210,6 +2210,80 @@ class SVLSystemKernel:
             **merge_info,
         }
 
+    def restore_all_memory(self, *, force: bool = True, origin: str = "client", correlation_id: str = "") -> dict[str, Any]:
+        """
+        Odblokowuje i przywraca CAŁĄ pamięć AI oraz rozmowy z kopii zapasowej.
+        W odróżnieniu od automatycznego odtwarzania przy starcie:
+        - działa też, gdy baza NIE jest pusta (dokłada brakujące wpisy — INSERT OR IGNORE),
+        - z force=True ignoruje flagę `explicitly_cleared` (ręczne odblokowanie przez Operatora),
+        - na końcu zapisuje kopię jako `explicitly_cleared=False`, odblokowując przyszłe odtwarzanie.
+        """
+        if not self.durable_backup_path.is_file():
+            return {"ok": False, "error": "Brak pliku kopii zapasowej pamięci (svl_durable_backup.json)."}
+        try:
+            raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"ok": False, "error": f"Nie udało się odczytać kopii zapasowej: {exc}"}
+        if not isinstance(raw, dict):
+            return {"ok": False, "error": "Nieprawidłowy format kopii zapasowej."}
+        if raw.get("explicitly_cleared") and not force:
+            return {"ok": False, "error": "Kopia oznaczona jako wyczyszczona (użyj force=true, aby odblokować)."}
+
+        backup_convs = raw.get("conversations") or []
+        backup_msgs = raw.get("chat_messages") or []
+        backup_mems = raw.get("agent_memory") or []
+
+        def _restore(conn: sqlite3.Connection) -> dict[str, int]:
+            has_mem_tbl = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone())
+            msgs_before = int(conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0])
+            mems_before = int(conn.execute("SELECT COUNT(*) FROM agent_memory").fetchone()[0]) if has_mem_tbl else 0
+            for c in backup_convs:
+                if isinstance(c, dict) and c.get("id"):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO conversations (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (str(c["id"]), str(c.get("title") or "Sesja SVL Python OS"), str(c.get("model") or "svl-hybrid-router"),
+                         str(c.get("created_at") or datetime.now(timezone.utc).isoformat()), str(c.get("updated_at") or datetime.now(timezone.utc).isoformat())),
+                    )
+            for m in backup_msgs:
+                if isinstance(m, dict) and m.get("id") and m.get("conversation_id"):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (str(m["id"]), str(m["conversation_id"]), str(m.get("role") or "user"), str(m.get("sender") or "Operator"),
+                         str(m.get("content") or ""), str(m.get("attachments_json") or "[]"), str(m.get("metadata_json") or "{}"),
+                         str(m.get("created_at") or datetime.now(timezone.utc).isoformat())),
+                    )
+            if has_mem_tbl:
+                for mem in backup_mems:
+                    if isinstance(mem, dict) and mem.get("id"):
+                        conn.execute(
+                            "INSERT OR IGNORE INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (str(mem["id"]), str(mem.get("agent_id") or ""), str(mem.get("scope") or "global"), str(mem.get("kind") or "episode"),
+                             str(mem.get("content") or ""), str(mem.get("source") or "backup_restore"), str(mem.get("created_at") or datetime.now(timezone.utc).isoformat())),
+                        )
+            msgs_after = int(conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0])
+            mems_after = int(conn.execute("SELECT COUNT(*) FROM agent_memory").fetchone()[0]) if has_mem_tbl else 0
+            return {"messagesAdded": msgs_after - msgs_before, "memoriesAdded": mems_after - mems_before, "messagesTotal": msgs_after, "memoriesTotal": mems_after}
+
+        counts = self.run_db(_restore, write=True)
+        self.ensure_mitek_family_channel()
+        self.checkpoint_wal("PASSIVE")
+        # Odblokuj przyszłe odtwarzanie (zdejmij flagę wyczyszczenia).
+        self.save_durable_backup(explicitly_cleared=False)
+        append_python_log(
+            "memory",
+            f"Przywrócono pamięć AI z kopii: +{counts['messagesAdded']} wiadomości, +{counts['memoriesAdded']} wspomnień (łącznie {counts['messagesTotal']}/{counts['memoriesTotal']}).",
+            level="INFO", origin=origin, correlation_id=correlation_id,
+        )
+        return {"ok": True, **counts, "conversations": self.list_conversations_with_messages(), "serverRevision": self.get_server_revision()}
+
+    def export_memory_snapshot(self) -> dict[str, Any]:
+        """Zwraca aktualną kopię pamięci (rozmowy + pamięć AI) do pobrania/zarchiwizowania."""
+        self.save_durable_backup(explicitly_cleared=False)
+        try:
+            return {"ok": True, "snapshot": json.loads(self.durable_backup_path.read_text(encoding="utf-8"))}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def clear_all_chat_data(
         self,
         origin: str = "client",

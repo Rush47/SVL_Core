@@ -162,6 +162,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const noticeTimerRef = useRef<number | null>(null);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [isClearingAll, setIsClearingAll] = useState(false);
+  const [isRestoringMemory, setIsRestoringMemory] = useState(false);
 
   const showNotice = useCallback((text: string, kind: 'info' | 'ok' = 'ok') => {
     setChatActionNotice({ kind, text });
@@ -1299,6 +1300,36 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               </button>
             )}
           </div>
+          <button
+            type="button"
+            disabled={isRestoringMemory}
+            onClick={async () => {
+              if (!hasSvlOperatorAccessToken()) {
+                setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby przywrócić pamięć AI.');
+                return;
+              }
+              setIsRestoringMemory(true);
+              setChatActionError(null);
+              try {
+                const res = await safeFetchJson<{ ok: boolean; messagesAdded?: number; memoriesAdded?: number; error?: string }>(
+                  '/api/memory/restore', { method: 'POST', timeoutMs: 30000, body: JSON.stringify({ force: true }) },
+                );
+                if (res.data?.ok) {
+                  showNotice(`Odblokowano pamięć AI: +${res.data.messagesAdded ?? 0} wiadomości, +${res.data.memoriesAdded ?? 0} wspomnień.`, 'ok');
+                  await refreshAllDomains('memory_restore');
+                } else {
+                  setChatActionError(res.data?.error || res.error || 'Nie udało się przywrócić pamięci AI.');
+                }
+              } finally {
+                setIsRestoringMemory(false);
+              }
+            }}
+            className="w-full min-h-[36px] px-3 py-1.5 mb-2 bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-500/40 text-emerald-200 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            title="Przywraca i odblokowuje całą pamięć AI oraz rozmowy z kopii zapasowej (np. po resecie kontenera)."
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRestoringMemory ? 'animate-spin' : ''}`} />
+            {isRestoringMemory ? 'Przywracanie pamięci...' : 'Odblokuj / przywróć pamięć AI'}
+          </button>
           {!confirmClearOpen ? (
             <button
               type="button"

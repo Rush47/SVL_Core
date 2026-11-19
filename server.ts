@@ -2550,6 +2550,28 @@ async function startServer() {
     });
   }));
 
+  app.post('/api/memory/restore', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Przywracanie pamięci AI wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const pyRes = await callPythonBackend('POST', '/api/py/chat/restore-backup', { force: req.body?.force !== false }, corrId);
+    void pollAndRelayOutbox();
+    res.status(pyRes.status).json(pyRes.data);
+  }));
+
+  app.get('/api/memory/export', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Eksport pamięci AI wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const pyRes = await callPythonBackend('GET', '/api/py/chat/export-memory', undefined, corrId);
+    res.status(pyRes.status).json(pyRes.data);
+  }));
+
   app.post('/api/kernel/factory-reset', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
         !hasOperatorAuthorization(req.body?.operatorToken)) {

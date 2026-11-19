@@ -1635,6 +1635,13 @@ async def handle_api_request(
                 "conversations": runtime.kernel.list_conversations_with_messages(),
             }
 
+    if method == "POST" and path == "/api/py/chat/restore-backup":
+        res = runtime.kernel.restore_all_memory(force=bool(body.get("force", True)), origin=origin, correlation_id=corr)
+        return (200 if res.get("ok") else 400), res
+
+    if method == "GET" and path == "/api/py/chat/export-memory":
+        return 200, runtime.kernel.export_memory_snapshot()
+
     if method == "POST" and path == "/api/py/chat/conversations/clear-all":
         try:
             cleared = runtime.kernel.clear_all_chat_data(
