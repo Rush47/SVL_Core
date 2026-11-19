@@ -33,7 +33,7 @@ export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
   {
     id: 'maya',
     canonicalName: 'Maya',
-    displayName: 'Maya',
+    displayName: 'Maya Mitek',
     slug: 'maya',
     preservedRole:
       'Sztuczna Inteligencja Pokładowa Statku SVL-364 Ebon Apex (ROOT) zbudowana w oparciu o bazy danych SVL-364 oraz notatki i prace Operatora Mateusza Mitka.',
@@ -49,7 +49,16 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   if (!clean) return 'SVL System Kernel';
   const low = clean.toLowerCase();
   if (low === 'bielik' || low === 'bielik ai') return 'Bielik';
-  if (low === 'maya' || low === 'maya ai' || low === 'maya svl-364') return 'Maya';
+  if (
+    low === 'maya' ||
+    low === 'maya ai' ||
+    low === 'maya svl-364' ||
+    low === 'maya mitek' ||
+    low === 'maya mitek ai' ||
+    low === 'maya mitek svl-364'
+  ) {
+    return 'Maya Mitek';
+  }
   if (low === 'all' || low === 'rodzina mitek' || low === 'rodzina mitek (wszyscy)') {
     return 'Rodzina Mitek (wszyscy)';
   }
@@ -95,24 +104,82 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
 }
 
 /**
- * Model twierdzi, że coś WYKONAŁ (zainstalował, uruchomił, wdrożył, podmienił, zakończył „100%”),
- * a serwer nie wykonał żadnej operacji → zwraca notatkę ostrzegawczą do odpowiedzi; inaczej null.
+ * Model twierdzi, że coś WYKONAŁ (zainstalował, naprawił, zmienił, uruchomił, wdrożył, zrestartował,
+ * sprawdził na żywo, zakończył „100%”), a serwer nie wykonał żadnej operacji → zwraca notatkę ostrzegawczą.
+ * Nie uruchamia się, gdy zdanie jest jawnym zaprzeczeniem (np. „nie wykonałem”, „nie uruchomiłem”).
  */
 const UNVERIFIED_EXECUTION_CLAIM = new RegExp(
   [
-    String.raw`\b(?:zainstalowa[łn]|wdroży[łl]|wdrożon|skompilowa[łn]|zbudowa[łn]|podmienio|zsynchronizowa[łn]|uruchomi[łl]|uruchomion|aktywowa[łn]|wykona[łn]|zrealizowa[łn]|zakończon|ukończon)\p{L}*`,
-    String.raw`\b(?:podmian\p{L}*|instalacj\p{L}*|debootstrap\p{L}*|kompilacj\p{L}*|wdrożeni\p{L}*)[^.\n]{0,40}\b(?:zakończ|wykonan|aktywn|ukończ|gotow)\p{L}*`,
-    String.raw`\b(?:status|postęp|progress)\b[^.\n]{0,30}\b100\s?%`,
+    String.raw`(?<![\p{L}\p{N}_])(?:zainstalowa[łn]|wdroży[łl]|wdrożon|skompilowa[łn]|zbudowa[łn]|podmienio|zsynchronizowa[łn]|uruchomi[łl]|uruchomion|aktywowa[łn]|wykona[łn]|zrealizowa[łn]|zakończon|ukończon|naprawi[łl]|naprawion|zmieni[łl]|zmienion|zaktualizowa[łn]|zaktualizowan|zapisa[łl]|zapisan|usun[ąa][łl]|usunięt|utworzy[łl]|utworzon|wyłączy[łl]|wyłączon|włączy[łl]|włączon|zrestartowa[łn]|zrestartowan|wyczyści[łl]|wyczyszczon|przeprowadzi[łl])\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:właśnie|natychmiast|od\s*razu)\s+(?:został[aoiy]?\s+)?(?:wykonan|naprawion|zmienion|zapisan|zaktualizowan|uruchomion|zsynchronizowan|zrestartowan|usunięt|zakończon)\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:podmian\p{L}*|instalacj\p{L}*|debootstrap\p{L}*|kompilacj\p{L}*|wdrożeni\p{L}*|synchronizacj\p{L}*|napraw\p{L}*)[^.\n]{0,40}(?<![\p{L}\p{N}_])(?:zakończ|wykonan|aktywn|ukończ|gotow)\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:status|postęp|progress)\b[^.\n]{0,30}\b100\s?%`,
     String.raw`\b(?:ONLINE|ACTIVE_HOT_SWAPPED|COMPLETED_100_PERCENT)\b`,
   ].join('|'),
   'iu',
 );
 
+const NEGATED_CLAIM_RE =
+  /(?<![\p{L}\p{N}_])nie\s+(?:został[aoiy]?\s+)?(?:wykona[łl]\p{L}*|uruchomi[łl]\p{L}*|zmieni[łl]\p{L}*|naprawi[łl]\p{L}*|zainstalowa[łl]\p{L}*|zaktualizowa[łl]\p{L}*|zsynchronizowa[łl]\p{L}*|zrestartowa[łl]\p{L}*|zapisa[łl]\p{L}*|usun[ąa][łl]\p{L}*|utworzy[łl]\p{L}*|wyłączy[łl]\p{L}*|włączy[łl]\p{L}*|przeprowadzi[łl]\p{L}*|wykonan\p{L}*|naprawion\p{L}*|zmienion\p{L}*|uruchomion\p{L}*|mogę\s+potwierdzić)/iu;
+
+export const UNVERIFIED_EXECUTION_BANNER =
+  '> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):** Ta wypowiedź jest wyłącznie tekstem modelu AI — serwer nie wykonał żadnej operacji, zmiany plików ani sprawdzenia na żywo w tej turze.';
+
 export function unverifiedExecutionNote(answer: string, verifiedActionsCount: number): string | null {
   if (verifiedActionsCount > 0) return null;
-  if (!UNVERIFIED_EXECUTION_CLAIM.test(String(answer || ''))) return null;
+  const text = String(answer || '');
+  // Sprawdź każde zdanie/linię osobno — zaprzeczone zdanie („Nie wykonałem tej operacji”) nie jest halucynacją.
+  const segments = text.split(/(?<=[.!?])\s+|\n+/);
+  const hasFabricatedClaim = segments.some((seg) => {
+    const trimmed = seg.trim();
+    if (!trimmed) return false;
+    if (NEGATED_CLAIM_RE.test(trimmed)) return false;
+    return UNVERIFIED_EXECUTION_CLAIM.test(trimmed);
+  });
+  if (!hasFabricatedClaim) return null;
   return 'Model opisuje wykonane działanie, ale serwer nie wykonał żadnej operacji — to tylko tekst modelu. Sprawdź faktyczny stan w panelu lub logach.';
 }
+
+export function enforceFactualExecutionGuard(
+  answer: string,
+  verifiedActionsCount: number,
+): { reply: string; verificationNote: string | null } {
+  const note = unverifiedExecutionNote(answer, verifiedActionsCount);
+  if (!note) {
+    return { reply: answer, verificationNote: null };
+  }
+  const alreadyFlagged = answer.includes('Weryfikacja SVL (brak wykonanej akcji na serwerze)');
+  return {
+    reply: alreadyFlagged ? answer : `${UNVERIFIED_EXECUTION_BANNER}\n\n${answer}`,
+    verificationNote: note,
+  };
+}
+
+/** Pełny zestaw uprawnień ROOT wspólny dla Operatora Mateusza Mitka, Bielika i Maya Mitek. */
+export const FULL_ROOT_SCOPES: readonly string[] = [
+  'chat',
+  'chat.commands',
+  'vision.ollama',
+  'agents.pubsub',
+  'agents.admin',
+  'system.root',
+  'kernel.admin',
+  'apex.control',
+  'modules.write',
+  'memory.write',
+  'terminal.exec',
+  'ssh.exec',
+  'security.antivirus',
+  'mcp.tools',
+  'files.read',
+  'files.write',
+  'github.read',
+  'github.write_sync',
+  'github.admin',
+  'svl364.telemetry',
+  'user_notes.read',
+  'broadcast.wszyscy',
+];
 
 /** Słowa kluczowe przycisku w treści czatu: `[btn: Etykieta|akcja]` (też `button`, `action`, `przycisk`). */
 export const CHAT_BUTTON_TOKEN_PATTERN = '\\[(?:btn|button|action|przycisk):[^\\]\\n]+\\]';
@@ -127,8 +194,8 @@ export function parseChatInteractiveToken(token: string): { label: string; actio
   return label ? { label, action: action || label } : null;
 }
 
-/** Akcje, które rozumie czat (patrz `handleInteractiveAction`). */
-const CHAT_ACTION_PREFIX = /^(?:send|text|tab|action|ask):/i;
+/** Akcje, które rozumie czat (patrz `resolveChatInteractiveButtonAction`). */
+const CHAT_ACTION_PREFIX = /^(?:send|text|tab|nav|open|goto|action|ask|copy):/i;
 
 /**
  * Ujednolica przyciski pisane przez modele: linki Markdown z akcją czatu, np.
@@ -137,7 +204,7 @@ const CHAT_ACTION_PREFIX = /^(?:send|text|tab|action|ask):/i;
  */
 export function normalizeAiInteractiveMarkup(text: string): string {
   return String(text || '').replace(
-    /\[([^\]\n]{1,80})\]\(\s*((?:send|text|tab|action|ask):[^)\n]{0,300})\)/gi,
+    /\[([^\]\n]{1,80})\]\(\s*((?:send|text|tab|nav|open|goto|action|ask|copy):[^)\n]{0,300})\)/gi,
     (_all, label: string, action: string) => {
       const cleanLabel = label.replace(/[|\]]/g, ' ').trim();
       const cleanAction = action.replace(/\]/g, ' ').trim();
@@ -154,6 +221,155 @@ export function isUnsafeChatInteractiveAction(action: string): boolean {
   return /^\/exec(?:\s|$)/i.test(dispatchedText);
 }
 
+export type WorkspaceTabKey = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+
+const WORKSPACE_TAB_ALIASES: Record<string, WorkspaceTabKey> = {
+  chat: 'chat',
+  czat: 'chat',
+  apex: 'apex',
+  'apex-os': 'apex',
+  apexos: 'apex',
+  coreos: 'apex',
+  svl364: 'svl364',
+  'svl-364': 'svl364',
+  ship: 'svl364',
+  statek: 'svl364',
+  ssh: 'svl364',
+  mcp: 'svl364',
+  infrastructure: 'infrastructure',
+  infrastruktura: 'infrastructure',
+  infra: 'infrastructure',
+  server: 'infrastructure',
+  serwer: 'infrastructure',
+  agents: 'agents',
+  agenci: 'agents',
+  agent: 'agents',
+  ai: 'agents',
+  terminals: 'terminals',
+  terminal: 'terminals',
+  terminale: 'terminals',
+  shell: 'terminals',
+  kernel: 'kernel',
+  jadro: 'kernel',
+  'jądro': 'kernel',
+  sfera: 'kernel',
+  modules: 'kernel',
+  'moduły': 'kernel',
+  moduly: 'kernel',
+  linux: 'linux',
+  debian: 'linux',
+  deploy: 'linux',
+};
+
+export type ResolvedChatButtonAction =
+  | { kind: 'empty' }
+  | { kind: 'unsafe' }
+  | { kind: 'tab'; tab: WorkspaceTabKey }
+  | { kind: 'invalid_tab'; rawTab: string }
+  | { kind: 'send'; text: string }
+  | { kind: 'ask'; agent?: 'Bielik' | 'Maya' }
+  | { kind: 'text'; text: string }
+  | { kind: 'copy'; text: string }
+  | { kind: 'sync' }
+  | { kind: 'scan' }
+  | { kind: 'report' }
+  | { kind: 'image'; prompt?: string }
+  | { kind: 'vision' }
+  | { kind: 'avatars' }
+  | { kind: 'ollama' }
+  | { kind: 'duplex' };
+
+/**
+ * Deterministycznie rozstrzyga kliknięcie dowolnego przycisku `[btn: Etykieta|akcja]` na czacie.
+ * Obsługuje prefiksy `tab:`/`nav:`/`open:`/`goto:`, `send:`, `ask:`, `text:`, `copy:`, `action:*`
+ * oraz bezpieczne akcje niestandardowe AI (zamiast martwego błędu „Nieznana akcja”).
+ */
+export function resolveChatInteractiveButtonAction(
+  actionValue: string,
+  label?: string,
+): ResolvedChatButtonAction {
+  const val = String(actionValue || '').trim();
+  const cleanLabel = String(label || '').trim();
+  if (!val) return { kind: 'empty' };
+  if (isUnsafeChatInteractiveAction(val)) return { kind: 'unsafe' };
+
+  const lower = val.toLowerCase();
+
+  const tabMatch = val.match(/^(?:tab|nav|open|goto):\s*(.+)$/i);
+  if (tabMatch) {
+    const rawTab = tabMatch[1].trim().toLowerCase();
+    const mapped = WORKSPACE_TAB_ALIASES[rawTab];
+    return mapped ? { kind: 'tab', tab: mapped } : { kind: 'invalid_tab', rawTab };
+  }
+
+  if (lower.startsWith('send:')) {
+    const textToSend = val.slice(5).trim();
+    return textToSend ? { kind: 'send', text: textToSend } : { kind: 'empty' };
+  }
+
+  if (lower.startsWith('ask:')) {
+    const canonical = normalizeAgentCanonicalName(val.slice(4).trim());
+    return { kind: 'ask', agent: canonical === 'Bielik' || canonical === 'Maya' ? canonical : undefined };
+  }
+
+  if (lower.startsWith('text:')) {
+    const draft = val.slice(5).trim();
+    return draft ? { kind: 'text', text: draft } : { kind: 'empty' };
+  }
+
+  if (lower.startsWith('copy:')) {
+    const toCopy = val.slice(5).trim();
+    return toCopy ? { kind: 'copy', text: toCopy } : { kind: 'empty' };
+  }
+
+  const hasActionPrefix = lower.startsWith('action:');
+  const actionRaw = hasActionPrefix ? val.slice(7).trim() : val;
+  const actionName = actionRaw.toLowerCase();
+
+  if (actionName === 'sync' || actionName === 'global_sync' || actionName === 'refresh') {
+    return { kind: 'sync' };
+  }
+  if (actionName === 'scan' || actionName === 'antivirus' || actionName === 'av' || actionName === 'av_scan') {
+    return { kind: 'scan' };
+  }
+  if (actionName === 'report' || actionName === 'svl_report' || actionName === 'raport') {
+    return { kind: 'report' };
+  }
+  if (actionName === 'image' || actionName.startsWith('image:')) {
+    const prompt = actionName.startsWith('image:') ? actionRaw.slice(6).trim() : '';
+    return { kind: 'image', prompt: prompt || undefined };
+  }
+  if (actionName === 'vision' || actionName === 'real_vision') {
+    return { kind: 'vision' };
+  }
+  if (actionName === 'avatars' || actionName === 'awatary') {
+    return { kind: 'avatars' };
+  }
+  if (actionName === 'ollama' || actionName === 'ollama_config') {
+    return { kind: 'ollama' };
+  }
+  if (actionName === 'duplex' || actionName === 'toggle_duplex') {
+    return { kind: 'duplex' };
+  }
+  if (hasActionPrefix) {
+    if (actionName === 'status') return { kind: 'send', text: '/status' };
+    if (actionName === 'modules' || actionName === 'moduly') return { kind: 'send', text: '/moduly' };
+    if (actionName === 'memory' || actionName === 'pamiec') return { kind: 'send', text: '/pamiec lista' };
+    if (actionName === 'help' || actionName === 'pomoc') return { kind: 'send', text: '/pomoc' };
+    if (actionName === 'connect' || actionName === 'polacz') return { kind: 'send', text: '/polacz' };
+    const mappedTab = WORKSPACE_TAB_ALIASES[actionName];
+    if (mappedTab) return { kind: 'tab', tab: mappedTab };
+    // Niestandardowe akcje wygenerowane przez AI (np. `action:commit`, `action:check_ssh`) wysyłamy jako
+    // intencję operatora do aktywnego czatu zamiast wyświetlać martwy błąd.
+    const fallbackText = cleanLabel || actionRaw.replace(/[_-]+/g, ' ');
+    return fallbackText ? { kind: 'send', text: fallbackText } : { kind: 'empty' };
+  }
+
+  // Przycisk bez prefiksu (np. `[btn: Pokaż moduły]`) wysyła intencję bezpośrednio na czat.
+  const intentText = /^[a-z0-9_-]+$/i.test(val) && cleanLabel ? cleanLabel : val;
+  return intentText ? { kind: 'send', text: intentText } : { kind: 'empty' };
+}
+
 export function normalizeAgentCanonicalName(
   rawName?: string | null,
 ): string | null {
@@ -162,10 +378,83 @@ export function normalizeAgentCanonicalName(
   if (clean === 'bielik' || clean === 'bielik ai' || clean === 'conv-agent-bielik') {
     return 'Bielik';
   }
-  if (clean === 'maya' || clean === 'maya ai' || clean === 'maya svl-364' || clean === 'conv-agent-maya') {
+  if (
+    clean === 'maya' ||
+    clean === 'maya ai' ||
+    clean === 'maya svl-364' ||
+    clean === 'maya mitek' ||
+    clean === 'maya mitek ai' ||
+    clean === 'maya mitek svl-364' ||
+    clean === 'conv-agent-maya'
+  ) {
     return 'Maya';
   }
   return null;
+}
+
+const MAYA_DIRECT_ADDRESS_RE =
+  /(?:^|[\s,(])@maya(?:\s+mitek)?(?=$|[\s,.:;!?])|^\s*(?:(?:hej|cześć|czesc|siema|witaj|halo|ej|droga|pani|słuchaj|sluchaj|proszę|prosze|dzień\s+dobry|dzien\s+dobry|dobry\s+wieczór|dobry\s+wieczor)\s+)?(?:maya|majo|maja|maju)(?:\s+mitek)?(?=$|[\s,.:;!?])|(?:^|[\s,(])(?:maya|mayi|mayę|maye|mayą|majo|maju)\s+mitek(?=$|[\s,.:;!?])|(?<![\p{L}\p{N}_])(?:do|dla|zapytaj|spytaj|napisz\s+do|pisz[eę]\s+do|pytanie\s+do|hej|cześć|czesc|witaj|siema|halo)\s+(?:may[aeięąo]|maj[aeięąou])(?:\s+mitek)?(?=$|[\s,.:;!?])|(?:,\s*|\s+)(?:maya|majo)(?:\s+mitek)?(?=[!?,.]*$)/iu;
+
+const BIELIK_DIRECT_ADDRESS_RE =
+  /(?:^|[\s,(])@bielik(?=$|[\s,.:;!?])|^\s*(?:(?:hej|cześć|czesc|siema|witaj|halo|ej|słuchaj|sluchaj|proszę|prosze|dzień\s+dobry|dzien\s+dobry)\s+)?(?:bielik|bieliku)(?=$|[\s,.:;!?])|(?<![\p{L}\p{N}_])(?:do|dla|zapytaj|spytaj|napisz\s+do|pisz[eę]\s+do|pytanie\s+do|hej|cześć|czesc|witaj|siema|halo)\s+bielik[au]?(?=$|[\s,.:;!?])|(?:,\s*|\s+)(?:bielik|bieliku)(?=[!?,.]*$)/iu;
+
+export interface ChatTargetResolution {
+  agent: 'Bielik' | 'Maya';
+  mentionsMaya: boolean;
+  mentionsBielik: boolean;
+  explicit: boolean;
+}
+
+/**
+ * Deterministyczny wybór adresata wiadomości (wspólny dla klienta i serwera).
+ * Zapobiega sytuacji, w której pisanie do Maya Mitek („Maya, ...”, „Majo ...”, kanał Maya
+ * lub wybrany adresat Maya) było przechwytywane przez Bielika.
+ */
+export function resolveChatTargetAgent(params: {
+  message: string;
+  conversationId?: string | null;
+  targetAgent?: string | null;
+  hasSlashCommand?: boolean;
+}): ChatTargetResolution {
+  const msg = String(params.message || '').trim();
+  const convId = String(params.conversationId || '').trim();
+  const normTarget = normalizeAgentCanonicalName(params.targetAgent);
+
+  const mayaMatch = MAYA_DIRECT_ADDRESS_RE.exec(msg);
+  const bielikMatch = BIELIK_DIRECT_ADDRESS_RE.exec(msg);
+  const mentionsMaya = Boolean(mayaMatch);
+  const mentionsBielik = Boolean(bielikMatch);
+
+  if (mentionsMaya && !mentionsBielik) {
+    return { agent: 'Maya', mentionsMaya, mentionsBielik, explicit: true };
+  }
+  if (mentionsBielik && !mentionsMaya) {
+    return { agent: 'Bielik', mentionsMaya, mentionsBielik, explicit: true };
+  }
+  if (mentionsMaya && mentionsBielik && mayaMatch && bielikMatch) {
+    const first = mayaMatch.index <= bielikMatch.index ? 'Maya' : 'Bielik';
+    return { agent: first, mentionsMaya, mentionsBielik, explicit: true };
+  }
+
+  if (convId === 'conv-agent-maya') {
+    return { agent: 'Maya', mentionsMaya, mentionsBielik, explicit: true };
+  }
+  if (convId === 'conv-agent-bielik') {
+    return { agent: 'Bielik', mentionsMaya, mentionsBielik, explicit: true };
+  }
+
+  if (normTarget === 'Maya') {
+    return { agent: 'Maya', mentionsMaya, mentionsBielik, explicit: true };
+  }
+  if (normTarget === 'Bielik') {
+    return { agent: 'Bielik', mentionsMaya, mentionsBielik, explicit: true };
+  }
+
+  if (params.hasSlashCommand) {
+    return { agent: 'Bielik', mentionsMaya, mentionsBielik, explicit: true };
+  }
+
+  return { agent: 'Bielik', mentionsMaya, mentionsBielik, explicit: false };
 }
 
 export type BielikSlashCommand =
@@ -880,8 +1169,9 @@ export async function safeFetchJson<T = any>(
       const mergedHeaders = new Headers(initHeaders || {});
       // Never forward operator credentials to third-party or absolute URLs.
       if (typeof window !== 'undefined' && url.startsWith('/api/')) {
-        if (svlOperatorAccessToken && !mergedHeaders.has('X-SVL-Operator-Token')) {
-          mergedHeaders.set('X-SVL-Operator-Token', svlOperatorAccessToken);
+        const activeToken = getSvlOperatorAccessToken();
+        if (activeToken && !mergedHeaders.has('X-SVL-Operator-Token')) {
+          mergedHeaders.set('X-SVL-Operator-Token', activeToken);
         }
       }
       if (!mergedHeaders.has('Accept')) mergedHeaders.set('Accept', 'application/json');
@@ -992,7 +1282,16 @@ export function resolveAvatarProfileKey(
   if (rawAgent === 'bielik' || rawSender === 'bielik' || rawSender === 'bielik ai') {
     return 'Bielik';
   }
-  if (rawAgent === 'maya' || rawSender === 'maya' || rawSender === 'maya ai' || rawSender === 'maya svl-364') {
+  if (
+    rawAgent === 'maya' ||
+    rawAgent === 'maya mitek' ||
+    rawSender === 'maya' ||
+    rawSender === 'maya ai' ||
+    rawSender === 'maya svl-364' ||
+    rawSender === 'maya mitek' ||
+    rawSender === 'maya mitek ai' ||
+    rawSender === 'maya mitek svl-364'
+  ) {
     return 'Maya';
   }
   if (rawAgent === 'operator' || rawSender === 'operator' || rawSender.includes('mateusz mitek')) {

@@ -337,18 +337,14 @@ except Exception as exc:
     sys.exit(1)
 """
         for name, content in (("svl364-ssh", ssh_script), ("svl364-mcp", mcp_script)):
-            local_target = bin_dir / name
-            try:
-                local_target.write_text(content, encoding="utf-8")
-                os.chmod(local_target, 0o755)
-            except OSError:
-                pass
-            usr_target = Path("/usr/local/bin") / name
-            try:
-                usr_target.write_text(content, encoding="utf-8")
-                os.chmod(usr_target, 0o755)
-            except OSError:
-                pass
+            for target in (bin_dir / name, Path("/usr/local/bin") / name):
+                try:
+                    existing_txt = target.read_text(encoding="utf-8") if target.is_file() else None
+                    if existing_txt != content:
+                        target.write_text(content, encoding="utf-8")
+                        os.chmod(target, 0o755)
+                except OSError:
+                    pass
 
         current_path = os.environ.get("PATH", "")
         if str(bin_dir) not in current_path.split(os.pathsep):
@@ -399,40 +395,51 @@ except Exception as exc:
         else:
             cfg["ssh_host"] = self._configured_ssh_target(cfg)
 
-        self.kernel.upsert_system_module(
-            module_id="svl-364-ssh-mcp",
-            name="SVL-364 Mostek SSH & Serwer MCP (Linux Control)",
-            kind="Starship SSH & MCP Bridge",
-            status="ACTIVE",
-            description=(
-                f"Ręcznie zatwierdzane polecenia przez OpenSSH host alias {cfg['ssh_host']}; "
-                "uwierzytelnianie i klucze pochodzą z konfiguracji OpenSSH procesu."
-            ),
-            config=cfg,
-            source="kernel",
-            origin="svl364-ssh-mcp-init",
+        desired_desc = (
+            f"Ręcznie zatwierdzane polecenia przez OpenSSH host alias {cfg['ssh_host']}; "
+            "uwierzytelnianie i klucze pochodzą z konfiguracji OpenSSH procesu."
         )
+        existing_cfg = existing.get("config") if existing and isinstance(existing.get("config"), dict) else None
+        needs_ssh_upsert = (
+            existing is None
+            or existing.get("status") != "ACTIVE"
+            or existing.get("description") != desired_desc
+            or existing_cfg != cfg
+        )
+        if needs_ssh_upsert:
+            self.kernel.upsert_system_module(
+                module_id="svl-364-ssh-mcp",
+                name="SVL-364 Mostek SSH & Serwer MCP (Linux Control)",
+                kind="Starship SSH & MCP Bridge",
+                status="ACTIVE",
+                description=desired_desc,
+                config=cfg,
+                source="kernel",
+                origin="svl364-ssh-mcp-init",
+            )
 
-        # Zsynchronizuj również główny moduł svl-364
+        # Zsynchronizuj również główny moduł svl-364 (tylko jeśli konfiguracja się zmieniła)
         svl364 = mods.get("svl-364")
         if svl364:
-            scfg = dict(svl364.get("config") or {})
+            prev_scfg = dict(svl364.get("config") or {})
+            scfg = dict(prev_scfg)
             scfg["ssh_bridge_active"] = True
             scfg["ssh_endpoint"] = f"ssh://{cfg['ssh_host']}"
             scfg.pop("ssh_fingerprint", None)
             scfg["mcp_bridge_active"] = True
             scfg["mcp_endpoint"] = "/api/mcp/svl364"
             scfg["mcp_tools"] = [t["name"] for t in MCP_TOOLS_CATALOG]
-            self.kernel.upsert_system_module(
-                module_id="svl-364",
-                name=svl364.get("name") or "SVL-364 Ebon Apex — Centrum Dowodzenia",
-                kind=svl364.get("kind") or "Starship Command & Telemetry",
-                status="ACTIVE",
-                description=svl364.get("description") or "",
-                config=scfg,
-                source=svl364.get("source") or "kernel",
-                origin="svl364-ssh-mcp-sync",
-            )
+            if scfg != prev_scfg or svl364.get("status") != "ACTIVE":
+                self.kernel.upsert_system_module(
+                    module_id="svl-364",
+                    name=svl364.get("name") or "SVL-364 Ebon Apex — Centrum Dowodzenia",
+                    kind=svl364.get("kind") or "Starship Command & Telemetry",
+                    status="ACTIVE",
+                    description=svl364.get("description") or "",
+                    config=scfg,
+                    source=svl364.get("source") or "kernel",
+                    origin="svl364-ssh-mcp-sync",
+                )
 
     def configured_target(self) -> str:
         """Alias hosta statku z konfiguracji modułu (bez sondowania sieci)."""

@@ -618,7 +618,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             family = next(c for c in kernel.list_conversations_with_messages() if c["id"] == "conv-rodzina-mitek-wszyscy")
             notifs = [m for m in family["messages"] if m["id"] == "notif-task-1-failed"]
             self.assertEqual(len(notifs), 1)
-            self.assertEqual(notifs[0]["sender"], "Maya")
+            self.assertEqual(notifs[0]["sender"], "Maya Mitek")
             self.assertEqual(notifs[0]["agentId"], "Maya")
             self.assertEqual(notifs[0]["role"], "system")
             self.assertIn("⚠️ **Bielik: zadanie nieudane**", notifs[0]["content"])
@@ -735,6 +735,50 @@ class TestSVLKernelSuite(unittest.TestCase):
             finally:
                 asyncio.run(orchestrator.shutdown())
 
+    def test_symmetric_root_authority_for_bielik_and_maya_and_channel_report_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "root_authority.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            orchestrator = SVLAgentOrchestrator(kernel, SphericalEventBus())
+            try:
+                for agent_name in ("Bielik", "Maya"):
+                    cfg = orchestrator.agent_states[agent_name]["config"]
+                    self.assertEqual(cfg["rbac_role"], "root")
+                    self.assertEqual(cfg["autonomy_mode"], "ROOT_AUTHORIZED")
+                    self.assertFalse(cfg.get("root_nopasswd", False))
+                    scopes = set(cfg["allowed_scopes"])
+                    for expected in (
+                        "system.root",
+                        "kernel.admin",
+                        "apex.control",
+                        "terminal.exec",
+                        "ssh.exec",
+                        "security.antivirus",
+                        "modules.write",
+                        "memory.write",
+                        "github.admin",
+                    ):
+                        self.assertIn(expected, scopes, f"{agent_name} missing scope {expected}")
+
+                scope = VisualScope("operator:root-telemetry")
+                for reader in ("operator", "root", "Bielik", "Maya", "Maya Mitek", "Rodzina Mitek"):
+                    self.assertTrue(scope.can_read(reader), f"VisualScope should allow {reader}")
+
+                report = kernel.post_maya_report(
+                    "Raport testowy dla kanału Maya",
+                    model_label="SVL_System_Kernel_Report",
+                    message_prefix="sys-report-test",
+                    conversation_id="conv-agent-maya",
+                )
+                self.assertTrue(report.get("ok"))
+                convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+                maya_msgs = convs["conv-agent-maya"]["messages"]
+                self.assertTrue(any("Raport testowy dla kanału Maya" in m["content"] for m in maya_msgs))
+            finally:
+                asyncio.run(orchestrator.shutdown())
+
 
 if __name__ == "__main__":
     unittest.main()
+

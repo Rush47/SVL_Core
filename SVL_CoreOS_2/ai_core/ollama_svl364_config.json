@@ -1,6 +1,6 @@
 {
   "engine": "SVL-364 Ship-Hosted Ollama Daemon",
-  "managed_by": "Maya (Kernel Master Daemon)",
+  "managed_by": "Maya Mitek (Kernel Master Daemon)",
   "model_name": "svl364-apex-uncensored:latest",
   "fallback_model": "llama3.2-vision:11b",
   "ship_ssh_target": "Ship",

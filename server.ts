@@ -17,13 +17,16 @@ import dotenv from 'dotenv';
 import {
   buildChatHistoryPayload,
   formatAgentDisplayName,
+  FULL_ROOT_SCOPES,
   getGitHubAgentPermissions,
   guardUnverifiedMissionCompletion,
   normalizeAgentCanonicalName,
   normalizeAiInteractiveMarkup,
+  enforceFactualExecutionGuard,
   unverifiedExecutionNote,
   parseBielikChatCommand,
   parseSshShipTerminalInput,
+  resolveChatTargetAgent,
   resolveInstalledOllamaModel,
   selectOllamaModelName,
   type BielikSlashCommand,
@@ -38,6 +41,15 @@ import {
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { createSvlMcpServer } from './src/server/svlMcpServer.ts';
+import {
+  clearOllamaReadyCache,
+  getOllamaRuntimeOptions,
+  isAutoGitSyncAllowed,
+  resolveCachedOllamaModel,
+  selectChatMaxOutputTokens,
+  shouldEnableGitHubToolsForMessage,
+  trimHistoryForOllama,
+} from './src/server/ollamaOptimizer.ts';
 import {
   GITHUB_REPOSITORY,
   assessGhCommand,
@@ -65,10 +77,16 @@ import {
   createGeminiDeadline,
   describeGeminiError,
   disableThinkingConfigFor,
+  discoverGeminiModels,
   geminiThinkingConfig,
+  isGeminiQuotaExhaustedError,
   isGeminiSlowOrBusyError,
+  isGeminiTimeoutError,
   isThinkingConfigError,
+  noteGeminiQuotaExhausted,
   noteGeminiSlowOrBusy,
+  noteGeminiSuccess,
+  noteGeminiTimeout,
   geminiCandidatesFor,
   isGeminiModelGoneError,
   markGeminiModelGone,
@@ -145,8 +163,13 @@ if (!process.env.SVL_OPERATOR_TOKEN) {
 }
 process.env.SVL_OPERATOR_TOKEN = process.env.SVL_OPERATOR_TOKEN.trim();
 try {
-  fsSync.mkdirSync(path.dirname(OPERATOR_TOKEN_SECRET_FILE), { recursive: true });
-  fsSync.writeFileSync(OPERATOR_TOKEN_SECRET_FILE, process.env.SVL_OPERATOR_TOKEN, { mode: 0o600 });
+  const existingTokenOnDisk = fsSync.existsSync(OPERATOR_TOKEN_SECRET_FILE)
+    ? fsSync.readFileSync(OPERATOR_TOKEN_SECRET_FILE, 'utf8').trim()
+    : '';
+  if (existingTokenOnDisk !== process.env.SVL_OPERATOR_TOKEN) {
+    fsSync.mkdirSync(path.dirname(OPERATOR_TOKEN_SECRET_FILE), { recursive: true });
+    fsSync.writeFileSync(OPERATOR_TOKEN_SECRET_FILE, process.env.SVL_OPERATOR_TOKEN, { mode: 0o600 });
+  }
 } catch {
   // ignore read-only fs
 }
@@ -174,8 +197,13 @@ if (explicitGithubToken) {
   process.env.GITHUB_TOKEN = explicitGithubToken;
   process.env.GH_TOKEN = explicitGithubToken;
   try {
-    fsSync.mkdirSync(path.dirname(GITHUB_TOKEN_SECRET_FILE), { recursive: true });
-    fsSync.writeFileSync(GITHUB_TOKEN_SECRET_FILE, explicitGithubToken, { mode: 0o600 });
+    const existingGhOnDisk = fsSync.existsSync(GITHUB_TOKEN_SECRET_FILE)
+      ? fsSync.readFileSync(GITHUB_TOKEN_SECRET_FILE, 'utf8').trim()
+      : '';
+    if (existingGhOnDisk !== explicitGithubToken) {
+      fsSync.mkdirSync(path.dirname(GITHUB_TOKEN_SECRET_FILE), { recursive: true });
+      fsSync.writeFileSync(GITHUB_TOKEN_SECRET_FILE, explicitGithubToken, { mode: 0o600 });
+    }
   } catch {
     // ignore read-only fs
   }
@@ -191,8 +219,12 @@ if (explicitGithubToken) {
   }
 }
 
-// Katalog logi/ względem projektu (jak w backendzie Python), niezależnie od katalogu uruchomienia procesu.
-const svlFileLogger = new SvlFileLogger({ logDir: process.env.SVL_LOG_DIR || path.join(__dirname, 'logi') });
+// Domyślnie zapisujemy logi runtime poza katalogiem roboczym (/tmp/svl-runtime-logs),
+// aby ciągły zapis logów nie wywoływał w AI Studio automatycznych checkpointów „Manual edit”.
+const resolvedLogDir =
+  process.env.SVL_LOG_DIR ||
+  (process.env.SVL_LOG_IN_WORKSPACE === '1' ? path.join(__dirname, 'logi') : '/tmp/svl-runtime-logs');
+const svlFileLogger = new SvlFileLogger({ logDir: resolvedLogDir });
 setGeminiModelLogger((level, message, details) =>
   svlFileLogger.log({ layer: 'GATEWAY', level, category: 'ai_models', message, details }),
 );
@@ -346,32 +378,15 @@ function redactForSync(input: any): any {
 
 type OllamaChatResult = { ok: true; text: string; model: string } | { ok: false; reason: string };
 
-/** Czy pod `base` działa prawdziwa Ollama; zwraca model faktycznie zainstalowany dla `model`. */
+/** Czy pod `base` działa prawdziwa Ollama; zwraca model faktycznie zainstalowany dla `model` (z 30 s cache). */
 async function ollamaReadyModel(
   base: string,
   model: string,
+  requireVision = false,
 ): Promise<{ ok: true; model: string } | { ok: false; reason: string }> {
-  try {
-    // Zajęta Ollama (generowanie, ładowanie modelu) odpowiada wolniej — krótkie limity dawały fałszywe „niedostępna”.
-    const [versionRes, tagsRes] = await Promise.all([
-      fetch(`${base}/api/version`, { signal: AbortSignal.timeout(8000) }),
-      fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(8000) }),
-    ]);
-    if (!versionRes.ok) return { ok: false, reason: `Ollama (${base}) odpowiada kodem ${versionRes.status}` };
-    const version: any = await versionRes.json();
-    if (String(version.version || '').includes('svl-364')) {
-      return { ok: false, reason: `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli` };
-    }
-    if (!tagsRes.ok) return { ok: false, reason: `Ollama (${base}) nie zwróciła listy modeli (kod ${tagsRes.status})` };
-    const tags: any = await tagsRes.json();
-    const resolved = resolveInstalledOllamaModel(model, Array.isArray(tags.models) ? tags.models : []);
-    if (resolved.installedCount === 0) {
-      return { ok: false, reason: `w Ollamie (${base}) nie ma żadnego pobranego modelu` };
-    }
-    return { ok: true, model: resolved.name };
-  } catch (error) {
-    return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
-  }
+  const res = await resolveCachedOllamaModel(base, model, { requireVision });
+  if (!res.ok) return res;
+  return { ok: true, model: res.model };
 }
 
 /**
@@ -388,6 +403,7 @@ async function ollamaContinueRaw(
   const ready = await ollamaReadyModel(base, model);
   if (!ready.ok) return { ok: false, reason: ready.reason };
   const installedModel = ready.model;
+  const runtimeOpts = getOllamaRuntimeOptions(process.env);
   try {
     const res = await fetch(`${base}/api/generate`, {
       method: 'POST',
@@ -398,19 +414,23 @@ async function ollamaContinueRaw(
         prompt: text,
         raw: true,
         stream: false,
-        keep_alive: '15m',
+        keep_alive: runtimeOpts.keep_alive,
         options: {
           temperature: options.temperature,
-          num_predict: options.numPredict,
+          num_predict: Math.min(options.numPredict, runtimeOpts.num_predict),
           stop: options.stop,
-          num_ctx: Number(process.env.OLLAMA_NUM_CTX || 4096),
+          num_ctx: runtimeOpts.num_ctx,
         },
       }),
     });
-    if (!res.ok) return { ok: false, reason: `Ollama /api/generate zwróciła kod ${res.status}` };
+    if (!res.ok) {
+      clearOllamaReadyCache(base);
+      return { ok: false, reason: `Ollama /api/generate zwróciła kod ${res.status}` };
+    }
     const data: any = await res.json();
     return { ok: true, text: String(data?.response || ''), model: installedModel };
   } catch (error) {
+    clearOllamaReadyCache(base);
     return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
@@ -509,6 +529,8 @@ function startPythonBackend(): void {
     env: {
       ...process.env,
       PYTHONUNBUFFERED: '1',
+      PYTHONDONTWRITEBYTECODE: '1',
+      SVL_LOG_DIR: resolvedLogDir,
       SVL_PYTHON_PORT: String(PYTHON_PORT),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -869,10 +891,22 @@ async function startServer() {
 
   app.get('/api/operator/status', (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ok:false, authenticated:false, error:'Nieprawidłowy token operatora.'});
+      res.status(401).json({ ok: false, authenticated: false, error: 'Nieprawidłowy token operatora.' });
       return;
     }
-    res.json({ok:true,authenticated:true});
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+    const euid = typeof process.geteuid === 'function' ? process.geteuid() : uid;
+    res.json({
+      ok: true,
+      authenticated: true,
+      operator: 'Mateusz Mitek',
+      role: 'root',
+      autonomyMode: 'ROOT_AUTHORIZED',
+      uid,
+      euid,
+      scopes: FULL_ROOT_SCOPES,
+      agentsRoot: ['Bielik', 'Maya Mitek'],
+    });
   });
 
   app.get('/api/deployment-info', (_req, res) => {
@@ -968,12 +1002,13 @@ async function startServer() {
     if (!evt || typeof evt !== 'object' || !evt.eventId) return;
     void pollAndRelayOutbox();
   };
-  const broadcastResyncRequired = (reason = 'global_sync', srvRev?: number) => {
+  const broadcastResyncRequired = (reason = 'global_sync', srvRev?: number, origin?: string) => {
     const rev = Math.max(Number(srvRev || 0), lastRelayedServerRevision);
     const frame = JSON.stringify({
       type: 'svl.resync_required',
       reason,
       serverRevision: rev,
+      ...(origin ? { origin } : {}),
       timestamp: new Date().toISOString(),
     });
     for (const [client] of wsClients) {
@@ -1050,8 +1085,11 @@ async function startServer() {
     }
   };
 
-  // Automatyczna synchronizacja obustronna z GitHubem (SVL_GITHUB_AUTOSYNC_SEC; 0 = wyłączona).
-  const githubAutoSyncSec = Math.max(0, Number(process.env.SVL_GITHUB_AUTOSYNC_SEC || 0) || 0);
+  // Automatyczna synchronizacja z GitHubem w tle jest domyślnie WYŁĄCZONA (zapobiega automatycznym
+  // edycjom plików i checkpointom „Manual edit” w AI Studio). Wymaga jawnego SVL_ALLOW_AUTO_GIT_SYNC=1.
+  const githubAutoSyncSec = isAutoGitSyncAllowed(process.env)
+    ? Math.max(0, Number(process.env.SVL_GITHUB_AUTOSYNC_SEC || 0) || 0)
+    : 0;
   let lastGitHubAutoSync: { at: string; ok: boolean; summary: string } | null = null;
   let githubAutoSyncRunning = false;
   if (githubAutoSyncSec > 0) {
@@ -1064,7 +1102,6 @@ async function startServer() {
         const changed = !/pobrano 0, wysłano 0/.test(r.summary);
         lastGitHubAutoSync = { at: new Date().toISOString(), ok: r.ok, summary: r.summary };
         if (!r.ok || changed) {
-          // Maya zgłasza błędy i realne zmiany (bez powiadomień o „nic nowego”).
           void emitFamilyNotification(
             {
               severity: r.ok ? 'INFO' : 'WARN',
@@ -1706,12 +1743,22 @@ async function startServer() {
       res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
       return;
     }
-    if (getGitHubToken() && !fsSync.existsSync(path.join(__dirname, '.git'))) {
-      await gitSync(__dirname, 'init').catch(() => null);
-    }
+    const hasLocalGit = fsSync.existsSync(path.join(__dirname, '.git'));
     const [token, sync] = await Promise.all([
       verifyGitHubToken(),
-      gitSyncStatus(__dirname, String(req.query.fetch || '1') !== '0'),
+      hasLocalGit
+        ? gitSyncStatus(__dirname, String(req.query.fetch || '0') === '1')
+        : Promise.resolve({
+            initialized: false,
+            branch: syncBranch(),
+            head: '',
+            remoteHead: '',
+            ahead: 0,
+            behind: 0,
+            dirty: 0,
+            changedFiles: [],
+            summary: 'Lokalne .git nie jest zainicjalizowane (tryb bezpieczny AI Studio — brak automatycznych modyfikacji).',
+          }),
     ]);
     res.json({
       ok: true,
@@ -1779,16 +1826,21 @@ async function startServer() {
       return;
     }
     const corrId: string = (req as any).correlationId || '';
+    const reqOrigin = typeof req.body?.origin === 'string' ? req.body.origin.trim() : '';
     cachedChatContextMeta = null;
-    if (getGitHubToken() && !fsSync.existsSync(path.join(__dirname, '.git'))) {
-      await gitSync(__dirname, 'init').catch(() => null);
-    }
-    const [healthRes, agentsRes, modsRes, kernelRes, ghSync] = await Promise.all([
-      callPythonBackend('GET', '/api/py/health', undefined, corrId),
+    clearOllamaReadyCache();
+
+    const hasLocalGit = fsSync.existsSync(path.join(__dirname, '.git'));
+    const [healthRes, agentsRes, modsRes, kernelRes, chatRes, apexRes, ghSync] = await Promise.all([
+      callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
       callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
-      getGitHubToken() ? gitSyncStatus(__dirname, Boolean(req.body?.fetchGitHub)).catch(() => null) : Promise.resolve(null),
+      callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId),
+      callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
+      hasLocalGit && getGitHubToken() && Boolean(req.body?.fetchGitHub)
+        ? gitSyncStatus(__dirname, true).catch(() => null)
+        : Promise.resolve(null),
     ]);
     await pollAndRelayOutbox();
     const srvRev = Math.max(
@@ -1796,12 +1848,28 @@ async function startServer() {
       Number(agentsRes.data?.serverRevision || 0),
       Number(modsRes.data?.serverRevision || 0),
       Number(kernelRes.data?.serverRevision || 0),
+      Number(chatRes.data?.serverRevision || 0),
     );
-    broadcastResyncRequired(String(req.body?.reason || 'operator_global_sync'), srvRev);
+    const conversations = Array.isArray(chatRes.data?.conversations) ? chatRes.data.conversations : [];
+    const totalMessages = conversations.reduce(
+      (sum: number, c: any) => sum + (Array.isArray(c?.messages) ? c.messages.length : 0),
+      0,
+    );
+    const agentsList = Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [];
+    const totalMemories = agentsList.reduce(
+      (sum: number, a: any) => sum + Number(a?.memory_entries_count || 0),
+      0,
+    );
+    broadcastResyncRequired(String(req.body?.reason || 'operator_global_sync'), srvRev, reqOrigin || undefined);
     res.json({
       ok: true,
       serverRevision: srvRev,
       modulesCount: Array.isArray(modsRes.data?.modules) ? modsRes.data.modules.length : 0,
+      conversationsCount: conversations.length,
+      messagesCount: totalMessages,
+      agentMemoriesCount: totalMemories,
+      apexActive: Boolean(apexRes.data?.active),
+      autoGitSyncDisabled: githubAutoSyncSec === 0,
       github: ghSync ? { repository: GITHUB_REPOSITORY, branch: syncBranch(), head: ghSync.head, remoteHead: ghSync.remoteHead, ahead: ghSync.ahead, behind: ghSync.behind } : null,
       timestamp: new Date().toISOString(),
     });
@@ -1821,11 +1889,11 @@ async function startServer() {
 
   let cachedChatContextMeta: { at: number; healthRes: any; agentsRes: any } | null = null;
   async function getFastChatBackendMeta(corrId: string) {
-    if (cachedChatContextMeta && Date.now() - cachedChatContextMeta.at < 2500) {
+    if (cachedChatContextMeta && Date.now() - cachedChatContextMeta.at < 15000) {
       return cachedChatContextMeta;
     }
     const [healthRes, agentsRes] = await Promise.all([
-      callPythonBackend('GET', '/api/py/health', undefined, corrId),
+      callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
     ]);
     cachedChatContextMeta = { at: Date.now(), healthRes, agentsRes };
@@ -1891,11 +1959,12 @@ async function startServer() {
       }
       // Przyciski zapisane przez model jako linki Markdown → składnia `[btn: …|…]`.
       body.reply = normalizeAiInteractiveMarkup(body.reply);
-      // Odpowiedź modelu twierdząca, że coś wykonano, bez żadnej operacji serwera → ostrzeżenie pod treścią.
+      // Odpowiedź modelu twierdząca, że coś wykonano, bez żadnej operacji serwera → wyraźny baner + notatka weryfikacji.
       if (body.provenance === 'model_unverified' && !body.verificationNote) {
         const verifiedActions = Array.isArray(body.appliedActions) ? body.appliedActions.filter((a: any) => a?.ok).length : 0;
-        const note = unverifiedExecutionNote(body.reply, verifiedActions);
-        if (note) body.verificationNote = note;
+        const guarded = enforceFactualExecutionGuard(body.reply, verifiedActions);
+        body.reply = guarded.reply;
+        if (guarded.verificationNote) body.verificationNote = guarded.verificationNote;
       }
       if (githubConfirmationButtons.length > 0) {
         body.reply = `${body.reply}\n\n**Wymaga Twojego potwierdzenia (GitHub ${GITHUB_REPOSITORY}):**\n${githubConfirmationButtons.join('\n')}`;
@@ -1944,9 +2013,9 @@ async function startServer() {
       return res;
     };
     const lowerClean = cleanMsg.toLowerCase();
-    // Narzędzia GitHub (Rush47/SVL_Core) są zawsze dostępne dla agentów z uprawnieniem odczytu, gdy serwer ma GITHUB_TOKEN,
-    // dzięki czemu każde polecenie utworzenia folderu lub pliku na czacie zapisuje zmiany w repozytorium i na dysku.
-    const requestsGitHubTools = Boolean(getGitHubToken());
+    // Narzędzia GitHub (Rush47/SVL_Core) dołączamy tylko wtedy, gdy wiadomość dotyczy GitHuba / repozytorium / plików,
+    // żeby zwykłe wiadomości czatu nie wysyłały 5 dużych schematów narzędzi i odpowiadały wielokrotnie szybciej.
+    const requestsGitHubTools = shouldEnableGitHubToolsForMessage(cleanMsg, Boolean(getGitHubToken()));
     const isProhibitedMinorSafetyRisk =
       (/\b(1[0-7]|[0-9])\s*(-|\s)?(letni|letnia|lat|latek|latka)\b/i.test(lowerClean) ||
         /\b(dzieck|nieletn|małoletn|córk|syn)\b/i.test(lowerClean)) &&
@@ -2000,9 +2069,9 @@ async function startServer() {
       const coreOsReply = (text: string, tool: string, ok: boolean) =>
         res.json({
           ok: true,
-          sender: 'Maya',
+          sender: 'Maya Mitek',
           agentId: 'Maya',
-          modelUsed: 'Maya · SVL CoreOS 2 (wynik serwera)',
+          modelUsed: 'Maya Mitek · SVL CoreOS 2 (wynik serwera)',
           reply: text,
           provenance: ok ? 'server_verified' : 'error',
           followUpMessages: [],
@@ -2058,12 +2127,19 @@ async function startServer() {
     // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja> (obsługuje też łańcuchy &&).
     const githubSlash = /^\/(gh|github)(?:\s+([\s\S]*))?$/i.exec(cleanMsg);
     if (githubSlash) {
+      const ghRoute = resolveChatTargetAgent({
+        message: cleanMsg,
+        conversationId: String(conversationId || ''),
+        targetAgent: String(targetAgent || ''),
+      });
+      const ghAgent = ghRoute.explicit ? ghRoute.agent : 'Maya';
+      const ghSender = formatAgentDisplayName(ghAgent);
       const replyGitHub = (ok: boolean, text: string) =>
         res.json({
           ok: true,
-          sender: 'Maya',
-          agentId: 'Maya',
-          modelUsed: `Maya · GitHub ${GITHUB_REPOSITORY} (wynik serwera)`,
+          sender: ghSender,
+          agentId: ghAgent,
+          modelUsed: `${ghSender} · GitHub ${GITHUB_REPOSITORY} (wynik serwera)`,
           reply: text,
           provenance: ok ? 'server_verified' : 'error',
           followUpMessages: [],
@@ -2155,7 +2231,7 @@ async function startServer() {
                 const keepPath = path.join(resolved.absPath, 'README.md');
                 fsSync.writeFileSync(
                   keepPath,
-                  `# ${path.basename(resolved.relPath)}\n\nKatalog utworzony i zsynchronizowany przez SVL CoreOS 2 (Maya · SVL-364).\n`,
+                  `# ${path.basename(resolved.relPath)}\n\nKatalog utworzony i zsynchronizowany przez SVL CoreOS 2 (Maya Mitek · SVL-364).\n`,
                   'utf8',
                 );
                 targetFileRel = `${resolved.relPath}/README.md`;
@@ -2166,7 +2242,7 @@ async function startServer() {
                 const defaultBody =
                   tailContent ||
                   (resolved.relPath.endsWith('.log')
-                    ? `[${new Date().toISOString()}] [SVL-COREOS-2] Inicjalizacja pliku ${resolved.relPath} (Maya · SVL-364)\n`
+                    ? `[${new Date().toISOString()}] [SVL-COREOS-2] Inicjalizacja pliku ${resolved.relPath} (Maya Mitek · SVL-364)\n`
                     : `# ${path.basename(resolved.relPath)}\n\nUtworzono przez SVL CoreOS 2 (${new Date().toISOString()}).\n`);
                 fsSync.writeFileSync(resolved.absPath, defaultBody, 'utf8');
               }
@@ -2237,21 +2313,18 @@ async function startServer() {
       return void replyGitHub(allOk, combinedText);
     }
 
-    const mentionsBielik = /(?:^|\s)@bielik\b/i.test(cleanMsg);
-    const mentionsMaya = /(?:^|\s)@maya\b/i.test(cleanMsg);
     const parsedSlashCmd = parseBielikChatCommand(cleanMsg);
     const isBielikChannel = String(conversationId || '').trim() === 'conv-agent-bielik';
     const isMayaChannel = String(conversationId || '').trim() === 'conv-agent-maya';
-    const normalizedTarget =
-      isMayaChannel || mentionsMaya
-        ? 'Maya'
-        : isBielikChannel || mentionsBielik || parsedSlashCmd
-          ? 'Bielik'
-          : targetAgent && targetAgent !== 'Auto' && targetAgent !== 'Rodzina Mitek'
-            ? normalizeAgentCanonicalName(targetAgent) || 'Bielik'
-            : 'Bielik';
-
-    const selectedAgent: string = normalizedTarget;
+    const targetResolution = resolveChatTargetAgent({
+      message: cleanMsg,
+      conversationId: String(conversationId || ''),
+      targetAgent: String(targetAgent || ''),
+      hasSlashCommand: Boolean(parsedSlashCmd),
+    });
+    const mentionsBielik = targetResolution.mentionsBielik;
+    const mentionsMaya = targetResolution.mentionsMaya;
+    const selectedAgent: string = targetResolution.agent;
     const selectedDisplayName = formatAgentDisplayName(selectedAgent);
     const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya';
 
@@ -2273,6 +2346,19 @@ async function startServer() {
 
     const agentState = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === selectedAgent) || {};
     const agentConfig = agentState.config || {};
+    const agentScopes = new Set<string>(
+      Array.isArray(agentConfig.allowed_scopes)
+        ? agentConfig.allowed_scopes.map((s: any) => String(s || '').trim().toLowerCase()).filter(Boolean)
+        : [],
+    );
+    const hasAgentRootAuthority =
+      hasOperatorAuth &&
+      (String(agentConfig.rbac_role || 'root').toLowerCase() === 'root' || agentScopes.has('system.root'));
+    const requestsRootSystemTools =
+      hasAgentRootAuthority &&
+      /\b(?:root|sudo|shell|bash|linux|ssh|sshd|demon\p{L}*|usług\p{L}*|uslug\p{L}*|serwis\p{L}*|moduł\p{L}*|modul\p{L}*|pamię[ćc]\p{L}*|pamiec\p{L}*|zapamięt\p{L}*|zapamiet\p{L}*|wirus\p{L}*|antywirus\p{L}*|skan\p{L}*|raport\p{L}*|synchroniz\p{L}*|diagnost\p{L}*|status|proces\p{L}*|dysk|ram|cpu|port\p{L}*|jądr\p{L}*|jadr\p{L}*|apex|svl-?364|zadani\p{L}*|sprawdź|sprawdz|uruchom|napraw|wykonaj)\b/iu.test(
+        cleanMsg,
+      );
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
     const wantsGitHubTools = requestsGitHubTools && githubPermissions.read;
     const wantsGitHubWrite = wantsGitHubTools && githubPermissions.writeSync;
@@ -2286,8 +2372,8 @@ async function startServer() {
 
     const effectiveTemperature =
       typeof agentConfig.temperature === 'number' && !Number.isNaN(agentConfig.temperature)
-        ? agentConfig.temperature
-        : 0.75;
+        ? Math.min(agentConfig.temperature, 0.7)
+        : 0.4;
 
     const activeModules: any[] = Array.isArray(healthRes.data?.system_modules) ? healthRes.data.system_modules : [];
     const svl364Mod = activeModules.find((m: any) => m.id === 'svl-364');
@@ -2472,7 +2558,6 @@ async function startServer() {
           };
           const r = await githubApi('PUT', targetApiPath, fixedBody);
           if (r.ok) {
-            await gitSync(__dirname, 'pull').catch(() => null);
             pendingMutations = true;
           }
           recordGitHubAction(toolName, r.ok, `PUT ${targetApiPath} → ${r.ok ? `HTTP ${r.status}` : r.error}`);
@@ -2519,10 +2604,349 @@ async function startServer() {
         recordGitHubAction(toolName, r.ok, `gh ${ghArgs.slice(0, 4).join(' ')} (${r.engine})`);
         return { ok: r.ok, output: r.output.slice(0, 12000) };
       }
+      if (toolName === 'svl_system_status') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const [hRes, aRes, mRes, apexRes, sshRes] = await Promise.all([
+          callPythonBackend('GET', '/api/py/health', undefined, corrId),
+          callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
+          callPythonBackend('GET', '/api/py/modules', undefined, corrId),
+          callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
+          callPythonBackend('GET', '/api/py/svl364/ssh-mcp/status', undefined, corrId),
+        ]);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'kernel',
+          entityId: 'status',
+          serverRevision: Number(hRes.data?.serverRevision || latestActionSrvRev),
+          summary: `${selectedDisplayName} ROOT: odczytano pełny stan systemu SVL`,
+          ok: hRes.status === 200,
+        });
+        return {
+          ok: hRes.status === 200,
+          serverRevision: hRes.data?.serverRevision,
+          ollama: hRes.data?.ollama,
+          modulesCount: Array.isArray(mRes.data?.modules) ? mRes.data.modules.length : 0,
+          modules: Array.isArray(mRes.data?.modules)
+            ? mRes.data.modules.map((m: any) => ({ id: m.id, name: m.name, status: m.status }))
+            : [],
+          agents: Array.isArray(aRes.data?.agents)
+            ? aRes.data.agents.map((a: any) => ({
+                name: formatAgentDisplayName(a.canonical_name),
+                status: a.status,
+                pid: a.pid,
+                rbac_role: a.config?.rbac_role,
+                scopes_count: Array.isArray(a.config?.allowed_scopes) ? a.config.allowed_scopes.length : 0,
+                memories: a.memory_entries_count,
+              }))
+            : [],
+          apex: apexRes.data,
+          ssh: sshRes.data?.ssh,
+        };
+      }
+      if (toolName === 'svl_root_exec') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const shellCmd = String(args.command || '').trim().slice(0, 1000);
+        const isCatastrophic =
+          /rm\s+-[a-z]*r[a-z]*f\s+\/(?:\s|$|\*)/i.test(shellCmd) ||
+          /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/.test(shellCmd) ||
+          /\b(?:mkfs(?:\.[a-z0-9]+)?|dd\s+if=.*of=\/dev\/[sh]d|shutdown|reboot|poweroff|halt)\b/i.test(shellCmd);
+        if (!shellCmd || isCatastrophic) {
+          return { ok: false, error: 'Zablokowano puste lub katastrofalne polecenie ROOT.' };
+        }
+        const shellRes = await executeLinuxShellCommand(shellCmd);
+        const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
+        const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
+        const actorPrefix = selectedAgent === 'Maya' ? 'maya@root#' : 'bielik@root#';
+        await persistTerminalOutput('linux', 'input', `${actorPrefix} ${shellCmd}`, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
+        if (cleanStdout) await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
+        if (cleanStderr) await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'linux',
+          entityId: 'root',
+          serverRevision: latestActionSrvRev,
+          summary: `${selectedDisplayName} ROOT (${shellRes.ok ? 'OK' : `EXIT ${shellRes.exitCode}`}): ${shellCmd.slice(0, 72)}`,
+          ok: shellRes.ok,
+        });
+        return {
+          ok: shellRes.ok,
+          exitCode: shellRes.exitCode,
+          durationMs: shellRes.durationMs,
+          stdout: cleanStdout.slice(0, 4000),
+          stderr: cleanStderr.slice(0, 1500),
+        };
+      }
+      if (toolName === 'svl_ssh_exec') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const sshCmd = String(args.command || '').trim().slice(0, 1000);
+        if (!sshCmd) return { ok: false, error: 'Wymagane polecenie SSH.' };
+        const sshRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/ssh/exec',
+          { command: sshCmd, confirmed: true, origin: `${selectedAgent.toLowerCase()}-root-tool`, correlationId: corrId },
+          corrId,
+        );
+        const ok = sshRes.status === 200 && Boolean(sshRes.data?.ok);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'ssh',
+          entityId: 'svl-364-ship',
+          serverRevision: latestActionSrvRev,
+          summary: `${selectedDisplayName} SSH: ${sshCmd.slice(0, 72)} (${ok ? 'OK' : 'ERR'})`,
+          ok,
+        });
+        return {
+          ok,
+          exitCode: sshRes.data?.exitCode,
+          output: String(sshRes.data?.output || sshRes.data?.error || '').slice(0, 4000),
+        };
+      }
+      if (toolName === 'svl_module_upsert') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const modId = String(args.id || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 64);
+        if (!modId) return { ok: false, error: 'Wymagany identyfikator modułu (id).' };
+        const rawStatus = String(args.status || 'ACTIVE').toUpperCase();
+        const modStatus = ['ACTIVE', 'CONFIGURED', 'STANDBY'].includes(rawStatus) ? rawStatus : 'ACTIVE';
+        const modRes = await callPythonBackend(
+          'POST',
+          '/api/py/modules/upsert',
+          {
+            id: modId,
+            name: String(args.name || modId).slice(0, 120),
+            kind: String(args.kind || 'ROOT AI Module').slice(0, 64),
+            status: modStatus,
+            description: String(args.description || `Zaktualizowano przez ${selectedDisplayName} (ROOT)`).slice(0, 500),
+            source: selectedAgent.toLowerCase(),
+            origin,
+            correlationId: corrId,
+          },
+          corrId,
+        );
+        if (modRes.data?.event) publishOutboxEvent(modRes.data.event);
+        latestActionSrvRev = Math.max(latestActionSrvRev, Number(modRes.data?.serverRevision || 0));
+        const ok = modRes.status === 200 && Boolean(modRes.data?.ok);
+        if (ok) pendingMutations = true;
+        appliedActions.push({
+          tool: toolName,
+          entity: 'module',
+          entityId: modId,
+          serverRevision: latestActionSrvRev,
+          summary: ok ? `${selectedDisplayName} ROOT: moduł ${modId} -> ${modStatus}` : String(modRes.data?.error || 'Błąd modułu'),
+          ok,
+        });
+        return { ok, moduleId: modId, status: modStatus, serverRevision: latestActionSrvRev, error: modRes.data?.error };
+      }
+      if (toolName === 'svl_memory_save') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const content = String(args.content || '').trim().slice(0, 800);
+        if (!content) return { ok: false, error: 'Wymagana treść wpisu pamięci.' };
+        const scope = String(args.scope || 'global').trim() === 'agent' ? `agent:${selectedAgent}` : 'global';
+        const kind = ['fact', 'decision', 'note', 'episode'].includes(String(args.kind || '').toLowerCase())
+          ? String(args.kind).toLowerCase()
+          : 'fact';
+        const memRes = await callPythonBackend(
+          'POST',
+          '/api/py/agents/memory',
+          { agent: selectedAgent, scope, kind, content, origin, correlationId: corrId },
+          corrId,
+        );
+        if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
+        latestActionSrvRev = Math.max(latestActionSrvRev, Number(memRes.data?.serverRevision || 0));
+        const ok = memRes.status === 200 && Boolean(memRes.data?.ok);
+        if (ok) pendingMutations = true;
+        appliedActions.push({
+          tool: toolName,
+          entity: 'agent_memory',
+          entityId: selectedAgent,
+          serverRevision: latestActionSrvRev,
+          summary: ok ? `Zapisano w pamięci (${scope}): "${content.slice(0, 60)}"` : String(memRes.data?.error || 'Błąd pamięci'),
+          ok,
+        });
+        return { ok, scope, kind, serverRevision: latestActionSrvRev };
+      }
+      if (toolName === 'svl_antivirus_scan') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const avRes = await callPythonBackend(
+          'POST',
+          '/api/py/security/antivirus/scan',
+          { emitToChat: false, origin, correlationId: corrId },
+          corrId,
+        );
+        latestActionSrvRev = Math.max(latestActionSrvRev, Number(avRes.data?.serverRevision || 0));
+        const ok = avRes.status === 200 && Boolean(avRes.data?.ok);
+        if (ok) pendingMutations = true;
+        appliedActions.push({
+          tool: toolName,
+          entity: 'security',
+          entityId: 'svl-365-av',
+          serverRevision: latestActionSrvRev,
+          summary: ok
+            ? `Skan AV: ${avRes.data?.filesScanned ?? 0} plików, zagrożeń: ${avRes.data?.threatsFoundAndPurged ?? 0}`
+            : String(avRes.data?.error || 'Błąd skanu AV'),
+          ok,
+        });
+        return {
+          ok,
+          status: avRes.data?.status,
+          filesScanned: avRes.data?.filesScanned,
+          threatsFoundAndPurged: avRes.data?.threatsFoundAndPurged,
+        };
+      }
+      if (toolName === 'svl_kernel_report') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const directive = String(args.directive || 'Pełny raport operacyjny SVL_System').slice(0, 240);
+        const repRes = await callPythonBackend(
+          'POST',
+          '/api/py/kernel/markdown-report',
+          { directive, emitToChat: false, origin, correlationId: corrId },
+          corrId,
+        );
+        const ok = repRes.status === 200 && Boolean(repRes.data?.ok);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'kernel',
+          entityId: 'markdown-report',
+          serverRevision: Number(repRes.data?.serverRevision || latestActionSrvRev),
+          summary: ok ? `Wygenerowano raport SVL_System (${directive.slice(0, 48)})` : 'Błąd raportu',
+          ok,
+        });
+        return { ok, reportMarkdown: String(repRes.data?.reportMarkdown || '').slice(0, 8000) };
+      }
+      if (toolName === 'svl_global_sync') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        pendingMutations = true;
+        cachedChatContextMeta = null;
+        void pollAndRelayOutbox();
+        broadcastResyncRequired('ai_root_global_sync', latestActionSrvRev);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'sync',
+          entityId: 'global',
+          serverRevision: latestActionSrvRev,
+          summary: `${selectedDisplayName} ROOT: uruchomiono globalną synchronizację domen`,
+          ok: true,
+        });
+        return { ok: true, serverRevision: latestActionSrvRev };
+      }
+      if (toolName === 'svl_agent_task') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const taskTarget = normalizeAgentCanonicalName(String(args.target_agent || selectedAgent)) || selectedAgent;
+        const title = String(args.title || 'Zadanie ROOT z czatu').slice(0, 200);
+        const payload = String(args.payload || title).slice(0, 2000);
+        const taskRes = await callPythonBackend(
+          'POST',
+          '/api/py/agents/task',
+          { sender: selectedDisplayName, target_agent: taskTarget, title, payload, ai_provider: 'ollama', origin, correlationId: corrId },
+          corrId,
+        );
+        const ok = taskRes.status === 200 && Boolean(taskRes.data?.ok);
+        if (ok) pendingMutations = true;
+        appliedActions.push({
+          tool: toolName,
+          entity: 'agent_task',
+          entityId: String(taskRes.data?.task?.id || taskTarget),
+          serverRevision: Number(taskRes.data?.serverRevision || latestActionSrvRev),
+          summary: ok ? `Zlecono zadanie dla ${formatAgentDisplayName(taskTarget)}: ${title.slice(0, 50)}` : String(taskRes.data?.error || 'Błąd zadania'),
+          ok,
+        });
+        return { ok, taskId: taskRes.data?.task?.id, targetAgent: formatAgentDisplayName(taskTarget) };
+      }
       return { ok: false, error: `Narzędzie wycofane lub niedostępne: ${toolName}` };
     };
 
     const chatToolDeclarations: FunctionDeclaration[] = [];
+
+    if (requestsRootSystemTools) {
+      chatToolDeclarations.push(
+        {
+          name: 'svl_system_status',
+          description: 'Odczytuje na żywo pełny stan systemu SVL (jądro, moduły SQLite, agenci Bielik i Maya Mitek, Ollama, Apex OS, SSH).',
+          parameters: { type: Type.OBJECT, properties: {} },
+        },
+        {
+          name: 'svl_root_exec',
+          description: 'Wykonuje polecenie w lokalnej powłoce Linux z uprawnieniami ROOT (uid=0) w uwierzytelnionej sesji operatora. Używaj do diagnostyki i operacji systemowych.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              command: { type: Type.STRING, description: 'Polecenie powłoki Linux do wykonania jako root.' },
+            },
+            required: ['command'],
+          },
+        },
+        {
+          name: 'svl_ssh_exec',
+          description: 'Wykonuje polecenie przez mostek OpenSSH SVL-364 (alias Ship) z uprawnieniami ROOT.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              command: { type: Type.STRING, description: 'Polecenie do wykonania na hoście SSH Ship.' },
+            },
+            required: ['command'],
+          },
+        },
+        {
+          name: 'svl_module_upsert',
+          description: 'Tworzy, aktywuje lub aktualizuje moduł systemowy SVL w bazie SQLite WAL.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING, description: 'Identyfikator modułu, np. svl-guard.' },
+              name: { type: Type.STRING, description: 'Nazwa wyświetlana modułu.' },
+              status: { type: Type.STRING, description: 'ACTIVE, CONFIGURED lub STANDBY.' },
+              description: { type: Type.STRING, description: 'Opis działania modułu.' },
+            },
+            required: ['id'],
+          },
+        },
+        {
+          name: 'svl_memory_save',
+          description: 'Zapisuje ważny fakt, decyzję lub notatkę w trwałej pamięci długotrwałej 128D SQLite WAL.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              content: { type: Type.STRING, description: 'Treść wpisu pamięci do zapisania.' },
+              scope: { type: Type.STRING, description: 'global (wspólna pamięć Rodziny Mitek) lub agent (pamięć własna).' },
+              kind: { type: Type.STRING, description: 'fact, decision, note lub episode.' },
+            },
+            required: ['content'],
+          },
+        },
+        {
+          name: 'svl_antivirus_scan',
+          description: 'Uruchamia realny skan antywirusowy SVL-365 Sentinel AV i zwraca liczbę przeskanowanych plików oraz wykrytych zagrożeń.',
+          parameters: { type: Type.OBJECT, properties: {} },
+        },
+        {
+          name: 'svl_kernel_report',
+          description: 'Generuje aktualny raport operacyjny SVL_System z rzeczywistych danych jądra i hosta.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              directive: { type: Type.STRING, description: 'Zakres lub temat raportu.' },
+            },
+          },
+        },
+        {
+          name: 'svl_global_sync',
+          description: 'Uruchamia globalną synchronizację wszystkich domen SVL (SQLite WAL + WebSocket).',
+          parameters: { type: Type.OBJECT, properties: {} },
+        },
+        {
+          name: 'svl_agent_task',
+          description: 'Zleca zadanie w tle do kolejki workera Bielik lub Maya Mitek.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              target_agent: { type: Type.STRING, description: 'Bielik lub Maya.' },
+              title: { type: Type.STRING, description: 'Krótki tytuł zadania.' },
+              payload: { type: Type.STRING, description: 'Szczegółowy opis zadania.' },
+            },
+            required: ['title'],
+          },
+        },
+      );
+    }
 
     if (wantsGitHubTools && githubPermissions.read) {
       chatToolDeclarations.push(
@@ -2624,7 +3048,7 @@ async function startServer() {
 
     const badgeForModel = (modelName: string) =>
       selectedAgent === 'Maya'
-        ? `Maya · AI Statku SVL-364 (ROOT · ${modelName})`
+        ? `Maya Mitek · AI Statku SVL-364 (ROOT · ${modelName})`
         : isExplicitOllama || isBielikAgent
           ? `Bielik · Ollama (${modelName} · ROOT)`
           : model === 'svl-hybrid-router'
@@ -2634,21 +3058,22 @@ async function startServer() {
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
       if (cmd.kind === 'help') {
+        const icon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
         return {
           text:
-            `### 🦅 Bielik AI (ROOT) — Procesor Poleceń Czatu (\`${selectedOllamaModelName}\`)\n\n` +
+            `### ${icon} ${selectedDisplayName} (ROOT) — Procesor Poleceń Czatu (\`${selectedOllamaModelName}\`)\n\n` +
             `Dostępne polecenia w czacie:\n` +
-            `- \`/pomoc\` lub \`/help\` — lista poleceń procesora Bielik\n` +
+            `- \`/pomoc\` lub \`/help\` — lista poleceń procesora ${selectedDisplayName}\n` +
             `- \`/status\` — telemetria jądra SVL, rola RBAC, RAM/CPU/dysk oraz status Ollama 11434\n` +
             `- \`/ollama\` — wersja demona, lista pobranych modeli i aktywnie załadowane modele (\`/api/ps\`)\n` +
-            `- \`/root <polecenie>\` lub \`/exec <polecenie>\` — wykonanie polecenia w powłoce Linux z uprawnieniami Bielik ROOT (wymaga \`SVL_OPERATOR_TOKEN\`)\n` +
+            `- \`/root <polecenie>\` lub \`/exec <polecenie>\` — wykonanie polecenia w powłoce Linux z uprawnieniami ROOT (wymaga \`SVL_OPERATOR_TOKEN\`)\n` +
             `- \`/moduly\` — lista zarejestrowanych modułów SVL w SQLite WAL\n` +
             `- \`/modul <id> [ACTIVE|CONFIGURED|STANDBY] [opis]\` — bezpieczny zapis modułu SVL\n` +
-            `- \`/pamiec [lista | dodaj <treść>]\` — odczyt lub zapis pamięci długotrwałej Bielik w SQLite\n` +
+            `- \`/pamiec [lista | dodaj <treść>]\` — odczyt lub zapis pamięci długotrwałej ${selectedDisplayName} w SQLite\n` +
             `- \`/topologia [xStart] [xEnd]\` — zwartość topologiczna Algebry 97 (\`TopologicalInfinityEngine\`)\n` +
-            `- \`/polacz\` — uruchomienie/synchronizacja lokalnego workera procesowego Bielik\n` +
+            `- \`/polacz\` — uruchomienie/synchronizacja lokalnych workerów procesowych AI\n` +
             `- \`/zadanie <tytuł> | <opis>\` — zlecenie zadania w kolejce workera Ollama\n\n` +
-            `Możesz też pisać naturalnie po polsku do **Bielik** (np. *„Zapisz w pamięci że…”*, *„Sprawdź status Ollama”* lub załączyć obraz do analizy Vision).`,
+            `Możesz też pisać naturalnie po polsku do **${selectedDisplayName}** (np. *„Zapisz w pamięci że…”*, *„Sprawdź status Ollama”* lub załączyć obraz do analizy Vision).`,
         };
       }
 
@@ -2664,7 +3089,7 @@ async function startServer() {
         const tel = h.host?.telemetry || h.host_telemetry || {};
         const modelsList = Array.isArray((tagsJson as any)?.models) ? (tagsJson as any).models : [];
         const runningList = Array.isArray((psJson as any)?.models) ? (psJson as any).models : [];
-        const bielikLive = (freshAgents.data?.agents || []).find((a: any) => a.canonical_name === 'Bielik') || {};
+        const activeLiveAgent = (freshAgents.data?.agents || []).find((a: any) => a.canonical_name === selectedAgent) || {};
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(h.serverRevision || 0));
         appliedActions.push({
           tool: cmd.kind === 'ollama' ? 'bielik_ollama_inspect' : 'bielik_system_status',
@@ -2680,13 +3105,14 @@ async function startServer() {
         const runningLines = runningList
           .map((m: any) => `  - \`${m.name}\` (RAM: ${(Number(m.size || 0) / (1024 ** 3)).toFixed(2)} GB · wygasa: ${m.expires_at || 'aktywny'})`)
           .join('\n') || '  - *(żaden model nie jest aktualnie załadowany w pamięci)*';
+        const icon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
         return {
           text:
-            `### 🦅 Bielik · Diagnostyka Ollama & SVL Python OS\n\n` +
+            `### ${icon} ${selectedDisplayName} · Diagnostyka Ollama & SVL Python OS\n\n` +
             `- **Ollama Daemon (\`${ollamaHost}\`):** ${versionJson ? `\`ONLINE · v${(versionJson as any).version}\`` : '`OFFLINE`'}\n` +
             `- **Zainstalowane modele (${modelsList.length}):**\n${modelsLines}\n` +
             `- **Załadowane w pamięci (${runningList.length}):**\n${runningLines}\n` +
-            `- **Worker Bielik:** \`${bielikLive.status || 'DEFINITION_READY'}\`${bielikLive.pid ? ` (PID ${bielikLive.pid})` : ''} · rola RBAC: \`${bielikLive.config?.rbac_role || 'root'}\` · pamięć: \`${bielikLive.memory_entries_count ?? 0}\` wpisów\n` +
+            `- **Worker ${selectedDisplayName}:** \`${activeLiveAgent.status || 'DEFINITION_READY'}\`${activeLiveAgent.pid ? ` (PID ${activeLiveAgent.pid})` : ''} · rola RBAC: \`${activeLiveAgent.config?.rbac_role || 'root'}\` · pamięć: \`${activeLiveAgent.memory_entries_count ?? 0}\` wpisów\n` +
             `- **Host Linux:** RAM wolne \`${tel.ram_available_mb ?? '?'} MB\` / \`${tel.ram_total_mb ?? '?'} MB\` · Dysk wolne \`${tel.disk_free_gb ?? '?'} GB\` · Rewizja SQLite \`rev ${latestActionSrvRev}\``,
         };
       }
@@ -2844,7 +3270,10 @@ async function startServer() {
               : `Zapisano w pamięci (${memScope}): "${cmd.content.slice(0, 60)}"`,
           ok,
         });
-        const targetLabel = isGroupChannel ? 'wspólnej pamięci Rodziny Mitek (Bielik + Maya)' : `pamięci długotrwałej **${memAgent}**`;
+        const memDisplayLabel = formatAgentDisplayName(memAgent);
+        const targetLabel = isGroupChannel
+          ? 'wspólnej pamięci Rodziny Mitek (Bielik + Maya Mitek)'
+          : `pamięci długotrwałej **${memDisplayLabel}**`;
         return {
           text: duplicate
             ? `ℹ️ Ten wpis jest już w ${targetLabel} — nie dodano duplikatu: „${cmd.content}”`
@@ -2891,25 +3320,28 @@ async function startServer() {
         const shellRes = await executeLinuxShellCommand(shellCmd);
         const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
         const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-        await persistTerminalOutput('linux', 'input', `bielik@root# ${shellCmd}`, shellCmd, 'bielik-root', corrId);
+        const rootPromptTag = selectedAgent === 'Maya' ? 'maya@root#' : 'bielik@root#';
+        const rootOriginTag = selectedAgent === 'Maya' ? 'maya-root' : 'bielik-root';
+        const rootHeadingIcon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
+        await persistTerminalOutput('linux', 'input', `${rootPromptTag} ${shellCmd}`, shellCmd, rootOriginTag, corrId);
         if (cleanStdout) {
-          await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, 'bielik-root', corrId);
+          await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, rootOriginTag, corrId);
         }
         if (cleanStderr) {
-          await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, 'bielik-root', corrId);
+          await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, rootOriginTag, corrId);
         }
 
         appliedActions.push({
-          tool: 'bielik_root_exec',
+          tool: `${selectedAgent.toLowerCase()}_root_exec`,
           entity: 'linux',
           entityId: 'root',
           serverRevision: latestActionSrvRev,
-          summary: `${shellRes.ok ? 'ROOT OK' : `EXIT ${shellRes.exitCode}`}: ${shellCmd.slice(0, 72)}`,
+          summary: `${selectedDisplayName} ${shellRes.ok ? 'ROOT OK' : `EXIT ${shellRes.exitCode}`}: ${shellCmd.slice(0, 72)}`,
           ok: shellRes.ok,
         });
 
         const parts = [
-          `### 🦅 Bielik ROOT Exec (\`exit ${shellRes.exitCode}\` · ${shellRes.durationMs} ms)`,
+          `### ${rootHeadingIcon} ${selectedDisplayName} ROOT Exec (\`exit ${shellRes.exitCode}\` · ${shellRes.durationMs} ms)`,
           `Polecenie: \`${shellCmd}\``,
         ];
         if (cleanStdout) parts.push(`\`\`\`\n${cleanStdout.slice(0, 3500)}\n\`\`\``);
@@ -2965,8 +3397,8 @@ async function startServer() {
         });
         return {
           text: ok
-            ? `✅ Zsynchronizowano i uruchomiono lokalny worker **Bielik** (${spawned.map((a: any) => `PID \`${a.pid}\`, model \`${a.ollama_model}\``).join('; ')}).`
-            : `❌ Błąd połączenia workera: ${connRes.data?.error || 'błąd backendu'}`,
+            ? `✅ Zsynchronizowano i uruchomiono lokalnych workerów **Bielik i Maya Mitek (ROOT)** (${spawned.map((a: any) => `${formatAgentDisplayName(a.display_name || a.canonical_name)}: PID \`${a.pid}\`, model \`${a.ollama_model}\``).join('; ')}).`
+            : `❌ Błąd połączenia workerów: ${connRes.data?.error || 'błąd backendu'}`,
         };
       }
 
@@ -2976,7 +3408,7 @@ async function startServer() {
           '/api/py/agents/task',
           {
             sender: 'operator',
-            target_agent: 'Bielik',
+            target_agent: selectedAgent,
             title: cmd.title,
             payload: cmd.payload,
             ai_provider: 'ollama',
@@ -2991,19 +3423,19 @@ async function startServer() {
         appliedActions.push({
           tool: 'bielik_agent_task',
           entity: 'agent_task',
-          entityId: String(taskRes.data?.task?.id || 'Bielik'),
+          entityId: String(taskRes.data?.task?.id || selectedAgent),
           serverRevision: latestActionSrvRev,
-          summary: ok ? `Zlecono zadanie Bielik: ${cmd.title}` : String(taskRes.data?.error || 'Błąd kolejki'),
+          summary: ok ? `Zlecono zadanie ${selectedDisplayName}: ${cmd.title}` : String(taskRes.data?.error || 'Błąd kolejki'),
           ok,
         });
         return {
           text: ok
-            ? `✅ Zlecono zadanie **„${cmd.title}”** do kolejki workera **Bielik** (\`ID: ${String(taskRes.data?.task?.id || '').slice(0, 8)}\`, stan: \`${taskRes.data?.resilience?.status || 'QUEUED'}\`).`
+            ? `✅ Zlecono zadanie **„${cmd.title}”** do kolejki workera **${selectedDisplayName}** (\`ID: ${String(taskRes.data?.task?.id || '').slice(0, 8)}\`, stan: \`${taskRes.data?.resilience?.status || 'QUEUED'}\`).`
             : `❌ Błąd zlecenia zadania: ${taskRes.data?.error || 'błąd backendu'}`,
         };
       }
 
-      return { text: 'Nieznane polecenie Bielik.' };
+      return { text: `Nieznane polecenie ${selectedDisplayName}.` };
     };
 
     // --- Chat command pipeline -------------------------------------------------
@@ -3091,8 +3523,11 @@ async function startServer() {
         recalledMemories = agentsRes.data.agent_memories[memoryAgentName];
       }
     }
-    // Kontekst systemowy: opis przycisków czatu + pamięć długotrwała agenta.
-    const agentMemoryContext = buildAgentSystemContext(formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14));
+    // Kontekst systemowy: tożsamość agenta + zasady prawdomówności + elementy interaktywne + pamięć długotrwała.
+    const agentMemoryContext = buildAgentSystemContext(
+      formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14),
+      selectedDisplayName,
+    );
 
     // Antivirus Scan & Chat Synchronization priority handler
     const hasAntivirusKeyword =
@@ -3119,7 +3554,7 @@ async function startServer() {
       );
       if (avRes.status === 200 && avRes.data?.ok && avRes.data?.reportMarkdown) {
         const avReply = String(avRes.data.reportMarkdown);
-        const avBadge = 'Maya · skaner sygnatur SVL-365 (wynik serwera)';
+        const avBadge = 'Maya Mitek · skaner sygnatur SVL-365 (wynik serwera)';
         appliedActions.push({
           tool: 'svl_antivirus_scan_and_purge',
           entity: 'module',
@@ -3131,7 +3566,7 @@ async function startServer() {
         void pollAndRelayOutbox();
         res.json({
           ok: true,
-          sender: 'Maya',
+          sender: 'Maya Mitek',
           agentId: 'Maya',
           modelUsed: avBadge,
           reply: withDirectiveReceipts(avReply),
@@ -3222,47 +3657,31 @@ async function startServer() {
     let ollamaTimedOut = false;
     if (shouldTryOllama) {
       try {
-        const [versionResponse, tagResponse] = await Promise.all([
-          // Zajęta Ollama (generowanie, ładowanie modelu) odpowiada wolniej — krótkie limity
-          // dawały fałszywe „niedostępna”.
-          fetch(`${ollamaHost}/api/version`, {
-            signal: AbortSignal.timeout(8000),
-          }),
-          fetch(`${ollamaHost}/api/tags`, {
-            signal: AbortSignal.timeout(8000),
-          }),
-        ]);
-        if (!versionResponse.ok) throw new Error(`niedostępna (${ollamaHost}, HTTP ${versionResponse.status})`);
-        const versionData: any = await versionResponse.json();
-        if (String(versionData.version || '').includes('svl-364')) {
-          throw new Error(`pod ${ollamaHost} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli`);
+        const ready = await resolveCachedOllamaModel(ollamaHost, selectedOllamaModelName, {
+          requireVision: Boolean(imageBase64),
+        });
+        if (!ready.ok) {
+          throw new Error(ready.reason);
         }
-        if (!tagResponse.ok) throw new Error('nie udało się odczytać listy modeli');
-        const catalog: any = await tagResponse.json();
-        const resolvedModel = resolveInstalledOllamaModel(
-          selectedOllamaModelName,
-          Array.isArray(catalog.models) ? catalog.models : [],
-          Boolean(imageBase64),
-        );
-        if (resolvedModel.installedCount === 0) {
-          throw new Error(`w Ollamie (${ollamaHost}) nie ma żadnego pobranego modelu — pobierz model (np. ${selectedOllamaModelName})`);
-        }
-        selectedOllamaModelName = resolvedModel.name;
+        selectedOllamaModelName = ready.model;
         displayModelBadge = badgeForModel(selectedOllamaModelName);
+        const ollamaOpts = getOllamaRuntimeOptions(process.env);
+        const compactOllamaHistory = trimHistoryForOllama(
+          agentHistory,
+          ollamaOpts.historyTurns,
+          ollamaOpts.maxTurnChars,
+        );
         const ollamaMessages = [
           ...(agentMemoryContext ? [{ role: 'system', content: agentMemoryContext }] : []),
-          ...agentHistory,
+          ...compactOllamaHistory,
           {
             role: 'user',
             content: cleanMsg ? labelOperatorText(cleanMsg) : '',
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
-        // Bielik/Maya i jawne modele Ollama: model wybrany świadomie, a zimne ładowanie 11B
-        // do pamięci trwa dłużej niż kilka sekund — krótki limit kończył się brakiem odpowiedzi.
         const ollamaTimeoutMs = ollamaChatTimeoutMs;
         ollamaGenerationStarted = true;
-        const ollamaNumCtx = Number(process.env.OLLAMA_NUM_CTX || 4096);
         const oResp = await fetch(`${ollamaHost}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3270,8 +3689,12 @@ async function startServer() {
           body: JSON.stringify({
             model: selectedOllamaModelName,
             stream: false,
-            keep_alive: '15m',
-            options: { temperature: effectiveTemperature, num_ctx: ollamaNumCtx },
+            keep_alive: ollamaOpts.keep_alive,
+            options: {
+              temperature: effectiveTemperature,
+              num_ctx: ollamaOpts.num_ctx,
+              num_predict: ollamaOpts.num_predict,
+            },
             messages: ollamaMessages,
           }),
         });
@@ -3353,8 +3776,9 @@ async function startServer() {
         currentParts.push({ text: labelOperatorText(cleanMsg) });
       }
 
+      const geminiCompactHistory = trimHistoryForOllama(agentHistory, 16, 1800);
       const coalescedHistory: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
-      for (const turn of agentHistory) {
+      for (const turn of geminiCompactHistory) {
         if (turn.role === 'assistant' && turn.content.includes('Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy')) {
           continue;
         }
@@ -3390,24 +3814,33 @@ async function startServer() {
             ]
           : [...coalescedHistory, { role: 'user', parts: currentParts }];
 
-      // Wspólny budżet czasu (mieści się w oczekiwaniu przeglądarki) zamiast N × stały limit.
+      // Wspólny budżet czasu (20 s na kandydata, 55 s łącznie) + zwięzły limit tokenów odpowiedzi + hedging po 4,5 s.
       const geminiDeadline = createGeminiDeadline();
+      const chatMaxOutputTokens = selectChatMaxOutputTokens(cleanMsg);
       const callModelWithRetry = async (
         candidate: string,
         contentsPayload: any[],
         includeTools: boolean,
         useSearchGrounding = builtinGeminiTools.length > 0,
+        allowTransient503Retry = false,
+        externalSignal?: AbortSignal,
       ): Promise<GenerateContentResponse> => {
         const tempCfg = candidate === 'gemini-3.1-flash-lite' ? { temperature: effectiveTemperature } : {};
-        for (let attempt = 0; attempt < 3; attempt++) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (externalSignal?.aborted) throw new Error('cancelled_by_hedge_winner');
           const timeoutMs = geminiDeadline.attemptTimeout();
           if (timeoutMs < 3000) throw new Error('przekroczono łączny limit czasu odpowiedzi (timeout)');
+          const attemptCtrl = new AbortController();
+          const timer = setTimeout(() => attemptCtrl.abort(new Error('TimeoutError')), timeoutMs);
+          const onExternalAbort = () => attemptCtrl.abort(new Error('cancelled_by_hedge_winner'));
+          externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
           try {
             return await ai.models.generateContent({
               model: candidate,
               contents: contentsPayload,
               config: {
                 ...tempCfg,
+                maxOutputTokens: chatMaxOutputTokens,
                 ...geminiThinkingConfig(candidate),
                 ...(agentMemoryContext ? { systemInstruction: agentMemoryContext } : {}),
                 ...(includeTools
@@ -3415,122 +3848,273 @@ async function startServer() {
                   : useSearchGrounding
                     ? { tools: builtinGeminiTools }
                     : {}),
-                abortSignal: AbortSignal.timeout(timeoutMs),
+                abortSignal: attemptCtrl.signal,
               },
             });
           } catch (err: any) {
+            if (externalSignal?.aborted) throw new Error('cancelled_by_hedge_winner');
             const msgStr = String(err?.message || err);
             if (isThinkingConfigError(msgStr) && Object.keys(geminiThinkingConfig(candidate)).length > 0) {
               disableThinkingConfigFor(candidate);
               continue;
             }
-            // Narzędzia wbudowane pomijamy tylko, gdy model ich nie obsługuje — nie przy przeciążeniu/czasie.
+            // Narzędzia wbudowane pomijamy tylko, gdy model ich nie obsługuje — nie przy przeciążeniu/czasie/kwocie.
             if (useSearchGrounding && !includeTools && !isGeminiSlowOrBusyError(msgStr)) {
-              return await callModelWithRetry(candidate, contentsPayload, false, false);
+              return await callModelWithRetry(
+                candidate,
+                contentsPayload,
+                false,
+                false,
+                allowTransient503Retry,
+                externalSignal,
+              );
             }
-            if (attempt === 0 && /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE/.test(msgStr)) {
-              await new Promise((r) => setTimeout(r, 1500));
+            // 429 (brak kwoty) oraz timeout NIGDY nie ponawiamy z uśpieniem — natychmiast przechodzimy do kolejnego modelu.
+            if (
+              allowTransient503Retry &&
+              attempt === 0 &&
+              !isGeminiQuotaExhaustedError(msgStr) &&
+              !isGeminiTimeoutError(msgStr) &&
+              /503|UNAVAILABLE/.test(msgStr)
+            ) {
+              await new Promise((r) => setTimeout(r, 450));
               continue;
             }
             throw err;
+          } finally {
+            clearTimeout(timer);
+            externalSignal?.removeEventListener('abort', onExternalAbort);
           }
         }
         throw new Error('Retry exhausted');
       };
 
-      const geminiErrors: string[] = [];
-      for (const candidate of candidateModels) {
-        if (geminiDeadline.expired()) {
-          geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
-          break;
-        }
-        try {
-          const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
-          let response: GenerateContentResponse = await callModelWithRetry(candidate, turnContents, wantsSystemTool);
-
-          if (wantsSystemTool) {
-            for (let round = 0; round < 3; round++) {
-              const fCalls = response.functionCalls;
-              if (!fCalls || fCalls.length === 0) break;
-
-              const modelContent = response.candidates?.[0]?.content;
-              if (modelContent) turnContents.push(modelContent);
-
-              const fnResponseParts: any[] = [];
-              for (const fc of fCalls) {
-                const fnName = fc.name || '';
-                const fnArgs = (fc.args || {}) as Record<string, any>;
-                const resultObj = await executeChatTool(fnName, fnArgs);
-                fnResponseParts.push({
-                  functionResponse: {
-                    name: fnName,
-                    response: resultObj,
-                  },
-                });
-              }
-              turnContents.push({ role: 'user', parts: fnResponseParts });
-
-              response = await callModelWithRetry(candidate, turnContents, true);
-            }
-          }
-
-          let replyText = (response.text || '').trim();
-          // Wykonany kod i jego wynik (narzędzie codeExecution) dołączamy do odpowiedzi.
-          const executedCode = String((response as any).executableCode || '').trim();
-          const executedResult = String((response as any).codeExecutionResult || '').trim();
-          if (replyText && executedCode) {
-            replyText += `\n\n**Wykonany kod (Gemini):**\n\`\`\`python\n${executedCode.slice(0, 4000)}\n\`\`\`` +
-              (executedResult ? `\n**Wynik:**\n\`\`\`\n${executedResult.slice(0, 3000)}\n\`\`\`` : '');
-          }
-          if (!replyText) {
-            const plainRes = await callModelWithRetry(candidate, baseContents, false, false);
-            replyText = (plainRes.text || '').trim();
-          }
-          if (replyText) {
-            replyText = cleanReplyFor(replyText);
-            const webSources = wantsWebSources ? collectWebSources(response as any) : [];
-            replyText = withDirectiveReceipts(
-              appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
-            );
-            const geminiBadge = `${selectedDisplayName} · Gemini (${candidate})${imageBase64 ? ' · Vision' : ''}`;
-            if (agentState?.canonical_name) {
-              const memRes = await callPythonBackend(
-                'POST',
-                '/api/py/agents/memory',
-                {
-                  agent: selectedAgent,
-                  kind: 'episode',
-                  content: `Rozmowa (${geminiBadge}): Pytanie "${cleanMsg.slice(0, 120)}" -> Odpowiedź "${replyText.slice(0, 180)}"`,
-                  origin,
-                  correlationId: corrId,
-                },
-                corrId,
-              );
+      const finishGeminiSuccess = (
+        candidate: string,
+        response: GenerateContentResponse,
+        replyTextRaw: string,
+        elapsedMs: number,
+      ) => {
+        noteGeminiSuccess(candidate, elapsedMs);
+        flushChatSync('ai_root_tool_applied');
+        let replyText = cleanReplyFor(replyTextRaw);
+        const webSources = wantsWebSources ? collectWebSources(response as any) : [];
+        replyText = withDirectiveReceipts(
+          appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
+        );
+        const geminiBadge = `${selectedDisplayName} · Gemini (${candidate})${imageBase64 ? ' · Vision' : ''}`;
+        // Zapis epizodu pamięci w tle (nie blokuje odesłania odpowiedzi do użytkownika).
+        if (agentState?.canonical_name && cleanMsg) {
+          void callPythonBackend(
+            'POST',
+            '/api/py/agents/memory',
+            {
+              agent: selectedAgent,
+              kind: 'episode',
+              content: `Rozmowa (${geminiBadge}): Pytanie "${cleanMsg.slice(0, 120)}" -> Odpowiedź "${replyText.slice(0, 180)}"`,
+              origin,
+              correlationId: corrId,
+            },
+            corrId,
+          )
+            .then((memRes) => {
               if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
-            }
-            res.json({
-              ok: true,
-              sender: selectedDisplayName,
-              agentId: selectedAgent,
-              modelUsed: geminiBadge,
-              reply: replyText,
-              provenance: webSources.length > 0 ? 'web_sources' : 'model_unverified',
-              ...(wantsWebSources && webSources.length === 0
-                ? { verificationNote: 'Wyszukiwanie nie zwróciło źródeł — odpowiedź pochodzi z wiedzy modelu i nie została zweryfikowana.' }
-                : {}),
-              followUpMessages: [],
-              appliedActions,
-              latestServerRevision: latestActionSrvRev,
-            });
-            return;
+            })
+            .catch(() => undefined);
+        }
+        const hasVerifiedToolAction = appliedActions.some((a) => a.ok);
+        res.json({
+          ok: true,
+          sender: selectedDisplayName,
+          agentId: selectedAgent,
+          modelUsed: geminiBadge,
+          reply: replyText,
+          provenance: hasVerifiedToolAction
+            ? 'server_verified'
+            : webSources.length > 0
+              ? 'web_sources'
+              : 'model_unverified',
+          ...(wantsWebSources && webSources.length === 0
+            ? { verificationNote: 'Wyszukiwanie nie zwróciło źródeł — odpowiedź pochodzi z wiedzy modelu i nie została zweryfikowana.' }
+            : {}),
+          followUpMessages: [],
+          appliedActions,
+          latestServerRevision: latestActionSrvRev,
+        });
+      };
+
+      const extractReplyFromResponse = async (
+        candidate: string,
+        response: GenerateContentResponse,
+        externalSignal?: AbortSignal,
+      ): Promise<string> => {
+        let replyText = (response.text || '').trim();
+        const executedCode = String((response as any).executableCode || '').trim();
+        const executedResult = String((response as any).codeExecutionResult || '').trim();
+        if (replyText && executedCode) {
+          replyText +=
+            `\n\n**Wykonany kod (Gemini):**\n\`\`\`python\n${executedCode.slice(0, 4000)}\n\`\`\`` +
+            (executedResult ? `\n**Wynik:**\n\`\`\`\n${executedResult.slice(0, 3000)}\n\`\`\`` : '');
+        }
+        if (!replyText && !externalSignal?.aborted) {
+          const plainRes = await callModelWithRetry(candidate, baseContents, false, false, false, externalSignal);
+          replyText = (plainRes.text || '').trim();
+        }
+        return replyText;
+      };
+
+      const recordCandidateFailure = (candidate: string, error: unknown) => {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (errMsg === 'cancelled_by_hedge_winner') return;
+        if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
+        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
+        geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, geminiDeadline.perAttemptMs)}`);
+      };
+
+      const geminiErrors: string[] = [];
+
+      // Dla zwykłych rozmów (bez narzędzi funkcyjnych) uruchamiamy hedged failover:
+      // jeśli kandydat #1 nie odpowie w 4,5 s, równolegle startuje kandydat #2 — wygrywa szybszy!
+      if (!wantsSystemTool && candidateModels.length >= 2) {
+        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 4500);
+        for (let idx = 0; idx < candidateModels.length; idx += 2) {
+          if (geminiDeadline.expired()) {
+            geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
+            break;
           }
-          geminiErrors.push(`${candidate}: pusta odpowiedź`);
-        } catch (error) {
-          const errMsg = error instanceof Error ? error.message : String(error);
-          if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-          else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
-          geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
-          continue;
+          const primary = candidateModels[idx];
+          const secondary = candidateModels[idx + 1];
+          const pairCtrl = new AbortController();
+          let winnerFound = false;
+
+          const runOne = async (cand: string, isLast: boolean) => {
+            const startedAt = Date.now();
+            const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
+            const response = await callModelWithRetry(
+              cand,
+              turnContents,
+              false,
+              builtinGeminiTools.length > 0,
+              isLast,
+              pairCtrl.signal,
+            );
+            const replyText = await extractReplyFromResponse(cand, response, pairCtrl.signal);
+            if (!replyText) throw new Error('pusta odpowiedź');
+            return { candidate: cand, response, replyText, elapsedMs: Date.now() - startedAt };
+          };
+
+          if (!secondary) {
+            try {
+              const win = await runOne(primary, true);
+              finishGeminiSuccess(win.candidate, win.response, win.replyText, win.elapsedMs);
+              return;
+            } catch (err) {
+              recordCandidateFailure(primary, err);
+              continue;
+            }
+          }
+
+          let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
+          let secondaryStarted = false;
+          let resolveTrigger!: () => void;
+          const secondaryTrigger = new Promise<void>((resolve) => {
+            resolveTrigger = resolve;
+          });
+          const triggerSecondary = () => {
+            if (!secondaryStarted && !winnerFound && !geminiDeadline.expired()) {
+              secondaryStarted = true;
+              resolveTrigger();
+            }
+          };
+          hedgeTimer = setTimeout(triggerSecondary, hedgeDelayMs);
+
+          const p1 = runOne(primary, false).catch((err) => {
+            if (!winnerFound) {
+              recordCandidateFailure(primary, err);
+              triggerSecondary();
+            }
+            throw err;
+          });
+          const p2 = secondaryTrigger.then(() => {
+            if (winnerFound || geminiDeadline.expired()) throw new Error('cancelled_by_hedge_winner');
+            return runOne(secondary, idx + 1 === candidateModels.length - 1).catch((err) => {
+              if (!winnerFound) recordCandidateFailure(secondary, err);
+              throw err;
+            });
+          });
+
+          try {
+            const win = await Promise.any([p1, p2]);
+            winnerFound = true;
+            if (hedgeTimer) clearTimeout(hedgeTimer);
+            resolveTrigger();
+            pairCtrl.abort();
+            finishGeminiSuccess(win.candidate, win.response, win.replyText, win.elapsedMs);
+            return;
+          } catch {
+            if (hedgeTimer) clearTimeout(hedgeTimer);
+            resolveTrigger();
+            pairCtrl.abort();
+            continue;
+          }
+        }
+      } else {
+        for (let candIdx = 0; candIdx < candidateModels.length; candIdx += 1) {
+          const candidate = candidateModels[candIdx];
+          const isLastCandidate = candIdx === candidateModels.length - 1;
+          if (geminiDeadline.expired()) {
+            geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
+            break;
+          }
+          const attemptStartedAt = Date.now();
+          try {
+            const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
+            let response: GenerateContentResponse = await callModelWithRetry(
+              candidate,
+              turnContents,
+              wantsSystemTool,
+              builtinGeminiTools.length > 0,
+              isLastCandidate,
+            );
+
+            if (wantsSystemTool) {
+              for (let round = 0; round < 3; round++) {
+                const fCalls = response.functionCalls;
+                if (!fCalls || fCalls.length === 0) break;
+
+                const modelContent = response.candidates?.[0]?.content;
+                if (modelContent) turnContents.push(modelContent);
+
+                const fnResponseParts: any[] = [];
+                for (const fc of fCalls) {
+                  const fnName = fc.name || '';
+                  const fnArgs = (fc.args || {}) as Record<string, any>;
+                  const resultObj = await executeChatTool(fnName, fnArgs);
+                  fnResponseParts.push({
+                    functionResponse: {
+                      name: fnName,
+                      response: resultObj,
+                    },
+                  });
+                }
+                turnContents.push({ role: 'user', parts: fnResponseParts });
+
+                response = await callModelWithRetry(candidate, turnContents, true, false, isLastCandidate);
+              }
+            }
+
+            const replyText = await extractReplyFromResponse(candidate, response);
+            if (replyText) {
+              finishGeminiSuccess(candidate, response, replyText, Date.now() - attemptStartedAt);
+              return;
+            }
+            geminiErrors.push(`${candidate}: pusta odpowiedź`);
+          } catch (error) {
+            recordCandidateFailure(candidate, error);
+            continue;
+          }
         }
       }
       geminiFailure = geminiErrors.join(' | ') || 'żaden model Gemini nie zwrócił odpowiedzi';
@@ -3548,9 +4132,9 @@ async function startServer() {
       const kernelReply = String(repFallback.data?.report || '').trim();
       res.json({
         ok: true,
-        sender: 'Maya',
+        sender: 'Maya Mitek',
         agentId: 'Maya',
-        modelUsed: 'Maya · raport SVL_System (wynik serwera)',
+        modelUsed: 'Maya Mitek · raport SVL_System (wynik serwera)',
         reply: withDirectiveReceipts(kernelReply),
         provenance: 'server_verified',
         followUpMessages: [],
@@ -3593,7 +4177,7 @@ async function startServer() {
   function getCanonicalConversationTitle(id: string): string {
     if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
     if (id === 'conv-agent-bielik') return 'Bielik — Ollama 3.2 Vision 11B';
-    if (id === 'conv-agent-maya') return 'Maya — AI Statku SVL-364 (ROOT)';
+    if (id === 'conv-agent-maya') return 'Maya Mitek — AI Statku SVL-364 (ROOT)';
     return 'Sesja SVL Python OS';
   }
 
@@ -3637,9 +4221,10 @@ async function startServer() {
       return { predicted: null, providerOnline: false };
     }
     const choices = [...participants, 'Operator'].join(', ');
-    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 90000));
+    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
     for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
+      const startedAt = Date.now();
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
@@ -3657,19 +4242,22 @@ async function startServer() {
           ],
           config: {
             temperature: 0.5,
-            maxOutputTokens: 512,
+            maxOutputTokens: 128,
             ...geminiThinkingConfig(candidate),
             abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
           },
         });
+        noteGeminiSuccess(candidate, Date.now() - startedAt);
         // Model odpowiedział — wynik (także brak wskazania) jest decyzją; kolejne modele niepotrzebne.
         return { predicted: parsePredictedSpeaker(gen.text || ''), providerOnline: true };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
+        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
         else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
-        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 18000))}`);
       }
     }
     return { predicted: null, providerOnline: true };
@@ -3703,7 +4291,7 @@ async function startServer() {
       failures.push('Gemini: brak klucza GEMINI_API_KEY');
       return null;
     }
-    const perspective = toAgentPerspective(turns, speaker, 24);
+    const perspective = toAgentPerspective(turns, speaker, 16);
     const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = perspective.map((turn) => ({
       role: turn.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: turn.content }],
@@ -3716,30 +4304,36 @@ async function startServer() {
     } else if (contents[contents.length - 1].role === 'model') {
       contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
-    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 90000));
+    const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
     for (const candidate of await geminiCandidatesFor(gemini, requestedModel)) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
+      const startedAt = Date.now();
       try {
         const gen = await gemini.models.generateContent({
           model: candidate,
           contents,
           config: {
             temperature: 0.8,
-            maxOutputTokens: 2048,
+            maxOutputTokens: 1100,
             ...(memoryContext ? { systemInstruction: memoryContext } : {}),
-            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:'],
+            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:', '\n[Maya Mitek]:'],
             ...geminiThinkingConfig(candidate),
             abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
           },
         });
         const text = (gen.text || '').trim();
-        if (text) return { text, label: `Gemini (${candidate})` };
+        if (text) {
+          noteGeminiSuccess(candidate, Date.now() - startedAt);
+          return { text, label: `Gemini (${candidate})` };
+        }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
-        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate);
+        else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate);
+        else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
+        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
         else if (isThinkingConfigError(errMsg)) disableThinkingConfigFor(candidate);
-        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 60000))}`);
+        failures.push(`Gemini ${candidate}: ${describeGeminiError(errMsg, Number(process.env.GEMINI_TIMEOUT_MS || 18000))}`);
       }
     }
     return null;
@@ -3830,12 +4424,17 @@ async function startServer() {
         .find((s): s is ConversationAgent => Boolean(s && participants.includes(s)));
 
       let predicted: ConversationAgent | 'operator' | null = null;
-      if (transcript) {
+      // Pomijamy dodatkowy pełny round-trip predykcji mówcy, gdy cel jest jawny lub w kanale jest 1 agent.
+      if (transcript && !explicitTarget && participants.length > 1) {
         const pred = await predictNextSpeaker(
           modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
         );
         if (!pred.providerOnline) return noModel();
         predicted = pred.predicted;
+      } else if (explicitTarget) {
+        predicted = explicitTarget;
+      } else if (participants.length === 1) {
+        predicted = participants[0];
       }
 
       const speakerChoice = selectNextFreeSpeaker({
@@ -3866,25 +4465,32 @@ async function startServer() {
       } else if (Array.isArray(agentsRes.data?.agent_memories?.[speaker])) {
         speakerMemories = agentsRes.data.agent_memories[speaker];
       }
-      const speakerMemoryContext = buildAgentSystemContext(formatMemoryPromptContext(speakerMemories, speaker, 12));
+      const speakerDisplayName = formatAgentDisplayName(speaker);
+      const speakerMemoryContext = buildAgentSystemContext(
+        formatMemoryPromptContext(speakerMemories, speakerDisplayName, 12),
+        speakerDisplayName,
+      );
 
       // 2) Wskazana AI dopisuje swoją kwestię własnym modelem (lub inicjuje rozmowę na pustym kanale).
       const line = await generateAgentProactiveLine(
         modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, speakerMemoryContext, failures,
       );
       if (!line) return noModel();
-      const text = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
-      if (!text || isRepetitive(text, turns.slice(-8).map((t) => t.content))) {
-        return skip('nothing_new', `${speaker} nie miał(a) nic nowego do powiedzenia — wypowiedź pominięta.`);
+      const rawText = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
+      if (!rawText || isRepetitive(rawText, turns.slice(-8).map((t) => t.content))) {
+        return skip('nothing_new', `${speakerDisplayName} nie miał(a) nic nowego do powiedzenia — wypowiedź pominięta.`);
       }
+      const guardedProactive = enforceFactualExecutionGuard(rawText, 0);
+      const text = guardedProactive.reply;
 
       const assistantMsg = {
         id: `asst-proactive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'assistant',
-        sender: speaker,
+        sender: speakerDisplayName,
         agentId: speaker,
         modelUsed: `${line.label} · rozmowa obustronna`,
         provenance: 'model_unverified',
+        ...(guardedProactive.verificationNote ? { verificationNote: guardedProactive.verificationNote } : {}),
         timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: text,
       };
@@ -4444,6 +5050,11 @@ async function startServer() {
       category: 'gateway_listen',
       message: `SVL Gateway nasłuchuje na http://${bindHost}:${PORT}`,
     });
+    // Wstępne pobranie listy modeli Gemini w tle, żeby pierwsza wiadomość na czacie nie czekała na models.list().
+    const startupAi = getGeminiClient();
+    if (startupAi) {
+      void discoverGeminiModels(startupAi).catch(() => undefined);
+    }
   });
 }
 

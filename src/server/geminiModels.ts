@@ -5,11 +5,11 @@
 // modeli z API (`models.list()`), wybiera te obsługujące `generateContent`, układa je
 // (szybkie → stabilne → nowsze) i pamięta modele, które zwróciły 404, żeby ich nie ponawiać.
 
-/** Zapas, gdy listy modeli nie da się pobrać. */
+/** Zapas, gdy listy modeli nie da się pobrać (szybkie i stabilne modele lite na początku). */
 export const GEMINI_STATIC_FALLBACK = [
-  'gemini-flash-latest',
-  'gemini-3.1-flash-lite', // odpowiadał (bez 404) w AI Studio — tylko przekraczał krótki limit czasu
   'gemini-flash-lite-latest',
+  'gemini-3.1-flash-lite',
+  'gemini-flash-latest',
   'gemini-3-flash-preview',
 ];
 
@@ -61,10 +61,20 @@ export function isGeminiModelGoneError(message: string): boolean {
   );
 }
 
+/** Czy błąd oznacza wyczerpaną kwotę (429 / RESOURCE_EXHAUSTED) — nie warto ponawiać po 1,5 s. */
+export function isGeminiQuotaExhaustedError(message: string): boolean {
+  return /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota|quota/i.test(String(message || ''));
+}
+
+/** Czy błąd oznacza przekroczenie czasu (timeout / abort). */
+export function isGeminiTimeoutError(message: string): boolean {
+  return /aborted|AbortError|TimeoutError|timed? ?out/i.test(String(message || ''));
+}
+
 /** Czytelny opis błędu Gemini (zamiast surowego JSON-a z API). */
-export function describeGeminiError(message: string, timeoutMs = 30000): string {
+export function describeGeminiError(message: string, timeoutMs = 18000): string {
   const raw = String(message || '').trim();
-  if (/aborted|AbortError|TimeoutError|timed? ?out/i.test(raw)) {
+  if (isGeminiTimeoutError(raw)) {
     return `przekroczono limit czasu (${Math.round(timeoutMs / 1000)} s)`;
   }
   const jsonStart = raw.indexOf('{');
@@ -97,6 +107,7 @@ export function markGeminiModelGone(model: string): void {
   if (!goneModels.has(model)) {
     modelLogger?.('WARN', `Model Gemini ${model} niedostępny (404 / wycofany) — pomijany do restartu serwera`);
   }
+  workingModels.delete(model);
   goneModels.add(model);
 }
 
@@ -134,23 +145,98 @@ export async function discoverGeminiModels(client: any): Promise<string[]> {
   return discovering;
 }
 
-/** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, wykryte modele, zapas. */
-export async function geminiCandidatesFor(client: any, requestedModel?: string, max = 5): Promise<string[]> {
+const COOLDOWN_MS = 5 * 60 * 1000;
+const TIMEOUT_COOLDOWN_MS = 15 * 60 * 1000;
+const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
+const WORKING_TTL_MS = 45 * 60 * 1000;
+const coolingDown = new Map<string, number>();
+const workingModels = new Map<string, { at: number; avgMs: number }>();
+const noThinkingConfig = new Set<string>();
+
+/** Resetuje stan zdrowia modeli (używane głównie w testach jednostkowych). */
+export function resetGeminiModelHealth(): void {
+  coolingDown.clear();
+  workingModels.clear();
+  goneModels.clear();
+  noThinkingConfig.clear();
+  discovered = null;
+  discovering = null;
+}
+
+/** Zapamiętuje sprawdzony szybki model — w kolejnych zapytaniach będzie wywoływany jako pierwszy. */
+export function noteGeminiSuccess(model: string, durationMs = 2000): void {
+  coolingDown.delete(model);
+  const prev = workingModels.get(model);
+  const safeMs = Math.max(100, Math.round(durationMs));
+  const avgMs = prev ? Math.round(prev.avgMs * 0.6 + safeMs * 0.4) : safeMs;
+  workingModels.set(model, { at: Date.now(), avgMs });
+}
+
+/** Przekroczona kwota (429) → model na 30 minut na koniec kolejki, bez ponawiania po 1,5 s. */
+export function noteGeminiQuotaExhausted(model: string): void {
+  workingModels.delete(model);
+  coolingDown.set(model, Date.now() + QUOTA_COOLDOWN_MS);
+  modelLogger?.('WARN', `Model Gemini ${model} ma wyczerpaną kwotę (429) — pomijany przez 30 min`);
+}
+
+/** Model zawiesił się (timeout) → na 15 minut na koniec kolejki. */
+export function noteGeminiTimeout(model: string): void {
+  workingModels.delete(model);
+  coolingDown.set(model, Date.now() + TIMEOUT_COOLDOWN_MS);
+  modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas odpowiedzi — pomijany przez 15 min`);
+}
+
+/** Przekroczony czas / 503 / 429 → model na koniec kolejki (z właściwym czasem karencji). */
+export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void {
+  if (errorMessage && isGeminiQuotaExhaustedError(errorMessage)) {
+    noteGeminiQuotaExhausted(model);
+    return;
+  }
+  if (errorMessage && isGeminiTimeoutError(errorMessage)) {
+    noteGeminiTimeout(model);
+    return;
+  }
+  workingModels.delete(model);
+  coolingDown.set(model, Date.now() + COOLDOWN_MS);
+  modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony — na 5 min na koniec kolejki`);
+}
+
+export function isGeminiSlowOrBusyError(message: string): boolean {
+  return /aborted|AbortError|TimeoutError|timed? ?out|\b503\b|UNAVAILABLE|high demand|\b429\b|RESOURCE_EXHAUSTED|overloaded/i.test(
+    String(message || ''),
+  );
+}
+
+/** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, sprawdzone szybkie modele, wykryte modele, zapas. */
+export async function geminiCandidatesFor(client: any, requestedModel?: string, max = 8): Promise<string[]> {
   const requested = String(requestedModel || '').trim();
   const fromApi = await discoverGeminiModels(client);
+  const now = Date.now();
+  const provenFast = [...workingModels.entries()]
+    .filter(([m, info]) => !goneModels.has(m) && now - info.at < WORKING_TTL_MS && !(coolingDown.get(m) && now < (coolingDown.get(m) as number)))
+    .sort((a, b) => a[1].avgMs - b[1].avgMs)
+    .map(([m]) => m);
+
   const ordered = [
     process.env.GEMINI_MODEL,
     requested.startsWith('gemini-') ? requested : null,
+    ...provenFast,
     // Wykryte modele najpierw; zapas zawsze na końcu, gdyby lista z API była niepełna.
-    ...diversify(fromApi).slice(0, Math.max(1, max - 2)),
+    ...diversify(fromApi),
     ...GEMINI_STATIC_FALLBACK,
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
   const unique = [...new Set(ordered)].filter((m) => !goneModels.has(m));
-  // Modele, które przed chwilą przekroczyły czas / były przeciążone (503), idą na koniec.
-  const now = Date.now();
+  // Modele, które przed chwilą przekroczyły czas / były przeciążone (503) / bez kwoty (429), idą na koniec.
   const healthy = unique.filter((m) => !(coolingDown.get(m) && now < (coolingDown.get(m) as number)));
   const cooling = unique.filter((m) => !healthy.includes(m));
-  return [...diversify(healthy), ...cooling].slice(0, max);
+  const pinned = [
+    process.env.GEMINI_MODEL,
+    requested.startsWith('gemini-') ? requested : null,
+    ...provenFast,
+  ].filter((m): m is string => Boolean(m && healthy.includes(m)));
+  const pinnedSet = new Set(pinned);
+  const remainingHealthy = healthy.filter((m) => !pinnedSet.has(m));
+  return [...pinned, ...diversify(remainingHealthy), ...cooling].slice(0, max);
 }
 
 /**
@@ -178,28 +264,14 @@ export function diversify(models: string[]): string[] {
   return forced && out.includes(forced) ? [forced, ...out.filter((m) => m !== forced)] : out;
 }
 
-const COOLDOWN_MS = 5 * 60 * 1000;
-const coolingDown = new Map<string, number>();
-const noThinkingConfig = new Set<string>();
-
-/** Przekroczony czas / 503 / 429 → model na 5 minut przesunięty na koniec kolejki. */
-export function noteGeminiSlowOrBusy(model: string): void {
-  coolingDown.set(model, Date.now() + COOLDOWN_MS);
-  modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas lub jest przeciążony — na 5 min na koniec kolejki`);
-}
-
-export function isGeminiSlowOrBusyError(message: string): boolean {
-  return /aborted|AbortError|TimeoutError|timed? ?out|\b503\b|UNAVAILABLE|high demand|\b429\b|RESOURCE_EXHAUSTED|overloaded/i.test(
-    String(message || ''),
-  );
-}
-
 /**
  * Ograniczenie „myślenia” modeli Gemini 3.x (domyślnie myślą długo — czat przekraczał 30 s).
- * GEMINI_THINKING_LEVEL: MINIMAL | LOW | MEDIUM | HIGH | OFF (domyślnie LOW).
+ * Dla szybkich modeli `flash-lite` domyślnie używamy `MINIMAL`, dla pozostałych `LOW`.
+ * GEMINI_THINKING_LEVEL: MINIMAL | LOW | MEDIUM | HIGH | OFF.
  */
 export function geminiThinkingConfig(model: string): Record<string, unknown> {
-  const level = String(process.env.GEMINI_THINKING_LEVEL || 'LOW').toUpperCase();
+  const envLevel = String(process.env.GEMINI_THINKING_LEVEL || '').trim().toUpperCase();
+  const level = envLevel || (/flash-lite/i.test(model) ? 'MINIMAL' : 'LOW');
   if (level === 'OFF' || noThinkingConfig.has(model)) return {};
   if (!['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].includes(level)) return {};
   return { thinkingConfig: { thinkingLevel: level } };
@@ -215,10 +287,11 @@ export function disableThinkingConfigFor(model: string): void {
 }
 
 /** Wspólny budżet czasu dla całego zapytania (wszystkich kandydatów). */
-export function createGeminiDeadline(totalMs = Number(process.env.GEMINI_TOTAL_BUDGET_MS || 150000)) {
+export function createGeminiDeadline(totalMs = Number(process.env.GEMINI_TOTAL_BUDGET_MS || 55000)) {
   const endsAt = Date.now() + totalMs;
-  const perAttempt = Number(process.env.GEMINI_TIMEOUT_MS || 60000);
+  const perAttempt = Number(process.env.GEMINI_TIMEOUT_MS || 20000);
   return {
+    perAttemptMs: perAttempt,
     remaining: () => Math.max(0, endsAt - Date.now()),
     /** Limit pojedynczej próby: min(GEMINI_TIMEOUT_MS, pozostały czas). */
     attemptTimeout: () => Math.max(0, Math.min(perAttempt, endsAt - Date.now())),

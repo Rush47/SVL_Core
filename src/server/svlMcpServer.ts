@@ -196,13 +196,13 @@ const TOOLS = [
   },
   {
     name: 'svl_antivirus_scan',
-    description: 'Uruchamia skan antywirusowy SVL-365 (pliki + baza); wynik publikuje Maya na kanale „wszyscy”.',
+    description: 'Uruchamia skan antywirusowy SVL-365 (pliki + baza); wynik publikuje Maya Mitek na kanale „wszyscy”.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
     name: 'svl_report',
-    description: 'Generuje pełny raport SVL_System (host, moduły, pamięć); publikuje go Maya na kanale „wszyscy”.',
+    description: 'Generuje pełny raport SVL_System (host, moduły, pamięć); publikuje go Maya Mitek na kanale „wszyscy”.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false },
   },
@@ -254,7 +254,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
     {
       capabilities: { tools: {} },
       instructions:
-        'SVL Python OS (Rush47/SVL_Core): czat z AI Bielik i Maya, terminale ROOT, statek SVL-364 przez SSH, logi, pamięć, GitHub. ' +
+        'SVL Python OS (Rush47/SVL_Core): czat z AI Bielik i Maya Mitek, terminale ROOT, statek SVL-364 przez SSH, logi, pamięć, GitHub. ' +
         'Wiadomości wysłane przez svl_chat są widoczne w aplikacji jako „Claude (MCP)”.',
     },
   );
@@ -376,7 +376,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
             category: 'mcp',
             origin: 'mcp-claude',
           });
-          return asText(r.deduplicated ? 'Takie powiadomienie już istnieje.' : 'Maya opublikowała powiadomienie na kanale „wszyscy”.');
+          return asText(r.deduplicated ? 'Takie powiadomienie już istnieje.' : 'Maya Mitek opublikowała powiadomienie na kanale „wszyscy”.');
         }
         case 'svl_antivirus_scan': {
           const r = await call(ctx, 'POST', '/api/security/antivirus/scan', { emitToChat: true, origin: 'mcp-claude' }, 120000);

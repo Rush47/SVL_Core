@@ -2,7 +2,7 @@
 
 ## 1. Architektura Jądra i Uprawnienia ROOT
 - **Operator Nadrzędny:** Mateusz Mitek (`SVL_OPERATOR_TOKEN`, `uid=0 / ROOT`)
-- **Kernel Master Daemon:** Maya (`uid=0 / ROOT`, proces nadrzędny `SVL-Sentinel`)
+- **Kernel Master Daemon:** Maya Mitek (`uid=0 / ROOT`, proces nadrzędny `SVL-Sentinel`)
 - **Architekt Wspomagający:** Bielik (`Ollama 3.2 Vision 11B · ROOT`)
 - **Dystrybucja Bazowa:** Debian GNU/Linux 13 (Trixie) z jądrem `6.12-svl364-apex`
 

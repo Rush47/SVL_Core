@@ -6,7 +6,7 @@
   "debootstrap_version": "z repozytorium Debian 13",
   "status": "SPECYFIKACJA — rootfs budowany przez instalator (SVL_RUN_DEBOOTSTRAP=1)",
   "operator_root": "Mateusz Mitek",
-  "kernel_master_daemon": "Maya (SVL-364 Ship AI)",
+  "kernel_master_daemon": "Maya Mitek (SVL-364 Ship AI)",
   "stages": {
     "stage_1_fetch_and_unpack": "do wykonania przez instalator",
     "stage_2_chroot_configure": "do wykonania przez instalator",

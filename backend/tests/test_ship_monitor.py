@@ -68,7 +68,7 @@ class ShipMonitorPersistenceTest(unittest.TestCase):
             family = next(c for c in restarted.list_conversations_with_messages() if c["id"] == "conv-rodzina-mitek-wszyscy")
             notes = [m for m in family["messages"] if m["id"].startswith("notif-ship-")]
             self.assertEqual(len(notes), 1)
-            self.assertEqual(notes[0]["sender"], "Maya")
+            self.assertEqual(notes[0]["sender"], "Maya Mitek")
             self.assertIn("No route to host", notes[0]["content"])
             self.assertFalse(monitor.start())  # interval 0 = wyłączony
 

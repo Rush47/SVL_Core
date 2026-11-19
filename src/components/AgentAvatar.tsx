@@ -26,8 +26,8 @@ const PROFILE_META: Record<
     textClass: 'text-amber-200',
   },
   Maya: {
-    label: 'Maya (AI Statku SVL-364 · ROOT)',
-    short: 'MA',
+    label: 'Maya Mitek (AI Statku SVL-364 · ROOT)',
+    short: 'MM',
     ringClass: 'border-cyan-400/70',
     bgClass: 'bg-cyan-950/70',
     textClass: 'text-cyan-200',
@@ -43,7 +43,7 @@ const PROFILE_META: Record<
 
 const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
   { key: 'Bielik', label: 'Bielik (Ollama 3.2 Vision 11B · ROOT)' },
-  { key: 'Maya', label: 'Maya (AI Statku SVL-364 · ROOT)' },
+  { key: 'Maya', label: 'Maya Mitek (AI Statku SVL-364 · ROOT)' },
   { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
 ];
 

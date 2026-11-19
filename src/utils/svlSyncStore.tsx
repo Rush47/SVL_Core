@@ -25,10 +25,17 @@ import {
   hasSvlOperatorAccessToken,
 } from './svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './guiLogger';
+import {
+  countTotalConversationMessages,
+  evaluateChatSnapshotAcceptance,
+  shouldPreserveLocalConversationsOnEmptyServer,
+  shouldSkipResyncEcho,
+} from './syncGuards';
 
 const BROADCAST_CHANNEL_NAME = 'svl_python_os_sync';
 const STORAGE_SIGNAL_KEY = 'svl_sync_signal_v1';
 const CONVERSATIONS_CACHE_KEY = 'svl_python_os_conversations_v1';
+const DURABLE_RECOVERY_BACKUP_KEY = 'svl_durable_chat_backup_v2';
 
 const DEFAULT_TERMINAL_LOGS: Record<TerminalTabId, TerminalLogLine[]> = {
   linux: [],
@@ -42,7 +49,7 @@ const DEFAULT_TERMINAL_LOGS: Record<TerminalTabId, TerminalLogLine[]> = {
 export const INITIAL_WELCOME_CONVERSATIONS: SyncableConversation[] = [
   { id: 'conv-rodzina-mitek-wszyscy', title: 'Rodzina Mitek (wszyscy)', updatedAt: '', revision: 1, messages: [] },
   { id: 'conv-agent-bielik', title: 'Bielik — Ollama 3.2 Vision 11B', updatedAt: '', revision: 1, messages: [] },
-  { id: 'conv-agent-maya', title: 'Maya — AI Statku SVL-364 (ROOT)', updatedAt: '', revision: 1, messages: [] },
+  { id: 'conv-agent-maya', title: 'Maya Mitek — AI Statku SVL-364 (ROOT)', updatedAt: '', revision: 1, messages: [] },
 ];
 
 export interface RefreshExecutionReport {
@@ -91,7 +98,7 @@ const REMOVED_AGENT_CONVERSATION_IDS = new Set([
 export function getCanonicalConversationTitle(id: string, fallbackTitle?: string): string {
   if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
   if (id === 'conv-agent-bielik') return 'Bielik — Ollama 3.2 Vision 11B';
-  if (id === 'conv-agent-maya') return 'Maya — AI Statku SVL-364 (ROOT)';
+  if (id === 'conv-agent-maya') return 'Maya Mitek — AI Statku SVL-364 (ROOT)';
   return fallbackTitle || 'Sesja SVL Python OS';
 }
 
@@ -99,7 +106,11 @@ function normalizeConversationsFromServer(rawList: any[]): SyncableConversation[
   return (rawList || [])
     .filter((c: any) => !REMOVED_AGENT_CONVERSATION_IDS.has(String(c?.id || '')))
     .map((c: any) => {
-      const cleaned = stripObsoleteDiagnosticMessages(c.messages);
+      const cleaned = stripObsoleteDiagnosticMessages(c.messages).map((m: any) =>
+        m && typeof m.sender === 'string' && /^maya(?:\s+ai|\s+svl-364)?$/i.test(m.sender.trim())
+          ? { ...m, sender: 'Maya Mitek' }
+          : m,
+      );
       return {
         id: String(c.id),
         title: getCanonicalConversationTitle(String(c.id), c.title),
@@ -148,7 +159,13 @@ interface SvlSyncContextValue {
   createConversation: () => SyncableConversation;
   deleteConversation: (convId: string) => Promise<{ ok: boolean; error?: string }>;
   clearAllConversationsAndBuffers: (accessToken?: string) => Promise<{ ok: boolean; error?: string }>;
-  appendAndPersistChatMessage: (convId: string, convTitle: string, model: string, msg: SyncableMessage) => Promise<{ ok: boolean; error?: string }>;
+  appendAndPersistChatMessage: (
+    convId: string,
+    convTitle: string,
+    model: string,
+    msg: SyncableMessage,
+    opts?: { alreadyPersisted?: boolean; serverRevision?: number },
+  ) => Promise<{ ok: boolean; error?: string }>;
   upsertSystemModule: (mod: { id: string; name: string; kind?: string; status?: string; description?: string; config?: Record<string, any> }) => Promise<{ ok: boolean; module?: SystemModule; error?: string }>;
   deleteSystemModule: (modId: string) => Promise<{ ok: boolean; error?: string }>;
   saveAgentAvatar: (agent: AvatarProfileKey, image: string) => Promise<{ ok: boolean; avatars?: SvlAvatarMap; error?: string }>;
@@ -201,11 +218,41 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [agentsData, setAgentsData] = useState<any>(null);
   const [systemModules, setSystemModules] = useState<SystemModule[]>([]);
   const [avatars, setAvatars] = useState<SvlAvatarMap>({});
-  const [conversations, setConversations] = useState<SyncableConversation[]>(INITIAL_WELCOME_CONVERSATIONS);
-  // Never restore erased conversation history from an old browser cache.
+  const [conversations, setConversations] = useState<SyncableConversation[]>(() => {
+    try {
+      const raw = localStorage.getItem(DURABLE_RECOVERY_BACKUP_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.version === 2 && !parsed.clearedAt && Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
+          return parsed.conversations;
+        }
+      }
+    } catch {
+      // ignore storage unavailable
+    }
+    return INITIAL_WELCOME_CONVERSATIONS;
+  });
+  const explicitlyClearedRef = useRef(false);
   useEffect(() => {
     try { localStorage.removeItem(CONVERSATIONS_CACHE_KEY); } catch { /* unavailable */ }
   }, []);
+  useEffect(() => {
+    if (explicitlyClearedRef.current) return;
+    if (countTotalConversationMessages(conversations) === 0) return;
+    try {
+      localStorage.setItem(
+        DURABLE_RECOVERY_BACKUP_KEY,
+        JSON.stringify({
+          version: 2,
+          savedAt: new Date().toISOString(),
+          clearedAt: null,
+          conversations,
+        }),
+      );
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [conversations]);
 
   const conversationsRef = useRef<SyncableConversation[]>(conversations);
   conversationsRef.current = conversations;
@@ -236,7 +283,10 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const chatMutationEpochRef = useRef(0);
   const chatRefreshRetriesRef = useRef(0);
   const refreshDomainModulesRef = useRef<
-    ((modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>) => Promise<DomainRefreshReport>) | null
+    ((
+      modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>,
+      options?: { forceApply?: boolean },
+    ) => Promise<DomainRefreshReport>) | null
   >(null);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenEventOrderRef = useRef<string[]>([]);
@@ -339,8 +389,12 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const refreshDomainModules = useCallback(
-    async (modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>): Promise<DomainRefreshReport> => {
+    async (
+      modules: Array<'health' | 'kernel' | 'agents' | 'chat' | 'terminals' | 'workspace' | 'modules' | 'avatars'>,
+      options?: { forceApply?: boolean },
+    ): Promise<DomainRefreshReport> => {
       const hasOperator = hasSvlOperatorAccessToken();
+      const forceApply = Boolean(options?.forceApply);
       const unique = Array.from(new Set(modules)).filter((mod) => {
         if (mod === 'avatars') return true;
         return hasOperator;
@@ -448,20 +502,32 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const respSrvRev = Number(r.data.serverRevision || 0);
             advanceServerRevision(respSrvRev);
             if (!isFresh('chat')) return;
-            if (
-              (respSrvRev > 0 && respSrvRev < appliedChatServerRevRef.current) ||
-              chatMutationEpochRef.current !== chatReqEpoch
-            ) {
-              // Lokalny zapis zmienił stan w trakcie pobierania — ta migawka może być nieaktualna,
-              // ale zdarzenie z innej karty nie może przepaść: pobieramy czat jeszcze raz.
+            const decision = evaluateChatSnapshotAcceptance({
+              responseServerRevision: respSrvRev,
+              appliedChatServerRevision: appliedChatServerRevRef.current,
+              requestEpoch: chatReqEpoch,
+              currentEpoch: chatMutationEpochRef.current,
+              forceApply,
+            });
+            if (!decision.accept) {
               chatRefreshDropped = true;
               return;
             }
             chatRefreshRetriesRef.current = 0;
-            if (respSrvRev > appliedChatServerRevRef.current) {
+            if (decision.resetAppliedRevision || respSrvRev > appliedChatServerRevRef.current) {
               appliedChatServerRevRef.current = respSrvRev;
             }
             const hydrated = normalizeConversationsFromServer(r.data.conversations);
+            if (
+              shouldPreserveLocalConversationsOnEmptyServer(
+                hydrated,
+                conversationsRef.current,
+                explicitlyClearedRef.current,
+              )
+            ) {
+              // Nie nadpisuj niepustej historii rozmów, jeśli serwer chwilowo zwrócił pusty stan bez jawnego clear-all.
+              return;
+            }
             refreshedConversationIds = new Set(hydrated.map((conversation) => conversation.id));
             for (const conversation of hydrated) {
               deletedConvIdsRef.current.delete(conversation.id);
@@ -571,23 +637,33 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           if (!isRemoteTrigger && hasSvlOperatorAccessToken()) {
             const gsRes = await safeFetchJson<{ ok: boolean; serverRevision?: number }>('/api/system/global-sync', {
               method: 'POST',
-              timeoutMs: 6000,
+              timeoutMs: 15000,
               body: JSON.stringify({ reason, origin: tabOrigin }),
             }).catch(() => null);
             if (gsRes?.ok && gsRes.data?.serverRevision) {
               advanceServerRevision(gsRes.data.serverRevision);
             }
           }
-          const result = await refreshDomainModules([
-            'health',
-            'kernel',
-            'agents',
-            'chat',
-            'terminals',
-            'workspace',
-            'modules',
-            'avatars',
-          ]);
+          const result = await refreshDomainModules(
+            [
+              'health',
+              'kernel',
+              'agents',
+              'chat',
+              'terminals',
+              'workspace',
+              'modules',
+              'avatars',
+            ],
+            { forceApply: true },
+          );
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(
+              new CustomEvent('svl:global-synced', {
+                detail: { reason, serverRevision: serverRevisionRef.current, ok: result.ok },
+              }),
+            );
+          }
           if (!isRemoteTrigger) {
             emitCrossTabSignal('system', 'global_sync', serverRevisionRef.current);
           }
@@ -879,7 +955,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       bc?.close();
       broadcastChannelRef.current = null;
     };
-  }, [catchUpFromEvents, recordSeenSignalId, tabOrigin]);
+  }, [catchUpFromEvents, recordSeenSignalId, refreshAllDomains, tabOrigin]);
 
   // Hardened Application WebSocket (/ws/svl) with handshake, heartbeat, backoff+jitter & gap recovery
   useEffect(() => {
@@ -1038,6 +1114,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
 
         if (frame.type === 'svl.resync_required') {
+          if (shouldSkipResyncEcho(frame.origin, tabOrigin)) {
+            return;
+          }
           void refreshAllDomains(`ws_${frame.reason || 'resync_required'}`);
           return;
         }
@@ -1261,7 +1340,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const appendAndPersistChatMessage = useCallback(
-    async (convId: string, convTitle: string, model: string, msg: SyncableMessage) => {
+    async (
+      convId: string,
+      convTitle: string,
+      model: string,
+      msg: SyncableMessage,
+      opts?: { alreadyPersisted?: boolean; serverRevision?: number },
+    ) => {
       chatMutationEpochRef.current += 1;
       pendingMsgIdsRef.current.add(msg.id);
       setConversations((prev) =>
@@ -1276,6 +1361,22 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           };
         }),
       );
+
+      // Jeśli serwer (/api/chat) już zapisał odpowiedź w SQLite, nie wysyłamy zbędnego drugiego POST-a.
+      if (opts?.alreadyPersisted) {
+        chatMutationEpochRef.current += 1;
+        recentlyPersistedMsgExpiryRef.current.set(msg.id, Date.now() + 30000);
+        const srvRev = Number(opts.serverRevision || 0);
+        if (srvRev > appliedChatServerRevRef.current) {
+          appliedChatServerRevRef.current = srvRev;
+        }
+        pendingConvIdsRef.current.delete(convId);
+        pendingMsgIdsRef.current.delete(msg.id);
+        if (srvRev > 0) {
+          notifyLocalMutation('chat', convId, srvRev);
+        }
+        return { ok: true };
+      }
 
       const eventId = createUniqueId('evt-msg');
       try {
@@ -1478,11 +1579,23 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       pendingMsgIdsRef.current.clear();
       recentlyPersistedMsgExpiryRef.current.clear();
       deletedConvIdsRef.current.clear();
+      explicitlyClearedRef.current = true;
       const hydrated = normalizeConversationsFromServer(res.data.conversations);
       setConversations(hydrated);
       setActiveConvIdState('conv-rodzina-mitek-wszyscy');
       setTargetAgentState('Rodzina Mitek');
-      try { localStorage.removeItem(CONVERSATIONS_CACHE_KEY); } catch { /* unavailable */ }
+      try {
+        localStorage.removeItem(CONVERSATIONS_CACHE_KEY);
+        localStorage.setItem(
+          DURABLE_RECOVERY_BACKUP_KEY,
+          JSON.stringify({
+            version: 2,
+            savedAt: new Date().toISOString(),
+            clearedAt: new Date().toISOString(),
+            conversations: [],
+          }),
+        );
+      } catch { /* unavailable */ }
       notifyLocalMutation('chat', 'all', res.data.serverRevision);
       return { ok: true };
     }

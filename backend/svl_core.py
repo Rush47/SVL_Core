@@ -135,7 +135,11 @@ class VisualScope:
         self.scope_mode = scope_mode
         self.allowed_readers: set[str] = allowed_readers or {
             "operator",
+            "root",
             "Rodzina Mitek",
+            "Bielik",
+            "Maya",
+            "Maya Mitek",
         }
         self.monitored_metrics: list[str] = monitored_metrics or ["cpu_load", "memory_ram", "disk_root", "event_bus"]
         self.created_at = datetime.now(timezone.utc).isoformat()
@@ -486,6 +490,131 @@ class SVLSystemKernel:
         self._remove_nonproduction_artifacts()
         self._revert_commands_and_remove_agata_once()
         self._purge_decommissioned_agents_v1()
+        self._restore_from_durable_backup_if_empty()
+
+    @property
+    def durable_backup_path(self) -> Path:
+        return self.db_path.parent / "svl_durable_backup.json"
+
+    def checkpoint_wal(self, mode: str = "PASSIVE") -> None:
+        safe_mode = mode.upper() if mode.upper() in {"PASSIVE", "FULL", "RESTART", "TRUNCATE"} else "PASSIVE"
+        try:
+            with self._db_lock:
+                with contextlib.closing(self._connect()) as conn:
+                    conn.execute(f"PRAGMA wal_checkpoint({safe_mode});")
+        except Exception:
+            pass
+
+    def save_durable_backup(self, *, explicitly_cleared: bool = False) -> None:
+        """
+        Zapisuje lekką, atomową kopię zapasową rozmów i pamięci AI obok pliku SQLite,
+        chroniąc dane przed utratą w razie nagłego restartu kontenera lub niescheckpointowanego WAL.
+        """
+        try:
+            def _dump(conn: sqlite3.Connection) -> dict[str, Any]:
+                convs = [dict(r) for r in conn.execute("SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC").fetchall()]
+                msgs = [dict(r) for r in conn.execute("SELECT id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at FROM chat_messages ORDER BY created_at ASC, rowid ASC").fetchall()]
+                mems = []
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone():
+                    mems = [dict(r) for r in conn.execute("SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory ORDER BY created_at ASC").fetchall()]
+                return {
+                    "version": 1,
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "explicitly_cleared": bool(explicitly_cleared),
+                    "conversations": convs,
+                    "chat_messages": msgs,
+                    "agent_memory": mems,
+                }
+
+            snapshot = self.run_db(_dump, write=False)
+            if not explicitly_cleared and not snapshot["chat_messages"] and not snapshot["agent_memory"]:
+                return
+            self.durable_backup_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.durable_backup_path.with_suffix(".json.tmp")
+            tmp_path.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp_path, self.durable_backup_path)
+        except Exception:
+            pass
+
+    def _restore_from_durable_backup_if_empty(self) -> bool:
+        """
+        Jeśli baza SQLite uruchomiła się pusta (0 wiadomości i 0 wspomnień AI),
+        a istnieje ważna kopia zapasowa nieoznaczona jako jawnie wyczyszczona, automatycznie przywraca dane.
+        """
+        try:
+            if not self.durable_backup_path.is_file():
+                return False
+            raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or raw.get("explicitly_cleared"):
+                return False
+            backup_msgs = raw.get("chat_messages") or []
+            backup_mems = raw.get("agent_memory") or []
+            backup_convs = raw.get("conversations") or []
+            if not backup_msgs and not backup_mems:
+                return False
+
+            def _restore(conn: sqlite3.Connection) -> bool:
+                msg_count = int(conn.execute("SELECT COUNT(*) FROM chat_messages").fetchone()[0])
+                mem_count = 0
+                has_mem_tbl = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone())
+                if has_mem_tbl:
+                    mem_count = int(conn.execute("SELECT COUNT(*) FROM agent_memory").fetchone()[0])
+                if msg_count > 0 or mem_count > 0:
+                    return False
+
+                for c in backup_convs:
+                    if not isinstance(c, dict) or not c.get("id"):
+                        continue
+                    conn.execute(
+                        "INSERT OR IGNORE INTO conversations (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (
+                            str(c["id"]),
+                            str(c.get("title") or "Sesja SVL Python OS"),
+                            str(c.get("model") or "svl-hybrid-router"),
+                            str(c.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                            str(c.get("updated_at") or datetime.now(timezone.utc).isoformat()),
+                        ),
+                    )
+                for m in backup_msgs:
+                    if not isinstance(m, dict) or not m.get("id") or not m.get("conversation_id"):
+                        continue
+                    conn.execute(
+                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            str(m["id"]),
+                            str(m["conversation_id"]),
+                            str(m.get("role") or "user"),
+                            str(m.get("sender") or "Operator"),
+                            str(m.get("content") or ""),
+                            str(m.get("attachments_json") or "[]"),
+                            str(m.get("metadata_json") or "{}"),
+                            str(m.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                        ),
+                    )
+                if has_mem_tbl:
+                    for mem in backup_mems:
+                        if not isinstance(mem, dict) or not mem.get("id"):
+                            continue
+                        conn.execute(
+                            "INSERT OR IGNORE INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                str(mem["id"]),
+                                str(mem.get("agent_id") or ""),
+                                str(mem.get("scope") or "global"),
+                                str(mem.get("kind") or "episode"),
+                                str(mem.get("content") or ""),
+                                str(mem.get("source") or "backup_restore"),
+                                str(mem.get("created_at") or datetime.now(timezone.utc).isoformat()),
+                            ),
+                        )
+                return True
+
+            restored = self.run_db(_restore, write=True)
+            if restored:
+                self.checkpoint_wal("PASSIVE")
+            return restored
+        except Exception:
+            return False
 
     @property
     def operator_token(self) -> str:
@@ -501,7 +630,7 @@ class SVLSystemKernel:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=15000;")
         conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA synchronous=FULL;")
         conn.execute("PRAGMA cache_size=-64000;")
         conn.execute("PRAGMA temp_store=MEMORY;")
         conn.execute("PRAGMA mmap_size=268435456;")
@@ -806,7 +935,7 @@ class SVLSystemKernel:
                             "base_distro": "Debian GNU/Linux 13 (Trixie)",
                             "codename": "Apex",
                             "repository_folder": "SVL_CoreOS_2",
-                            "kernel_master_daemon": "Maya",
+                            "kernel_master_daemon": "Maya Mitek",
                             "ollama_model": "svl364-apex-uncensored:latest",
                             "compute_thrust": "ACTIVE",
                             "e_shield_mode": "DIRECTIONAL_EARTH_APPROACH_VISIBLE_ALLIES_OPEN",
@@ -847,7 +976,7 @@ class SVLSystemKernel:
             for chan_id, chan_title, chan_model in (
                 ("conv-rodzina-mitek-wszyscy", "Rodzina Mitek (wszyscy)", "svl-hybrid-router"),
                 ("conv-agent-bielik", "Bielik — Ollama 3.2 Vision 11B", "ollama:llama3.2-vision:11b"),
-                ("conv-agent-maya", "Maya — AI Statku SVL-364 (ROOT)", "ollama:llama3.2-vision:11b"),
+                ("conv-agent-maya", "Maya Mitek — AI Statku SVL-364 (ROOT)", "ollama:llama3.2-vision:11b"),
             ):
                 del_row = conn.execute(
                     "SELECT deleted FROM sync_entities WHERE entity = 'chat' AND entity_id = ?",
@@ -862,7 +991,7 @@ class SVLSystemKernel:
                     del_row = None
                 if not del_row or int(del_row["deleted"]) == 0:
                     existing_conv = conn.execute(
-                        "SELECT id FROM conversations WHERE id = ?",
+                        "SELECT id, title FROM conversations WHERE id = ?",
                         (chan_id,),
                     ).fetchone()
                     if not existing_conv:
@@ -880,6 +1009,15 @@ class SVLSystemKernel:
                             "INSERT OR IGNORE INTO sync_entities (entity, entity_id, revision, updated_at, deleted) VALUES ('chat', ?, 1, ?, 0)",
                             (chan_id, now_iso),
                         )
+                    elif chan_id == "conv-agent-maya" and str(existing_conv["title"] or "") != chan_title:
+                        conn.execute(
+                            "UPDATE conversations SET title = ? WHERE id = ?",
+                            (chan_title, chan_id),
+                        )
+            # Bezpieczna, niedestrukcyjna aktualizacja nazwy wyświetlanej Maya -> Maya Mitek w istniejących wiadomościach.
+            conn.execute(
+                "UPDATE chat_messages SET sender = 'Maya Mitek' WHERE sender IN ('Maya', 'Maya AI', 'Maya SVL-364')"
+            )
 
         self.run_db(_seed_family, write=True)
 
@@ -1157,159 +1295,28 @@ class SVLSystemKernel:
 
     def _revert_commands_and_remove_agata_once(self) -> None:
         """
-        Jednorazowe, idempotentne wycofanie wszystkich poleceń oraz usunięcie AI Agata Mitek z bazy SQLite WAL.
+        Jednorazowe usunięcie wycofanych artefaktów legacy (conv-agent-agata, svl-memory-shield, @work).
+        NIGDY nie kasuje bieżących wiadomości czatu (Rodzina Mitek / Bielik / Maya Mitek) ani pamięci AI.
         """
         marker = "revert_commands_remove_agata_2026_11_16_v1"
-        now_iso = datetime.now(timezone.utc).isoformat()
 
-        def _revert(conn: sqlite3.Connection) -> bool:
+        def _cleanup_legacy_only(conn: sqlite3.Connection) -> None:
             if conn.execute("SELECT 1 FROM sync_meta WHERE key = ?", (marker,)).fetchone():
-                return False
-
-            existing_tables = {
-                str(r["name"])
-                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
-
-            for tbl in (
-                "agent_tasks",
-                "terminal_history",
-                "audit_log",
-                "chat_messages",
-                "iris_notifications",
-                "update_history",
-                "agent_configs",
-                "agent_memory",
-                "sync_outbox",
-                "sync_inbox",
-                "workspace_ui_state",
-                "system_events",
-            ):
-                if tbl in existing_tables:
-                    conn.execute(f"DELETE FROM {tbl}")
-
-            conn.execute("DELETE FROM conversations WHERE id != 'conv-rodzina-mitek-wszyscy'")
-
-            # Usuń moduły utworzone przez polecenia (/exec, @work, podłącz moje ai, operator/chat overrides)
+                return
+            now_iso = datetime.now(timezone.utc).isoformat()
+            conn.execute("DELETE FROM chat_messages WHERE conversation_id = 'conv-agent-agata'")
+            conn.execute("DELETE FROM conversations WHERE id = 'conv-agent-agata'")
             conn.execute(
-                """
-                DELETE FROM system_modules
-                WHERE id IN (
-                    'svl-memory-shield', 'svl-364-repo-vault', 'svl-364-camera-feed',
-                    'svl-antivirus-scanner', 'svl-real-vision', 'svl-agent-task-distributor',
-                    'svl-autonomy-core', 'svl-codex-mesh', 'svl-ai-liaison'
-                )
-                OR source IN ('chat', 'operator')
-                """
-            )
-
-            # Przywróć czystą bazową konfigurację modułów rdzeniowych
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO system_modules (
-                    id, name, kind, status, description, config_json, source, source_message_id, revision, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "svl-364",
-                    "SVL-364 — Centrum Dowodzenia",
-                    "Orchestration & Command Center",
-                    "ACTIVE",
-                    "Programowy panel do koordynacji i diagnostyki usług SVL.",
-                    json.dumps({"async_event_bus_buffer": 2000}, ensure_ascii=False),
-                    "kernel",
-                    "init-svl-364-command",
-                    1,
-                    now_iso,
-                ),
+                "INSERT OR IGNORE INTO conversations (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                ("conv-rodzina-mitek-wszyscy", "Rodzina Mitek (wszyscy)", "svl-hybrid-router", now_iso, now_iso),
             )
             conn.execute(
-                """
-                UPDATE system_modules
-                SET config_json = ?, source = 'kernel', revision = 1, updated_at = ?
-                WHERE id = 'svl-deep-memory-core'
-                """,
-                (
-                    json.dumps(
-                        {
-                            "engine": "SQLite WAL + BinaryHyperspace 128D Hybrid Recall",
-                            "persistent_scopes": ["global"],
-                            "priority_kinds": ["decision", "preference", "fact", "task", "episode"],
-                            "auto_extract_from_chat": True,
-                            "deduplicate_entries": True,
-                            "max_context_turns": 64,
-                            "ollama_num_ctx": 16384,
-                            "recall_top_k": 32,
-                            "low_latency_cache_ms": 2500,
-                        },
-                        ensure_ascii=False,
-                    ),
-                    now_iso,
-                ),
+                "DELETE FROM system_modules WHERE id = 'svl-memory-shield' AND description LIKE '%Zsynchronizowano z rozkazu Operatora%'"
             )
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO system_modules (
-                    id, name, kind, status, description, config_json, source, source_message_id, revision, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "svl-duplex-chat",
-                    "Interaktywny Czat Obustronny — Rodzina Mitek (wszyscy)",
-                    "Duplex Multi-Agent Bridge",
-                    "ACTIVE",
-                    "Kanał rozmów Rodziny Mitek (wszyscy).",
-                    json.dumps(
-                        {
-                            "channel": "Rodzina Mitek (wszyscy)",
-                            "conversation_id": "conv-rodzina-mitek-wszyscy",
-                            "bidirectional_duplex": True,
-                            "agents": [],
-                        },
-                        ensure_ascii=False,
-                    ),
-                    "kernel",
-                    "init-duplex",
-                    1,
-                    now_iso,
-                ),
-            )
+            conn.execute("DELETE FROM terminal_history WHERE command LIKE '@work%'")
+            conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
 
-            # Usuń Agatę z avatars_map_json
-            av_row = conn.execute(
-                "SELECT value FROM runtime_settings WHERE key = 'avatars_map_json'"
-            ).fetchone()
-            if av_row and av_row["value"]:
-                try:
-                    parsed_av = json.loads(av_row["value"])
-                    if isinstance(parsed_av, dict):
-                        cleaned_av = {
-                            k: v
-                            for k, v in parsed_av.items()
-                            if self._normalize_avatar_profile_key(str(k))
-                        }
-                        conn.execute(
-                            "UPDATE runtime_settings SET value = ?, updated_at = ? WHERE key = 'avatars_map_json'",
-                            (json.dumps(cleaned_av, ensure_ascii=False), now_iso),
-                        )
-                except Exception:
-                    pass
-
-            conn.execute(
-                "DELETE FROM sync_entities WHERE entity IN ('agent_config', 'agent_memory', 'agent_runtime', 'task', 'notification')"
-            )
-            conn.execute(
-                "DELETE FROM sync_entities WHERE entity = 'chat' AND entity_id != 'conv-rodzina-mitek-wszyscy'"
-            )
-            conn.execute(
-                "DELETE FROM sync_entities WHERE entity = 'module' AND entity_id NOT IN (SELECT id FROM system_modules)"
-            )
-            conn.execute("INSERT INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
-            return True
-
-        if self.run_db(_revert, write=True):
-            self._purge_decommissioned_agents_v1()
-            self.ensure_mitek_family_channel()
+        self.run_db(_cleanup_legacy_only, write=True)
 
     def _get_server_revision_tx(self, conn: sqlite3.Connection) -> int:
         row = conn.execute("SELECT value FROM sync_meta WHERE key = 'server_revision'").fetchone()
@@ -2102,7 +2109,11 @@ class SVLSystemKernel:
                 "event": sync_res["event"],
             }
 
-        return self.run_db(_write, write=True)
+        res = self.run_db(_write, write=True)
+        if res.get("ok") and not res.get("deduplicated"):
+            self.checkpoint_wal("PASSIVE")
+            self.save_durable_backup(explicitly_cleared=False)
+        return res
 
     def sync_conversations_detailed(
         self,
@@ -2224,6 +2235,8 @@ class SVLSystemKernel:
 
         sync_res = self.run_db(_clear, write=True)
         self.ensure_mitek_family_channel()
+        self.checkpoint_wal("PASSIVE")
+        self.save_durable_backup(explicitly_cleared=True)
         return {
             "ok": True,
             "revision": sync_res["revision"],
@@ -2722,8 +2735,8 @@ class SVLSystemKernel:
 
         mod_badges = ", ".join(f"`{r['id']}`" for r in mod_rows[:8])
         return (
-            f"### 🛰️ Raport Operacyjny `SVL_System` · Maya [#{seq_num}] — {clean_title}\n"
-            f"> **Raport przygotowała:** Maya (AI statku SVL-364) · **Kanał:** `Rodzina Mitek (wszyscy)` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
+            f"### 🛰️ Raport Operacyjny `SVL_System` · Maya Mitek [#{seq_num}] — {clean_title}\n"
+            f"> **Raport przygotowała:** Maya Mitek (AI statku SVL-364) · **Kanał:** `Rodzina Mitek (wszyscy)` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
             f"#### 📋 1. Szczegółowy Opis Zdarzenia i Operacji\n"
             f"- **Tytuł operacji:** **{clean_title}**\n"
             f"- **Komunikat wykonawczy:** {clean_msg}\n"
@@ -2738,10 +2751,10 @@ class SVLSystemKernel:
             f"| **Mostek SSH / MCP** | `alias OpenSSH {os.environ.get('SVL_SSH_TARGET', 'Ship')}` · `POST /api/mcp/svl364` | konfiguracja |\n\n"
             f"Aktualny stan usług (Ollama, ComfyUI, host SSH), GPU i zapory: zakładka **SVL-364** (pomiar na żywo).\n\n"
             f"#### 🧠 3. Jądro `SVL_System`, Pamięć Długotrwała AI i Aktywna Obsada\n"
-            f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Maya (AI statku SVL-364)** · **Mateusz Mitek (Operator)**\n"
+            f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Maya Mitek (AI statku SVL-364)** · **Mateusz Mitek (Operator)**\n"
             f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`)\n"
             f"- **Aktywne Moduły Systemowe ({active_mod_count}):** {mod_badges} · Wolny dysk `/` `{disk_free} GB`\n\n"
-            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Mayę o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
+            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Maya Mitek o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
         )
 
     def generate_comprehensive_svl_system_markdown_report(self, directive_context: str = "Pełna diagnostyka SVL_System i statku SVL-364") -> str:
@@ -2767,8 +2780,8 @@ class SVLSystemKernel:
 
     FAMILY_CHANNEL_ID = "conv-rodzina-mitek-wszyscy"
     FAMILY_CHANNEL_TITLE = "Rodzina Mitek (wszyscy)"
-    # Powiadomienia systemu na kanale „wszyscy” przekazuje AI pokładowe statku — Maya.
-    NOTIFICATION_SENDER = "Maya"
+    # Powiadomienia systemu na kanale „wszyscy” przekazuje AI pokładowe statku — Maya Mitek.
+    NOTIFICATION_SENDER = "Maya Mitek"
     NOTIFICATION_AGENT_ID = "Maya"
     NOTIFICATION_SEVERITIES = ("INFO", "WARN", "ALERT")
     _NOTIFICATION_ICONS = {"INFO": "ℹ️", "WARN": "⚠️", "ALERT": "🚨"}
@@ -2809,7 +2822,7 @@ class SVLSystemKernel:
             "role": "system",
             "sender": self.NOTIFICATION_SENDER,
             "agentId": self.NOTIFICATION_AGENT_ID,
-            "modelUsed": f"Maya · powiadomienie · {clean_category} · {sev}",
+            "modelUsed": f"Maya Mitek · powiadomienie · {clean_category} · {sev}",
             "provenance": "server_verified",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "content": "\n\n".join(lines),
@@ -2825,14 +2838,14 @@ class SVLSystemKernel:
         )
         if not saved.get("ok"):
             append_python_log(
-                "notification", f"Nie zapisano powiadomienia Mayi: {clean_title}",
+                "notification", f"Nie zapisano powiadomienia Maya Mitek: {clean_title}",
                 level="ERROR", origin=origin, details={"error": saved.get("error")},
             )
             return {"ok": False, "error": saved.get("error") or "Nie zapisano powiadomienia."}
         if not saved.get("deduplicated"):
             append_python_log(
                 "notification",
-                f"Maya → kanał wszyscy [{sev}/{clean_category}]: {clean_title}",
+                f"Maya Mitek → kanał wszyscy [{sev}/{clean_category}]: {clean_title}",
                 level="WARN" if sev in ("WARN", "ALERT") else "INFO",
                 correlation_id=correlation_id,
                 origin=origin,
@@ -2861,14 +2874,31 @@ class SVLSystemKernel:
         *,
         model_label: str,
         message_prefix: str,
+        conversation_id: Optional[str] = None,
         origin: str = "python-kernel",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        """Pełny raport (skan, raport systemu) publikowany przez Mayę na kanale „wszyscy”."""
+        """Pełny raport (skan, raport systemu) publikowany przez Maya Mitek na wybranym kanale (domyślnie „wszyscy”)."""
         msg_id = f"{message_prefix}-{uuid.uuid4().hex[:12]}"
+        target_conv_id = str(conversation_id or "").strip() or self.FAMILY_CHANNEL_ID
+        if target_conv_id == self.FAMILY_CHANNEL_ID:
+            target_title = self.FAMILY_CHANNEL_TITLE
+        elif target_conv_id == "conv-agent-bielik":
+            target_title = "Bielik (AI · ROOT)"
+        elif target_conv_id == "conv-agent-maya":
+            target_title = "Maya Mitek (AI Statku SVL-364 · ROOT)"
+        else:
+            def _lookup_title(conn: sqlite3.Connection) -> Optional[str]:
+                row = conn.execute(
+                    "SELECT title FROM conversations WHERE id = ?",
+                    (target_conv_id,),
+                ).fetchone()
+                return str(row["title"]) if row and row["title"] else None
+
+            target_title = self.run_db(_lookup_title, write=False) or self.FAMILY_CHANNEL_TITLE
         return self.save_chat_message(
-            self.FAMILY_CHANNEL_ID,
-            self.FAMILY_CHANNEL_TITLE,
+            target_conv_id,
+            target_title,
             "svl-hybrid-router",
             {
                 "id": msg_id,
@@ -2928,6 +2958,8 @@ class SVLSystemKernel:
             "bielik ai": "Bielik",
             "maya": "Maya",
             "maya ai": "Maya",
+            "maya mitek": "Maya",
+            "maya mitek ai": "Maya",
             "operator": "Operator",
             "mateusz mitek": "Operator",
             "mateusz mitek (operator)": "Operator",
@@ -3109,6 +3141,8 @@ class SVLSystemKernel:
 
         sync_res = self.run_db(_reset, write=True)
         self.ensure_mitek_family_channel()
+        self.checkpoint_wal("PASSIVE")
+        self.save_durable_backup(explicitly_cleared=True)
 
         try:
             from antivirus_scanner import SVLAntivirusScanner
@@ -3159,7 +3193,7 @@ class SVLSystemKernel:
                 {"checked_at": sentinel_state.get("checked_at"), "issues": sentinel_state.get("issues", [])}
                 if isinstance(sentinel_state, dict) else "nie działa na tym hoście"
             ),
-            "AI_Agents": ["Bielik", "Maya"],
+            "AI_Agents": ["Bielik", "Maya Mitek"],
         }
 
         report: dict[str, Any] = {

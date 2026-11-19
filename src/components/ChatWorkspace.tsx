@@ -23,6 +23,7 @@ import {
   Brain,
   FileBarChart2,
   Shield,
+  Loader2,
 } from 'lucide-react';
 import {
   CANONICAL_AGENTS,
@@ -30,13 +31,11 @@ import {
   buildChatHistoryPayload,
   createUniqueId,
   formatAgentDisplayName,
-  isUnsafeChatInteractiveAction,
-  normalizeAgentCanonicalName,
   parseBielikChatCommand,
+  resolveChatInteractiveButtonAction,
+  resolveChatTargetAgent,
   safeFetchJson,
-  getSvlOperatorAccessToken,
   hasSvlOperatorAccessToken,
-  setSvlOperatorAccessToken,
   validateOllamaHostUrl,
 } from '../utils/svlLogic';
 import { useSvlSync, getCanonicalConversationTitle } from '../utils/svlSyncStore';
@@ -120,10 +119,24 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const setInput = (value: string) => composerRef.current?.setValue(value);
   const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
   const [isSending, setIsSending] = useState(false);
+  const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
+  const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Maya Mitek');
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
   const [isScanningAv, setIsScanningAv] = useState(false);
   const sendingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isSending) {
+      setSendingElapsedSec(0);
+      return;
+    }
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      setSendingElapsedSec(Math.max(1, Math.floor((Date.now() - started) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isSending]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [controlsExpanded, setControlsExpanded] = useState(false);
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
@@ -132,6 +145,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false);
   const [realVisionOpen, setRealVisionOpen] = useState(false);
   const [chatActionError, setChatActionError] = useState<string | null>(null);
+  const [chatActionNotice, setChatActionNotice] = useState<{ kind: 'info' | 'ok'; text: string } | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [isClearingAll, setIsClearingAll] = useState(false);
+
+  const showNotice = useCallback((text: string, kind: 'info' | 'ok' = 'ok') => {
+    setChatActionNotice({ kind, text });
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+    noticeTimerRef.current = window.setTimeout(() => {
+      setChatActionNotice(null);
+      noticeTimerRef.current = null;
+    }, 4500);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimerRef.current !== null) {
+      window.clearTimeout(noticeTimerRef.current);
+    }
+  }, []);
 
   // Ollama connection panel & pull state
   const [ollamaConfigOpen, setOllamaConfigOpen] = useState(false);
@@ -146,7 +180,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const prevMsgCountRef = useRef<number>(0);
 
-  const [duplexActive, setDuplexActive] = useState(true);
+  const [duplexActive, setDuplexActive] = useState(false);
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
   // Dlaczego rozmowa obustronna stoi (powód z serwera) — pokazywane zamiast cichego zatrzymania.
   const [duplexStatus, setDuplexStatus] = useState<{ reason: string; text: string } | null>(null);
@@ -421,15 +455,22 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     setChatActionError(null);
     const rep = await refreshAllDomains('operator_refresh_button');
     setSyncDrawerOpen(true);
-    if (!rep.ok) {
+    if (rep.ok) {
+      showNotice(`Zsynchronizowano system (rev ${rep.serverRevision}, ${rep.durationMs} ms).`, 'ok');
+    } else {
       setChatActionError(rep.error || 'Odświeżanie nie powiodło się.');
     }
   };
 
   const handleEmitComprehensiveSvlReport = async () => {
     if (isGeneratingSvlReport || isSending) return;
+    if (!hasSvlOperatorAccessToken()) {
+      setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wygenerować raport SVL_System.');
+      return;
+    }
     setIsGeneratingSvlReport(true);
     setChatActionError(null);
+    const targetConvId = activeConv?.id || 'conv-rodzina-mitek-wszyscy';
     try {
       const res = await safeFetchJson<{
         ok: boolean;
@@ -442,12 +483,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         body: JSON.stringify({
           directive: 'Pełny raport operacyjny SVL_System (host, moduły, pamięć)',
           emitToChat: true,
+          conversationId: targetConvId,
           origin: tabOrigin,
         }),
       });
       if (res.ok && res.data?.ok) {
         await refreshDomainModules(['chat', 'modules', 'kernel']);
-        notifyLocalMutation('chat', 'conv-rodzina-mitek-wszyscy', res.data.serverRevision);
+        notifyLocalMutation('chat', targetConvId, res.data.serverRevision);
+        showNotice('Wygenerowano raport SVL_System w aktywnym kanale.', 'ok');
+        window.setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 120);
       } else {
         setChatActionError(res.error || res.data?.error || 'Nie udało się wygenerować raportu SVL_System.');
       }
@@ -458,8 +502,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
   const handleRunAntivirusScan = async () => {
     if (isScanningAv || isSending) return;
+    if (!hasSvlOperatorAccessToken()) {
+      setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby uruchomić skaner SVL-365 Sentinel AV.');
+      return;
+    }
     setIsScanningAv(true);
     setChatActionError(null);
+    const targetConvId = activeConv?.id || 'conv-rodzina-mitek-wszyscy';
     try {
       const res = await safeFetchJson<{
         ok: boolean;
@@ -472,13 +521,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         timeoutMs: 25000,
         body: JSON.stringify({
           emitToChat: true,
+          conversationId: targetConvId,
           origin: tabOrigin,
         }),
       });
       await refreshAllDomains('operator_antivirus_scan');
       await refreshDomainModules(['chat', 'modules', 'kernel', 'health', 'agents']);
       if (res.ok && res.data?.ok) {
-        notifyLocalMutation('chat', 'conv-rodzina-mitek-wszyscy', res.data.serverRevision);
+        notifyLocalMutation('chat', targetConvId, res.data.serverRevision);
+        const scanned = typeof res.data.filesScanned === 'number' ? res.data.filesScanned : 0;
+        const removed = typeof res.data.totalThreatsRemoved === 'number' ? res.data.totalThreatsRemoved : 0;
+        showNotice(`Skaner AV zakończył kontrolę (plików: ${scanned}, usuniętych zagrożeń: ${removed}).`, 'ok');
+        window.setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 120);
       } else {
         setChatActionError(res.error || res.data?.error || 'Błąd skanera SVL-365 Sentinel AV.');
       }
@@ -563,17 +617,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         setChatActionError(`Błąd zapisu SQLite: ${persistRes.error || 'Nie zapisano wiadomości.'}`);
         return;
       }
-      void refreshDomainModules(['modules', 'kernel'])
-        .then((report) => {
-          if (!report.ok) {
-            setChatActionError(`Błąd synchronizacji zmian z czatu: ${report.error}`);
-          }
-        })
-        .catch((error: unknown) => {
-          setChatActionError(
-            `Błąd synchronizacji zmian z czatu: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
 
       if (overrideText === undefined) setInput('');
       const currentImage = attachedImage;
@@ -582,13 +625,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
       const historyPayload = buildChatHistoryPayload(targetConvObj.messages, 16);
 
-      const mentionsBielik = /(?:^|\s)@bielik\b/i.test(trimmed);
-      const mentionsMaya = /(?:^|\s)@maya\b/i.test(trimmed);
-      const isBielikChannel = targetConvId === 'conv-agent-bielik';
-      const isMayaChannel = targetConvId === 'conv-agent-maya';
       const isBielikSlashCmd = Boolean(parseBielikChatCommand(trimmed));
-      const isExplicitMaya = isMayaChannel || targetAgent === 'Maya' || mentionsMaya;
-      const isExplicitBielik = !isExplicitMaya && (isBielikChannel || targetAgent === 'Bielik' || mentionsBielik || isBielikSlashCmd);
+      const resolvedTarget = resolveChatTargetAgent({
+        message: trimmed,
+        conversationId: targetConvId,
+        targetAgent,
+        hasSlashCommand: isBielikSlashCmd,
+      });
+      const isExplicitMaya = resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
+      const isExplicitBielik = resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
 
       const isFamilyDuplex =
         !isExplicitBielik &&
@@ -605,10 +650,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           : isFamilyDuplex
             ? 'Rodzina Mitek'
             : targetAgent;
+      setPendingReplyAgent(formatAgentDisplayName(resolvedTarget.agent));
 
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
-        timeoutMs: 180000,
+        timeoutMs: 90000,
         body: JSON.stringify({
           message: fullPrompt,
           model: (isExplicitBielik || isExplicitMaya) && selectedModel === 'svl-hybrid-router'
@@ -668,7 +714,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         provenance: data.provenance,
         verificationNote: data.verificationNote,
       };
-      const replyPersist = await appendAndPersistChatMessage(targetConvId, targetTitle, selectedModel, replyMsg);
+      const replyPersist = await appendAndPersistChatMessage(
+        targetConvId,
+        targetTitle,
+        selectedModel,
+        replyMsg,
+        {
+          alreadyPersisted: Boolean(data.persisted),
+          serverRevision: typeof data.serverRevision === 'number' ? data.serverRevision : undefined,
+        },
+      );
       if (!replyPersist.ok && replyPersist.error) {
         setChatActionError(`Błąd zapisu odpowiedzi w SQLite: ${replyPersist.error}`);
       }
@@ -676,22 +731,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       if (appliedActions || data.connectionReport) {
         notifyLocalMutation('module', 'chat', data.latestServerRevision || undefined);
         void refreshAllDomains('chat_command_applied');
-      } else {
-        void refreshDomainModules(['modules', 'agents', 'kernel', 'health', 'terminals', 'chat'])
-          .then((report) => {
-            if (!report.ok) {
-              setChatActionError(`Błąd synchronizacji zmian z czatu: ${report.error}`);
-            } else {
-              setChatActionError((current) =>
-                current?.startsWith('Błąd synchronizacji zmian z czatu:') ? null : current,
-              );
-            }
-          })
-          .catch((error: unknown) => {
-            setChatActionError(
-              `Błąd synchronizacji zmian z czatu: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          });
+      } else if (!data.persisted) {
+        void refreshDomainModules(['chat']).catch(() => undefined);
       }
     } catch (error: any) {
       setChatActionError(`Błąd wysyłania wiadomości: ${error?.message || String(error)}`);
@@ -701,10 +742,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     }
   };
 
-  const handleGenerateImage = async () => {
-    const prompt = getInput().trim();
+  const handleGenerateImage = async (promptOverride?: string) => {
+    const prompt = (promptOverride !== undefined ? promptOverride : getInput()).trim();
     const targetConvObj = activeConv;
-    if (!prompt || sendingRef.current || !targetConvObj) return;
+    if (!targetConvObj || sendingRef.current) return;
+    if (!hasSvlOperatorAccessToken()) {
+      setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wygenerować obraz.');
+      return;
+    }
+    if (!prompt) {
+      composerRef.current?.focus();
+      showNotice('Wpisz opis obrazu w polu poniżej, a potem kliknij „Generuj obraz”.', 'info');
+      return;
+    }
 
     sendingRef.current = true;
     setIsSending(true);
@@ -734,7 +784,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         return;
       }
 
-      setInput('');
+      if (promptOverride === undefined) setInput('');
       const result = await safeFetchJson<any>('/api/py/images/generate', {
         method: 'POST',
         timeoutMs: 900000,
@@ -762,6 +812,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       );
       if (!savedImage.ok) {
         setChatActionError(`Obraz wygenerowano, ale nie zapisano go w czacie: ${savedImage.error || 'błąd SQLite.'}`);
+      } else {
+        showNotice('Wygenerowano obraz i zapisano w czacie.', 'ok');
       }
       await refreshDomainModules(['chat', 'health']);
     } catch (error: any) {
@@ -774,77 +826,118 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   };
 
   /**
-   * Obsługa przycisków z wiadomości (pisanych przez Bielika i Mayę lub serwer):
+   * Obsługa przycisków z wiadomości (pisanych przez Bielika, Maya Mitek lub serwer):
    * `send:` wysyła wiadomość do AI, `ask:Bielik|Maya` oddaje głos AI, `text:` wstawia tekst
-   * do pola, `tab:` otwiera zakładkę, `action:` uruchamia akcję systemu.
+   * do pola, `tab:`/`nav:` otwiera zakładkę, `action:` uruchamia akcję systemu.
    */
   const handleInteractiveAction = async (actionValue: string, label?: string) => {
-    const val = actionValue.trim();
-    if (!val) return;
-    if (isUnsafeChatInteractiveAction(val)) {
-      setChatActionError('Przyciski odpowiedzi AI nie mogą automatycznie uruchamiać powłoki. Wklej komendę ręcznie do terminala po sprawdzeniu.');
-      return;
-    }
-    const lower = val.toLowerCase();
-
-    if (lower.startsWith('tab:')) {
-      const tabName = lower.slice(4).trim();
-      if (!['chat', 'apex', 'svl364', 'infrastructure', 'agents', 'terminals', 'kernel', 'linux'].includes(tabName)) {
-        setChatActionError(`Przycisk wskazuje nieistniejącą zakładkę „${tabName}”.`);
+    const resolved = resolveChatInteractiveButtonAction(actionValue, label);
+    switch (resolved.kind) {
+      case 'empty':
+        return;
+      case 'unsafe':
+        setChatActionError(
+          'Przyciski odpowiedzi AI nie mogą automatycznie uruchamiać powłoki. Wklej komendę ręcznie do terminala lub użyj /root w polu czatu.',
+        );
+        return;
+      case 'tab':
+        setChatActionError(null);
+        onNavigateTab(resolved.tab);
+        return;
+      case 'invalid_tab':
+        setChatActionError(`Przycisk wskazuje nieistniejącą zakładkę „${resolved.rawTab}”.`);
+        return;
+      case 'send':
+        if (!hasSvlOperatorAccessToken()) {
+          setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wysłać polecenie z przycisku.');
+          return;
+        }
+        if (sendingRef.current || isSending) {
+          setChatActionError('Poczekaj, aż AI skończy odpowiadać — potem kliknij przycisk ponownie.');
+          return;
+        }
+        setChatActionError(null);
+        window.setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
+        await handleSendMessage(resolved.text);
+        return;
+      case 'ask':
+        setChatActionError(null);
+        await handleProactiveRef.current(resolved.agent, false);
+        return;
+      case 'text':
+        setChatActionError(null);
+        setInput(resolved.text);
+        composerRef.current?.focus();
+        showNotice('Wstawiono tekst do pola wpisywania — kliknij „Wyślij” lub edytuj.', 'info');
+        return;
+      case 'copy': {
+        let copiedOk = false;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(resolved.text);
+            copiedOk = true;
+          }
+        } catch {
+          copiedOk = false;
+        }
+        if (!copiedOk && typeof document !== 'undefined') {
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = resolved.text;
+            ta.setAttribute('readonly', 'true');
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            copiedOk = document.execCommand('copy');
+            document.body.removeChild(ta);
+          } catch {
+            copiedOk = false;
+          }
+        }
+        if (copiedOk) {
+          showNotice('Skopiowano treść do schowka.', 'ok');
+        } else {
+          setInput(resolved.text);
+          composerRef.current?.focus();
+          showNotice('Schowek zablokowany — wstawiono tekst do pola wpisywania.', 'info');
+        }
         return;
       }
-      onNavigateTab(tabName as 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux');
-      return;
-    }
-
-    if (lower.startsWith('send:')) {
-      const textToSend = val.slice(5).trim();
-      if (!textToSend) return;
-      if (sendingRef.current || isSending) {
-        setChatActionError('Poczekaj, aż AI skończy odpowiadać — potem kliknij przycisk ponownie.');
+      case 'sync':
+        await handleRefreshAllDomains();
         return;
-      }
-      void handleSendMessage(textToSend);
-      return;
+      case 'scan':
+        await handleRunAntivirusScan();
+        return;
+      case 'report':
+        await handleEmitComprehensiveSvlReport();
+        return;
+      case 'image':
+        await handleGenerateImage(resolved.prompt);
+        return;
+      case 'vision':
+        setChatActionError(null);
+        setRealVisionOpen(true);
+        return;
+      case 'avatars':
+        setChatActionError(null);
+        setAvatarSettingsOpen(true);
+        return;
+      case 'ollama':
+        setChatActionError(null);
+        setControlsExpanded(true);
+        setOllamaConfigOpen(true);
+        showNotice('Otwarto konfigurację OLLAMA_HOST.', 'info');
+        return;
+      case 'duplex':
+        setDuplexActive((prev) => {
+          const next = !prev;
+          showNotice(next ? 'Włączono czat obustronny (AI może pisać samodzielnie).' : 'Wyłączono czat obustronny.', 'info');
+          return next;
+        });
+        return;
     }
-
-    if (lower.startsWith('ask:')) {
-      const agent = normalizeAgentCanonicalName(val.slice(4).trim());
-      void handleProactiveRef.current(agent === 'Bielik' || agent === 'Maya' ? agent : undefined, false);
-      return;
-    }
-
-    if (lower.startsWith('text:')) {
-      setInput(val.slice(5).trim());
-      composerRef.current?.focus();
-      return;
-    }
-
-    const actionName = lower.startsWith('action:') ? lower.slice(7).trim() : lower;
-    if (actionName === 'sync') {
-      await handleRefreshAllDomains();
-      return;
-    }
-    if (actionName === 'scan' || actionName === 'antivirus') {
-      await handleRunAntivirusScan();
-      return;
-    }
-    if (actionName === 'report') {
-      await handleEmitComprehensiveSvlReport();
-      return;
-    }
-    if (actionName === 'image') {
-      await handleGenerateImage();
-      return;
-    }
-    if (lower.startsWith('action:')) {
-      setChatActionError(`Nieznana akcja przycisku: „${val}”.`);
-      return;
-    }
-
-    // Przycisk bez prefiksu (np. `[btn: Pokaż moduły]`) wstawia swoją treść do pola wpisywania.
-    setInput(/^[a-z0-9_-]+$/i.test(val) && label ? label : val);
-    composerRef.current?.focus();
   };
 
   const wsBadgeLabel =
@@ -966,8 +1059,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-amber-300/15 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">
                         <span className="inline-flex items-center gap-1.5">
                           <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
-                          {msg.sender === 'Maya'
-                            ? 'Powiadomienie od Mayi'
+                          {msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
+                            ? 'Powiadomienie od Maya Mitek'
                             : isFamilyChannel
                               ? 'Powiadomienie · kanał grupowy'
                               : 'Wiadomość systemowa'}
@@ -1127,23 +1220,62 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={async () => {
-              if (window.confirm('Czy na pewno chcesz wyczyścić wszystkie wiadomości i odetkać bufory czatu?')) {
-                const credential = getSvlOperatorAccessToken() ||
-                  window.prompt('Podaj SVL_OPERATOR_TOKEN, aby wyczyścić historię wszystkich rozmów:') || '';
-                if (credential) setSvlOperatorAccessToken(credential);
-                const cleared = await clearAllConversationsAndBuffers();
-                if (cleared.ok) setMobileSidebarOpen(false);
-                else setChatActionError(cleared.error || 'Nie udało się wyczyścić rozmów w SQLite.');
-              }
-            }}
-            className="w-full min-h-[36px] px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/35 border border-rose-500/40 text-rose-200 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Wyczyść wszystko i odetkaj bufory
-          </button>
+          {!confirmClearOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!hasSvlOperatorAccessToken()) {
+                  setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wyczyścić rozmowy i bufory.');
+                  return;
+                }
+                setConfirmClearOpen(true);
+              }}
+              className="w-full min-h-[36px] px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/35 border border-rose-500/40 text-rose-200 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Wyczyść wszystko i odetkaj bufory
+            </button>
+          ) : (
+            <div className="rounded-lg border border-rose-500/50 bg-rose-950/35 p-2.5 space-y-2">
+              <p className="text-[11px] leading-snug text-rose-100">
+                Wyczyścić wszystkie wiadomości w SQLite i odetkać bufory czatu?
+              </p>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={isClearingAll}
+                  onClick={async () => {
+                    if (isClearingAll) return;
+                    setIsClearingAll(true);
+                    setChatActionError(null);
+                    try {
+                      const cleared = await clearAllConversationsAndBuffers();
+                      if (cleared.ok) {
+                        setConfirmClearOpen(false);
+                        setMobileSidebarOpen(false);
+                        showNotice('Wyczyszczono rozmowy i odetkano bufory czatu.', 'ok');
+                      } else {
+                        setChatActionError(cleared.error || 'Nie udało się wyczyścić rozmów w SQLite.');
+                      }
+                    } finally {
+                      setIsClearingAll(false);
+                    }
+                  }}
+                  className="flex-1 px-2.5 py-1.5 rounded bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                >
+                  {isClearingAll ? 'Czyszczenie...' : 'Potwierdź'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isClearingAll}
+                  onClick={() => setConfirmClearOpen(false)}
+                  className="flex-1 px-2.5 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium transition-colors cursor-pointer"
+                >
+                  Anuluj
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Conversations List */}
@@ -1285,7 +1417,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             >
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
               <option value="Bielik">Bielik (3.2 Vision 11B · ROOT)</option>
-              <option value="Maya">Maya (AI Statku SVL-364 · ROOT)</option>
+              <option value="Maya">Maya Mitek (AI Statku SVL-364 · ROOT)</option>
               <option value="Auto">Auto-Router</option>
             </select>
 
@@ -1299,10 +1431,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
             >
               <option value="svl-hybrid-router">
-                Bielik / Maya · Ollama ({ollamaReachable ? `${ollamaModels.length} modeli` : 'niedostępna — zapas'})
+                Bielik / Maya Mitek · Ollama ({ollamaReachable ? `${ollamaModels.length} modeli` : 'niedostępna — zapas'})
               </option>
               <option value="ollama:svl364-apex-uncensored:latest">
-                SVL CoreOS 2 · Apex-Uncensored (Maya · SVL-364 Ship)
+                SVL CoreOS 2 · Apex-Uncensored (Maya Mitek · SVL-364 Ship)
               </option>
               <option value="ollama:llama3.2-vision:11b">
                 Ollama: llama3.2-vision:11b (Vision · 11B)
@@ -1414,7 +1546,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           <div className="border-b border-slate-800/80 bg-[#0D1018] shrink-0">
             <div className="px-3 py-1.5 border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 font-mono tabular-nums">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-emerald-300 font-semibold">Tryb czatu: SQLite WAL (Bielik i Maya)</span>
+                <span className="text-emerald-300 font-semibold">Tryb czatu: SQLite WAL (Bielik i Maya Mitek)</span>
                 <span aria-hidden="true">·</span>
                 <span>Vision: {selectedModelSupportsVision ? 'Tak' : 'Nie'}</span>
                 <span aria-hidden="true">·</span>
@@ -1599,6 +1731,31 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         )}
 
+        {chatActionNotice && (
+          <div role="status" aria-live="polite" className="shrink-0 border-b border-emerald-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
+            <div
+              className={`mx-auto flex max-w-5xl items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
+                chatActionNotice.kind === 'ok'
+                  ? 'border-emerald-500/35 bg-emerald-950/30 text-emerald-200'
+                  : 'border-cyan-500/35 bg-cyan-950/30 text-cyan-200'
+              }`}
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">{chatActionNotice.text}</span>
+              </span>
+              <button
+                type="button"
+                aria-label="Zamknij komunikat"
+                onClick={() => setChatActionNotice(null)}
+                className="shrink-0 rounded px-2 py-0.5 text-[11px] hover:bg-white/10"
+              >
+                Zamknij
+              </button>
+            </div>
+          </div>
+        )}
+
         {chatActionError && (
           <div role="alert" aria-live="assertive" className="shrink-0 border-b border-rose-500/20 bg-[#0B0D13]/95 px-3 py-2.5 md:px-5">
             <div className="mx-auto flex max-w-5xl items-start gap-3 rounded-xl border border-rose-500/35 bg-gradient-to-r from-rose-950/70 via-[#17131d] to-[#111520] p-3 shadow-lg shadow-rose-950/20">
@@ -1617,7 +1774,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   )}
                 </div>
                 <div className="break-words text-sm leading-relaxed text-rose-100">
-                  {renderFormattedContent(chatActionError, handleInteractiveAction)}
+                  {renderFormattedContent(chatActionError, stableInteractiveAction)}
                 </div>
               </div>
               <button
@@ -1665,6 +1822,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             </div>
           )}
           {messageListNode}
+          {isSending && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2.5 rounded-xl border border-indigo-500/25 bg-[#121623]/90 px-3.5 py-2.5 text-xs text-slate-300 max-w-md"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" aria-hidden="true" />
+              <span>
+                <strong className="font-semibold text-indigo-200">{pendingReplyAgent}</strong> przygotowuje odpowiedź
+                {sendingElapsedSec > 0 ? ` (${sendingElapsedSec} s)…` : '…'}
+              </span>
+            </div>
+          )}
           <div ref={messagesEndRef} />
           </div>
         </div>
@@ -1750,7 +1920,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               <button
                 type="button"
                 onClick={() => void handleGenerateImage()}
-                disabled={isSending || !hasInput}
+                disabled={isSending}
+                title={hasInput ? 'Wygeneruj obraz z wpisanego promptu' : 'Wpisz opis obrazu w polu poniżej, a potem kliknij tutaj'}
                 aria-label="Wygeneruj obraz z wpisanego promptu"
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-medium transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
               >
@@ -1789,8 +1960,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
                   ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
                   : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
-                    ? 'Wydaj polecenie dla Maya (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
-                    : 'Wpisz wiadomość, @Bielik, @Maya lub polecenie dla systemu SVL...'
+                    ? 'Wydaj polecenie dla Maya Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
+                    : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
               className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"

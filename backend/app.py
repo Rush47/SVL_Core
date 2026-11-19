@@ -388,16 +388,17 @@ class SVLBackendRuntime:
         except OSError:
             return False
 
-    def probe_ollama_status(self, force_refresh: bool = False) -> dict[str, Any]:
+    def probe_ollama_status(self, force_refresh: bool = False, fast_only: bool = False) -> dict[str, Any]:
         ollama_host = (self.ollama_host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")).rstrip("/")
         pull_state = self._get_ollama_pull_state()
         cached = getattr(self, "_ollama_probe_cache", None)
+        cache_ttl = 60.0 if fast_only else 20.0
         if (
             not force_refresh
             and not pull_state.get("active")
             and isinstance(cached, dict)
             and cached.get("ollama_host") == ollama_host
-            and time.monotonic() - cached.get("_cached_at", 0) < 4.5
+            and time.monotonic() - cached.get("_cached_at", 0) < cache_ttl
         ):
             return {
                 **{k: v for k, v in cached.items() if k != "_cached_at"},
@@ -405,21 +406,26 @@ class SVLBackendRuntime:
             }
 
         preferred_model = os.environ.get("OLLAMA_PREFERRED_MODEL", "llama3.2-vision:11b")
-        self.ollama_daemon.start_if_needed()
         binary_installed = (
             shutil.which("ollama") is not None
             or Path("/usr/local/bin/ollama").exists()
             or (BACKEND_DIR / "bin" / "ollama").exists()
         )
-
-        # Zajęta Ollama (generowanie / ładowanie modelu) odpowiada wolniej niż 0,8 s — taki limit
-        # dawał fałszywe „Ollama niedostępna”, choć działała.
-        reachable, models, error_msg = self._probe_single_ollama_endpoint(ollama_host, timeout=4.0)
-        if not reachable and ("127.0.0.1" in ollama_host or "localhost" in ollama_host):
+        if not fast_only:
             self.ollama_daemon.start_if_needed()
-            reachable, models, error_msg = self._probe_single_ollama_endpoint("http://127.0.0.1:11434", timeout=4.0)
+
+        probe_timeout = 0.7 if fast_only else 1.5
+        reachable, models, error_msg = self._probe_single_ollama_endpoint(ollama_host, timeout=probe_timeout)
+        if (
+            not reachable
+            and not fast_only
+            and ollama_host != "http://127.0.0.1:11434"
+            and ("127.0.0.1" in ollama_host or "localhost" in ollama_host)
+        ):
+            self.ollama_daemon.start_if_needed()
+            reachable, models, error_msg = self._probe_single_ollama_endpoint("http://127.0.0.1:11434", timeout=1.5)
         busy = False
-        if not reachable and self._ollama_port_accepts(ollama_host):
+        if not reachable and not fast_only and self._ollama_port_accepts(ollama_host):
             # Port przyjmuje połączenia, ale lista modeli nie zdążyła wrócić — Ollama działa i jest zajęta.
             busy = True
             reachable = True
@@ -429,10 +435,10 @@ class SVLBackendRuntime:
 
         # Report only actual daemon responses. A built-in catalog is not proof of installation.
         loaded_models: list[str] = []
-        if reachable:
+        if reachable and not fast_only:
             try:
                 req_ps = urllib.request.Request(f"{ollama_host}/api/ps", headers={"Accept": "application/json"})
-                with urllib.request.urlopen(req_ps, timeout=0.6) as r_ps:
+                with urllib.request.urlopen(req_ps, timeout=0.5) as r_ps:
                     ps_data = json.loads(r_ps.read().decode("utf-8"))
                     ps_list = [str(m.get("name", "")) for m in ps_data.get("models", []) if m.get("name")]
                     if ps_list:
@@ -845,7 +851,7 @@ class SVLCoreOS2ApexController:
             "debootstrap_status": install["debootstrap_status"],
             "install_log": install["install_log"],
             "operator_root": "Mateusz Mitek",
-            "kernel_master_daemon": "Maya (agent w backendzie SVL, nie proces jądra)",
+            "kernel_master_daemon": "Maya Mitek (agent w backendzie SVL, nie proces jądra)",
             "secondary_daemon": "Bielik (agent w backendzie SVL)",
             "kernel_throughput_boost": "brak pomiaru",
             "neural_kernel_link_boost": "brak pomiaru",
@@ -937,7 +943,7 @@ class SVLCoreOS2ApexController:
         if emit_chat and chat_notice:
             posted = self.rt.kernel.post_maya_report(
                 chat_notice,
-                model_label="Maya · SVL CoreOS 2 (wynik serwera)",
+                model_label="Maya Mitek · SVL CoreOS 2 (wynik serwera)",
                 message_prefix="msg-apex-ctl",
                 origin=origin,
                 correlation_id=corr,
@@ -980,7 +986,22 @@ async def handle_api_request(
     expected_rev = _opt_int(body.get("expectedRevision"))
 
     if method == "GET" and path == "/api/py/health":
+        fast_mode = str(query.get("fast") or "").strip().lower() in ("1", "true", "yes")
+        force_refresh = str(query.get("force") or "").strip().lower() in ("1", "true", "yes")
         meta = runtime.kernel.get_sync_metadata()
+        comfy_url = os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188")
+        cached_img = getattr(runtime, "_image_engine_cache", None)
+        if (
+            not force_refresh
+            and isinstance(cached_img, dict)
+            and time.monotonic() - cached_img.get("_cached_at", 0) < (60.0 if fast_mode else 20.0)
+        ):
+            img_status = cached_img["data"]
+        elif fast_mode:
+            img_status = {"ok": False, "engine": "comfyui", "url": comfy_url, "reachable": False, "deferred": True}
+        else:
+            img_status = probe_image_engine(comfy_url)
+            setattr(runtime, "_image_engine_cache", {"_cached_at": time.monotonic(), "data": img_status})
         return 200, {
             "status": "ONLINE",
             "system": runtime.kernel.sys_version.value,
@@ -990,11 +1011,9 @@ async def handle_api_request(
             "serverRevision": meta["serverRevision"],
             "system_modules": runtime.kernel.list_system_modules(),
             "host": runtime.probe_host_environment(),
-            "ollama": runtime.probe_ollama_status(),
+            "ollama": runtime.probe_ollama_status(force_refresh=force_refresh, fast_only=fast_mode),
             "svl364_ssh_mcp": runtime.svl364_ssh_mcp.get_status(),
-            "image_engine": probe_image_engine(
-                os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188")
-            ),
+            "image_engine": img_status,
             "security": {
                 "token_source": runtime.kernel.token_source,
                 "token_length": len(runtime.kernel.operator_token),
@@ -1036,11 +1055,13 @@ async def handle_api_request(
         report_md = runtime.kernel.generate_comprehensive_svl_system_markdown_report(directive)
         posted = None
         if method == "POST" and bool(body.get("emitToChat")):
-            # Raport publikuje Maya na kanale „wszyscy”, widoczny od razu u wszystkich.
+            target_conv_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip() or None
+            # Raport publikuje Maya Mitek na aktywnym kanale czatu (domyślnie „wszyscy”).
             posted = runtime.kernel.post_maya_report(
                 report_md,
-                model_label="Maya · raport SVL_System (wynik serwera)",
+                model_label="Maya Mitek · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
+                conversation_id=target_conv_id,
                 origin=origin,
                 correlation_id=corr,
             )
@@ -1987,6 +2008,11 @@ async def main() -> None:
             await server.serve_forever()
     finally:
         append_python_log("python_lifecycle", "Zatrzymywanie SVL Python OS Backend Kernel")
+        try:
+            runtime.kernel.checkpoint_wal("TRUNCATE")
+            runtime.kernel.save_durable_backup(explicitly_cleared=False)
+        except Exception:
+            pass
         await runtime.orchestrator.shutdown()
 
 

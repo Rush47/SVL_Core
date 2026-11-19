@@ -1,7 +1,7 @@
 # SVL CoreOS 2: Apex
 
 **SVL CoreOS 2: Apex** to aktualna wersja systemu SVL (repozytorium `Rush47/SVL_Core`): brama Node
-(port 3000), jądro Python (port 8085, SQLite WAL), interfejs React oraz AI **Bielik** i **Maya**.
+(port 3000), jądro Python (port 8085, SQLite WAL), interfejs React oraz AI **Bielik** i **Maya Mitek**.
 Na Debianie 13 (Trixie) instaluje się jako usługi systemd.
 
 ## Obraz ISO (bootowalny system)
@@ -35,7 +35,7 @@ Log instalacji: `/var/log/svl-coreos2-install.log`. Stan usług: `systemctl stat
 ## SVL-Sentinel (`kernel/svl_sentinel_daemon.py`)
 
 Co 30 s mierzy bramę, jądro Python, Ollamę, dysk i RAM. Gdy brama nie odpowiada 3 razy z rzędu —
-restartuje `svl-coreos2`. Każdą zmianę stanu Maya ogłasza na kanale „Rodzina Mitek (wszyscy)”.
+restartuje `svl-coreos2`. Każdą zmianę stanu Maya Mitek ogłasza na kanale „Rodzina Mitek (wszyscy)”.
 Ostatni pomiar: `/var/lib/svl-coreos2/sentinel_status.json` (widoczny w panelu Apex).
 Jednorazowy pomiar: `python3 kernel/svl_sentinel_daemon.py --once`.
 

@@ -3,7 +3,7 @@
   "version": "2.0.0-Apex",
   "base_os": "Debian 13 (Trixie) — system docelowy instalatora",
   "operator_root": "Mateusz Mitek",
-  "kernel_master_daemon": "Maya (SVL-364 Ship AI)",
+  "kernel_master_daemon": "Maya Mitek (SVL-364 Ship AI)",
   "secondary_agent_root": "Bielik (Ollama 3.2 Vision 11B)",
   "calibration_pattern": 364,
   "compact_metric_c": 2.5,

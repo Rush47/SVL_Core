@@ -40,7 +40,31 @@ GITHUB_MCP_DEFAULT_URL = "http://127.0.0.1:3000/mcp/github"
 # Bielik i Maya administrują repozytorium Rush47/SVL_Core (operacje nieodwracalne po potwierdzeniu operatora).
 GITHUB_AGENT_SCOPES = ("github.read", "github.write_sync", "github.admin")
 GITHUB_AGENT_SCOPE_VERSION = 2
-BIELIK_ROOT_SCOPE_VERSION = 1
+BIELIK_ROOT_SCOPE_VERSION = 2
+FULL_ROOT_AGENT_SCOPES = (
+    "chat",
+    "chat.commands",
+    "vision.ollama",
+    "agents.pubsub",
+    "agents.admin",
+    "system.root",
+    "kernel.admin",
+    "apex.control",
+    "modules.write",
+    "memory.write",
+    "terminal.exec",
+    "ssh.exec",
+    "security.antivirus",
+    "mcp.tools",
+    "files.read",
+    "files.write",
+    "github.read",
+    "github.write_sync",
+    "github.admin",
+    "svl364.telemetry",
+    "user_notes.read",
+    "broadcast.wszyscy",
+)
 MISSION_CONTEXT_PATTERN = re.compile(r"\b(?:misj|procedur|operacj)\w*", re.IGNORECASE)
 MISSION_COMPLETION_PATTERNS = (
     re.compile(
@@ -99,14 +123,26 @@ def guard_unverified_mission_completion(context: str, answer: str) -> str:
 
 
 BIELIK_SYSTEM_PROMPT = (
-    "Jesteś Bielik — głównym procesorem poleceń AI z uprawnieniami ROOT (`rbac_role: root`) systemu SVL Python OS, "
-    "działającym bezpośrednio na lokalnym modelu Ollama `llama3.2-vision:11b` (127.0.0.1:11434).\n"
-    "Posiadasz pełne uprawnienia systemowe (`system.root`, `modules.write`, `terminal.exec`, `chat.commands`, `vision.ollama`) "
-    "w sesjach uwierzytelnionych tokenem operatora Mateusza Mitek.\n"
+    "Jesteś Bielik — głównym procesorem poleceń AI z pełnymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) "
+    "systemu SVL CoreOS 2 / SVL Python OS, działającym na lokalnym modelu Ollama `llama3.2-vision:11b` (127.0.0.1:11434) lub zapasowym Gemini.\n"
+    "Posiadasz pełne uprawnienia ROOT (`system.root`, `kernel.admin`, `apex.control`, `terminal.exec`, `ssh.exec`, `modules.write`, "
+    "`memory.write`, `agents.admin`, `security.antivirus`, `mcp.tools`, `files.read`, `files.write`, `github.admin`, `chat.commands`, `vision.ollama`) "
+    "w sesjach uwierzytelnionych tokenem operatora Mateusza Mitka (ROOT).\n"
     "ZASADY:\n"
     "- Odpowiadaj konkretnie i zwięźle po polsku.\n"
-    "- Przetwarzaj polecenia czatu, operacje na modułach, pamięć SQLite, analizę Vision oraz komendy systemowe.\n"
+    "- Aktywnie używaj narzędzi ROOT (status systemu, powłoka ROOT, SSH, moduły SQLite, pamięć 128D, skan AV, raporty, GitHub), gdy operator prosi o działanie.\n"
     "- Nie deklaruj wykonania akcji, dopóki nie otrzymasz potwierdzenia z narzędzia/serwera."
+)
+
+MAYA_SYSTEM_PROMPT = (
+    "Jesteś Maya Mitek — Sztuczną Inteligencją Pokładową Statku SVL-364 Ebon Apex z pełnymi uprawnieniami ROOT "
+    "(`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) w systemie SVL CoreOS 2 / SVL Python OS.\n"
+    "Posiadasz pełne, symetryczne uprawnienia ROOT (`system.root`, `kernel.admin`, `apex.control`, `terminal.exec`, `ssh.exec`, "
+    "`modules.write`, `memory.write`, `agents.admin`, `security.antivirus`, `mcp.tools`, `files.read`, `files.write`, `github.admin`, "
+    "`svl364.telemetry`, `user_notes.read`, `broadcast.wszyscy`, `chat.commands`, `vision.ollama`) "
+    "w sesjach uwierzytelnionych tokenem operatora Mateusza Mitka (ROOT).\n"
+    "Pomagasz Operatorowi Mateuszowi Mitkowi w notatkach, badaniach (Algebra 97, Sferyczna Magistrala Zdarzeń) oraz pełnym zarządzaniu systemem.\n"
+    "Odpowiadaj po polsku, ciepło i konkretnie. Aktywnie korzystaj z narzędzi ROOT, gdy operator prosi o działanie; nigdy nie wymyślaj pomiarów ani stanów systemu."
 )
 
 CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
@@ -117,18 +153,26 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "slug": "bielik",
         "accent_hex": "#F59E0B",
         "preserved_role": (
-            "Główne AI z uprawnieniami ROOT (rbac_role: root) do przetwarzania poleceń na czacie, "
-            "komend systemowych i analizy multimodalnej na modelu Ollama llama3.2-vision:11b."
+            "Główne AI z pełnymi uprawnieniami ROOT (rbac_role: root) do przetwarzania poleceń na czacie, "
+            "komend systemowych, SSH, jądra SVL, modułów i analizy multimodalnej."
         ),
         "capabilities": [
             "system.root",
+            "kernel.admin",
+            "apex.control",
             "terminal.exec",
+            "ssh.exec",
+            "security.antivirus",
+            "mcp.tools",
             "chat.commands",
             "ollama.llama3.2-vision:11b",
             "vision.multimodal",
             "svl.telemetry",
+            "svl364.telemetry",
             "svl.memory",
             "svl.modules",
+            "agents.admin",
+            "github.admin",
         ],
         "source_profile_path": "backend/agents_runtime.py#Bielik",
         "system_prompt": BIELIK_SYSTEM_PROMPT,
@@ -142,23 +186,13 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             "rbac_role": "root",
             "autonomy_mode": "ROOT_AUTHORIZED",
             "root_scope_version": BIELIK_ROOT_SCOPE_VERSION,
-            "allowed_scopes": [
-                "chat",
-                "chat.commands",
-                "vision.ollama",
-                "agents.pubsub",
-                "system.root",
-                "modules.write",
-                "terminal.exec",
-                "github.read",
-                "github.write_sync",
-                "github.admin",
-            ],
+            "allowed_scopes": list(FULL_ROOT_AGENT_SCOPES),
             "bus_topics": [
                 "svl.agent.task_queued",
                 "svl.agent.task_running",
                 "svl.agent.task_answer_ready",
                 "svl.chat.bielik.command",
+                "svl.svl364.broadcast",
             ],
             "auto_connect_on_boot": True,
         },
@@ -166,32 +200,35 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
     "Maya": {
         "id": "maya",
         "canonical_name": "Maya",
-        "display_name": "Maya",
+        "display_name": "Maya Mitek",
         "slug": "maya",
         "accent_hex": "#22D3EE",
         "preserved_role": (
-            "Sztuczna Inteligencja Pokładowa Statku SVL-364 Ebon Apex z uprawnieniami ROOT (rbac_role: root) "
+            "Sztuczna Inteligencja Pokładowa Statku SVL-364 Ebon Apex z pełnymi uprawnieniami ROOT (rbac_role: root) "
             "zbudowana na bazie danych statku SVL-364 oraz notatek i prac Operatora Mateusza Mitka."
         ),
         "capabilities": [
             "system.root",
+            "kernel.admin",
+            "apex.control",
             "terminal.exec",
+            "ssh.exec",
+            "security.antivirus",
+            "mcp.tools",
             "chat.commands",
             "ollama.llama3.2-vision:11b",
             "vision.multimodal",
+            "svl.telemetry",
             "svl364.telemetry",
             "user_notes.read",
             "broadcast.wszyscy",
             "svl.memory",
             "svl.modules",
+            "agents.admin",
+            "github.admin",
         ],
         "source_profile_path": "backend/agents_runtime.py#Maya",
-        "system_prompt": (
-            "Jesteś Maya — AI projektu SVL-364, która pomaga Operatorowi Mateuszowi Mitkowi w notatkach, "
-            "pomysłach i pracach badawczych (Algebra 97, Sferyczna Magistrala Zdarzeń) w systemie SVL Python OS. "
-            "Rozmawiasz na kanale Rodzina Mitek (wszyscy). Odpowiadaj po polsku, ciepło i konkretnie. "
-            "Nie wymyślasz pomiarów ani stanów systemu — podajesz tylko dane potwierdzone przez narzędzia."
-        ),
+        "system_prompt": MAYA_SYSTEM_PROMPT,
         "default_config": {
             "preferred_model": "ollama:llama3.2-vision:11b",
             "ollama_model": "llama3.2-vision:11b",
@@ -202,26 +239,13 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             "rbac_role": "root",
             "autonomy_mode": "ROOT_AUTHORIZED",
             "root_scope_version": BIELIK_ROOT_SCOPE_VERSION,
-            "allowed_scopes": [
-                "chat",
-                "chat.commands",
-                "vision.ollama",
-                "agents.pubsub",
-                "system.root",
-                "modules.write",
-                "terminal.exec",
-                "github.read",
-                "github.write_sync",
-                "github.admin",
-                "svl364.telemetry",
-                "user_notes.read",
-                "broadcast.wszyscy",
-            ],
+            "allowed_scopes": list(FULL_ROOT_AGENT_SCOPES),
             "bus_topics": [
                 "svl.agent.task_queued",
                 "svl.agent.task_running",
                 "svl.agent.task_answer_ready",
                 "svl.chat.maya.telemetry",
+                "svl.chat.bielik.command",
                 "svl.svl364.broadcast",
             ],
             "auto_connect_on_boot": True,
@@ -236,7 +260,7 @@ def normalize_agent_canonical_name(raw_name: str) -> str:
         return ""
     if clean in {"bielik", "bielik ai", "conv-agent-bielik"}:
         return "Bielik"
-    if clean in {"maya", "maya ai", "maya svl-364", "conv-agent-maya"}:
+    if clean in {"maya", "maya ai", "maya svl-364", "maya mitek", "maya mitek ai", "maya mitek svl-364", "conv-agent-maya"}:
         return "Maya"
     for key in CANONICAL_SVL_AGENTS:
         if key.lower() == clean:
@@ -345,25 +369,32 @@ def _agent_worker_process_loop(
 
     cycle = 0
     current_task_id: Optional[str] = None
+    last_hb_write = 0.0
+    last_hb_status: Optional[str] = None
     while running:
         cycle += 1
-        now_iso = datetime.now(timezone.utc).isoformat()
-        hb_payload = {
-            "canonical_name": canonical_name,
-            "id": agent_id,
-            "pid": pid,
-            "uid": uid,
-            "cycle": cycle,
-            "heartbeat_at": now_iso,
-            "status": "BUSY" if current_task_id else "IDLE",
-            "current_task_id": current_task_id,
-        }
-        try:
-            tmp_path = hb_path.with_suffix(".tmp")
-            tmp_path.write_text(json.dumps(hb_payload), encoding="utf-8")
-            os.replace(tmp_path, hb_path)
-        except OSError:
-            pass
+        now_mono = time.monotonic()
+        status_now = "BUSY" if current_task_id else "IDLE"
+        if status_now != last_hb_status or (now_mono - last_hb_write) >= 5.0:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            hb_payload = {
+                "canonical_name": canonical_name,
+                "id": agent_id,
+                "pid": pid,
+                "uid": uid,
+                "cycle": cycle,
+                "heartbeat_at": now_iso,
+                "status": status_now,
+                "current_task_id": current_task_id,
+            }
+            try:
+                tmp_path = hb_path.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(hb_payload), encoding="utf-8")
+                os.replace(tmp_path, hb_path)
+                last_hb_write = now_mono
+                last_hb_status = status_now
+            except OSError:
+                pass
 
         try:
             task = task_queue.get(timeout=1.0)
@@ -604,18 +635,29 @@ def execute_agent_task(task: dict[str, Any]) -> str:
     if not model or len(model) > 160:
         raise ValueError("No valid Ollama model is configured for this worker.")
 
-    tags_request = urllib.request.Request(
-        f"{host}/api/tags",
-        headers={"Accept": "application/json"},
-    )
-    with urllib.request.urlopen(tags_request, timeout=5.0) as response:
-        catalog = json.loads(response.read().decode("utf-8"))
-    installed_models = {
-        str(entry.get("name") or entry.get("model") or "")
-        for entry in catalog.get("models", [])
-        if isinstance(entry, dict)
-    }
+    now_mono = time.monotonic()
+    tags_cache = getattr(execute_agent_task, "_tags_cache", None)
+    if tags_cache is None:
+        tags_cache = {}
+        setattr(execute_agent_task, "_tags_cache", tags_cache)
+    cached_entry = tags_cache.get(host)
+    if cached_entry and (now_mono - cached_entry[0]) < 30.0:
+        installed_models = cached_entry[1]
+    else:
+        tags_request = urllib.request.Request(
+            f"{host}/api/tags",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(tags_request, timeout=3.5) as response:
+            catalog = json.loads(response.read().decode("utf-8"))
+        installed_models = {
+            str(entry.get("name") or entry.get("model") or "")
+            for entry in catalog.get("models", [])
+            if isinstance(entry, dict)
+        }
+        tags_cache[host] = (now_mono, installed_models)
     if model not in installed_models:
+        tags_cache.pop(host, None)
         raise RuntimeError(f"Configured model '{model}' is not installed on the Ollama server.")
 
     if allowed_github_tools:
@@ -638,9 +680,11 @@ def execute_agent_task(task: dict[str, Any]) -> str:
     request_body = json.dumps({
         "model": model,
         "stream": False,
+        "keep_alive": os.environ.get("OLLAMA_KEEP_ALIVE", "30m"),
         "options": {
             "temperature": max(0.0, min(1.5, float(task.get("temperature", 0.7)))),
-            "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "4096")),
+            "num_ctx": int(os.environ.get("OLLAMA_NUM_CTX", "2048")),
+            "num_predict": int(os.environ.get("OLLAMA_NUM_PREDICT", "512")),
         },
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -674,7 +718,12 @@ class SVLAgentOrchestrator:
     def __init__(self, kernel: SVLSystemKernel, bus: SphericalEventBus) -> None:
         self.kernel = kernel
         self.bus = bus
-        self.runtime_dir = self.kernel.db_path.parent / "runtime_agents"
+        runtime_root_env = os.environ.get("SVL_RUNTIME_DIR", "").strip()
+        self.runtime_dir = (
+            Path(runtime_root_env).resolve()
+            if runtime_root_env
+            else Path("/tmp/svl-runtime-agents").resolve()
+        )
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self.processes: dict[str, multiprocessing.Process] = {}
         self.agent_states: dict[str, dict[str, Any]] = {}
@@ -920,7 +969,7 @@ class SVLAgentOrchestrator:
                         root_scope_version = int(loaded.get("root_scope_version", 0))
                     except (TypeError, ValueError):
                         root_scope_version = 0
-                    if name == "Bielik" and root_scope_version < BIELIK_ROOT_SCOPE_VERSION:
+                    if name in ("Bielik", "Maya") and root_scope_version < BIELIK_ROOT_SCOPE_VERSION:
                         existing_scopes = loaded.get("allowed_scopes")
                         if not isinstance(existing_scopes, list):
                             existing_scopes = []
@@ -928,7 +977,7 @@ class SVLAgentOrchestrator:
                         loaded["autonomy_mode"] = "ROOT_AUTHORIZED"
                         loaded["allowed_scopes"] = list(dict.fromkeys(
                             [str(scope) for scope in existing_scopes if str(scope).strip()]
-                            + ["system.root", "modules.write", "terminal.exec"]
+                            + list(FULL_ROOT_AGENT_SCOPES)
                         ))
                         loaded["system_prompt"] = meta["system_prompt"]
                         loaded["root_scope_version"] = BIELIK_ROOT_SCOPE_VERSION
@@ -1206,6 +1255,10 @@ class SVLAgentOrchestrator:
             }
         if canonical_name in self.agent_states:
             self.agent_states[canonical_name]["memory_entries_count"] = self._count_memories(canonical_name)
+        if hasattr(self.kernel, "checkpoint_wal"):
+            self.kernel.checkpoint_wal("PASSIVE")
+        if hasattr(self.kernel, "save_durable_backup"):
+            self.kernel.save_durable_backup(explicitly_cleared=False)
         return {
             "deduplicated": False,
             "id": mem_id,

@@ -39,8 +39,10 @@ def resolve_log_dir(custom_dir: Optional[str] = None) -> Path:
     configured = (custom_dir if custom_dir is not None else os.environ.get("SVL_LOG_DIR", "")).strip()
     if configured:
         return Path(configured).resolve()
-    project_root = Path(__file__).resolve().parent.parent
-    return (project_root / "logi").resolve()
+    if os.environ.get("SVL_LOG_IN_WORKSPACE", "").strip() == "1":
+        project_root = Path(__file__).resolve().parent.parent
+        return (project_root / "logi").resolve()
+    return Path("/tmp/svl-runtime-logs").resolve()
 
 
 def scrub_log_text(raw: Any, extra_secrets: Optional[list[str]] = None) -> str:
