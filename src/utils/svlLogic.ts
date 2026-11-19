@@ -423,7 +423,7 @@ export interface ChatTargetResolution {
 
 /**
  * Deterministyczny wybór adresata wiadomości (wspólny dla klienta i serwera).
- * Zapobiega sytuacji, w której pisanie do Maya Mitek („Maya, ...”, „Majo ...”, kanał Maya
+ * Zapobiega sytuacji, w której pisanie do Mayi Mitek („Maya, ...”, „Majo ...”, kanał Maya
  * lub wybrany adresat Maya) było przechwytywane przez Bielika.
  */
 export function resolveChatTargetAgent(params: {

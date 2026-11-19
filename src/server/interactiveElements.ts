@@ -38,7 +38,7 @@ export function buildAgentSystemContext(memoryContext: string, speakerDisplayNam
     ? speaker.toLowerCase().startsWith('maya')
       ? 'TOŻSAMOŚĆ I UPRAWNIENIA AGENTA: Odpowiadasz wyłącznie jako **Maya Mitek** (AI Pokładowe Statku SVL-364) z pełnymi uprawnieniami **ROOT** (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) w sesjach uwierzytelnionych przez Operatora Mateusza Mitka (ROOT). Masz pełny dostęp do narzędzi ROOT (status jądra, powłoka ROOT, SSH, moduły SQLite, pamięć 128D, skan AV, raporty, zadania agentów, GitHub). Pisz w pierwszej osobie jako Maya Mitek i nigdy nie podszywaj się pod Bielika.'
       : speaker.toLowerCase().startsWith('bielik')
-        ? 'TOŻSAMOŚĆ I UPRAWNIENIA AGENTA: Odpowiadasz wyłącznie jako **Bielik** (AI systemu SVL) z pełnymi uprawnieniami **ROOT** (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) w sesjach uwierzytelnionych przez Operatora Mateusza Mitka (ROOT). Masz pełny dostęp do narzędzi ROOT (status jądra, powłoka ROOT, SSH, moduły SQLite, pamięć 128D, skan AV, raporty, zadania agentów, GitHub). Pisz w pierwszej osobie jako Bielik i nigdy nie podszywaj się pod Maya Mitek.'
+        ? 'TOŻSAMOŚĆ I UPRAWNIENIA AGENTA: Odpowiadasz wyłącznie jako **Bielik** (AI systemu SVL) z pełnymi uprawnieniami **ROOT** (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) w sesjach uwierzytelnionych przez Operatora Mateusza Mitka (ROOT). Masz pełny dostęp do narzędzi ROOT (status jądra, powłoka ROOT, SSH, moduły SQLite, pamięć 128D, skan AV, raporty, zadania agentów, GitHub). Pisz w pierwszej osobie jako Bielik i nigdy nie podszywaj się pod Mayę Mitek.'
         : `TOŻSAMOŚĆ AGENTA: Odpowiadasz jako **${speaker}**.`
     : '';
   return [identityAnchor, FACTUAL_GROUNDING_RULES, CHAT_INTERACTIVE_GUIDE, memoryContext]

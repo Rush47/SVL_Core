@@ -79,6 +79,16 @@ interface ChatWorkspaceProps {
   onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
 
+/** Usuwa z etykiety modelu powtórzoną na początku nazwę nadawcy (np. „Maya Mitek · …”). */
+function stripSenderPrefix(label: string, names: Array<string | undefined>): string {
+  let out = label.trim();
+  for (const name of names) {
+    const n = String(name || '').trim();
+    if (n && out.toLowerCase().startsWith(`${n.toLowerCase()} · `)) out = out.slice(n.length + 3).trim();
+  }
+  return out;
+}
+
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {
   const {
     tabOrigin,
@@ -181,6 +191,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesScrollRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const prevConvIdRef = useRef('');
   const prevMsgCountRef = useRef<number>(0);
 
   const [duplexActive, setDuplexActive] = useState(false);
@@ -192,6 +203,24 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const prevDuplexActiveRef = useRef<boolean>(duplexActive);
 
   const activeConv = conversations.find((c) => c.id === activeConvId) || conversations[0];
+
+  // Ile wiadomości każdego kanału Operator już widział — nowe powiadomienia Mayi na innym kanale
+  // dostają znacznik na liście kanałów.
+  const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setSeenCounts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const conv of conversations) {
+        const len = conv.messages.length;
+        if ((next[conv.id] === undefined && len > 0) || (conv.id === activeConv?.id && next[conv.id] !== len)) {
+          next[conv.id] = len;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [conversations, activeConv?.id]);
 
   useEffect(() => {
     if (healthData?.ollama?.ollama_host && !ollamaUrlDirtyRef.current) {
@@ -223,9 +252,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     const msgCount = activeConv?.messages.length || 0;
     const prevCount = prevMsgCountRef.current;
     prevMsgCountRef.current = msgCount;
+    const container = messagesScrollRef.current;
+    // Zmiana kanału: zawsze najnowsze wiadomości (np. świeże powiadomienia Mayi na „wszyscy”).
+    const convId = activeConv?.id || '';
+    if (convId !== prevConvIdRef.current) {
+      prevConvIdRef.current = convId;
+      requestAnimationFrame(() => {
+        const box = messagesScrollRef.current;
+        if (box) box.scrollTop = box.scrollHeight;
+      });
+      return;
+    }
     if (msgCount === prevCount && !isSending) return;
 
-    const container = messagesScrollRef.current;
     if (!container) return;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < 180 || isSending) {
@@ -1011,6 +1050,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               const isNotification = msg.role === 'system';
               const isFamilyChannel = currentConvId === 'conv-rodzina-mitek-wszyscy';
               const formattedSender = isUser ? msg.sender : formatAgentDisplayName(msg.sender);
+              // Etykieta modelu bez powtórzonej nazwy nadawcy („Maya Mitek · Maya Mitek · …”).
+              const modelLabel = stripSenderPrefix(String(msg.modelUsed || ''), [formattedSender, msg.sender]);
               const agentMeta = CANONICAL_AGENTS.find(
                 (a) =>
                   a.canonicalName === msg.sender ||
@@ -1040,10 +1081,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                     >
                       {formattedSender}
                     </span>
-                    {msg.modelUsed && (
+                    {modelLabel && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <span className="font-mono text-slate-500">{msg.modelUsed}</span>
+                        <span className="font-mono text-slate-500">{modelLabel}</span>
                       </>
                     )}
                     <span aria-hidden="true">·</span>
@@ -1078,7 +1119,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                         <span className="inline-flex items-center gap-1.5">
                           <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
                           {msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
-                            ? 'Powiadomienie od Maya Mitek'
+                            ? 'Powiadomienie od Mayi Mitek'
                             : isFamilyChannel
                               ? 'Powiadomienie · kanał grupowy'
                               : 'Wiadomość systemowa'}
@@ -1306,6 +1347,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const isFamilyChan =
               conv.id === 'conv-rodzina-mitek-wszyscy' ||
               conv.title.toLowerCase().includes('rodzina mitek');
+            const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
+            const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
+            const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
             return (
               <div
                 key={conv.id}
@@ -1335,6 +1379,23 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   <div className="font-medium truncate flex items-center gap-1.5">
                     {isFamilyChan && <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     <span className="truncate">{conv.title}</span>
+                    {unseenNotifications > 0 && (
+                      <span
+                        className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200"
+                        title="Nowe powiadomienia od Mayi Mitek"
+                      >
+                        <BellRing className="w-3 h-3" aria-hidden="true" />
+                        {unseenNotifications}
+                      </span>
+                    )}
+                    {unseenNotifications === 0 && unseenReplies > 0 && (
+                      <span
+                        className="ml-auto shrink-0 rounded-full bg-violet-500/20 border border-violet-400/40 px-1.5 py-0.5 text-[10px] font-semibold text-violet-200"
+                        title="Nowe odpowiedzi AI"
+                      >
+                        {unseenReplies}
+                      </span>
+                    )}
                   </div>
                   <div className="text-[11px] text-slate-500 font-mono tabular-nums mt-0.5">
                     {conv.messages.length} wiad. · {conv.updatedAt}
@@ -1978,7 +2039,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
                   ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
                   : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
-                    ? 'Wydaj polecenie dla Maya Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
+                    ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
                     : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"

@@ -2754,7 +2754,7 @@ class SVLSystemKernel:
             f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Maya Mitek (AI statku SVL-364)** · **Mateusz Mitek (Operator)**\n"
             f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`)\n"
             f"- **Aktywne Moduły Systemowe ({active_mod_count}):** {mod_badges} · Wolny dysk `/` `{disk_free} GB`\n\n"
-            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Maya Mitek o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
+            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Mayę Mitek o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
         )
 
     def generate_comprehensive_svl_system_markdown_report(self, directive_context: str = "Pełna diagnostyka SVL_System i statku SVL-364") -> str:
@@ -2878,7 +2878,7 @@ class SVLSystemKernel:
         origin: str = "python-kernel",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        """Pełny raport (skan, raport systemu) publikowany przez Maya Mitek na wybranym kanale (domyślnie „wszyscy”)."""
+        """Pełny raport (skan, raport systemu) publikowany przez Mayę Mitek na wybranym kanale (domyślnie „wszyscy”)."""
         msg_id = f"{message_prefix}-{uuid.uuid4().hex[:12]}"
         target_conv_id = str(conversation_id or "").strip() or self.FAMILY_CHANNEL_ID
         if target_conv_id == self.FAMILY_CHANNEL_ID:
