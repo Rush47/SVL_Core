@@ -1162,8 +1162,27 @@ export function getSvlOperatorAccessToken(): string {
   }
   return svlOperatorAccessToken;
 }
+// Serwer domyślnie NIE wymaga SVL_OPERATOR_TOKEN (wymóg włącza SVL_REQUIRE_OPERATOR_TOKEN=1).
+// Tryb potwierdza /api/operator/status (pole tokenRequired); do tego czasu zakładamy domyślny.
+let svlOperatorTokenRequired = false;
+export function setSvlOperatorTokenRequired(required: boolean): void {
+  const next = Boolean(required);
+  if (next === svlOperatorTokenRequired) return;
+  svlOperatorTokenRequired = next;
+  try {
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('svl-operator-token-changed', { detail: getSvlOperatorAccessToken() }));
+    }
+  } catch {
+    // ignore
+  }
+}
+export function isSvlOperatorTokenRequired(): boolean {
+  return svlOperatorTokenRequired;
+}
+/** Czy przeglądarka ma prawa operatora: token wpisany albo serwer go nie wymaga. */
 export function hasSvlOperatorAccessToken(): boolean {
-  return getSvlOperatorAccessToken().length > 0;
+  return !svlOperatorTokenRequired || getSvlOperatorAccessToken().length > 0;
 }
 
 

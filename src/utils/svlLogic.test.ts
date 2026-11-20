@@ -13,6 +13,7 @@ import {
   getSvlOperatorAccessToken,
   guardUnverifiedMissionCompletion,
   hasSvlOperatorAccessToken,
+  setSvlOperatorTokenRequired,
   isUnsafeChatInteractiveAction,
   mergeConversationThreads,
   normalizeAgentCanonicalName,
@@ -384,10 +385,16 @@ test('operator access token stays strictly in memory', () => {
   const prevOp = getSvlOperatorAccessToken();
   try {
     setSvlOperatorAccessToken('');
+    // Domyślnie serwer nie wymaga tokenu — prawa operatora bez wpisywania.
+    setSvlOperatorTokenRequired(false);
+    assert.equal(hasSvlOperatorAccessToken(), true);
+    // Przy SVL_REQUIRE_OPERATOR_TOKEN=1 bez tokenu nie ma praw.
+    setSvlOperatorTokenRequired(true);
     assert.equal(hasSvlOperatorAccessToken(), false);
     setSvlOperatorAccessToken('op_secret_token_32_characters_minimum_xyz');
     assert.equal(hasSvlOperatorAccessToken(), true);
   } finally {
+    setSvlOperatorTokenRequired(false);
     setSvlOperatorAccessToken(prevOp);
   }
 });

@@ -3,7 +3,7 @@
 ## 1. Serwer MCP systemu (`/mcp/svl`)
 
 Jeden serwer MCP dla całego SVL Python OS. Łączy się z nim Claude Code, Claude Desktop
-albo dowolny klient MCP (Streamable HTTP). Uwierzytelnienie: `Authorization: Bearer <SVL_OPERATOR_TOKEN>`.
+albo dowolny klient MCP (Streamable HTTP). Uwierzytelnienie: domyślnie niewymagane; przy `SVL_REQUIRE_OPERATOR_TOKEN=1` — `Authorization: Bearer <SVL_OPERATOR_TOKEN>`.
 
 | Narzędzie | Co robi |
 | --- | --- |

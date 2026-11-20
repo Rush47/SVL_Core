@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Images, Upload, ThumbsUp, ThumbsDown, Trash2, Loader2 } from 'lucide-react';
-import { safeFetchJson, getSvlOperatorAccessToken } from '../utils/svlLogic';
+import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } from '../utils/svlLogic';
 
 interface Opinion { agent: string; verdict: 'like' | 'dislike'; comment: string; model: string }
 interface GalleryItem { id: string; imageDataUrl: string; uploadedAt: string; opinions: Opinion[] }
@@ -15,7 +15,7 @@ export const GalleryPanel: React.FC = () => {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!getSvlOperatorAccessToken()) {
+    if (!hasSvlOperatorAccessToken()) {
       setError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby korzystać z galerii.');
       return;
     }

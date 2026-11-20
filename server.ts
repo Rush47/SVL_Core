@@ -118,6 +118,7 @@ import {
   summarizeGeminiFailures,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
+import { hasOperatorAuthorization, isOperatorTokenRequired } from './src/server/operatorAuth.ts';
 import {
   CONVERSATION_AGENTS,
   OPERATOR_LABEL,
@@ -775,21 +776,6 @@ function mcpUrlKeyMatches(candidate: string): boolean {
   }
 }
 
-function hasOperatorAuthorization(candidate: unknown): boolean {
-  if (typeof candidate !== 'string') return false;
-  const trimmedCandidate = candidate.trim();
-  if (trimmedCandidate.length < 32 || trimmedCandidate.length > 512) return false;
-  const secret = (process.env.SVL_OPERATOR_TOKEN || '').trim();
-  if (secret.length < 32) return false;
-  try {
-    const actual = Buffer.from(trimmedCandidate, 'utf8');
-    const expected = Buffer.from(secret, 'utf8');
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
-  } catch {
-    return false;
-  }
-}
-
 // ======================= OLLAMA ZE STATKU SVL-364 PRZEZ SSH =======================
 // Gdy SVL_SHIP_OLLAMA=1, cały system używa Ollamy ze statku: gateway zestawia tunel SSH
 // (local port-forward) i ustawia OLLAMA_HOST na jego lokalny koniec PRZED startem backendu
@@ -1048,7 +1034,8 @@ async function startServer() {
       });
       return;
     }
-    const token = hasOperatorAuthorization(bearer) ? bearer : String(process.env.SVL_OPERATOR_TOKEN || '').trim();
+    // Wewnętrzne wywołania MCP → brama zawsze z sekretem serwera (działa też przy SVL_REQUIRE_OPERATOR_TOKEN=1).
+    const token = String(process.env.SVL_OPERATOR_TOKEN || '').trim();
     const svlMcp = createSvlMcpServer({
       baseUrl: `http://127.0.0.1:${PORT}`,
       operatorToken: token,
@@ -1180,7 +1167,7 @@ async function startServer() {
 
   app.get('/api/operator/status', (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, authenticated: false, error: 'Nieprawidłowy token operatora.' });
+      res.status(401).json({ ok: false, authenticated: false, tokenRequired: true, error: 'Nieprawidłowy token operatora.' });
       return;
     }
     const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
@@ -1188,6 +1175,7 @@ async function startServer() {
     res.json({
       ok: true,
       authenticated: true,
+      tokenRequired: isOperatorTokenRequired(),
       operator: 'Mateusz Mitek',
       role: 'root',
       autonomyMode: 'ROOT_AUTHORIZED',
@@ -2073,10 +2061,16 @@ async function startServer() {
       });
       return;
     }
+    let pyBody = method === 'POST' ? req.body : undefined;
+    // Jądro Pythona samo sprawdza token przy zapisie rekordu aktualizacji. Gdy token operatora
+    // nie jest wymagany, brama podaje sekret serwera (przeglądarka go nie zna).
+    if (pyBody && req.path === '/api/py/kernel/record-update' && !isOperatorTokenRequired() && !String(pyBody.token || '').trim()) {
+      pyBody = { ...pyBody, token: String(process.env.SVL_OPERATOR_TOKEN || '') };
+    }
     const result = await callPythonBackend(
       method,
       fullEndpoint,
-      method === 'POST' ? req.body : undefined,
+      pyBody,
       corrId,
       6,
       timeoutMs,
@@ -5817,11 +5811,13 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // WebSocket Vite zawsze na tym samym serwerze i porcie co aplikacja. Klient Vite 8 łączy się
-        // zawsze — bez serwera (port 24678) każde wczytanie strony dawało nieobsłużony błąd
-        // „WebSocket closed without opened”. Przy DISABLE_HMR obserwowanie plików jest wyłączone
-        // (vite.config.ts: watch null), więc połączenie nie powoduje przeładowań.
-        ws: { server: httpServer },
+        // Przy DISABLE_HMR (podgląd AI Studio) HMR i WebSocket Vite są całkowicie wyłączone.
+        // Klient Vite po każdym zerwaniu swojego WebSocketu (proxy podglądu zrywa bezczynne
+        // połączenia) czeka na serwer i robi location.reload() — strona przeładowywała się
+        // w kółko. Bez HMR klient Vite nie otwiera żadnego połączenia.
+        // Lokalnie WebSocket Vite działa na tym samym serwerze i porcie co aplikacja.
+        hmr: hmrDisabled ? false : { server: httpServer },
+        ws: hmrDisabled ? false : { server: httpServer },
       },
       appType: 'spa',
     });

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, Play, Pause, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, Wrench, Lightbulb } from 'lucide-react';
-import { safeFetchJson, getSvlOperatorAccessToken } from '../utils/svlLogic';
+import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } from '../utils/svlLogic';
 
 type Severity = 'OK' | 'INFO' | 'WARN' | 'ALERT';
 interface MissionFinding { severity: Severity; category: string; title: string; detail: string }
@@ -48,7 +48,7 @@ export const MayaMissionPanel: React.FC = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!getSvlOperatorAccessToken()) {
+    if (!hasSvlOperatorAccessToken()) {
       setError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby zobaczyć misję Maya Mitek.');
       setState(null);
       return;

@@ -15,7 +15,7 @@ import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
 import { ApexCommandDock, ApexTelemetryRibbon } from './components/ApexCommandDock';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
-import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from './utils/svlLogic';
+import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
 type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'maya' | 'gallery' | 'terminals' | 'kernel' | 'linux';
@@ -96,12 +96,7 @@ function SVLWorkspaceShell() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!operatorToken) {
-      firstAuthCheckRef.current = false;
-      setOperatorAuthStatus('none');
-      reconnectWebSocket();
-      return;
-    }
+    // Status sprawdzamy też bez tokenu: serwer domyślnie go nie wymaga (tokenRequired: false).
     setOperatorAuthStatus('checking');
     const isInitial = firstAuthCheckRef.current;
     firstAuthCheckRef.current = false;
@@ -113,17 +108,21 @@ function SVLWorkspaceShell() {
         role?: string;
         uid?: number;
         scopes?: string[];
+        tokenRequired?: boolean;
       }>(
         '/api/operator/status',
         {
           timeoutMs: 8000,
           maxRetries: 0,
-          headers: {'X-SVL-Operator-Token': operatorToken},
+          headers: operatorToken ? {'X-SVL-Operator-Token': operatorToken} : {},
         },
       );
       if (cancelled) return;
+      if (typeof result.data?.tokenRequired === 'boolean') {
+        setSvlOperatorTokenRequired(result.data.tokenRequired);
+      }
       const authorized = result.ok && result.data?.ok && result.data?.authenticated === true;
-      setOperatorAuthStatus(authorized ? 'authorized' : 'denied');
+      setOperatorAuthStatus(authorized ? 'authorized' : operatorToken ? 'denied' : 'none');
       setOperatorRootInfo(
         authorized
           ? {

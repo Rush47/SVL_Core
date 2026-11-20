@@ -6,7 +6,7 @@ import {
 import {
   TerminalLogLine,
   TerminalTabId,
-  getSvlOperatorAccessToken,
+  getSvlOperatorAccessToken, hasSvlOperatorAccessToken,
   safeFetchJson,
   setSvlOperatorAccessToken,
 } from '../utils/svlLogic';
@@ -137,7 +137,7 @@ export const TerminalsWorkspace: React.FC = () => {
   const [isSavingSshConfig, setIsSavingSshConfig] = useState(false);
 
   const loadSshBridgeStatus = async () => {
-    if (!getSvlOperatorAccessToken()) return;
+    if (!hasSvlOperatorAccessToken()) return;
     const res = await safeFetchJson<any>('/api/svl364/ssh-mcp/status', { timeoutMs: 8000 });
     if (res.ok && res.data?.ok) {
       setSshBridgeStatus(res.data.ssh || null);

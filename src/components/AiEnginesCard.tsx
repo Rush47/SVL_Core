@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Cpu, Satellite, Sparkles, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
-import { safeFetchJson, getSvlOperatorAccessToken } from '../utils/svlLogic';
+import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } from '../utils/svlLogic';
 
 interface OllamaModel { name: string; size: number | null; parameterSize: string | null; vision: boolean }
 interface ShipTunnel { enabled: boolean; status: string; target: string; localUrl: string; description: string; error: string | null }
@@ -51,7 +51,7 @@ export const AiEnginesCard: React.FC = () => {
   };
 
   const refresh = useCallback(async () => {
-    if (!getSvlOperatorAccessToken()) {
+    if (!hasSvlOperatorAccessToken()) {
       setError('Odblokuj dostęp przyciskiem 🔒 SVL, aby zobaczyć silniki AI.');
       setState(null);
       return;

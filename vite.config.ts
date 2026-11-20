@@ -1,11 +1,39 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+const hmrDisabled = process.env.DISABLE_HMR === 'true';
+
+/**
+ * Podgląd AI Studio (DISABLE_HMR=true): klient Vite nie otwiera WebSocketu.
+ * Proxy podglądu zrywa bezczynne WebSockety, a klient Vite po każdym zerwaniu czeka na serwer
+ * i robi location.reload() — podgląd przeładowywał się w kółko. Bez HMR to połączenie nic nie
+ * daje, więc usuwamy tylko jego otwarcie (style i reszta klienta działają bez zmian).
+ */
+function noViteClientSocket(): Plugin {
+  const CONNECT_CALLS = [
+    'transport.connect(createHMRHandler(handleMessage));',
+    'setupForwardConsoleHandler(transport, forwardConsole);',
+  ];
+  return {
+    name: 'svl-no-vite-client-socket',
+    apply: 'serve',
+    enforce: 'post',
+    transform(code, id) {
+      if (!/vite\/dist\/client\/client\.mjs/.test(id.replace(/\\/g, '/'))) return null;
+      if (!CONNECT_CALLS.every((call) => code.includes(call))) {
+        this.warn('Nie rozpoznano klienta Vite — WebSocket Vite pozostaje włączony (możliwe przeładowania podglądu).');
+        return null;
+      }
+      return CONNECT_CALLS.reduce((out, call) => out.replace(call, '/* SVL: DISABLE_HMR — bez WebSocketu Vite */'), code);
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), ...(hmrDisabled ? [noViteClientSocket()] : [])],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('.', import.meta.url)),
@@ -31,9 +59,9 @@ export default defineConfig(() => {
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      ws: process.env.DISABLE_HMR === 'true' ? false : {},
+      ws: hmrDisabled ? false : {},
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch: hmrDisabled ? null : {},
     },
   };
 });

@@ -6,7 +6,7 @@ import {
   Check,
   RefreshCw,
 } from 'lucide-react';
-import { createUniqueId, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
+import { createUniqueId, getSvlOperatorAccessToken, hasSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
 import { useSvlSync } from '../utils/svlSyncStore';
 
 const DEFAULT_COREOS2_FILES = [
@@ -181,7 +181,7 @@ export const LinuxDeployDashboard: React.FC = () => {
 
   const effectiveOperatorToken = operatorTokenInput || getSvlOperatorAccessToken();
   useEffect(() => {
-    if (!effectiveOperatorToken) return;
+    if (!effectiveOperatorToken && !hasSvlOperatorAccessToken()) return;
     void safeFetchJson<any>('/api/files?path=SVL_CoreOS_2&tree=1', {
       timeoutMs: 10000,
       headers: { 'X-SVL-Operator-Token': effectiveOperatorToken },
@@ -195,7 +195,7 @@ export const LinuxDeployDashboard: React.FC = () => {
   useEffect(() => {
     const controller = new AbortController();
     async function loadFile() {
-      if (!effectiveOperatorToken) {
+      if (!effectiveOperatorToken && !hasSvlOperatorAccessToken()) {
         setFileContent('Aby odczytać plik, wprowadź SVL_OPERATOR_TOKEN w głównym pasku 🔒 SVL lub w tym panelu.');
         return;
       }

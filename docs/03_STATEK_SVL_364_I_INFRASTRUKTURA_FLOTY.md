@@ -31,7 +31,7 @@ Zakładka pokazuje wyłącznie pomiary. Brak źródła = napis „brak danych”
 | Ollama, ComfyUI | zapytanie HTTP z pomiarem czasu; wbudowany zastępnik Ollamy jest oznaczany jako „nie prawdziwa Ollama” |
 | Host SSH (`SVL_SSH_TARGET`) | `ssh -G` + pomiar połączenia TCP; zdalne CPU/RAM/dysk przez OpenSSH co 60 s |
 
-Endpoint: `GET /api/py/svl364/telemetry?ship=1` (wymaga `SVL_OPERATOR_TOKEN`).
+Endpoint: `GET /api/py/svl364/telemetry?ship=1` (przy `SVL_REQUIRE_OPERATOR_TOKEN=1` wymaga `SVL_OPERATOR_TOKEN`).
 
 Usunięto fikcyjny stan statku (sektor, orbita, reaktor, tarcze, DEFCON), mapę galaktyki,
 łącze „QKD-364”, narzędzia MCP `svl364_starship_helm`, `svl364_tactical_shields`,
@@ -42,7 +42,7 @@ Backend przy starcie usuwa ich stare kopie — tylko pliki o dokładnie tej tre�
 ## Zakładka Infrastruktura — źródła danych
 
 Fikcyjne dane (flota statków, placówki planetarne, botanika, badania z ETA) zostały usunięte.
-Endpoint `GET /api/py/infrastructure` (wymaga `SVL_OPERATOR_TOKEN`, `backend/infrastructure_probe.py`):
+Endpoint `GET /api/py/infrastructure` (przy `SVL_REQUIRE_OPERATOR_TOKEN=1` wymaga `SVL_OPERATOR_TOKEN`, `backend/infrastructure_probe.py`):
 
 | Sekcja | Źródło |
 | :--- | :--- |
