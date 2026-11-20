@@ -2859,6 +2859,9 @@ async function startServer() {
     // Przyciski potwierdzeń operacji GitHub zleconych przez AI (dopisywane pod odpowiedzią).
     const githubConfirmationButtons: string[] = [];
     (res as any).json = (body: any) => {
+      if (replyConversationId === 'conv-svl364-komputer-pokladowy') {
+        body = { ...body, sender: 'Komputer pokładowy', agentId: 'KomputerPokladowy' };
+      }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
       const failed = !body || body.ok !== true || body.provenance === 'error';
       svlFileLogger.log({

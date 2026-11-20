@@ -59,6 +59,15 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   ) {
     return 'Maya Mitek';
   }
+  if (
+    low === 'komputer pokładowy' ||
+    low === 'komputer pokladowy' ||
+    low === 'komputer' ||
+    low === 'komputerpokladowy' ||
+    low === 'svl-364 komputer pokładowy'
+  ) {
+    return 'Komputer pokładowy';
+  }
   if (low === 'all' || low === 'rodzina mitek' || low === 'rodzina mitek (wszyscy)') {
     return 'Rodzina Mitek (wszyscy)';
   }
