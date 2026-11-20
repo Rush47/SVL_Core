@@ -29,10 +29,11 @@ export default defineConfig(() => {
       ],
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      ws: process.env.DISABLE_HMR === 'true' ? false : {},
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+      // W AI Studio (DISABLE_HMR=true) wyłączamy TYLKO obserwowanie plików, żeby edycje agenta
+      // nie wywoływały przeładowań/migotania podglądu. Połączenia HMR WebSocket NIE wyłączamy
+      // przez `ws: false` — to odsyłało klienta @vite/client na nieosiągalny port 24678
+      // („WebSocket closed without opened” w pętli). Sam socket HMR konfiguruje server.ts
+      // (hmr.server = wspólny serwer HTTP, ten sam origin co strona — działa też przez proxy).
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

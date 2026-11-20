@@ -5606,11 +5606,15 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // WebSocket Vite zawsze na tym samym serwerze i porcie co aplikacja. Klient Vite 8 łączy się
-        // zawsze — bez serwera (port 24678) każde wczytanie strony dawało nieobsłużony błąd
-        // „WebSocket closed without opened”. Przy DISABLE_HMR obserwowanie plików jest wyłączone
-        // (vite.config.ts: watch null), więc połączenie nie powoduje przeładowań.
-        ws: { server: httpServer },
+        // Klient Vite 8 (@vite/client) ZAWSZE się łączy. Domyślnie celuje w osobny port 24678,
+        // którego przeglądarka w AI Studio (za proxy) nie osiąga → „WebSocket closed without opened”
+        // w pętli i migotanie podglądu. Dlatego HMR podpinamy pod TEN SAM serwer/origin co aplikacja
+        // (port 3000) — połączenie przechodzi przez proxy AI Studio i nie zrywa się.
+        // Nakładka błędów wyłączona, żeby błąd nie przejmował całego podglądu.
+        hmr: { server: httpServer, overlay: false },
+        // DISABLE_HMR (AI Studio): wyłącz obserwowanie plików — połączenie HMR trwa, ale nic nie
+        // wywołuje przeładowań podczas edycji przez agenta (koniec „wariowania” podglądu).
+        watch: hmrDisabled ? null : undefined,
       },
       appType: 'spa',
     });
