@@ -46,6 +46,7 @@ const SYSTEM_COMMAND_WORDS = [
   'ollam\\p{L}*', 'model\\p{L}*', 'vision', 'plik\\p{L}*', 'katalog\\p{L}*', 'bielik\\p{L}*', 'may\\p{L}*',
   'agent\\p{L}*', 'misj\\p{L}*', 'pakiet\\p{L}*', 'komend\\p{L}*', 'polece[ńn]\\p{L}*', 'log\\p{L}*', 'mcp',
   'api',
+  'infrastruktur\\p{L}*', 'flot\\p{L}*', 'system[_-]si[_-]1', 'systemsi1',
   // Interfejs (GUI): wcześniej brakowało tych słów, więc model nie dostawał narzędzi do zmiany wyglądu.
   'motyw\\p{L}*', 'kolor\\p{L}*', 'akcent\\p{L}*', 'wygl[ąa]d\\p{L}*', 'design\\p{L}*', 'gui', 'ui',
   'interfejs\\p{L}*', 'panel\\p{L}*', 'zak[łl]adk\\p{L}*', 'ekran\\p{L}*', 'tryb\\p{L}*', 'w[łl][ąa]cz\\p{L}*',

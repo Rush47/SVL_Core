@@ -80,8 +80,48 @@ test('mcp tools: svl_chat calls SVL /api/chat', async () => {
     assert.equal(seen.body.targetAgent, 'Maya');
     assert.equal(seen.headers['X-SVL-Operator-Token'], 'op');
     assert.match(r, /Maya \[grok-4\.7\][\s\S]*Gotowe/);
+    assert.equal(seen.body.conversationId, 'conv-agent-maya');
   } finally {
     fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+});
+
+test('mcp tools: svl_chat keeps System_SI_1 and its aliases', async () => {
+  const seen: any[] = [];
+  const fetchImpl = (async (_url: string, init: any) => {
+    seen.push(JSON.parse(init.body));
+    return new Response(
+      JSON.stringify({ sender: 'System_SI_1', modelUsed: 'System_SI_1 · Ollama (llama3.2:1b · ROOT)', reply: 'Tu System_SI_1.' }),
+      { status: 200 },
+    );
+  }) as unknown as typeof fetch;
+  const ctx = mkCtx({ fetchImpl, svlOperatorToken: 'op' });
+  try {
+    for (const agent of ['System_SI_1', 'system_si_1', 'system-si-1']) {
+      const r = text(await callTool(ctx, 'svl_chat', { message: 'Przedstaw się.', agent }));
+      assert.match(r, /^System_SI_1 \[System_SI_1 · Ollama \(llama3\.2:1b · ROOT\)\]/);
+    }
+    assert.deepEqual(
+      seen.map((body) => body.targetAgent),
+      ['System_SI_1', 'System_SI_1', 'System_SI_1'],
+    );
+    assert.ok(seen.every((body) => body.conversationId === 'conv-system-si-1'));
+  } finally {
+    fs.rmSync(ctx.root, { recursive: true, force: true });
+  }
+  let unknownBody: any = null;
+  const unknownCtx = mkCtx({
+    fetchImpl: (async (_url: string, init: any) => {
+      unknownBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({ sender: 'Bielik', modelUsed: 'x', reply: 'ok' }), { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  try {
+    await callTool(unknownCtx, 'svl_chat', { message: 'hej', agent: 'nieznany' });
+    assert.equal(unknownBody.targetAgent, 'Bielik');
+    assert.equal(unknownBody.conversationId, 'conv-agent-bielik');
+  } finally {
+    fs.rmSync(unknownCtx.root, { recursive: true, force: true });
   }
 });
 
