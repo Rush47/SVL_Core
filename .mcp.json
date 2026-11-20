@@ -2,7 +2,7 @@
   "mcpServers": {
     "svl-core": {
       "type": "http",
-      "url": "${SVL_MCP_URL:-http://127.0.0.1:3000/mcp/svl}",
+      "url": "http://127.0.0.1:3000/mcp/svl",
       "headers": {
         "Authorization": "Bearer ${SVL_OPERATOR_TOKEN}"
       }

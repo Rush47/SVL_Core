@@ -27,7 +27,7 @@ npx vite build         # build frontendu
 - Logi systemu: `logi/*.txt` (kategorie m.in. `ai_chat`, `ai_models`, `github`, `ship_monitor`).
 
 ## MCP
-`.mcp.json` łączy Claude Code z działającym systemem (`svl-core`); opcjonalnie ustaw `SVL_MCP_URL`.
+`.mcp.json` łączy Claude Code z działającym systemem (`svl-core`, `http://127.0.0.1:3000/mcp/svl`). Adres jest wpisany na stałe, bo Copilot nie rozwija składni `${VAR:-domyślna}` w `url` i odrzuca cały plik; inny adres zmień bezpośrednio w `.mcp.json`.
 Token operatora domyślnie nie jest wymagany — `SVL_REQUIRE_OPERATOR_TOKEN=1` włącza wymóg
 (wtedy ustaw też `SVL_OPERATOR_TOKEN` w środowisku). Narzędzia: `svl_status`, `svl_chat`, `svl_conversation`,
 `svl_terminal`, `svl_ship_telemetry`, `svl_logs`, `svl_memory_*`, `svl_github`, `svl_notify`,
