@@ -775,7 +775,16 @@ function mcpUrlKeyMatches(candidate: string): boolean {
   }
 }
 
+// Czy token operatora jest wymagany. Na życzenie Operatora autoryzacja jest DOMYŚLNIE WYŁĄCZONA
+// — system działa bez tokena (pełny dostęp dla każdego, kto dojdzie do adresu). Aby PRZYWRÓCIĆ
+// wymóg logowania, ustaw SVL_REQUIRE_OPERATOR_AUTH=1 (zalecane, jeśli adres jest publiczny).
+const OPERATOR_AUTH_REQUIRED = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.SVL_REQUIRE_OPERATOR_AUTH || '').trim().toLowerCase(),
+);
+
 function hasOperatorAuthorization(candidate: unknown): boolean {
+  // Autoryzacja wyłączona przez Operatora: przepuszczamy wszystko (system działa bez tokena).
+  if (!OPERATOR_AUTH_REQUIRED) return true;
   if (typeof candidate !== 'string') return false;
   const trimmedCandidate = candidate.trim();
   if (trimmedCandidate.length < 32 || trimmedCandidate.length > 512) return false;
@@ -1167,6 +1176,11 @@ async function startServer() {
       stopping: pythonStopping,
       checkedAt: new Date().toISOString(),
     });
+  });
+
+  // Publiczna konfiguracja klienta (bez autoryzacji): czy token operatora jest wymagany.
+  app.get('/api/public-config', (_req, res) => {
+    res.json({ ok: true, authRequired: OPERATOR_AUTH_REQUIRED });
   });
 
   app.get('/api/health', (_req, res) => {
@@ -5935,6 +5949,10 @@ async function startServer() {
     (process.env.NODE_ENV === 'production' ? '127.0.0.1' : '0.0.0.0');
   httpServer.listen(PORT, bindHost, () => {
     console.log(`[SVL Python OS] Gateway running on http://${bindHost}:${PORT}`);
+    if (!OPERATOR_AUTH_REQUIRED) {
+      console.warn('[SVL auth] UWAGA: autoryzacja operatora WYŁĄCZONA (SVL_DISABLE_OPERATOR_AUTH). System działa BEZ tokena — pełny dostęp bez logowania. Włącz z powrotem: SVL_REQUIRE_OPERATOR_AUTH=1.');
+      svlFileLogger.log({ layer: 'GATEWAY', level: 'WARN', category: 'security', message: 'Autoryzacja operatora WYŁĄCZONA — system działa bez tokena (pełny dostęp bez logowania).' });
+    }
     svlFileLogger.log({
       layer: 'GATEWAY',
       level: 'INFO',

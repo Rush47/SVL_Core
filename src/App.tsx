@@ -45,6 +45,17 @@ function SVLWorkspaceShell() {
     return () => window.removeEventListener('svl-operator-token-changed', onTokenChanged);
   }, []);
 
+  // Jeśli serwer ma wyłączoną autoryzację operatora, odblokuj interfejs automatycznie
+  // (ustaw token zastępczy), żeby wszystko działało bez wpisywania SVL_OPERATOR_TOKEN.
+  useEffect(() => {
+    if (getSvlOperatorAccessToken()) return;
+    void safeFetchJson<{ ok: boolean; authRequired: boolean }>('/api/public-config', { timeoutMs: 6000 }).then((res) => {
+      if (res.ok && res.data?.ok && res.data.authRequired === false && !getSvlOperatorAccessToken()) {
+        setOperatorToken('svl-local-no-auth');
+      }
+    });
+  }, []);
+
   const handleSaveOperatorToken = () => {
     const trimmed = operatorToken.trim();
     trackGuiEvent({
