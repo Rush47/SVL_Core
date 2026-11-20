@@ -143,6 +143,13 @@ import {
   normalizeGuiLogBatch,
   scrubSensitiveText,
 } from './src/server/fileLogger.ts';
+import {
+  completeXaiChat,
+  getXaiModel,
+  getXaiTimeoutMs,
+  isXaiConfigured,
+  type XaiChatMessage,
+} from './src/server/xaiGrok.ts';
 
 dotenv.config();
 
@@ -548,7 +555,7 @@ function scrubRuntimeLog(input: string): string {
   let cleaned = String(input || '').replace(/\u001b\[[0-9;]*m/g, '');
   for (const key of [
     'SVL_OPERATOR_TOKEN', 'GITHUB_TOKEN',
-    'GH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY',
+    'GH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY',
   ]) {
     const value = process.env[key];
     if (value && value.length >= 8) cleaned = cleaned.split(value).join('[REDACTED]');
@@ -1233,7 +1240,7 @@ async function startServer() {
     });
   });
 
-  // Zbiorczy podgląd silników AI i dostępnych modeli (Ollama ze statku SVL-364, Gemini, obraz).
+  // Zbiorczy podgląd silników AI i dostępnych modeli (Grok, Ollama ze statku SVL-364, Gemini, obraz).
   app.get('/api/ai/engines', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN.' });
@@ -1288,6 +1295,12 @@ async function startServer() {
           ramAvailableMb: typeof ollama.host_ram_available_mb === 'number' ? ollama.host_ram_available_mb : null,
           diskFreeGb: typeof ollama.host_disk_free_gb === 'number' ? ollama.host_disk_free_gb : null,
           error: ollama.error || null,
+        },
+        grok: {
+          configured: isXaiConfigured(),
+          model: getXaiModel(),
+          timeoutMs: getXaiTimeoutMs(),
+          paid: true,
         },
         gemini: {
           configured: Boolean(gemini),
@@ -5002,7 +5015,7 @@ async function startServer() {
     }
 
 
-    // Try explicit Ollama model (or try Ollama with fast timeout when Gemini fallback is available)
+    // Grok (xAI) jest głównym silnikiem, gdy XAI_API_KEY jest ustawiony; potem Ollama, potem Gemini.
     const ai = getGeminiClient();
     // Pytania o aktualne informacje / źródła idą do Gemini z wyszukiwaniem Google (odpowiedź ze źródłami).
     const wantsWebSources = isWebSearchRequest(cleanMsg) && !wantsGitHubTools;
@@ -5037,7 +5050,32 @@ async function startServer() {
     const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
-    // Ollama: pierwsza dla Bielika i jawnego wyboru, zapasowa, gdy Gemini zawiedzie.
+    const grokConfigured = isXaiConfigured();
+    const shouldTryGrok =
+      grokConfigured &&
+      !isExplicitGemini &&
+      !isExplicitOllama &&
+      !(wantsWebSources && ai);
+    let grokFailure = shouldTryGrok
+      ? ''
+      : !grokConfigured
+        ? 'brak klucza XAI_API_KEY'
+        : isExplicitGemini
+          ? 'pominięty — wybrano konkretny model Gemini bez fallbacku'
+          : isExplicitOllama
+            ? 'pominięty — wybrano konkretny model Ollama bez fallbacku'
+            : wantsWebSources && ai
+              ? 'pominięty — pytanie o źródła obsługuje Gemini z wyszukiwaniem'
+              : 'nie użyto dla tego zapytania';
+    const grokBadgeFor = (modelName: string) =>
+      isOnboardComputerChannel
+        ? `Komputer pokładowy SVL-364 (SSH + MCP · Grok ${modelName})`
+        : selectedAgent === 'Maya'
+          ? `Maya Mitek · AI Statku SVL-364 (ROOT · Grok ${modelName})`
+          : isBielikAgent
+            ? `Bielik · Grok (${modelName} · ROOT)`
+            : `SVL-364 · Grok (${modelName})`;
+    // Ollama: zapas po Grok (albo pierwsza, gdy Grok nie jest skonfigurowany); potem Gemini.
     const tryOllama = async (): Promise<boolean> => {
       try {
         const ready = await resolveCachedOllamaModel(ollamaHost, selectedOllamaModelName, {
@@ -5199,6 +5237,123 @@ async function startServer() {
       }
       return false;
     };
+    const tryGrok = async (): Promise<boolean> => {
+      try {
+        const grokModel = getXaiModel();
+        displayModelBadge = grokBadgeFor(grokModel);
+        const grokOptsHistory = trimHistoryForOllama(agentHistory, 16, 1800);
+        const grokMessages: XaiChatMessage[] = [
+          ...(agentMemoryContext ? [{ role: 'system' as const, content: agentMemoryContext }] : []),
+          ...grokOptsHistory.map((turn: any) => ({
+            role: (turn.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user',
+            content: String(turn.content || ''),
+          })),
+        ];
+        const userText = cleanMsg ? labelOperatorText(cleanMsg) : '';
+        if (imageBase64) {
+          const cleanB64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
+          const mime = imageMimeType || 'image/png';
+          grokMessages.push({
+            role: 'user',
+            content: [
+              ...(userText ? [{ type: 'text', text: userText }] : []),
+              { type: 'image_url', image_url: { url: `data:${mime};base64,${cleanB64}` } },
+            ],
+          });
+        } else {
+          grokMessages.push({ role: 'user', content: userText });
+        }
+        let grokTools: Array<Record<string, unknown>> =
+          chatToolDeclarations.length > 0 && !imageBase64
+            ? chatToolDeclarations.map((fn) => ({
+                type: 'function',
+                function: {
+                  name: fn.name,
+                  description: fn.description,
+                  parameters: fn.parameters,
+                },
+              }))
+            : [];
+        let extReplyRaw = '';
+        let usedModel = grokModel;
+        for (let round = 0; round < 5; round++) {
+          const result = await completeXaiChat({
+            messages: grokMessages,
+            tools: grokTools,
+            temperature: effectiveTemperature,
+            timeoutMs: getXaiTimeoutMs(),
+          });
+          if (!result.ok) {
+            grokFailure = result.reason;
+            return false;
+          }
+          if (result.toolCalls.length > 0 && round < 4) {
+            grokMessages.push({
+              role: 'assistant',
+              content: result.text || '',
+              tool_calls: result.toolCalls.map((tc) => ({
+                id: tc.id,
+                type: 'function',
+                function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) },
+              })),
+            });
+            for (const tc of result.toolCalls) {
+              const toolResult = await executeChatTool(tc.name, tc.arguments);
+              grokMessages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: JSON.stringify(toolResult).slice(0, 12000),
+              });
+            }
+            continue;
+          }
+          extReplyRaw = result.text.trim();
+          usedModel = result.model || grokModel;
+          break;
+        }
+        if (extReplyRaw) {
+          displayModelBadge = grokBadgeFor(usedModel);
+          flushChatSync('ai_root_tool_applied');
+          const finalReply = cleanReplyFor(extReplyRaw);
+          const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
+          const hasVerifiedToolAction = appliedActions.some((a) => a.ok);
+          if (agentState?.canonical_name && cleanMsg) {
+            void callPythonBackend(
+              'POST',
+              '/api/py/agents/memory',
+              {
+                agent: selectedAgent,
+                kind: 'episode',
+                content: `Czat (${displayModelBadge}): "${cleanMsg.slice(0, 120)}" -> "${safeReply.slice(0, 180)}"`,
+                origin,
+                correlationId: corrId,
+              },
+              corrId,
+            ).then((memRes) => {
+              if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
+            }).catch(() => undefined);
+          }
+          res.json({
+            ok: true,
+            sender: selectedDisplayName,
+            agentId: selectedAgent,
+            modelUsed: displayModelBadge,
+            reply: safeReply,
+            provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
+            ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
+            followUpMessages: [],
+            appliedActions,
+            latestServerRevision: latestActionSrvRev,
+          });
+          return true;
+        }
+        grokFailure = grokFailure || 'model Grok zwrócił pustą odpowiedź';
+      } catch (error) {
+        grokFailure = error instanceof Error ? error.message : String(error);
+      }
+      return false;
+    };
+    if (shouldTryGrok && (await tryGrok())) return;
     if (shouldTryOllama && (await tryOllama())) return;
 
     // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models via failover, SVL-364 Router, and Gemini models)
@@ -5661,7 +5816,7 @@ async function startServer() {
       conversationalReply =
         `### 🛰️ Komputer pokładowy SVL-364 — Raport MCP / SSH (\`${hostnameVal}\`)\n\n` +
         `Odebrano zgłoszenie: *„${cleanMsg}”*. Ponieważ zewnętrzne modele LLM chwilowo nie odpowiedziały ` +
-        `(Ollama: *${ollamaFailure || 'niedostępna'}*; Gemini: *${geminiFailure || 'brak odpowiedzi'}*), ` +
+        `(Grok: *${grokFailure || 'niedostępny'}*; Ollama: *${ollamaFailure || 'niedostępna'}*; Gemini: *${geminiFailure || 'brak odpowiedzi'}*), ` +
         `Komputer pokładowy wykonał bezpośredni odczyt przez serwer **MCP SVL-364**.\n\n` +
         `| Podsystem statku | Status | Rzeczywisty odczyt |\n` +
         `| :--- | :--- | :--- |\n` +
@@ -5679,6 +5834,7 @@ async function startServer() {
         (ollamaTimedOut
           ? `⚠️ ${selectedDisplayName} nie zdążył(a) odpowiedzieć.\n\n`
           : `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie odpowiedział.\n\n`) +
+        `- **Grok:** ${grokFailure || 'brak odpowiedzi'}\n` +
         `- **Ollama:** ${ollamaFailure || 'brak odpowiedzi'}\n` +
         `- **Gemini:** ${geminiFailure || 'brak odpowiedzi'}\n\n` +
         'Polecenia czatu działają bez modelu (np. „Zapisz w pamięci, że…”, `/status`, `/moduly`, `/exec <polecenie>`). ' +
@@ -5694,7 +5850,7 @@ async function startServer() {
         : directiveReceipts.length > 0
           ? displayModelBadge
           : 'Brak dostępnego modelu AI',
-      failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
+      failureReasons: { grok: grokFailure || null, ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
       provenance: directiveReceipts.length > 0 || isOnboardComputerChannel ? 'server_verified' : 'error',
       followUpMessages: [],
@@ -5727,7 +5883,7 @@ async function startServer() {
     quota_cooldown: 'Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się automatycznie.',
   };
 
-  /** Wybór kolejnego mówcy przez Ollamę (`raw: true`) lub Gemini (krótki wybór spośród uczestników). */
+  /** Wybór kolejnego mówcy: Grok, potem Ollama (`raw: true`), potem Gemini. */
   const predictNextSpeaker = async (
     agentModel: string,
     ollamaHost: string,
@@ -5737,6 +5893,26 @@ async function startServer() {
     failures: string[],
   ): Promise<{ predicted: ConversationAgent | 'operator' | null; providerOnline: boolean }> => {
     const useGeminiOnly = requestedModel.startsWith('gemini-');
+    const useOllamaRequested = requestedModel.startsWith('ollama:');
+    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
+      const choices = [...participants, 'Operator'].join(', ');
+      const fromGrok = await completeXaiChat({
+        messages: [
+          {
+            role: 'user',
+            content:
+              `${transcript}\n\n` +
+              `Kto naturalnie zabiera głos jako następny (${choices})? Odpowiedz wyłącznie jedną nazwą.`,
+          },
+        ],
+        temperature: 0.5,
+        maxTokens: 128,
+      });
+      if (fromGrok.ok) {
+        return { predicted: parsePredictedSpeaker(fromGrok.text), providerOnline: true };
+      }
+      failures.push(fromGrok.reason);
+    }
     if (!useGeminiOnly) {
       const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${transcript}\n[`, {
         temperature: 0.7,
@@ -5801,7 +5977,7 @@ async function startServer() {
     return { predicted: null, providerOnline: true };
   };
 
-  /** Wypowiedź wskazanego agenta: najpierw Ollama (`raw: true`), awaryjnie Gemini z pamięcią długotrwałą i perspektywą agenta. */
+  /** Wypowiedź wskazanego agenta: Grok, potem Ollama (`raw: true`), awaryjnie Gemini z pamięcią i perspektywą agenta. */
   const generateAgentProactiveLine = async (
     agentModel: string,
     ollamaHost: string,
@@ -5818,6 +5994,34 @@ async function startServer() {
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
     const useGeminiOnly = requestedModel.startsWith('gemini-');
     const useOllamaRequested = requestedModel.startsWith('ollama:');
+    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
+      const perspective = toAgentPerspective(turns, speaker, 16);
+      const grokMessages: XaiChatMessage[] = [];
+      if (memoryContext) grokMessages.push({ role: 'system', content: memoryContext });
+      if (perspective.length === 0) {
+        grokMessages.push({ role: 'user', content: buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext) });
+      } else {
+        for (const turn of perspective) {
+          grokMessages.push({
+            role: turn.role === 'assistant' ? 'assistant' : 'user',
+            content: turn.content,
+          });
+        }
+        if (grokMessages[grokMessages.length - 1]?.role === 'assistant') {
+          grokMessages.push({ role: 'user', content: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` });
+        }
+      }
+      const fromGrok = await completeXaiChat({
+        messages: grokMessages,
+        temperature: 0.8,
+        maxTokens: 1100,
+        stop: ['\n[Mateusz', '\n[Operator', '\n[Bielik]:', '\n[Maya]:', '\n[Maya Mitek]:'],
+      });
+      if (fromGrok.ok && fromGrok.text.trim()) {
+        return { text: fromGrok.text, label: `Grok (${fromGrok.model})` };
+      }
+      failures.push(fromGrok.ok ? 'Grok: pusta odpowiedź' : fromGrok.reason);
+    }
     if (!useGeminiOnly) {
       const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${rawPromptPrefix}${starterBlock}`, {
         temperature: 0.8,
@@ -6650,6 +6854,14 @@ async function startServer() {
       level: 'INFO',
       category: 'gateway_listen',
       message: `SVL Gateway nasłuchuje na http://${bindHost}:${PORT}`,
+    });
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: 'INFO',
+      category: 'ai_models',
+      message: isXaiConfigured()
+        ? `Grok (xAI) włączony jako główny silnik — model ${getXaiModel()}`
+        : 'Grok (xAI) wyłączony (brak XAI_API_KEY) — używana darmowa Ollama jako zapas',
     });
     // Wstępne pobranie listy modeli Gemini w tle, żeby pierwsza wiadomość na czacie nie czekała na models.list().
     const startupAi = getGeminiClient();
