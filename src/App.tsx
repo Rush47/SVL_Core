@@ -14,6 +14,8 @@ import { GalleryPanel } from './components/GalleryPanel';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
 import { ApexCommandDock } from './components/ApexCommandDock';
+import { LiveUpdateBanner } from './components/LiveUpdateBanner';
+import { takeReloadState } from './utils/liveRepoEvents';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
@@ -21,7 +23,21 @@ import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'maya' | 'gallery' | 'terminals' | 'kernel' | 'linux';
 
 function SVLWorkspaceShell() {
-  const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('chat');
+  // Po automatycznym przeładowaniu (nowa wersja GUI) wracamy na tę samą zakładkę i pozycję.
+  const [restoredView] = useState(() => takeReloadState());
+  const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>(
+    () => {
+      const tab = String(restoredView?.activeTab || '');
+      const known: ActiveWorkspaceTab[] = ['chat', 'apex', 'svl364', 'infrastructure', 'agents', 'maya', 'gallery', 'terminals', 'kernel', 'linux'];
+      return (known as string[]).includes(tab) ? (tab as ActiveWorkspaceTab) : 'chat';
+    },
+  );
+  useEffect(() => {
+    if (typeof restoredView?.scrollY === 'number' && restoredView.scrollY > 0) {
+      const y = restoredView.scrollY;
+      setTimeout(() => window.scrollTo(0, y), 300);
+    }
+  }, [restoredView]);
   const [operatorToken, setOperatorToken] = useState(() => getSvlOperatorAccessToken());
   const [operatorAuthVisible, setOperatorAuthVisible] = useState(false);
   const [operatorAuthStatus, setOperatorAuthStatus] = useState<'none' | 'checking' | 'authorized' | 'denied'>('checking');
@@ -432,6 +448,7 @@ function SVLWorkspaceShell() {
         {activeTab === 'kernel' && <KernelDiagnosticsView />}
         {activeTab === 'linux' && <LinuxDeployDashboard />}
       </main>
+      <LiveUpdateBanner getViewState={() => ({ activeTab })} />
     </div>
   );
 }

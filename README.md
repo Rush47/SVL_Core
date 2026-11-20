@@ -40,6 +40,14 @@ i sam wystawia się do internetu tunelem Cloudflare (bez konta, stałego IP i do
 `data/svl_mcp_connector.secret`. Usługa przy starcie systemu: `sudo bash deploy/install-mcp.sh`.
 Szczegóły, tryb tylko do odczytu i stały adres: [deploy/MCP.md](deploy/MCP.md).
 
+## Zmiany z GitHuba i od AI widoczne od razu
+
+Gateway obserwuje repozytorium: po `git pull` (także automatycznym co 60 s, tylko fast-forward) i po
+edycji plików przez czat, MCP lub agentów panele odświeżają się same, GUI w trybie `npm start`
+przebudowuje się i przeładowuje karty, zmiany `backend/*.py` restartują jądro Python, a zmiany kodu
+serwera restartują gateway (pod systemd/pm2 samo, bez nadzorcy — jeden przycisk w GUI).
+Szczegóły i ustawienia: [docs/05](docs/05_GITHUB_RUSH47_SVL_CORE.md#zmiany-widoczne-od-razu-synchronizacja-na-żywo).
+
 ## Szybki Start i Testy
 
 ```bash

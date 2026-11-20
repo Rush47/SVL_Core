@@ -403,12 +403,36 @@ export function visibleTools(ctx: ToolContext): ToolDef[] {
   return TOOL_DEFS.filter((t) => !(ctx.readOnly && t.write) && !(t.name === 'run_command' && !ctx.allowShell));
 }
 
+/**
+ * Po zmianie plików zgłasza ją działającej aplikacji SVL (POST /api/live/repo-changed), żeby
+ * GUI odświeżyło się od razu. Bez tokenu operatora nic nie wysyła — obserwator plików SVL
+ * i tak wykryje zmianę. Błędy sieci są ignorowane (aplikacja może być wyłączona).
+ */
+export function notifySvlRepoChange(ctx: ToolContext, toolName: string, args: Args): void {
+  if (!ctx.svlOperatorToken || !ctx.svlBaseUrl) return;
+  const paths = [args.path, args.from, args.to]
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .map((p) => (path.isAbsolute(p) ? p : path.join(ctx.root, p)));
+  if (paths.length === 0) return;
+  try {
+    void (ctx.fetchImpl || fetch)(`${ctx.svlBaseUrl}/api/live/repo-changed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-SVL-Operator-Token': ctx.svlOperatorToken },
+      body: JSON.stringify({ paths, source: `mcp:${toolName}` }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => undefined);
+  } catch {
+    // brak fetch / zły URL — obserwator plików SVL i tak wykryje zmianę
+  }
+}
+
 export async function callTool(ctx: ToolContext, name: string, args: Args = {}): Promise<ToolResult> {
   const def = TOOL_DEFS.find((t) => t.name === name);
   try {
     if (!def) throw new Error(`Nieznane narzędzie: ${name}`);
     if (def.write && ctx.readOnly) throw new ReadOnlyError(name);
     const text = await def.handler(ctx, args || {});
+    if (def.write) notifySvlRepoChange(ctx, name, args || {});
     return { content: [{ type: 'text', text }] };
   } catch (error) {
     return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true };

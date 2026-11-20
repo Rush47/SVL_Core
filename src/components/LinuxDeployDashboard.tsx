@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { createUniqueId, getSvlOperatorAccessToken, hasSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
 import { useSvlSync } from '../utils/svlSyncStore';
+import { useRepoChangeRefresh } from '../utils/liveRepoEvents';
 
 const DEFAULT_COREOS2_FILES = [
   'SVL_CoreOS_2/README.md',
@@ -180,6 +181,11 @@ export const LinuxDeployDashboard: React.FC = () => {
   };
 
   const effectiveOperatorToken = operatorTokenInput || getSvlOperatorAccessToken();
+  // Pliki zmienione na dysku (git pull, czat, MCP, agenci) — drzewo i otwarty plik odświeżają się same.
+  const [repoTick, setRepoTick] = useState(0);
+  useRepoChangeRefresh(() => setRepoTick((n) => n + 1), { prefixes: ['SVL_CoreOS_2'] });
+  const [fileTick, setFileTick] = useState(0);
+  useRepoChangeRefresh(() => setFileTick((n) => n + 1), { prefixes: [selectedFilePath] });
   useEffect(() => {
     if (!effectiveOperatorToken && !hasSvlOperatorAccessToken()) return;
     void safeFetchJson<any>('/api/files?path=SVL_CoreOS_2&tree=1', {
@@ -190,7 +196,7 @@ export const LinuxDeployDashboard: React.FC = () => {
         setCoreOs2Files(res.data.treeFiles.map((f: any) => String(f.path)));
       }
     });
-  }, [effectiveOperatorToken, serverRevision]);
+  }, [effectiveOperatorToken, serverRevision, repoTick]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -212,7 +218,7 @@ export const LinuxDeployDashboard: React.FC = () => {
     return () => {
       controller.abort();
     };
-  }, [selectedFilePath, effectiveOperatorToken, serverRevision]);
+  }, [selectedFilePath, effectiveOperatorToken, serverRevision, fileTick]);
 
   const handleCopyFile = async () => {
     try {

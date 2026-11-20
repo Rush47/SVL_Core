@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, GitBranch, Link2, RefreshCw } from 'lucide-react';
 import { safeFetchJson } from '../utils/svlLogic';
 import { useSvlSync } from '../utils/svlSyncStore';
+import { useRepoChangeRefresh } from '../utils/liveRepoEvents';
 
 type SyncAction = 'status' | 'pull' | 'push' | 'sync' | 'init';
 
@@ -12,6 +13,16 @@ interface GitHubStatus {
   ghCli: 'gh' | 'rest';
   autoSyncSec: number;
   lastAutoSync: { at: string; ok: boolean; summary: string } | null;
+  live?: {
+    enabled: boolean;
+    watcher: { mode: string; dirs: string[]; error?: string };
+    head: string;
+    lastChange: { at: string; paths: number; sources: string[] } | null;
+    frontend: { state: string; buildId: string; lastDurationMs?: number | null; lastError?: string | null };
+    restartRequired: { since: string; reasons: string[] } | null;
+    supervisor: string | null;
+    autoPull: { intervalSec: number; lastAt: string | null; lastResult: string | null };
+  } | null;
   token: {
     configured: boolean;
     kind?: string;
@@ -122,6 +133,9 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
     }
   }, [serverRevision, load]);
 
+  // Zmiany na dysku i nowe commity (git pull, auto-pull, AI, MCP) — panel odświeża się sam, bez „Synchronizuj”.
+  useRepoChangeRefresh(() => void load(false), { debounceMs: 300 });
+
   const run = async (action: SyncAction) => {
     setBusy(action);
     setResult(null);
@@ -190,6 +204,28 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
             <span className={(sync.ahead || sync.behind || dirty) ? 'text-amber-300' : 'text-emerald-400'}>
               do wysłania {sync.ahead ?? 0} · do pobrania {sync.behind ?? 0} · niezapisanych {dirty}
             </span>
+          </div>
+        )}
+        {status?.live && (
+          <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
+            <span className="text-slate-400">Na żywo:</span>
+            <span className={status.live.watcher.mode === 'off' ? 'text-amber-300' : 'text-emerald-400'} title={status.live.watcher.dirs.join(', ')}>
+              {status.live.watcher.mode === 'off' ? 'obserwator wyłączony' : `obserwuję ${status.live.watcher.dirs.length} kat.`}
+              {' · '}auto-pull {status.live.autoPull.intervalSec ? `co ${status.live.autoPull.intervalSec} s` : 'wył.'}
+              {' · '}GUI {({ idle: 'aktualne', scheduled: 'w kolejce', building: 'przebudowa…', failed: 'błąd builda', disabled: 'bez przebudowy', 'dev-hmr': 'HMR', dev: 'dev' } as Record<string, string>)[status.live.frontend.state] || status.live.frontend.state}
+            </span>
+          </div>
+        )}
+        {status?.live?.autoPull.lastResult && (
+          <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
+            <span className="text-slate-400">Ostatni auto-pull:</span>
+            <span className="text-slate-300 truncate" title={status.live.autoPull.lastResult}>{status.live.autoPull.lastResult}</span>
+          </div>
+        )}
+        {status?.live?.restartRequired && (
+          <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
+            <span className="text-slate-400">Serwer:</span>
+            <span className="text-amber-300">wymaga restartu ({status.live.restartRequired.reasons.length} zmian)</span>
           </div>
         )}
         <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">

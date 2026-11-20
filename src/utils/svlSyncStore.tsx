@@ -32,6 +32,7 @@ import {
   shouldSkipResyncEcho,
 } from './syncGuards';
 import { createSseParser } from './sseStream';
+import { dispatchLiveRepoFrame } from './liveRepoEvents';
 
 const BROADCAST_CHANNEL_NAME = 'svl_python_os_sync';
 const STORAGE_SIGNAL_KEY = 'svl_sync_signal_v1';
@@ -1102,6 +1103,8 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return;
         }
         if (!frame || typeof frame !== 'object') return;
+        // Zmiany repozytorium / nowa wersja GUI / restart — obsługują je panele i baner aktualizacji.
+        if (dispatchLiveRepoFrame(frame)) return;
 
         if (frame.type === 'svl.hello') {
           const wasReconnect = consecutiveFailures > 0;
@@ -1247,6 +1250,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
       if (!frame || typeof frame !== 'object') return;
+      if (dispatchLiveRepoFrame(frame)) return;
       if (frame.type === 'svl.hello') {
         failures = 0;
         setSseState('online');

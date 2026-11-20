@@ -49,6 +49,7 @@ import {
   toJsonSchema,
 } from './src/server/chatActions.ts';
 import { LiveSyncBus, formatSseFrame, sseKeepAlive } from './src/server/liveSyncBus.ts';
+import { LiveRepoSync, loadLiveRepoSyncConfig } from './src/server/liveRepoSync.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { parseGalleryVerdict, galleryPromptForAgent } from './src/server/galleryVision.ts';
 import {
@@ -92,6 +93,7 @@ import {
   getGitHubToken,
   ghCliAvailable,
   gitSync,
+  gitFastForwardPull,
   gitSyncStatus,
   githubApi,
   isAllowedApiPath,
@@ -610,6 +612,71 @@ let pythonProc: ChildProcess | null = null;
 let pythonRestartTimer: NodeJS.Timeout | null = null;
 let pythonRestartAttempt = 0;
 let pythonStopping = false;
+// true w starym procesie gatewaya, który po restarcie bez nadzorcy został tylko pętlą run-loop —
+// jego pętle w tle (misja Mayi, autosynchronizacja, rozgrzewanie modeli) nie mogą już działać.
+let gatewayRetired = false;
+// Restart na żądanie (zmiana backend/*.py): bez narastającego opóźnienia jak przy awarii.
+let pythonReloadRequested = false;
+
+/** Restart jądra Python po zmianie jego kodu — gateway i GUI działają dalej. */
+function reloadPythonBackend(): void {
+  if (pythonStopping) return;
+  if (pythonProc && pythonProc.exitCode === null && !pythonProc.killed) {
+    pythonReloadRequested = true;
+    killPythonTree(pythonProc);
+    return;
+  }
+  if (pythonRestartTimer) {
+    clearTimeout(pythonRestartTimer);
+    pythonRestartTimer = null;
+  }
+  pythonRestartAttempt = 0;
+  startPythonBackend();
+}
+
+/** PID-y wszystkich potomków procesu (Linux/macOS: pgrep -P), np. procesy agentów multiprocessing. */
+function listDescendantPids(rootPid: number): number[] {
+  const out: number[] = [];
+  const queue = [rootPid];
+  while (queue.length > 0 && out.length < 200) {
+    const pid = queue.shift()!;
+    try {
+      const raw = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+      for (const line of raw.split('\n')) {
+        const child = Number(line.trim());
+        if (child > 0 && !out.includes(child)) {
+          out.push(child);
+          queue.push(child);
+        }
+      }
+    } catch {
+      // brak potomków albo brak pgrep
+    }
+  }
+  return out;
+}
+
+/**
+ * Zatrzymuje jądro Python RAZEM z procesami agentów (multiprocessing). Sam SIGTERM do procesu
+ * głównego zostawiał osierocone procesy agentów, które trzymały port 8085 — nowe jądro nie mogło
+ * wystartować („address already in use”). Po 3 s dobijamy pozostałe SIGKILL.
+ */
+function killPythonTree(proc: ChildProcess): void {
+  const pid = proc.pid;
+  const children = pid ? listDescendantPids(pid) : [];
+  try { proc.kill('SIGTERM'); } catch { /* już zakończony */ }
+  for (const child of children) {
+    try { process.kill(child, 'SIGTERM'); } catch { /* już zakończony */ }
+  }
+  if (children.length > 0) {
+    const t = setTimeout(() => {
+      for (const child of children) {
+        try { process.kill(child, 'SIGKILL'); } catch { /* zakończony */ }
+      }
+    }, 3000);
+    t.unref();
+  }
+}
 
 function stopPythonBackend(): void {
   pythonStopping = true;
@@ -618,7 +685,7 @@ function stopPythonBackend(): void {
     pythonRestartTimer = null;
   }
   if (pythonProc && pythonProc.exitCode === null && !pythonProc.killed) {
-    pythonProc.kill('SIGTERM');
+    killPythonTree(pythonProc);
   }
 }
 
@@ -656,6 +723,16 @@ function startPythonBackend(): void {
   proc.on('close', (code, signal) => {
     if (pythonProc === proc) pythonProc = null;
     if (pythonStopping) return;
+    if (pythonReloadRequested) {
+      pythonReloadRequested = false;
+      pythonRestartAttempt = 0;
+      recordRuntimeLog('gateway', 'info', 'Python backend: przeładowanie po zmianie kodu.');
+      pythonRestartTimer = setTimeout(() => {
+        pythonRestartTimer = null;
+        startPythonBackend();
+      }, 500);
+      return;
+    }
     const uptimeMs = Date.now() - startedAt;
     pythonRestartAttempt = uptimeMs >= 60000 ? 0 : Math.min(pythonRestartAttempt + 1, 8);
     const delayMs = Math.min(30000, 1500 * (2 ** Math.min(pythonRestartAttempt - 1, 5)));
@@ -1621,6 +1698,7 @@ async function startServer() {
         schemaVersion: statusRes.data?.schemaVersion || SYNC_SCHEMA_VERSION,
         serverRevision: currentSrvRev,
         heartbeatIntervalMs: 20000,
+        appBuildId: liveRepoSync?.appBuildId() || null,
         timestamp: new Date().toISOString(),
       })));
     })().catch(() => undefined);
@@ -1707,6 +1785,23 @@ async function startServer() {
     }
     liveSyncBus.publish(frame);
   };
+  /** Ramka synchronizacji repozytorium / GUI (svl.repo_changed, svl.app_updated…) do wszystkich klientów. */
+  const broadcastLiveFrame = (payload: Record<string, unknown>) => {
+    const frame = JSON.stringify(payload);
+    for (const [client] of wsClients) {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(frame);
+        } catch {
+          // ignore closed socket race
+        }
+      }
+    }
+    liveSyncBus.publish(frame);
+  };
+  // Synchronizacja repozytorium na żywo (obserwator plików + HEAD gita + przebudowa GUI).
+  // Tworzona po konfiguracji Vite (niżej); trasy /api/live/* korzystają z niej przez tę zmienną.
+  let liveRepoSync: LiveRepoSync | null = null;
   (globalThis as any).__svlPublishOutbox = publishOutboxEvent;
   (globalThis as any).__svlBroadcastResync = broadcastResyncRequired;
 
@@ -1781,9 +1876,10 @@ async function startServer() {
   if (githubAutoSyncSec > 0) {
     const minInterval = Math.max(60, githubAutoSyncSec);
     setInterval(async () => {
-      if (githubAutoSyncRunning || !getGitHubToken()) return;
+      if (gatewayRetired || githubAutoSyncRunning || !getGitHubToken()) return;
       githubAutoSyncRunning = true;
       try {
+        liveRepoSync?.markHeadSource('autosynchronizacja');
         const r = await gitSync(__dirname, 'sync', 'SVL: automatyczna synchronizacja z GitHubem');
         const changed = !/pobrano 0, wysłano 0/.test(r.summary);
         lastGitHubAutoSync = { at: new Date().toISOString(), ok: r.ok, summary: r.summary };
@@ -2096,10 +2192,10 @@ async function startServer() {
 
   // Pętla misji w tle: pierwszy cykl 20 s po starcie, potem co `intervalSec`.
   setTimeout(() => {
-    if (mayaMission.enabled && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('startup');
+    if (!gatewayRetired && mayaMission.enabled && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('startup');
   }, 20000).unref?.();
   setInterval(() => {
-    if (mayaMission.enabled && !mayaRunning && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('scheduled');
+    if (!gatewayRetired && mayaMission.enabled && !mayaRunning && Boolean(process.env.SVL_OPERATOR_TOKEN)) void runMayaMission('scheduled');
   }, Math.max(120, mayaMission.intervalSec) * 1000).unref?.();
 
 
@@ -2409,6 +2505,7 @@ async function startServer() {
       };
       const lowerCmd = effectiveCmd.toLowerCase();
       if (syncVerb[lowerCmd]) {
+        liveRepoSync?.markHeadSource('terminal GitHub');
         const r = await gitSync(__dirname, syncVerb[lowerCmd], 'SVL: synchronizacja z terminala GitHub');
         if (r.ok && r.action !== 'status') void pollAndRelayOutbox();
         await respondAndPersist({
@@ -2785,6 +2882,7 @@ async function startServer() {
       ghCli: ghCliAvailable() ? 'gh' : 'rest',
       autoSyncSec: githubAutoSyncSec,
       lastAutoSync: lastGitHubAutoSync,
+      live: liveRepoSync?.status() || null,
     });
   }));
 
@@ -2798,6 +2896,7 @@ async function startServer() {
       res.status(400).json({ ok: false, error: 'action: status | pull | push | sync | init' });
       return;
     }
+    if (action !== 'status') liveRepoSync?.markHeadSource('panel GitHub');
     const r = await gitSync(__dirname, action, String(req.body?.message || 'SVL: synchronizacja z panelu GitHub'));
     if (r.ok && action !== 'status') {
       void pollAndRelayOutbox();
@@ -2820,6 +2919,64 @@ async function startServer() {
     const r = await runGhCommand(__dirname, ghArgs);
     res.json({ ok: r.ok, output: r.output, engine: r.engine, ...(r.ok ? {} : { error: r.output.slice(0, 300) }) });
   }));
+
+  // Synchronizacja repozytorium na żywo: stan, zgłoszenia zmian (samodzielny MCP, skrypty),
+  // ręczna przebudowa GUI, pobranie z GitHuba (fast-forward) i restart gatewaya.
+  app.get('/api/live/status', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    res.json({ ok: true, ...(liveRepoSync?.status() || { enabled: false }), appBuildId: liveRepoSync?.appBuildId() || null });
+  });
+
+  app.post('/api/live/repo-changed', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const paths = (Array.isArray(req.body?.paths) ? req.body.paths : [req.body?.path])
+      .filter((p: unknown) => typeof p === 'string' && p.length > 0 && p.length < 400 && !p.includes('\0'))
+      .slice(0, 500) as string[];
+    const source = String(req.body?.source || 'zewnętrzne').replace(/[^\p{L}\p{N} :._-]/gu, '').slice(0, 60) || 'zewnętrzne';
+    liveRepoSync?.notify(paths, source);
+    res.json({ ok: true, accepted: paths.length, enabled: Boolean(liveRepoSync) });
+  });
+
+  app.post('/api/live/rebuild', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const started = liveRepoSync?.rebuildFrontend('ręcznie z GUI') || false;
+    res.json({ ok: started, ...(started ? {} : { error: 'Przebudowa GUI działa tylko w trybie produkcyjnym (npm start).' }) });
+  });
+
+  app.post('/api/live/pull', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    if (!liveRepoSync) {
+      res.status(503).json({ ok: false, error: 'Synchronizacja na żywo jest wyłączona.' });
+      return;
+    }
+    const summary = await liveRepoSync.autoPull('pobranie z GUI');
+    res.json({ ok: true, summary });
+  }));
+
+  app.post('/api/live/restart', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    if (!liveRepoSync) {
+      res.status(503).json({ ok: false, error: 'Synchronizacja na żywo jest wyłączona.' });
+      return;
+    }
+    liveRepoSync.scheduleRestart('restart z GUI', 500);
+    res.json({ ok: true, supervisor: liveRepoSync.status().supervisor });
+  });
 
   // Dane konektora MCP dla aplikacji Claude (tylko dla operatora; klucz nie trafia do logów).
   app.get('/api/mcp/connector', (req, res) => {
@@ -3304,6 +3461,7 @@ async function startServer() {
                 fsSync.writeFileSync(resolved.absPath, defaultBody, 'utf8');
               }
             }
+            liveRepoSync?.notify([targetFileRel], 'czat');
             const syncRes = await gitSync(__dirname, 'sync', `SVL: dodano ${targetFileRel} z czatu`);
             void pollAndRelayOutbox();
             broadcastResyncRequired('github_chat_add');
@@ -3569,6 +3727,7 @@ async function startServer() {
           if (absLocal.startsWith(__dirname + path.sep)) {
             fsSync.mkdirSync(path.dirname(absLocal), { recursive: true });
             fsSync.writeFileSync(absLocal, fileContent, 'utf8');
+            liveRepoSync?.notify([absLocal], 'czat');
           }
           const syncRes = await gitSync(__dirname, 'sync', commitMessage);
           pendingMutations = true;
@@ -3631,6 +3790,7 @@ async function startServer() {
           if (absLocal.startsWith(__dirname + path.sep) && isAllowedGitHubFilePath(effectiveRelPath)) {
             fsSync.mkdirSync(path.dirname(absLocal), { recursive: true });
             fsSync.writeFileSync(absLocal, plainTextContent, 'utf8');
+            liveRepoSync?.notify([absLocal], 'czat');
           }
           const targetBranch = String(body?.branch || syncBranch());
           const encodedRel = effectiveRelPath.split('/').map(encodeURIComponent).join('/');
@@ -6749,6 +6909,7 @@ async function startServer() {
     process.env.AI_STUDIO === 'true';
 
   // Vite middleware in development or static serving in production
+  let devVite: Awaited<ReturnType<typeof createViteServer>> | null = null;
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: {
@@ -6764,6 +6925,7 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    devVite = vite;
   } else {
     const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath, {
@@ -6899,6 +7061,7 @@ async function startServer() {
         schemaVersion: statusRes.data?.schemaVersion || SYNC_SCHEMA_VERSION,
         serverRevision: currentSrvRev,
         heartbeatIntervalMs: 20000,
+        appBuildId: liveRepoSync?.appBuildId() || null,
         timestamp: new Date().toISOString(),
       });
 
@@ -6936,6 +7099,7 @@ async function startServer() {
         schemaVersion: SYNC_SCHEMA_VERSION,
         serverRevision: lastRelayedServerRevision,
         heartbeatIntervalMs: 20000,
+        appBuildId: liveRepoSync?.appBuildId() || null,
         timestamp: new Date().toISOString(),
       });
     }
@@ -7083,13 +7247,140 @@ async function startServer() {
     stopShipOllamaTunnel();
     for (const client of wss.clients) client.terminate();
     httpServer.close();
+    (httpServer as any).closeAllConnections?.();
+    // Pętle w tle (misja, monitor, tunel) trzymały proces przy życiu po SIGTERM — kończymy go jawnie.
+    setTimeout(() => process.exit(0), 3000).unref();
   };
   process.once('SIGTERM', stopGateway);
   process.once('SIGINT', stopGateway);
 
+  // --- Synchronizacja repozytorium na żywo -------------------------------------------------
+  const isProdMode = process.env.NODE_ENV === 'production';
+  const liveConfig = loadLiveRepoSyncConfig(process.env, {
+    isProd: isProdMode,
+    aiStudio: process.env.AI_STUDIO === 'true',
+    hasGit: fsSync.existsSync(path.join(__dirname, '.git')),
+  });
+  let gatewayRestarting = false;
+  const GATEWAY_RESTART_EXIT_CODE = 75;
+  /**
+   * Restart gatewaya po zmianie kodu serwera. Pod nadzorcą (systemd/pm2/SVL_SUPERVISED=1) wystarczy
+   * wyjść — nadzorca uruchomi nową wersję. Bez nadzorcy uruchamiamy ten sam proces ponownie
+   * (te same argumenty node/tsx) dopiero po zwolnieniu portu.
+   */
+  const restartGateway = (reason: string) => {
+    if (gatewayRestarting) return;
+    gatewayRestarting = true;
+    svlFileLogger.logSync({
+      layer: 'SYSTEM',
+      level: 'WARN',
+      category: 'gateway_restart',
+      message: `Restart gatewaya: ${reason} (nadzorca: ${liveConfig.supervisor || 'brak — ponowne uruchomienie procesu'})`,
+    });
+    broadcastLiveFrame({ type: 'svl.restarting', reason, inMs: 0, timestamp: new Date().toISOString() });
+    liveRepoSync?.stop();
+    stopPythonBackend();
+    stopShipOllamaTunnel();
+    for (const client of wss.clients) client.terminate();
+    const finish = () => {
+      if (liveConfig.supervised) {
+        // systemd / pm2 / pętla run-loop uruchomią nową wersję po wyjściu (kod 75 = „uruchom ponownie”).
+        setTimeout(() => process.exit(GATEWAY_RESTART_EXIT_CODE), 150);
+        return;
+      }
+      // Bez nadzorcy ten proces staje się lekką pętlą run-loop: uruchamia nowy gateway z tym samym
+      // terminalem (Ctrl+C dalej działa, npm start nie kończy się) i wznawia go po kolejnych restartach.
+      gatewayRetired = true;
+      process.removeAllListeners('SIGTERM');
+      process.removeAllListeners('SIGINT');
+      let child: ChildProcess | null = null;
+      const spawnChild = () => {
+        child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+          cwd: process.cwd(),
+          env: { ...process.env, SVL_RUN_LOOP: '1' },
+          stdio: 'inherit',
+        });
+        child.on('exit', (code, signal) => {
+          if (code === GATEWAY_RESTART_EXIT_CODE) {
+            setTimeout(spawnChild, 300);
+            return;
+          }
+          process.exit(code ?? (signal ? 1 : 0));
+        });
+      };
+      try {
+        spawnChild();
+      } catch (err) {
+        console.error('[SVL] Nie udało się uruchomić nowego procesu gatewaya:', (err as Error).message);
+        process.exit(1);
+      }
+      // SIGINT z terminala trafia do całej grupy procesów (także do dziecka) — tu go ignorujemy.
+      process.on('SIGINT', () => undefined);
+      process.on('SIGTERM', () => {
+        try { child?.kill('SIGTERM'); } catch { /* już zakończony */ }
+      });
+    };
+    const forceTimer = setTimeout(finish, 5000);
+    httpServer.close(() => {
+      clearTimeout(forceTimer);
+      finish();
+    });
+    (httpServer as any).closeAllConnections?.();
+  };
+  const runNpmInstall = () => new Promise<{ ok: boolean; output: string }>((resolve) => {
+    const child = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund'], {
+      cwd: __dirname,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let output = '';
+    const onData = (c: Buffer) => { output = (output + c.toString()).slice(-6000); };
+    child.stdout?.on('data', onData);
+    child.stderr?.on('data', onData);
+    const timer = setTimeout(() => child.kill('SIGKILL'), 10 * 60_000);
+    child.on('error', (err) => { clearTimeout(timer); resolve({ ok: false, output: err.message }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, output }); });
+  });
+  if (liveConfig.enabled) {
+    liveRepoSync = new LiveRepoSync({
+      root: __dirname,
+      config: liveConfig,
+      isProd: isProdMode,
+      publish: broadcastLiveFrame,
+      broadcastResync: (reason) => {
+        void pollAndRelayOutbox();
+        broadcastResyncRequired(reason);
+      },
+      restartPython: reloadPythonBackend,
+      devHmrActive: Boolean(devVite) && !hmrDisabled,
+      invalidateDevModules: () => {
+        // Przy DISABLE_HMR Vite nie obserwuje plików, więc trzyma stare wersje modułów w pamięci.
+        const v: any = devVite;
+        if (!v) return;
+        for (const graph of [v.environments?.client?.moduleGraph, v.moduleGraph]) {
+          try { graph?.invalidateAll?.(); } catch { /* starsza/nowsza wersja Vite */ }
+        }
+      },
+      restartServer: restartGateway,
+      runAutoPull: () => gitFastForwardPull(__dirname),
+      runNpmInstall,
+      log: (level, message) => svlFileLogger.log({ layer: 'GATEWAY', level, category: 'live_repo_sync', message }),
+    });
+  }
+
   const bindHost = process.env.SVL_BIND_HOST || '0.0.0.0';
   httpServer.listen(PORT, bindHost, () => {
     console.log(`[SVL Python OS] Gateway running on http://${bindHost}:${PORT}`);
+    if (liveRepoSync) {
+      liveRepoSync.start();
+      const st = liveRepoSync.status();
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: 'INFO',
+        category: 'live_repo_sync',
+        message: `Synchronizacja na żywo: obserwator ${st.watcher.mode} (${st.watcher.dirs.length} katalogów), HEAD ${st.head.slice(0, 7) || '—'}, GUI ${'state' in st.frontend ? st.frontend.state : '?'}, auto-pull ${st.autoPull.intervalSec || 'wył.'} s, restart serwera: ${st.restartPolicy}${st.supervisor ? ` (${st.supervisor})` : ''}`,
+      });
+    }
     svlFileLogger.log({
       layer: 'GATEWAY',
       level: 'INFO',
@@ -7116,7 +7407,7 @@ async function startServer() {
     const warmupOff = ['0', 'false', 'no'].includes(String(process.env.OLLAMA_WARMUP || '').trim().toLowerCase());
     if (!warmupOff) {
       setTimeout(() => void warmConfiguredOllamaModels(), 8000).unref();
-      setInterval(() => void warmConfiguredOllamaModels(), 10 * 60_000).unref();
+      setInterval(() => { if (!gatewayRetired) void warmConfiguredOllamaModels(); }, 10 * 60_000).unref();
     }
   });
 }

@@ -33,6 +33,38 @@ w lokalnej wersji. Zmiany zawierające sekrety (tokeny, klucze, `.env`, `*.secre
 Gdzie: panel **Linux → GitHub · Rush47/SVL_Core**, zakładka terminala **GitHub CLI**, czat
 (`/github status|pobierz|wyślij|synchronizuj|init`), API `POST /api/github/sync`.
 
+## Zmiany widoczne od razu (synchronizacja na żywo)
+
+Wcześniej po `git pull` (panel, terminal, autosynchronizacja) i po edycji plików przez AI (czat, MCP,
+agenci) działająca aplikacja niczego nie zauważała: w trybie produkcyjnym (`npm start`) GUI jest
+serwowane z gotowego katalogu `dist/`, budowanego tylko przy starcie, a panele odświeżały się tylko
+po zmianach w bazie SQLite. Nowe elementy pojawiały się dopiero po ręcznej synchronizacji/restarcie.
+
+Teraz gateway (`src/server/liveRepoSync.ts`) obserwuje repozytorium i HEAD gita:
+
+| Co się zmieniło | Co dzieje się samo | Czas |
+|---|---|---|
+| dowolny plik repo (np. `SVL_CoreOS_2/`, `docs/`) | ramka `svl.repo_changed` → panel GitHub i drzewa plików odświeżają się | ~0,3–2 s |
+| nowy commit (pull, auto-pull, commit, checkout — także z konsoli) | ramka `svl.git_head` + odświeżenie wszystkich danych w GUI | ≤1,5 s |
+| GUI: `src/` (poza `src/server`), `index.html`, `public/` | produkcja: `vite build` do `dist.__next`, podmiana `dist` dopiero po udanym buildzie, karty przeładowują się same (czekają, gdy piszesz; wracają na tę samą zakładkę) | ~2–5 s |
+| `backend/*.py` | restart jądra Python, gateway i GUI działają dalej | ~3–4 s |
+| `server.ts`, `src/server/`, `src/mcp/`, `src/utils/` | pod systemd/pm2: automatyczny restart gatewaya; bez nadzorcy: baner z przyciskiem **Uruchom serwer ponownie** | po kliknięciu ~5–10 s |
+| `package.json` / `package-lock.json` | baner restartu; restart najpierw robi `npm install` | zależnie od npm |
+
+Automatyczne pobieranie z GitHuba (`SVL_GITHUB_AUTOPULL_SEC`, domyślnie co 60 s w produkcji):
+tylko fast-forward, bez commitów i wysyłania; pomijane, gdy lokalna gałąź ma własne commity albo
+niezapisane zmiany dotyczą plików przychodzących z GitHuba. Ręcznie: `POST /api/live/pull`.
+
+Samodzielny serwer MCP (`npm run mcp`) po każdej zmianie pliku zgłasza ją aplikacji
+(`POST /api/live/repo-changed`, token `SVL_OPERATOR_TOKEN`); nawet bez tego zmianę wykrywa obserwator.
+
+API (wszystkie z nagłówkiem `X-SVL-Operator-Token`): `GET /api/live/status`,
+`POST /api/live/repo-changed` (`{ "paths": [...], "source": "..." }`), `POST /api/live/rebuild`,
+`POST /api/live/pull`, `POST /api/live/restart`. Ustawienia: sekcja „SYNCHRONIZACJA NA ŻYWO” w `.env.example`.
+
+Zalecane uruchomienie pod systemd (automatyczny restart po zmianie kodu serwera):
+`deploy/systemd/svl-gateway.service`.
+
 ## GitHub CLI
 
 - Prawdziwe `gh` (instalowane przez `deploy/install-debian13.sh` i obraz Docker), uruchamiane

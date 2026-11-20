@@ -441,6 +441,49 @@ export async function gitSync(
   return done(true, `Synchronizacja obustronna zakończona: pobrano ${fetched.behind || 0}, wysłano ${after.ahead || 0} commitów${committed.committed ? ' (w tym zapis lokalnych zmian)' : ''}.`);
 }
 
+export interface FastForwardPullResult {
+  ok: boolean;
+  changed: boolean;
+  skipped?: string;
+  prevHead?: string;
+  newHead?: string;
+  behind?: number;
+  changedFiles?: string[];
+  error?: string;
+}
+
+/**
+ * Automatyczne pobieranie z GitHuba: TYLKO fast-forward, nic nie commituje i nie wysyła.
+ * Pomija pobranie, gdy lokalna gałąź ma własne commity (rozjazd) albo gdy niezapisane zmiany
+ * kolidują z przychodzącymi plikami — wtedy nic na dysku się nie zmienia.
+ */
+export async function gitFastForwardPull(projectDir: string): Promise<FastForwardPullResult> {
+  const branch = syncBranch();
+  if (!fsSync.existsSync(path.join(projectDir, '.git'))) return { ok: false, changed: false, skipped: 'brak .git' };
+  const localBranch = (await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+  if (localBranch !== branch) return { ok: true, changed: false, skipped: `lokalna gałąź ${localBranch || '?'} ≠ ${branch}` };
+  const f = await fetchRemote(projectDir, branch);
+  if (!f.ok) return { ok: false, changed: false, error: `Pobranie z GitHuba nie powiodło się: ${scrub(f.stderr)}` };
+  const counts = (await git(projectDir, ['rev-list', '--left-right', '--count', `HEAD...${TRACKING_REF(branch)}`])).stdout.trim().split(/\s+/);
+  const ahead = Number(counts[0] || 0);
+  const behind = Number(counts[1] || 0);
+  if (behind === 0) return { ok: true, changed: false, behind: 0 };
+  if (ahead > 0) return { ok: true, changed: false, behind, skipped: `lokalnie ${ahead} własnych commitów — użyj „synchronizuj”` };
+  const prevHead = (await git(projectDir, ['rev-parse', 'HEAD'])).stdout.trim();
+  const incoming = (await git(projectDir, ['diff', '--name-only', 'HEAD', TRACKING_REF(branch)])).stdout.split('\n').filter(Boolean);
+  const dirty = (await git(projectDir, ['status', '--porcelain'])).stdout.split('\n').filter(Boolean).map((l) => l.slice(3).replace(/^.* -> /, ''));
+  const incomingSet = new Set(incoming);
+  const conflicting = dirty.filter((d) => incomingSet.has(d));
+  if (conflicting.length > 0) {
+    return { ok: true, changed: false, behind, skipped: `niezapisane zmiany w plikach z GitHuba: ${conflicting.slice(0, 5).join(', ')}` };
+  }
+  const ff = await git(projectDir, ['merge', '--ff-only', '--quiet', TRACKING_REF(branch)]);
+  if (!ff.ok) return { ok: false, changed: false, behind, error: `Fast-forward nie powiódł się: ${scrub(ff.stderr)}` };
+  const newHead = (await git(projectDir, ['rev-parse', 'HEAD'])).stdout.trim();
+  logger('INFO', `GitHub auto-pull: ${prevHead.slice(0, 7)} → ${newHead.slice(0, 7)} (${behind} commitów, ${incoming.length} plików)`);
+  return { ok: true, changed: newHead !== prevHead, prevHead, newHead, behind, changedFiles: incoming.slice(0, 2000) };
+}
+
 export function describeStatus(s: GitSyncStatus): string {
   if (!s.isRepo) return s.error || 'Brak repozytorium git.';
   const dirty = (s.dirtyFiles || []).length;
