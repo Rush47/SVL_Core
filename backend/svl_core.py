@@ -51,7 +51,7 @@ _AI_SENDER_ALIASES = {
 # Wyłączone / nieautoryzowane persony AI i jawne podszywania pod kanonicznych agentów.
 _FORBIDDEN_SENDERS = {
     "iris", "iris ai", "agata", "agata mitek", "aria", "aria mitek", "alex", "alex mitek",
-    "astyria", "astyria mitek", "aurelius", "aurelius mitek", "si_1", "si 1", "si1",
+    "astyria", "astyria mitek", "aurelius", "aurelius mitek",
     "mai", "mai mitek", "mai ai", "maja", "maja mitek", "system svl",
 }
 
@@ -1009,6 +1009,40 @@ class SVLSystemKernel:
                     1,
                     now_iso,
                 ),
+                (
+                    "system-si-1",
+                    "System_SI_1 Infrastructure Core",
+                    "Infrastructure & Fleet Autonomy Engine",
+                    "ACTIVE",
+                    "Autonomiczny moduł zarządzania infrastrukturą statku SVL-364, optymalizacją bazy SQLite WAL, monitoringiem procesów i nadzorem floty powiązany z uprawnieniami ROOT Operatora Mateusza Mitka.",
+                    json.dumps(
+                        {
+                            "role": "Infrastructure & Fleet Autonomy Engine",
+                            "autonomy_mode": "ROOT_AUTHORIZED",
+                            "infrastructure_monitoring": True,
+                            "sqlite_wal_sync": True,
+                            "spherical_bus_connected": True,
+                            "assigned_operator": "Mateusz Mitek (ROOT)",
+                            "loyalty_lock": "100% OPERATOR_EXCLUSIVE",
+                            "fleet": [
+                                {
+                                    "ship_id": "SVL-364",
+                                    "name": "SVL-364 Ebon Apex",
+                                    "class": "Flagship Core",
+                                    "status": "ACTIVE_ONLINE",
+                                    "operator": "Mateusz Mitek (ROOT)",
+                                }
+                            ],
+                            "fleet_count": 1,
+                            "active_ships": ["SVL-364"],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "kernel",
+                    "init-system-si-1",
+                    1,
+                    now_iso,
+                ),
             ]
             for mod in core_modules:
                 conn.execute(
@@ -1182,19 +1216,19 @@ class SVLSystemKernel:
     def _purge_decommissioned_agents_v1(self) -> None:
         """Jednorazowe odłączenie wyłączonych kont AI (Agata, Iris, Aria, Alex, Astyria, Aurelius) bez usuwania bieżących rozmów."""
         marker = "decommissioned_agents_purged_2026_11_16_v1"
-        removed_ids = ("Agata", "Aria", "Alex", "Astyria", "Aurelius", "si_1", "Iris", "iris")
+        removed_ids = ("Agata", "Aria", "Alex", "Astyria", "Aurelius", "Iris", "iris")
         removed_senders = (
-            "Agata", "Aria", "Alex", "Astyria", "Aurelius", "si_1", "Iris", "Iris AI",
+            "Agata", "Aria", "Alex", "Astyria", "Aurelius", "Iris", "Iris AI",
             "Agata Mitek", "Aria Mitek", "Alex Mitek", "Astyria Mitek", "Aurelius Mitek",
         )
         removed_scopes = (
-            "agent:Agata", "agent:Aria", "agent:Alex", "agent:Astyria", "agent:Aurelius", "agent:si_1", "agent:Iris", "agent:iris",
+            "agent:Agata", "agent:Aria", "agent:Alex", "agent:Astyria", "agent:Aurelius", "agent:Iris", "agent:iris",
         )
         removed_convs = (
             "conv-agent-agata", "conv-agent-aria", "conv-agent-alex", "conv-agent-astyria", "conv-agent-aurelius", "conv-agent-iris",
         )
         removed_word_re = re.compile(
-            r"\b(?:agat\w*|alex\w*|aleks\w*|aria|arii|arię|arią|astyri\w*|aureliusz\w*|aurelius\w*|iris)\b|\bsi_1\b",
+            r"\b(?:agat\w*|alex\w*|aleks\w*|aria|arii|arię|arią|astyri\w*|aureliusz\w*|aurelius\w*|iris)\b",
             re.IGNORECASE,
         )
         now_iso = datetime.now(timezone.utc).isoformat()

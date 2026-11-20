@@ -2458,7 +2458,7 @@ async function startServer() {
     }
 
     if (terminalType === 'agents') {
-      const mentionsRemoved = /\b(?:agata|iris|aria|alex|astyria|aurelius|si_1|codex)\b/i.test(effectiveCmd);
+      const mentionsRemoved = /\b(?:agata|iris|aria|alex|astyria|aurelius|codex)\b/i.test(effectiveCmd);
       if (mentionsRemoved) {
         await respondAndPersist({
           ok: false,

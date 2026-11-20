@@ -33,7 +33,7 @@ class MessageIdentityGuardTests(unittest.TestCase):
 
     def test_removed_personas_blocked_any_role(self) -> None:
         for role in ("assistant", "system", "user"):
-            for name in ("Iris", "Iris AI", "Agata", "Aria", "Astyria", "Aurelius", "si_1"):
+            for name in ("Iris", "Iris AI", "Agata", "Aria", "Astyria", "Aurelius"):
                 sender, reason = sanitize_message_identity(role, name)
                 self.assertIsNone(sender, f"{role}:{name}")
                 self.assertIsNotNone(reason, f"{role}:{name}")

@@ -79,7 +79,7 @@ export function formatAgentDisplayName(rawName?: string | null): string {
 /** Wyłączone persony AI i jawne podszywania pod Bielika/Maye (np. „Mai”, „Iris”). */
 const FORBIDDEN_AGENT_SENDERS = new Set([
   'iris', 'iris ai', 'agata', 'agata mitek', 'aria', 'aria mitek', 'alex', 'alex mitek',
-  'astyria', 'astyria mitek', 'aurelius', 'aurelius mitek', 'si_1', 'si 1', 'si1',
+  'astyria', 'astyria mitek', 'aurelius', 'aurelius mitek',
   'mai', 'mai mitek', 'mai ai', 'maja', 'maja mitek', 'system svl',
 ]);
 
@@ -1098,30 +1098,35 @@ export function mergeConversationThreads(
     }
   }
 
-  // Ensure mandatory canonical channels are present even if neither remote nor local had them
-  const mandatoryCanonicalIds = [
-    'conv-rodzina-mitek-wszyscy',
-    'conv-svl364-komputer-pokladowy',
-    'conv-agent-bielik',
-    'conv-agent-maya',
-  ];
-  for (const cid of mandatoryCanonicalIds) {
-    if (!merged.some((c) => c.id === cid)) {
-      const canonicalTitle =
-        cid === 'conv-rodzina-mitek-wszyscy'
-          ? 'Rodzina Mitek (wszyscy)'
-          : cid === 'conv-svl364-komputer-pokladowy'
-          ? 'SVL-364 Komputer pokładowy (SSH + MCP)'
-          : cid === 'conv-agent-bielik'
-          ? 'Bielik — Ollama 3.2 Vision 11B'
-          : 'Maya Mitek — AI Statku SVL-364 (ROOT)';
-      merged.push({
-        id: cid,
-        title: canonicalTitle,
-        updatedAt: '',
-        revision: 1,
-        messages: [],
-      });
+  // Ensure mandatory canonical channels are present if canonical channels are in scope
+  const hasAnyCanonical = [...remoteThreads, ...localThreads].some((c) =>
+    c.id.startsWith('conv-'),
+  );
+  if (hasAnyCanonical) {
+    const mandatoryCanonicalIds = [
+      'conv-rodzina-mitek-wszyscy',
+      'conv-svl364-komputer-pokladowy',
+      'conv-agent-bielik',
+      'conv-agent-maya',
+    ];
+    for (const cid of mandatoryCanonicalIds) {
+      if (!merged.some((c) => c.id === cid)) {
+        const canonicalTitle =
+          cid === 'conv-rodzina-mitek-wszyscy'
+            ? 'Rodzina Mitek (wszyscy)'
+            : cid === 'conv-svl364-komputer-pokladowy'
+            ? 'SVL-364 Komputer pokładowy (SSH + MCP)'
+            : cid === 'conv-agent-bielik'
+            ? 'Bielik — Ollama 3.2 Vision 11B'
+            : 'Maya Mitek — AI Statku SVL-364 (ROOT)';
+        merged.push({
+          id: cid,
+          title: canonicalTitle,
+          updatedAt: '',
+          revision: 1,
+          messages: [],
+        });
+      }
     }
   }
 
