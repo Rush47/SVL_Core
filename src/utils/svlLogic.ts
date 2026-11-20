@@ -68,6 +68,17 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   ) {
     return 'Komputer pokładowy';
   }
+  if (
+    low === 'system_si_1' ||
+    low === 'system-si-1' ||
+    low === 'systemsi1' ||
+    low === 'system si 1' ||
+    low === 'system_si' ||
+    low === 'system-si' ||
+    low === 'system si'
+  ) {
+    return 'System_SI_1';
+  }
   if (low === 'all' || low === 'rodzina mitek' || low === 'rodzina mitek (wszyscy)') {
     return 'Rodzina Mitek (wszyscy)';
   }
@@ -455,6 +466,18 @@ export function normalizeAgentCanonicalName(
   ) {
     return 'Maya';
   }
+  if (
+    clean === 'system_si_1' ||
+    clean === 'system-si-1' ||
+    clean === 'systemsi1' ||
+    clean === 'system si 1' ||
+    clean === 'system_si' ||
+    clean === 'system-si' ||
+    clean === 'system si' ||
+    clean === 'conv-system-si-1'
+  ) {
+    return 'System_SI_1';
+  }
   return null;
 }
 
@@ -465,7 +488,7 @@ const BIELIK_DIRECT_ADDRESS_RE =
   /(?:^|[\s,(])@bielik(?=$|[\s,.:;!?])|^\s*(?:(?:hej|cześć|czesc|siema|witaj|halo|ej|słuchaj|sluchaj|proszę|prosze|dzień\s+dobry|dzien\s+dobry)\s+)?(?:bielik|bieliku)(?=$|[\s,.:;!?])|(?<![\p{L}\p{N}_])(?:do|dla|zapytaj|spytaj|napisz\s+do|pisz[eę]\s+do|pytanie\s+do|hej|cześć|czesc|witaj|siema|halo)\s+bielik[au]?(?=$|[\s,.:;!?])|(?:,\s*|\s+)(?:bielik|bieliku)(?=[!?,.]*$)/iu;
 
 export interface ChatTargetResolution {
-  agent: 'Bielik' | 'Maya';
+  agent: 'Bielik' | 'Maya' | 'System_SI_1';
   mentionsMaya: boolean;
   mentionsBielik: boolean;
   explicit: boolean;
@@ -490,6 +513,10 @@ export function resolveChatTargetAgent(params: {
   const bielikMatch = BIELIK_DIRECT_ADDRESS_RE.exec(msg);
   const mentionsMaya = Boolean(mayaMatch);
   const mentionsBielik = Boolean(bielikMatch);
+
+  if (convId === 'conv-system-si-1' || normTarget === 'System_SI_1') {
+    return { agent: 'System_SI_1', mentionsMaya, mentionsBielik, explicit: true };
+  }
 
   if (mentionsMaya && !mentionsBielik) {
     return { agent: 'Maya', mentionsMaya, mentionsBielik, explicit: true };
@@ -1015,7 +1042,7 @@ export interface SvlSyncEvent<TPayload = Record<string, any>> {
   payload: TPayload;
 }
 
-export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
+export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy' | 'System_SI_1';
 
 export interface WorkspaceUiState {
   active_conversation_id?: string | null;
@@ -1027,7 +1054,7 @@ export interface WorkspaceUiState {
   revisions?: Record<string, number>;
 }
 
-export type AvatarProfileKey = 'Bielik' | 'Maya' | 'KomputerPokladowy' | 'Operator';
+export type AvatarProfileKey = 'Bielik' | 'Maya' | 'KomputerPokladowy' | 'System_SI_1' | 'Operator';
 
 export type SvlAvatarMap = Partial<Record<AvatarProfileKey, string>>;
 
@@ -1089,6 +1116,7 @@ export function mergeConversationThreads(
     const isCanonical =
       lt.id === 'conv-rodzina-mitek-wszyscy' ||
       lt.id === 'conv-svl364-komputer-pokladowy' ||
+      lt.id === 'conv-system-si-1' ||
       lt.id === 'conv-agent-bielik' ||
       lt.id === 'conv-agent-maya';
     const hasPending = (lt.messages || []).some((m) => pendingMessageIds.has(m.id));
@@ -1106,6 +1134,7 @@ export function mergeConversationThreads(
     const mandatoryCanonicalIds = [
       'conv-rodzina-mitek-wszyscy',
       'conv-svl364-komputer-pokladowy',
+      'conv-system-si-1',
       'conv-agent-bielik',
       'conv-agent-maya',
     ];
@@ -1116,6 +1145,8 @@ export function mergeConversationThreads(
             ? 'Rodzina Mitek (wszyscy)'
             : cid === 'conv-svl364-komputer-pokladowy'
             ? 'SVL-364 Komputer pokładowy (SSH + MCP)'
+            : cid === 'conv-system-si-1'
+            ? 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)'
             : cid === 'conv-agent-bielik'
             ? 'Bielik — Ollama 3.2 Vision 11B'
             : 'Maya Mitek — AI Statku SVL-364 (ROOT)';
@@ -1488,6 +1519,20 @@ export function resolveAvatarProfileKey(
     rawSender === 'komputer pokładowy svl-364'
   ) {
     return 'KomputerPokladowy';
+  }
+  if (
+    rawAgent === 'system_si_1' ||
+    rawAgent === 'system-si-1' ||
+    rawAgent === 'systemsi1' ||
+    rawAgent === 'system_si' ||
+    rawSender === 'system_si_1' ||
+    rawSender === 'system-si-1' ||
+    rawSender === 'systemsi1' ||
+    rawSender === 'system si 1' ||
+    rawSender === 'system_si' ||
+    rawSender === 'system si'
+  ) {
+    return 'System_SI_1';
   }
   if (rawAgent === 'operator' || rawSender === 'operator' || rawSender.includes('mateusz mitek')) {
     return 'Operator';

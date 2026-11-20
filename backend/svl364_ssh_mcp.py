@@ -275,7 +275,7 @@ class SVL364SshMcpController:
             "ssh_port": 22,
             "ssh_user": "from OpenSSH config",
             "computer_account": "SVL-364 Komputer pokładowy",
-            "agent_accounts": ["Bielik", "Maya"],
+            "agent_accounts": ["Bielik", "Maya", "System_SI_1"],
             "ssh_mode": "openssh-config",
             "mcp_enabled": True,
             "mcp_server_name": "svl-364-linux-control-mcp",
@@ -353,7 +353,7 @@ class SVL364SshMcpController:
             scfg["ssh_bridge_active"] = True
             scfg["ssh_endpoint"] = f"ssh://{cfg['ssh_host']}"
             scfg["computer_account"] = "SVL-364 Komputer pokładowy"
-            scfg["agent_accounts"] = ["Bielik", "Maya"]
+            scfg["agent_accounts"] = ["Bielik", "Maya", "System_SI_1"]
             scfg.pop("ssh_fingerprint", None)
             scfg["mcp_bridge_active"] = True
             scfg["mcp_endpoint"] = "/api/mcp/svl364"
@@ -415,7 +415,7 @@ class SVL364SshMcpController:
                 "sessionsCount": self.ssh_sessions_count,
                 "invocations_count": self.ssh_sessions_count,
                 "computerAccount": cfg.get("computer_account", "SVL-364 Komputer pokładowy"),
-                "agentAccounts": list(cfg.get("agent_accounts") or ["Bielik", "Maya"]),
+                "agentAccounts": list(cfg.get("agent_accounts") or ["Bielik", "Maya", "System_SI_1"]),
             },
             "mcp": {
                 "active": True,

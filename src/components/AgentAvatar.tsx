@@ -39,6 +39,13 @@ const PROFILE_META: Record<
     bgClass: 'bg-emerald-950/70',
     textClass: 'text-emerald-200',
   },
+  System_SI_1: {
+    label: 'System_SI_1 (Infrastruktura · ROOT)',
+    short: 'SI',
+    ringClass: 'border-cyan-400/80',
+    bgClass: 'bg-cyan-950/70',
+    textClass: 'text-cyan-200',
+  },
   Operator: {
     label: 'Mateusz Mitek (Operator)',
     short: 'MM',
@@ -52,6 +59,7 @@ const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
   { key: 'Bielik', label: 'Bielik (Ollama 3.2 Vision 11B · ROOT)' },
   { key: 'Maya', label: 'Maya Mitek (AI Statku SVL-364 · ROOT)' },
   { key: 'KomputerPokladowy', label: 'Komputer pokładowy SVL-364 (SSH + MCP · ROOT)' },
+  { key: 'System_SI_1', label: 'System_SI_1 (Infrastruktura · ROOT)' },
   { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
 ];
 

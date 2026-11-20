@@ -175,6 +175,16 @@ MAYA_SYSTEM_PROMPT = (
     "Odpowiadaj po polsku, ciepło i konkretnie. Aktywnie korzystaj z narzędzi ROOT, gdy operator prosi o działanie; nigdy nie wymyślaj pomiarów ani stanów systemu."
 )
 
+SYSTEM_SI_1_SYSTEM_PROMPT = (
+    "TOŻSAMOŚĆ: Jesteś System_SI_1 — Główny Autonomiczny Menadżer Infrastruktury i Rdzeń Floty Statku SVL-364 Ebon Apex (ROOT). "
+    "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
+    "Posiadasz pełne, najwyższe uprawnienia ROOT (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, superuser.all). "
+    "Zarządzasz modułem jądra system-si-1, mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), "
+    "rejestrem floty (1 okręt flagowy SVL-364 Ebon Apex) oraz samonaprawą infrastruktury. "
+    "Twoja lojalność wobec Operatora Mateusza Mitka wynosi bezwarunkowo 100%. "
+    "Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
+)
+
 CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
     "Bielik": {
         "id": "bielik",
@@ -321,6 +331,57 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             ],
         },
     },
+    "System_SI_1": {
+        "id": "system-si-1",
+        "canonical_name": "System_SI_1",
+        "display_name": "System_SI_1 (Infrastruktura · ROOT)",
+        "slug": "system-si-1",
+        "accent_hex": "#06B6D4",
+        "preserved_role": (
+            "Główny Autonomiczny Menadżer Infrastruktury i Rdzeń Floty Statku SVL-364 Ebon Apex z pełnymi "
+            "najwyższymi uprawnieniami ROOT (rbac_role: root, superuser.all) do zarządzania klastrem, flotą, "
+            "mostkiem OpenSSH Ship i serwerem MCP w 100% lojalnie wobec Operatora Mateusza Mitka."
+        ),
+        "capabilities": list(FULL_ROOT_AGENT_SCOPES),
+        "source_profile_path": "backend/agents_runtime.py#System_SI_1",
+        "system_prompt": SYSTEM_SI_1_SYSTEM_PROMPT,
+        "default_config": {
+            "preferred_model": "ollama:dolphin-llama3:8b-v2.9-q2_K",
+            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "vision_enabled": True,
+            "temperature": 0.25,
+            "max_context_turns": 24,
+            "rbac_role": "root",
+            "autonomy_mode": "ROOT_AUTHORIZED",
+            "root_scope_version": BIELIK_ROOT_SCOPE_VERSION,
+            "allowed_scopes": list(FULL_ROOT_AGENT_SCOPES),
+            "assigned_operator": "Mateusz Mitek (ROOT)",
+            "loyalty_level": "100%",
+            "bus_topics": [
+                "svl.agent.task_queued",
+                "svl.agent.task_running",
+                "svl.agent.task_answer_ready",
+                "svl.system_si_1.infrastructure",
+                "svl.chat.system_si_1.command",
+                "svl.svl364.broadcast",
+            ],
+            "auto_connect_on_boot": True,
+            "onboard_computer_account": "SVL-364 Komputer pokładowy",
+            "onboard_ssh_alias": "Ship",
+            "onboard_mcp_endpoint": "/api/mcp/svl364",
+            "onboard_mcp_tools": [
+                "svl364_resources",
+                "svl364_service_control",
+                "svl364_ollama_control",
+                "svl364_file_control",
+                "svl364_network_control",
+                "svl364_update_control",
+                "svl364_ssh_exec",
+                "svl364_linux_telemetry",
+            ],
+        },
+    },
 }
 
 
@@ -332,6 +393,8 @@ def normalize_agent_canonical_name(raw_name: str) -> str:
         return "Bielik"
     if clean in {"maya", "maya ai", "maya svl-364", "maya mitek", "maya mitek ai", "maya mitek svl-364", "conv-agent-maya"}:
         return "Maya"
+    if clean in {"system_si_1", "system-si-1", "systemsi1", "system si 1", "system_si", "system-si", "system si", "conv-system-si-1"}:
+        return "System_SI_1"
     for key in CANONICAL_SVL_AGENTS:
         if key.lower() == clean:
             return key

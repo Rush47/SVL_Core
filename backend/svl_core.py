@@ -34,7 +34,7 @@ MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verif
 
 # --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
-ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Komputer pokładowy", "Claude (MCP)"}
+ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Komputer pokładowy", "System_SI_1", "Claude (MCP)"}
 # Rozpoznanie starszych, LEGALNYCH nazw kanonicznych agentów → mapowanie na nazwę kanoniczną.
 _AI_SENDER_ALIASES = {
     "bielik": "Bielik", "bielik ai": "Bielik",
@@ -46,6 +46,14 @@ _AI_SENDER_ALIASES = {
     "komputer": "Komputer pokładowy",
     "svl-364 komputer pokładowy": "Komputer pokładowy",
     "komputer pokładowy svl-364": "Komputer pokładowy",
+    "system_si_1": "System_SI_1",
+    "system si 1": "System_SI_1",
+    "system-si-1": "System_SI_1",
+    "systemsi1": "System_SI_1",
+    "system_si": "System_SI_1",
+    "system si": "System_SI_1",
+    "system-si": "System_SI_1",
+    "system_si_1 (root)": "System_SI_1",
     "claude (mcp)": "Claude (MCP)",
 }
 # Wyłączone / nieautoryzowane persony AI i jawne podszywania pod kanonicznych agentów.
@@ -82,7 +90,7 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
         if canon is None:
             return None, (
                 f"Zablokowano wiadomość agenta AI od nieautoryzowanego nadawcy: „{sender}”. "
-                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Komputer pokładowy, Claude (MCP)."
+                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Komputer pokładowy, System_SI_1, Claude (MCP)."
             )
         return canon, None
     if role_l == "system":
@@ -1117,6 +1125,7 @@ class SVLSystemKernel:
                 ("conv-agent-bielik", "Bielik — Ollama Dolphin Llama 3 8B Q2", "ollama:dolphin-llama3:8b-v2.9-q2_K"),
                 ("conv-agent-maya", "Maya Mitek — AI Statku SVL-364 (ROOT)", "ollama:dolphin-llama3:8b-v2.9-q2_K"),
                 ("conv-svl364-komputer-pokladowy", "SVL-364 Komputer pokładowy (SSH + MCP)", "ollama:llama3.2-vision:11b"),
+                ("conv-system-si-1", "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)", "system-si-1-core"),
             ):
                 del_row = conn.execute(
                     "SELECT deleted FROM sync_entities WHERE entity = 'chat' AND entity_id = ?",
@@ -1198,7 +1207,56 @@ class SVLSystemKernel:
                                         now_iso,
                                     ),
                                 )
-                    elif chan_id in ("conv-agent-maya", "conv-svl364-komputer-pokladowy") and str(existing_conv["title"] or "") != chan_title:
+                        elif chan_id == "conv-system-si-1":
+                            welcome_id = "sys-systemsi1-init"
+                            if not conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (welcome_id,)).fetchone():
+                                welcome_meta = json.dumps(
+                                    {
+                                        "display_timestamp": now_iso,
+                                        "agentId": "System_SI_1",
+                                        "modelUsed": "System_SI_1 Infrastructure Core (ROOT)",
+                                        "provenance": "server_verified",
+                                        "appliedActions": [
+                                            {
+                                                "tool": "svl_channel_upsert",
+                                                "entity": "chat",
+                                                "entityId": "conv-system-si-1",
+                                                "summary": "Zarejestrowano i połączono dedykowany kanał System_SI_1 (Infrastruktura · ROOT)",
+                                                "ok": True,
+                                            }
+                                        ],
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                welcome_content = (
+                                    "### 🛡️ System_SI_1 — Główny Węzeł Zarządzania Infrastrukturą (ROOT)\n\n"
+                                    "Dedykowany kanał komunikacji bezpośredniej z autonomicznym modułem **System_SI_1** "
+                                    "(Autonomous Infrastructure Manager & Fleet Core) został aktywowany i zarejestrowany w SQLite WAL.\n\n"
+                                    "| Parametr węzła | Konfiguracja | Status |\n"
+                                    "| :--- | :--- | :--- |\n"
+                                    "| **ID kanału** | `conv-system-si-1` | [card: Aktywny|SQLite WAL|ok] |\n"
+                                    "| **Moduł jądra** | `system-si-1` (System_SI_1 Infrastructure Core) | [card: Rdzeń ROOT|100% Lojalność|ok] |\n"
+                                    "| **Przypisany Operator** | Mateusz Mitek (ROOT) | [card: Autoryzacja|Wyłączna|ok] |\n"
+                                    "| **Rejestr floty** | SVL-364 Ebon Apex (Okręt flagowy) | [card: Flota|1 jednostka|ok] |\n"
+                                    "| **Uprawnienia** | ROOT Infrastructure / Cluster Deploy / Self-Healing | [card: Poziom|ROOT|ok] |\n\n"
+                                    "[btn: 🛡️ Status modułu System_SI_1|send:Podaj pełny status modułu system-si-1 oraz rejestr floty] "
+                                    "[btn: 🚀 Rejestr floty SVL-364|send:Pokaż stan i konfigurację okrętu flagowego SVL-364 w module System_SI_1] "
+                                    "[btn: 📡 Autodiagnostyka infrastruktury|send:Wykonaj autodiagnostykę węzłów infrastruktury System_SI_1] "
+                                    "[btn: ⚙️ Moduły systemowe|tab:modules]"
+                                )
+                                conn.execute(
+                                    "INSERT INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
+                                    (
+                                        welcome_id,
+                                        chan_id,
+                                        "assistant",
+                                        "System_SI_1",
+                                        welcome_content,
+                                        welcome_meta,
+                                        now_iso,
+                                    ),
+                                )
+                    elif chan_id in ("conv-agent-maya", "conv-svl364-komputer-pokladowy", "conv-system-si-1") and str(existing_conv["title"] or "") != chan_title:
                         conn.execute(
                             "UPDATE conversations SET title = ? WHERE id = ?",
                             (chan_title, chan_id),
@@ -2103,7 +2161,7 @@ class SVLSystemKernel:
 
         conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         existing_ids = {str(r["id"]) for r in conv_rows}
-        if "conv-svl364-komputer-pokladowy" not in existing_ids or "conv-rodzina-mitek-wszyscy" not in existing_ids:
+        if "conv-svl364-komputer-pokladowy" not in existing_ids or "conv-rodzina-mitek-wszyscy" not in existing_ids or "conv-system-si-1" not in existing_ids:
             self.ensure_mitek_family_channel()
             conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         msgs_by_conv: dict[str, list[dict[str, Any]]] = {}
@@ -2266,6 +2324,9 @@ class SVLSystemKernel:
             canonical_channel_titles = {
                 "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
                 "conv-svl364-komputer-pokladowy": "SVL-364 Komputer pokładowy (SSH + MCP)",
+                "conv-system-si-1": "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-agent-bielik": "Bielik — Ollama Dolphin Llama 3 8B Q2",
+                "conv-agent-maya": "Maya Mitek — AI Statku SVL-364 (ROOT)",
             }
             if conversation_id in canonical_channel_titles:
                 resolved_title = canonical_channel_titles[conversation_id]
@@ -3172,6 +3233,8 @@ class SVLSystemKernel:
             target_title = "Maya Mitek (AI Statku SVL-364 · ROOT)"
         elif target_conv_id == "conv-svl364-komputer-pokladowy":
             target_title = "SVL-364 Komputer pokładowy (SSH + MCP)"
+        elif target_conv_id == "conv-system-si-1":
+            target_title = "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)"
         else:
             def _lookup_title(conn: sqlite3.Connection) -> Optional[str]:
                 row = conn.execute(
@@ -3182,13 +3245,19 @@ class SVLSystemKernel:
 
             target_title = self.run_db(_lookup_title, write=False) or self.FAMILY_CHANNEL_TITLE
         is_onboard_channel = target_conv_id == "conv-svl364-komputer-pokladowy"
-        report_sender = "Komputer pokładowy" if is_onboard_channel else self.NOTIFICATION_SENDER
-        report_agent_id = "KomputerPokladowy" if is_onboard_channel else self.NOTIFICATION_AGENT_ID
-        report_model_label = (
-            model_label.replace("Maya Mitek", "Komputer pokładowy SVL-364")
-            if is_onboard_channel
-            else model_label
-        )
+        is_system_si1_channel = target_conv_id == "conv-system-si-1"
+        if is_onboard_channel:
+            report_sender = "Komputer pokładowy"
+            report_agent_id = "KomputerPokladowy"
+            report_model_label = model_label.replace("Maya Mitek", "Komputer pokładowy SVL-364")
+        elif is_system_si1_channel:
+            report_sender = "System_SI_1"
+            report_agent_id = "System_SI_1"
+            report_model_label = "System_SI_1 Infrastructure Core (ROOT)"
+        else:
+            report_sender = self.NOTIFICATION_SENDER
+            report_agent_id = self.NOTIFICATION_AGENT_ID
+            report_model_label = model_label
         return self.save_chat_message(
             target_conv_id,
             target_title,

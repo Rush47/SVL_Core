@@ -703,6 +703,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
         targetConvId === 'conv-svl364-komputer-pokladowy' ||
+        targetConvId === 'conv-system-si-1' ||
         targetConvId.startsWith('conv-agent-');
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
@@ -730,12 +731,16 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         targetAgent,
         hasSlashCommand: isBielikSlashCmd,
       });
+      const isSystemSi1Channel =
+        targetConvId === 'conv-system-si-1' || targetAgent === 'System_SI_1';
       const isOnboardChannel =
-        targetConvId === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy';
-      const isExplicitMaya = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
-      const isExplicitBielik = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
+        !isSystemSi1Channel &&
+        (targetConvId === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy');
+      const isExplicitMaya = !isSystemSi1Channel && !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
+      const isExplicitBielik = !isSystemSi1Channel && !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
 
       const isFamilyDuplex =
+        !isSystemSi1Channel &&
         !isOnboardChannel &&
         !isExplicitBielik &&
         !isExplicitMaya &&
@@ -744,17 +749,23 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           targetAgent === 'Rodzina Mitek' ||
           duplexActive);
 
-      const effectiveTargetAgent = isOnboardChannel
-        ? 'KomputerPokladowy'
-        : isExplicitMaya
-          ? 'Maya'
-          : isExplicitBielik
-            ? 'Bielik'
-            : isFamilyDuplex
-              ? 'Rodzina Mitek'
-              : targetAgent;
+      const effectiveTargetAgent = isSystemSi1Channel
+        ? 'System_SI_1'
+        : isOnboardChannel
+          ? 'KomputerPokladowy'
+          : isExplicitMaya
+            ? 'Maya'
+            : isExplicitBielik
+              ? 'Bielik'
+              : isFamilyDuplex
+                ? 'Rodzina Mitek'
+                : targetAgent;
       setPendingReplyAgent(
-        isOnboardChannel ? 'Komputer pokładowy' : formatAgentDisplayName(resolvedTarget.agent),
+        isSystemSi1Channel
+          ? 'System_SI_1'
+          : isOnboardChannel
+            ? 'Komputer pokładowy'
+            : formatAgentDisplayName(resolvedTarget.agent),
       );
 
       const res = await safeFetchJson<any>('/api/chat', {
@@ -1122,7 +1133,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                           ? agentMeta.textClass
                           : formattedSender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
                             ? 'text-emerald-300'
-                            : isUser
+                            : formattedSender === 'System_SI_1' || msg.agentId === 'System_SI_1'
+                              ? 'text-cyan-300'
+                              : isUser
                               ? 'text-violet-300'
                               : 'text-slate-200'
                       }`}
@@ -1168,11 +1181,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                           <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
                           {msg.sender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
                             ? 'Raport Komputera pokładowego SVL-364'
-                            : msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
-                              ? 'Powiadomienie od Mayi Mitek'
-                              : isFamilyChannel
-                                ? 'Powiadomienie · kanał grupowy'
-                                : 'Wiadomość systemowa'}
+                            : msg.sender === 'System_SI_1' || msg.agentId === 'System_SI_1'
+                              ? 'Raport węzła System_SI_1 (Infrastruktura · ROOT)'
+                              : msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
+                                ? 'Powiadomienie od Mayi Mitek'
+                                : isFamilyChannel
+                                  ? 'Powiadomienie · kanał grupowy'
+                                  : 'Wiadomość systemowa'}
                         </span>
                         {isFamilyChannel && (
                           <span className="rounded-full border border-amber-200/20 bg-amber-200/5 px-2 py-0.5 text-[9px]">
@@ -1431,6 +1446,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
             const isOnboardChan = conv.id === 'conv-svl364-komputer-pokladowy';
+            const isSystemSi1Chan = conv.id === 'conv-system-si-1';
             return (
               <div
                 key={conv.id}
@@ -1438,7 +1454,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   isActive
                     ? isFamilyChan || isOnboardChan
                       ? 'bg-emerald-600/20 text-slate-100 border border-emerald-500/40'
-                      : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
+                      : isSystemSi1Chan
+                        ? 'bg-cyan-600/20 text-slate-100 border border-cyan-500/40'
+                        : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
                     : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent'
                 }`}
               >
@@ -1454,6 +1472,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       setTargetAgent('Maya');
                     } else if (isOnboardChan) {
                       setTargetAgent('KomputerPokladowy');
+                    } else if (isSystemSi1Chan) {
+                      setTargetAgent('System_SI_1');
                     }
                     setMobileSidebarOpen(false);
                   }}
@@ -1462,6 +1482,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   <div className="font-medium truncate flex items-center gap-1.5">
                     {isFamilyChan && <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     {isOnboardChan && <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                    {isSystemSi1Chan && <Shield className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
                     <span className="truncate">{conv.title}</span>
                     {unseenNotifications > 0 && (
                       <span
@@ -1488,6 +1509,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 {conversations.length > 1 &&
                   !isFamilyChan &&
                   conv.id !== 'conv-svl364-komputer-pokladowy' &&
+                  conv.id !== 'conv-system-si-1' &&
                   !conv.id.startsWith('conv-agent-') && (
                   <button
                     type="button"
@@ -1572,12 +1594,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               id="openwebui-agent-select"
               value={targetAgent}
               onChange={(e) => {
-                const val = e.target.value as 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
+                const val = e.target.value as 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy' | 'System_SI_1';
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
                 } else if (val === 'KomputerPokladowy') {
                   setActiveConvId('conv-svl364-komputer-pokladowy');
                   setTargetAgent('KomputerPokladowy');
+                } else if (val === 'System_SI_1') {
+                  setActiveConvId('conv-system-si-1');
+                  setTargetAgent('System_SI_1');
                 } else {
                   setTargetAgent(val);
                 }
@@ -1586,6 +1611,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             >
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
               <option value="KomputerPokladowy">Komputer pokładowy SVL-364 (SSH + MCP)</option>
+              <option value="System_SI_1">System_SI_1 (Infrastruktura · ROOT)</option>
               <option value="Bielik">Bielik (3.2 Vision 11B · ROOT)</option>
               <option value="Maya">Maya Mitek (AI Statku SVL-364 · ROOT)</option>
               <option value="Auto">Auto-Router</option>
@@ -2151,13 +2177,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               ref={composerRef}
               onEmptyChange={handleInputEmptyChange}
               placeholder={
-                activeConv?.id === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy'
-                  ? 'Wydaj polecenie dla Komputera pokładowego SVL-364 (SSH + MCP · ROOT) lub zadaj pytanie...'
-                  : targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
-                    ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
-                    : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
-                      ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
-                      : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
+                activeConv?.id === 'conv-system-si-1' || targetAgent === 'System_SI_1'
+                  ? 'Wydaj polecenie dla System_SI_1 (Infrastruktura · Flota · ROOT) lub zadaj pytanie...'
+                  : activeConv?.id === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy'
+                    ? 'Wydaj polecenie dla Komputera pokładowego SVL-364 (SSH + MCP · ROOT) lub zadaj pytanie...'
+                    : targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
+                      ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
+                      : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
+                        ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
+                        : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
               className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"

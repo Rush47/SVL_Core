@@ -13,11 +13,14 @@ export interface SvlMcpContext {
   logDir: string;
 }
 
-const AGENTS = ['Bielik', 'Maya'] as const;
+const AGENTS = ['Bielik', 'Maya', 'System_SI_1'] as const;
 const CHANNELS: Record<string, string> = {
   wszyscy: 'conv-rodzina-mitek-wszyscy',
   svl364: 'conv-svl364-komputer-pokladowy',
   komputer_pokladowy: 'conv-svl364-komputer-pokladowy',
+  system_si_1: 'conv-system-si-1',
+  system_si: 'conv-system-si-1',
+  systemsi1: 'conv-system-si-1',
   bielik: 'conv-agent-bielik',
   maya: 'conv-agent-maya',
 };

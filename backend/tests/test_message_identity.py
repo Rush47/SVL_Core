@@ -90,6 +90,38 @@ class MessageIdentityGuardTests(unittest.TestCase):
             self.assertEqual(senders.get("asst-onboard-1"), "Komputer pokładowy")
             self.assertTrue(any(m["sender"] == "Komputer pokładowy" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
 
+    def test_system_si_1_channel_and_identity(self) -> None:
+        import tempfile
+        from svl_core import SVLSystemKernel, sanitize_message_identity
+
+        sender, reason = sanitize_message_identity("assistant", "System_SI_1")
+        self.assertIsNone(reason)
+        self.assertEqual(sender, "System_SI_1")
+
+        sender_alias, reason2 = sanitize_message_identity("assistant", "system_si_1")
+        self.assertIsNone(reason2)
+        self.assertEqual(sender_alias, "System_SI_1")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kernel = SVLSystemKernel(
+                db_path=str(Path(tmpdir) / "system_si_1_test.sqlite3"),
+                operator_token="test_operator_token_with_more_than_32_chars_abcdef",
+            )
+            convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+            self.assertIn("conv-system-si-1", convs)
+            self.assertEqual(convs["conv-system-si-1"]["title"], "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)")
+
+            rep = kernel.post_maya_report(
+                "Raport infrastruktury floty",
+                model_label="System_SI_1 · raport floty",
+                message_prefix="msg-si1-report",
+                conversation_id="conv-system-si-1",
+            )
+            self.assertTrue(rep.get("ok"), rep)
+            convs_after = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+            msgs = convs_after["conv-system-si-1"]["messages"]
+            self.assertTrue(any(m["sender"] == "System_SI_1" for m in msgs))
+
 
 if __name__ == "__main__":
     unittest.main()

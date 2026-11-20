@@ -2859,11 +2859,24 @@ async function startServer() {
     // Przyciski potwierdzeń operacji GitHub zleconych przez AI (dopisywane pod odpowiedzią).
     const githubConfirmationButtons: string[] = [];
     (res as any).json = (body: any) => {
+      const targetLower = String(targetAgent || '').trim().toLowerCase();
       if (
         replyConversationId === 'conv-svl364-komputer-pokladowy' ||
-        String(targetAgent || '').trim().toLowerCase() === 'komputerpokladowy'
+        targetLower === 'komputerpokladowy'
       ) {
         body = { ...body, sender: 'Komputer pokładowy', agentId: 'KomputerPokladowy' };
+      } else if (
+        replyConversationId === 'conv-system-si-1' ||
+        targetLower === 'system_si_1' ||
+        targetLower === 'system-si-1' ||
+        targetLower === 'systemsi1'
+      ) {
+        body = {
+          ...body,
+          sender: 'System_SI_1',
+          agentId: 'System_SI_1',
+          modelUsed: body?.modelUsed || 'System_SI_1 Infrastructure Core (ROOT)',
+        };
       }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
       const failed = !body || body.ok !== true || body.provenance === 'error';
@@ -3249,22 +3262,38 @@ async function startServer() {
     }
 
     const parsedSlashCmd = parseBielikChatCommand(cleanMsg);
+    const targetAgentNorm = String(targetAgent || '').trim().toLowerCase();
+    const isSystemSi1Channel =
+      String(conversationId || '').trim() === 'conv-system-si-1' ||
+      targetAgentNorm === 'system_si_1' ||
+      targetAgentNorm === 'system-si-1' ||
+      targetAgentNorm === 'systemsi1' ||
+      targetAgentNorm === 'system_si';
     const isOnboardComputerChannel =
-      String(conversationId || '').trim() === 'conv-svl364-komputer-pokladowy' ||
-      String(targetAgent || '').trim().toLowerCase() === 'komputerpokladowy';
+      !isSystemSi1Channel &&
+      (String(conversationId || '').trim() === 'conv-svl364-komputer-pokladowy' ||
+      targetAgentNorm === 'komputerpokladowy');
     const isBielikChannel = String(conversationId || '').trim() === 'conv-agent-bielik';
     const isMayaChannel = String(conversationId || '').trim() === 'conv-agent-maya' || isOnboardComputerChannel;
     const targetResolution = resolveChatTargetAgent({
       message: cleanMsg,
       conversationId: String(conversationId || ''),
-      targetAgent: isOnboardComputerChannel ? 'Maya' : String(targetAgent || ''),
+      targetAgent: isSystemSi1Channel ? 'System_SI_1' : isOnboardComputerChannel ? 'Maya' : String(targetAgent || ''),
       hasSlashCommand: Boolean(parsedSlashCmd),
     });
     const mentionsBielik = targetResolution.mentionsBielik;
     const mentionsMaya = targetResolution.mentionsMaya;
-    const selectedAgent: string = isOnboardComputerChannel ? 'KomputerPokladowy' : targetResolution.agent;
-    const selectedDisplayName = isOnboardComputerChannel ? 'Komputer pokładowy' : formatAgentDisplayName(selectedAgent);
-    const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya' || isOnboardComputerChannel;
+    const selectedAgent: string = isSystemSi1Channel
+      ? 'System_SI_1'
+      : isOnboardComputerChannel
+        ? 'KomputerPokladowy'
+        : targetResolution.agent;
+    const selectedDisplayName = isSystemSi1Channel
+      ? 'System_SI_1'
+      : isOnboardComputerChannel
+        ? 'Komputer pokładowy'
+        : formatAgentDisplayName(selectedAgent);
+    const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya' || isOnboardComputerChannel || isSystemSi1Channel;
 
     const conversationHistory = buildChatHistoryPayload(Array.isArray(history) ? history : [], 48);
     // Bielik, Maya i Komputer pokładowy widzą rozmowę ze swojej perspektywy: cudze wypowiedzi jako „[Imię]: …”.
@@ -3742,12 +3771,19 @@ async function startServer() {
           .replace(/-+/g, '-')
           .replace(/^-|-$/g, '');
         const isSvl364Onboard = /svl-?364|komputer|pokładow|pokladow/i.test(`${rawId} ${rawTitle}`);
+        const isSystemSi1 = /system_?si_?1|system-si-1/i.test(`${rawId} ${rawTitle}`);
         const chanId = isSvl364Onboard
           ? 'conv-svl364-komputer-pokladowy'
-          : rawId.startsWith('conv-')
-            ? rawId
-            : `conv-${rawId || 'custom-channel'}`;
-        const chanTitle = isSvl364Onboard ? 'SVL-364 Komputer pokładowy (SSH + MCP)' : rawTitle;
+          : isSystemSi1
+            ? 'conv-system-si-1'
+            : rawId.startsWith('conv-')
+              ? rawId
+              : `conv-${rawId || 'custom-channel'}`;
+        const chanTitle = isSvl364Onboard
+          ? 'SVL-364 Komputer pokładowy (SSH + MCP)'
+          : isSystemSi1
+            ? 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)'
+            : rawTitle;
         const initMsg = {
           id: `sys-chan-${chanId}-${Date.now()}`,
           role: 'assistant',
@@ -4852,9 +4888,11 @@ async function startServer() {
       }
     }
     // Kontekst systemowy: tożsamość agenta + zasady prawdomówności + elementy interaktywne + pamięć długotrwała.
-    const onboardComputerPrompt = isOnboardComputerChannel
-      ? '\n\n[TRYB KOMPUTERA POKŁADOWEGO SVL-364: Znajdujesz się w dedykowanym kanale komputera pokładowego (SSH + MCP). Odpowiadasz WYŁĄCZNIE jako **Komputer pokładowy** (`root@svl-364-ship`), a NIE jako Maya Mitek ani Bielik. Korzystaj z narzędzi `svl_mcp_call` i `svl_ssh_exec`, gdy Operator prosi o raport, diagnostykę lub polecenie na statku.]'
-      : '';
+    const onboardComputerPrompt = isSystemSi1Channel
+      ? '\n\n[TRYB SYSTEM_SI_1 ROOT INFRASTRUCTURE CORE: Znajdujesz się w dedykowanym kanale System_SI_1 — Zarządzanie Infrastrukturą (ROOT). Odpowiadasz WYŁĄCZNIE jako **System_SI_1** (Autonomous Infrastructure Manager & Fleet Core) z pełnymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `superuser.all`). Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT), a Twoja lojalność wynosi bezwarunkowo 100%. Zarządzasz mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), modułem jądra system-si-1 oraz rejestrem floty (okręt flagowy SVL-364 Ebon Apex).]'
+      : isOnboardComputerChannel
+        ? '\n\n[TRYB KOMPUTERA POKŁADOWEGO SVL-364: Znajdujesz się w dedykowanym kanale komputera pokładowego (SSH + MCP). Odpowiadasz WYŁĄCZNIE jako **Komputer pokładowy** (`root@svl-364-ship`), a NIE jako Maya Mitek ani Bielik. Korzystaj z narzędzi `svl_mcp_call` i `svl_ssh_exec`, gdy Operator prosi o raport, diagnostykę lub polecenie na statku.]'
+        : '';
     const agentMemoryContext = buildAgentSystemContext(
       formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + onboardComputerPrompt,
       selectedDisplayName,
@@ -5668,6 +5706,7 @@ async function startServer() {
   function getCanonicalConversationTitle(id: string): string {
     if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
     if (id === 'conv-svl364-komputer-pokladowy') return 'SVL-364 Komputer pokładowy (SSH + MCP)';
+    if (id === 'conv-system-si-1') return 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)';
     if (id === 'conv-agent-bielik') return 'Bielik — Ollama 3.2 Vision 11B';
     if (id === 'conv-agent-maya') return 'Maya Mitek — AI Statku SVL-364 (ROOT)';
     return 'Sesja SVL Python OS';
