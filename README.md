@@ -30,6 +30,16 @@ Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `
 
 ---
 
+## Serwer MCP — pełny odczyt/zapis z internetu
+
+`npm run mcp` uruchamia osobny serwer MCP (`src/mcp/`) z narzędziami plikowymi (odczyt, zapis, edycja,
+usuwanie, przenoszenie, wyszukiwanie), powłoką z limitem czasu oraz `svl_chat` (AI SVL: Grok → Ollama)
+i `svl_logs`. Wymaga tokenu Bearer (`MCP_TOKEN` albo wygenerowany w `data/svl_mcp_token.secret`)
+i sam wystawia się do internetu tunelem Cloudflare (bez konta, stałego IP i domeny); adres trafia do
+`data/svl_mcp_tunnel.json`, a gotowe konfiguracje klientów (Gemini CLI, Claude Code) do
+`data/svl_mcp_connector.secret`. Usługa przy starcie systemu: `sudo bash deploy/install-mcp.sh`.
+Szczegóły, tryb tylko do odczytu i stały adres: [deploy/MCP.md](deploy/MCP.md).
+
 ## Szybki Start i Testy
 
 ```bash

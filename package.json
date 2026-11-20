@@ -11,11 +11,13 @@
     "build": "vite build",
     "prestart": "npm run build",
     "start": "NODE_ENV=production tsx server.ts",
+    "mcp": "tsx src/mcp/main.ts",
+    "mcp:stdio": "tsx src/mcp/main.ts --stdio",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:python": "SVL_LOG_DIR=${TMPDIR:-/tmp}/svl-test-logi python3 -m unittest discover -s backend/tests -p 'test_*.py' -v",
-    "test:unit": "npx --yes tsx --test src/utils/svlLogic.test.ts src/utils/githubFiles.test.ts src/server/chatDirectives.test.ts src/server/conversation.test.ts src/server/memoryPrompt.test.ts src/server/geminiModels.test.ts src/server/xaiGrok.test.ts src/server/fileLogger.test.ts src/server/githubAdmin.test.ts src/server/svlMcpServer.test.ts src/server/mayaMission.test.ts src/server/shipOllamaTunnel.test.ts src/server/galleryVision.test.ts src/server/ollamaOptimizer.test.ts src/utils/syncGuards.test.ts src/server/webSearch.test.ts src/server/agentAvatars.test.ts src/server/operatorAuth.test.ts src/components/ChatInteractiveButton.test.tsx"
+    "test:unit": "npx --yes tsx --test src/utils/svlLogic.test.ts src/utils/githubFiles.test.ts src/server/chatDirectives.test.ts src/server/conversation.test.ts src/server/memoryPrompt.test.ts src/server/geminiModels.test.ts src/server/xaiGrok.test.ts src/mcp/auth.test.ts src/mcp/pathGuard.test.ts src/mcp/tools.test.ts src/mcp/tunnel.test.ts src/mcp/http.test.ts src/server/fileLogger.test.ts src/server/githubAdmin.test.ts src/server/svlMcpServer.test.ts src/server/mayaMission.test.ts src/server/shipOllamaTunnel.test.ts src/server/galleryVision.test.ts src/server/ollamaOptimizer.test.ts src/utils/syncGuards.test.ts src/server/webSearch.test.ts src/server/agentAvatars.test.ts src/server/operatorAuth.test.ts src/components/ChatInteractiveButton.test.tsx"
   },
   "dependencies": {
     "@fontsource/inconsolata": "^5.3.0",
