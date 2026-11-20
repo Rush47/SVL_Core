@@ -1,0 +1,16 @@
+[Unit]
+Description=SVL CoreOS 2: Apex — SVL-Sentinel (nadzór, samonaprawa, powiadomienia Mayi)
+After=network-online.target svl-coreos2.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/svl-coreos-2
+EnvironmentFile=-/etc/svl-coreos2/svl.env
+ExecStart=/usr/bin/python3 /opt/svl-coreos-2/SVL_CoreOS_2/kernel/svl_sentinel_daemon.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

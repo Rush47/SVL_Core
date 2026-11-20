@@ -1,0 +1,44 @@
+# Budowa bootowalnego obrazu SVL CoreOS 2: Apex (Debian 13 Trixie + SVL) — SVL_CoreOS_2/iso/build_iso.sh
+# Uruchamianie: Actions → „Build SVL CoreOS 2 ISO” → Run workflow; opublikowanie wydania (Release) dołącza ISO.
+name: Build SVL CoreOS 2 ISO
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    branches: ['**']
+    paths:
+      - 'SVL_CoreOS_2/iso/**'
+      - 'SVL_CoreOS_2/debian13/svl-coreos2*'
+      - '.github/workflows/build-iso.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - name: Zwolnienie miejsca na dysku
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Budowa ISO w kontenerze Debian 13
+        run: docker run --rm --privileged -v "$PWD:/src" -w /src debian:trixie bash SVL_CoreOS_2/iso/build_iso.sh
+      - name: Obraz ISO jako artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: svl-coreos2-apex-iso
+          path: |
+            out/*.iso
+            out/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Dołączenie ISO do wydania
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/*.iso
+            out/*.sha256

@@ -1,0 +1,12 @@
+[Unit]
+Description=SVL CoreOS 2: Apex — konfiguracja przy pierwszym uruchomieniu (token operatora)
+Before=svl-coreos2.service
+ConditionPathExists=!/etc/svl-coreos2/svl.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/svl-coreos2-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

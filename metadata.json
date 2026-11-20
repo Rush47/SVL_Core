@@ -1,0 +1,6 @@
+{
+  "name": "SVL CoreOS 2: Apex",
+  "description": "Pełnostosowy panel operacyjny Bielika i Mayi Mitek z serwerowym rdzeniem Python, synchronizacją WebSocket, pamięcią SQLite, Ollamą i zapasowym Gemini uruchamianym wyłącznie po stronie serwera.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,102 @@
+# ============================================================================
+# SVL PYTHON OS — DEBIAN 13 TRIXIE PRODUCTION STACK (DOCKER COMPOSE)
+# Includes:
+# 1. svl-python-backend (SVLSystemKernel + workery Bielik i Maya)
+# 2. ollama (Local LLM & Native Vision Engine with GPU passthrough if available)
+# 3. ollama-model-init (pulls the configured OLLAMA_PREFERRED_MODEL)
+# 4. comfyui (opcjonalny profil "image" — silnik obrazów)
+# ============================================================================
+
+services:
+  svl-python-backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.debian13
+    container_name: svl-python-backend
+    restart: unless-stopped
+    environment:
+      SVL_OPERATOR_TOKEN: "${SVL_OPERATOR_TOKEN:?Wymagany sekret SVL_OPERATOR_TOKEN o dlugosci min. 32 znakow}"
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-dolphin-llama3:8b-v2.9-q2_K}"
+      COMFYUI_HOST: "http://comfyui:8188"
+      SVL_SQLITE_PATH: "/var/lib/svl-os/svl_os.sqlite3"
+      SVL_PYTHON_PORT: "8085"
+    ports:
+      - "127.0.0.1:8085:8085"
+    volumes:
+      - svl-os-data:/var/lib/svl-os
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8085/api/py/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      ollama:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  ollama:
+    # Keep aligned with the installer: the newer runtime rejects this model's mllama architecture.
+    image: ollama/ollama:0.24.0
+    container_name: svl-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+      - "${SVL_AI_MODEL_DIR:-/opt/svl-ai-models}:/opt/svl-ai-models:ro"
+    expose:
+      - "11434"
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  ollama-model-init:
+    image: ollama/ollama:0.24.0
+    container_name: svl-ollama-init
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      MODEL="${OLLAMA_PREFERRED_MODEL:-llama3.2-vision:11b}"
+      if [ "$$MODEL" = "qwen3.8-27b-q5" ] && [ -f /opt/svl-ai-models/llm/Modelfile ]; then
+        echo "[SVL Ollama Init] Importowanie lokalnego GGUF: $$MODEL"
+        OLLAMA_HOST=http://ollama:11434 ollama create "$$MODEL" -f /opt/svl-ai-models/llm/Modelfile
+      else
+        echo "[SVL Ollama Init] Pobieranie skonfigurowanego modelu: $$MODEL"
+        OLLAMA_HOST=http://ollama:11434 ollama pull "$$MODEL"
+      fi
+    environment:
+      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-dolphin-llama3:8b-v2.9-q2_K}"
+
+  comfyui:
+    profiles: ["image"]
+    build:
+      context: ./comfyui
+    container_name: svl-comfyui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8188:8188"
+    volumes:
+      - "${COMFYUI_MODELS_PATH:-/opt/svl-comfyui/models}:/opt/ComfyUI/models"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8188/system_stats"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  svl-os-data:
+  ollama-models:

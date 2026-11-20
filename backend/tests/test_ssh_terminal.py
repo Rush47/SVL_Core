@@ -1,0 +1,283 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import sys
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from svl364_ssh_mcp import SVL364SshMcpController
+
+
+class FakeKernel:
+    def __init__(self) -> None:
+        self.modules: dict[str, dict[str, object]] = {}
+
+    def list_system_modules(self) -> list[dict[str, object]]:
+        return list(self.modules.values())
+
+    def upsert_system_module(self, module_id: str, **kwargs: object) -> None:
+        self.modules[module_id] = {"id": module_id, **kwargs}
+
+    def append_terminal_entry(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def get_server_revision(self) -> int:
+        return 1
+
+
+def build_controller() -> SVL364SshMcpController:
+    controller = object.__new__(SVL364SshMcpController)
+    controller.kernel = FakeKernel()
+    controller.project_root = Path.cwd()
+    controller.ssh_connected = False
+    controller.recent_activity = []
+    controller.ssh_sessions_count = 0
+    controller.mcp_calls_count = 0
+    controller.telemetry = MagicMock()
+    controller.telemetry.ssh_target.return_value = {"reachable": False, "error": "offline"}
+    controller.telemetry._ssh_target_cache = {}
+    controller.telemetry._ship_cache = {}
+    return controller
+
+
+class SshTerminalTests(unittest.TestCase):
+    def test_configure_openssh_writes_dedicated_config_and_public_key(self) -> None:
+        controller = build_controller()
+        with tempfile.TemporaryDirectory() as home:
+            ssh_dir = Path(home) / ".ssh"
+            ssh_dir.mkdir()
+            key = ssh_dir / "svl364_ed25519"
+            key.write_text("private-test-material", encoding="utf-8")
+            Path(f"{key}.pub").write_text("ssh-ed25519 AAAATEST svl-364@Ship\n", encoding="utf-8")
+            with patch("svl364_ssh_mcp.Path.home", return_value=Path(home)):
+                result = controller.configure_openssh({
+                    "alias": "Ship",
+                    "hostname": "192.0.2.10",
+                    "port": 2222,
+                    "user": "codespace",
+                    "generate_key": False,
+                })
+                public_key = controller.get_public_key()
+
+            dedicated = (ssh_dir / "config.d" / "svl-364.conf").read_text(encoding="utf-8")
+            self.assertTrue(result["ok"])
+            self.assertIn("HostName 192.0.2.10", dedicated)
+            self.assertIn("Port 2222", dedicated)
+            self.assertIn("User codespace", dedicated)
+            self.assertNotIn("private-test-material", result["publicKey"])
+            self.assertTrue(public_key["ok"])
+            self.assertIn("Include config.d/*.conf", (ssh_dir / "config").read_text(encoding="utf-8"))
+
+    def test_mcp_ssh_exec_still_requires_confirmation(self) -> None:
+        controller = build_controller()
+        with patch.object(controller, "execute_ssh_command") as execute:
+            execute.return_value = {
+                "ok": False,
+                "output": "",
+                "error": "Wykonanie SSH wymaga jawnego potwierdzenia",
+            }
+            result = controller.call_mcp_tool(
+                "svl364_ssh_exec",
+                {"command": "uname -a"},
+                origin="test",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(execute.call_args.kwargs["confirmed"])
+
+    def test_managed_service_operation_requires_confirmation_and_quotes_name(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="active\n", stderr="")
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
+        ):
+            denied = controller.call_mcp_tool(
+                "svl364_service_control",
+                {"service": "ollama.service", "action": "restart", "confirmed": False},
+            )
+            allowed = controller.call_mcp_tool(
+                "svl364_service_control",
+                {"service": "ollama.service", "action": "restart", "confirmed": True},
+            )
+
+        self.assertFalse(denied["ok"])
+        self.assertTrue(allowed["ok"])
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("systemctl restart", run.call_args.args[0][-1])
+
+    def test_managed_file_operation_rejects_path_outside_allowlist(self) -> None:
+        controller = build_controller()
+        result = controller.call_mcp_tool(
+            "svl364_file_control",
+            {"action": "read_log", "path": "/etc/shadow", "confirmed": False},
+        )
+        self.assertFalse(result["ok"])
+        self.assertIn("poza dozwolonymi", result["error"])
+
+    def test_onboard_account_is_visible_in_ssh_status(self) -> None:
+        controller = build_controller()
+        status = controller.get_status()
+        self.assertEqual(status["ssh"]["computerAccount"], "SVL-364 Komputer pokładowy")
+        self.assertEqual(status["ssh"]["agentAccounts"], ["Bielik", "Maya"])
+
+    def test_remote_execution_requires_explicit_confirmation(self) -> None:
+        controller = build_controller()
+        with patch("svl364_ssh_mcp.subprocess.run") as run:
+            result = controller.execute_ssh_command("uname -a")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("potwierdzenia", result["error"])
+        run.assert_not_called()
+
+    def test_confirmed_command_uses_configured_ssh_alias_not_local_shell(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="remote-host\n", stderr="")
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
+        ):
+            result = controller.execute_ssh_command("uname -a", confirmed=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["sshEndpoint"], "ssh://Ship")
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], "/usr/bin/ssh")
+        self.assertIn("Ship", command)
+        self.assertEqual(command[-1], "/bin/bash -lc 'uname -a'")
+        self.assertNotIn("shell", run.call_args.kwargs)
+
+    def test_ssh_failure_does_not_run_command_locally(self) -> None:
+        controller = build_controller()
+        failed = subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="connection failed")
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=failed) as run,
+        ):
+            result = controller.execute_ssh_command("uname -a", confirmed=True)
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(controller.ssh_connected)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][0], "/usr/bin/ssh")
+
+    def test_exec_prefix_runs_root_command_over_ssh(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(
+            args=["ssh"], returncode=0, stdout="uid=0(root) gid=0(root) groups=0(root)\n", stderr=""
+        )
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/local/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
+        ):
+            result = controller.execute_ssh_command("/exec id && uname -a", confirmed=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["effectiveCommand"], "id && uname -a")
+        self.assertIn("ROOT /exec", result["output"])
+        command = run.call_args.args[0]
+        self.assertEqual(command[-1], "/bin/bash -lc 'id && uname -a'")
+
+    def test_natural_polish_command_synthesizes_root_diagnostics(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(
+            args=["ssh"], returncode=0, stdout="uid=0(root)\nMem: 16000 4000 12000\n", stderr=""
+        )
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/local/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
+        ):
+            result = controller.execute_ssh_command("Sprawdź pamięć RAM statku SVL-364", confirmed=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["mode"], "natural")
+        self.assertIn("free -m", result["effectiveCommand"])
+        self.assertIn("Przetworzono polecenie naturalne", result["output"])
+
+    def test_missing_openssh_never_falls_back_to_local_shell(self) -> None:
+        controller = build_controller()
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value=None),
+            patch("svl364_ssh_mcp.subprocess.run") as run,
+        ):
+            result = controller.execute_ssh_command("id", confirmed=True)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["exitCode"], 127)
+        self.assertIn("OpenSSH", result["error"])
+        run.assert_not_called()
+
+    def test_natural_command_output_contains_no_fictional_ship_status(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="ok\n", stderr="")
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
+        ):
+            result = controller.execute_ssh_command("Ustaw tarcze na 50% i leć na Marsa", confirmed=True)
+
+        for fiction in ("Reaktor", "Tarcze", "Sektor", "uid=0(root) gid=0(root) · RBAC"):
+            self.assertNotIn(fiction, result["output"])
+
+    def test_terminal_origin_avoids_duplicate_sqlite_log_and_exposes_ssh_status(self) -> None:
+        from unittest.mock import MagicMock
+
+        controller = build_controller()
+        controller.telemetry = MagicMock()
+        controller.telemetry.ssh_target.return_value = {"reachable": False, "error": "Brak ssh"}
+        controller.kernel.append_terminal_entry = MagicMock()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=1, stdout="", stderr="Permission denied")
+        with (
+            patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship"}),
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed),
+        ):
+            res = controller.execute_ssh_command("uname -a", origin="terminal:ssh", confirmed=True)
+
+        self.assertFalse(res["ok"])
+        self.assertIn("Permission denied", res["error"])
+        self.assertTrue(res["ssh_status"]["ssh"]["sshInstalled"])
+        controller.kernel.append_terminal_entry.assert_not_called()
+
+    def test_raport_systemu_is_not_matched_as_port(self) -> None:
+        is_exec, mode, shell_cmd, _ = SVL364SshMcpController._parse_ssh_ship_input("/exec raport systemu")
+        self.assertTrue(is_exec)
+        self.assertEqual(mode, "natural")
+        self.assertIn("uname -srm", shell_cmd)
+        self.assertIn("df -h /", shell_cmd)
+        self.assertNotIn("ss -tlnp", shell_cmd)
+
+    def test_system_improvement_mission_synthesizes_full_ship_audit(self) -> None:
+        is_exec, mode, shell_cmd, natural = SVL364SshMcpController._parse_ssh_ship_input(
+            "ulepsz popraw i napraw oraz rozwiń ten system"
+        )
+        self.assertFalse(is_exec)
+        self.assertEqual(mode, "natural")
+        self.assertEqual(natural, "ulepsz popraw i napraw oraz rozwiń ten system")
+        self.assertIn("uname -srm", shell_cmd)
+        self.assertIn("system_modules", shell_cmd)
+        self.assertIn("/app/applet/data/svl_os.sqlite3", shell_cmd)
+        self.assertIn("ollama list", shell_cmd)
+
+    def test_sqlite_lookup_handles_remote_root_cwd(self) -> None:
+        _, mode, shell_cmd, _ = SVL364SshMcpController._parse_ssh_ship_input("Pokaż moduły w bazie sqlite")
+        self.assertEqual(mode, "natural")
+        self.assertIn("/app/applet/data/svl_os.sqlite3", shell_cmd)
+        self.assertIn("Brak bazy svl_os.sqlite3", shell_cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

@@ -1,0 +1,50 @@
+{
+  "name": "svl-python-os",
+  "private": true,
+  "version": "5.6.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "NODE_ENV=development tsx server.ts",
+    "build": "vite build",
+    "prestart": "npm run build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "test:python": "SVL_LOG_DIR=${TMPDIR:-/tmp}/svl-test-logi python3 -m unittest discover -s backend/tests -p 'test_*.py' -v",
+    "test:unit": "npx --yes tsx --test src/utils/svlLogic.test.ts src/utils/githubFiles.test.ts src/server/chatDirectives.test.ts src/server/conversation.test.ts src/server/memoryPrompt.test.ts src/server/geminiModels.test.ts src/server/fileLogger.test.ts src/server/githubAdmin.test.ts src/server/svlMcpServer.test.ts src/server/mayaMission.test.ts src/server/shipOllamaTunnel.test.ts src/server/galleryVision.test.ts src/server/ollamaOptimizer.test.ts src/utils/syncGuards.test.ts src/server/webSearch.test.ts src/server/agentAvatars.test.ts src/server/operatorAuth.test.ts src/components/ChatInteractiveButton.test.tsx"
+  },
+  "dependencies": {
+    "@fontsource/inconsolata": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@google/genai": "^3.6.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/ws": "^8.18.2",
+    "@vector-im/compound-design-tokens": "^11.3.1",
+    "@vector-im/compound-web": "^10.6.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0",
+    "lucide-react": "^1.77.0",
+    "motion": "^14.14.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tsx": "^4.23.15",
+    "vite": "^8.3.8",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.7.0",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
+  }
+}

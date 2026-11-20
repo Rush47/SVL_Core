@@ -1,0 +1,134 @@
+@import "tailwindcss";
+@import "@vector-im/compound-design-tokens/assets/web/css/cpd-common-base.css";
+@import "@vector-im/compound-design-tokens/assets/web/css/cpd-common-semantic.css";
+@import "@vector-im/compound-design-tokens/assets/web/css/cpd-theme-dark-base.css";
+@import "@vector-im/compound-design-tokens/assets/web/css/cpd-theme-dark-semantic.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inconsolata/400.css";
+@import "@vector-im/compound-web/dist/style.css";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --apex-bg-void: #050810;
+    --apex-bg-surface: #090F1E;
+    --apex-bg-elevated: #0E172A;
+    --apex-cyan: #00F0FF;
+    --apex-amber: #FFB800;
+    --apex-emerald: #00E676;
+    --apex-crimson: #FF1744;
+    --apex-text-primary: #F1F5F9;
+    --apex-text-muted: #94A3B8;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--apex-bg-void);
+    background-image:
+      radial-gradient(circle at 12% 0%, rgba(0, 240, 255, 0.08), transparent 40%),
+      radial-gradient(circle at 88% 100%, rgba(0, 230, 118, 0.06), transparent 40%);
+    color: var(--apex-text-primary);
+    letter-spacing: 0.01em;
+    word-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .svl-workspace {
+    --svl-workspace-bg: #050810;
+    --svl-header-bg: #090f1e;
+    --svl-accent: #00f0ff;
+    --svl-accent-rgb: 0, 240, 255;
+    --svl-secondary: #00e676;
+    background-color: var(--svl-workspace-bg);
+    color: #f1f5f9;
+    transition: background-color 220ms ease, color 220ms ease;
+  }
+
+  .svl-workspace[data-theme='midnight'] {
+    --svl-workspace-bg: #02030a;
+    --svl-header-bg: #070b17;
+    --svl-secondary: #64748b;
+  }
+
+  .svl-workspace[data-theme='emerald'] {
+    --svl-workspace-bg: #03100d;
+    --svl-header-bg: #071b17;
+    --svl-secondary: #34d399;
+  }
+
+  .svl-workspace[data-theme='violet'] {
+    --svl-workspace-bg: #090516;
+    --svl-header-bg: #140b27;
+    --svl-secondary: #c084fc;
+  }
+
+  .svl-workspace[data-accent='emerald'] {
+    --svl-accent: #34d399;
+    --svl-accent-rgb: 52, 211, 153;
+  }
+
+  .svl-workspace[data-accent='violet'] {
+    --svl-accent: #c084fc;
+    --svl-accent-rgb: 192, 132, 252;
+  }
+
+  .svl-workspace[data-accent='amber'] {
+    --svl-accent: #fbbf24;
+    --svl-accent-rgb: 251, 191, 36;
+  }
+
+  .svl-workspace > header {
+    background-color: var(--svl-header-bg);
+    border-color: rgba(var(--svl-accent-rgb), 0.3);
+  }
+
+  .svl-workspace > header > a,
+  .svl-workspace > header nav button[class*='text-cyan'],
+  .svl-workspace .apex-synced-accent {
+    color: var(--svl-accent);
+  }
+
+  .svl-workspace > header nav button[class*='border-cyan'] {
+    border-color: var(--svl-accent);
+  }
+
+  .svl-workspace .apex-hud-card {
+    border-color: rgba(var(--svl-accent-rgb), 0.25);
+    box-shadow: 0 12px 32px -12px rgba(var(--svl-accent-rgb), 0.14);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.apex-hud-card {
+  background: rgba(9, 15, 30, 0.92);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  box-shadow: 0 12px 32px -12px rgba(0, 240, 255, 0.14);
+}
+
+/* Custom Apex-Dark scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(5, 8, 16, 0.7);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.35);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.65);
+}

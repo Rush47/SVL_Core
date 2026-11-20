@@ -1,0 +1,25 @@
+{
+  "manifest_version": "2.0.0-Apex",
+  "unlocked_for_operator": true,
+  "operator": "Mateusz Mitek",
+  "managed_by": "Maya Mitek (Kernel Master Daemon & SVL-Sentinel)",
+  "theme": "Apex-Dark",
+  "note": "Pliki GUI, designu i architektury zostały odbezpieczone z kontenerów .svl_bundle do jawnych plików źródłowych w repozytorium SVL_CoreOS_2/.",
+  "assets": [
+    {
+      "path": "SVL_CoreOS_2/gui/apex_dark_ui.tsx",
+      "kind": "react-component",
+      "description": "Główny interaktywny pulpit Apex-Dark z rzeczywistą telemetrią SVL-364"
+    },
+    {
+      "path": "SVL_CoreOS_2/gui/apex_dark_theme.css",
+      "kind": "stylesheet",
+      "description": "Paleta i zmienne CSS motywu Dark-Apex"
+    },
+    {
+      "path": "SVL_CoreOS_2/gui/remote_desktop_server.py",
+      "kind": "daemon",
+      "description": "Serwer zdalnego pulpitu GUI dla Operatora i Mayi"
+    }
+  ]
+}
