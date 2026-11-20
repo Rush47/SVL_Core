@@ -119,6 +119,36 @@ function parseToolCalls(raw: unknown): XaiChatToolCall[] {
 
 export const XAI_CREDITS_EXHAUSTED_MESSAGE = 'Grok: brak kredytów na koncie xAI';
 
+export type SvlChatEngine = 'auto' | 'ollama' | 'grok';
+
+/**
+ * Który silnik czatu jest pierwszy.
+ * `SVL_CHAT_ENGINE=ollama` (albo `local`) nie woła Groka w ogóle.
+ * `auto` (domyślnie) i `grok` próbują xAI, gdy jest klucz, a przy 401/402/403 wracają do Ollamy.
+ */
+export function getSvlChatEngine(env: NodeJS.ProcessEnv = process.env): SvlChatEngine {
+  const raw = String(env.SVL_CHAT_ENGINE || '').trim().toLowerCase();
+  if (raw === 'ollama' || raw === 'local') return 'ollama';
+  if (raw === 'grok' || raw === 'xai') return 'grok';
+  return 'auto';
+}
+
+/** Czy w tym żądaniu w ogóle wołać API xAI. */
+export function shouldAttemptGrok(
+  env: NodeJS.ProcessEnv,
+  opts: { explicitOllama: boolean; explicitGemini: boolean; webSearchViaGemini: boolean },
+): boolean {
+  if (getSvlChatEngine(env) === 'ollama') return false;
+  if (!isXaiConfigured(env)) return false;
+  if (opts.explicitOllama || opts.explicitGemini || opts.webSearchViaGemini) return false;
+  return true;
+}
+
+/** 401 (zły klucz), 402 i 403 (brak kredytów / limit) — czat ma przejść na Ollamę, nie kończyć błędem. */
+export function isXaiAuthOrBillingStatus(status: number | undefined): boolean {
+  return status === 401 || status === 402 || status === 403;
+}
+
 /** 403/402 związane z kredytami lub limitem wydatków — nie ponawiać, wrócić do Ollamy. */
 export function isXaiCreditsExhaustedError(status: number | undefined, bodyOrMessage: string): boolean {
   const raw = String(bodyOrMessage || '');

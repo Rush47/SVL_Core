@@ -9,10 +9,13 @@ import {
   getXaiModel,
   getXaiTimeoutMs,
   XAI_CREDITS_EXHAUSTED_MESSAGE,
+  getSvlChatEngine,
+  isXaiAuthOrBillingStatus,
   isXaiConfigured,
   isXaiCreditsExhaustedError,
   isXaiRetryableStatus,
   scrubXaiSecrets,
+  shouldAttemptGrok,
 } from './xaiGrok.ts';
 
 const REAL_LOOKING_KEY = 'xai-test-secret-key-ABCDEFGHIJKLMNOP-9000';
@@ -61,6 +64,27 @@ test('getXaiModel and timeout use defaults when unset', () => {
   assert.equal(isXaiCreditsExhaustedError(402, 'Payment Required'), true);
   assert.equal(isXaiCreditsExhaustedError(403, 'model is not available to this key'), false);
   assert.equal(isXaiCreditsExhaustedError(401, 'invalid api key'), false);
+});
+
+test('SVL_CHAT_ENGINE=ollama skips Grok even when a key is set; 401/402/403 fall back to Ollama', () => {
+  const opts = { explicitOllama: false, explicitGemini: false, webSearchViaGemini: false };
+  assert.equal(getSvlChatEngine({}), 'auto');
+  assert.equal(getSvlChatEngine({ SVL_CHAT_ENGINE: 'OLLAMA' }), 'ollama');
+  assert.equal(getSvlChatEngine({ SVL_CHAT_ENGINE: 'local' }), 'ollama');
+  assert.equal(getSvlChatEngine({ SVL_CHAT_ENGINE: 'grok' }), 'grok');
+  assert.equal(getSvlChatEngine({ SVL_CHAT_ENGINE: 'xai' }), 'grok');
+  assert.equal(getSvlChatEngine({ SVL_CHAT_ENGINE: 'cos-innego' }), 'auto');
+  assert.equal(shouldAttemptGrok({ XAI_API_KEY: REAL_LOOKING_KEY }, opts), true);
+  assert.equal(shouldAttemptGrok({ XAI_API_KEY: REAL_LOOKING_KEY, SVL_CHAT_ENGINE: 'ollama' }, opts), false);
+  assert.equal(shouldAttemptGrok({ XAI_API_KEY: REAL_LOOKING_KEY, SVL_CHAT_ENGINE: 'grok' }, opts), true);
+  assert.equal(shouldAttemptGrok({ XAI_API_KEY: '' }, opts), false);
+  assert.equal(shouldAttemptGrok({ XAI_API_KEY: REAL_LOOKING_KEY }, { ...opts, explicitOllama: true }), false);
+  assert.equal(isXaiAuthOrBillingStatus(401), true);
+  assert.equal(isXaiAuthOrBillingStatus(402), true);
+  assert.equal(isXaiAuthOrBillingStatus(403), true);
+  assert.equal(isXaiAuthOrBillingStatus(429), false);
+  assert.equal(isXaiAuthOrBillingStatus(500), false);
+  assert.equal(isXaiAuthOrBillingStatus(undefined), false);
 });
 
 test('completeXaiChat skips the network when no key is configured', async () => {
