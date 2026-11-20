@@ -74,6 +74,86 @@ const UI_TAB = re(
   `${B}(?:otw(?:ó|o)rz|poka(?:ż|z)|prze(?:ł|l)(?:ą|a)cz|wy(?:ś|s)wietl)\\s+(?:panel|zak(?:ł|l)adk(?:ę|e))\\s+(?:na\\s+)?(czat|chat|apex|statek|svl[ -]?364|infrastruktura|agenci|maya|galeria|terminale|j(?:ą|a)dro|kernel|linux)${E}`,
 );
 
+const THEME_ALIASES: Record<string, string> = {
+  apex: 'apex',
+  ciemny: 'apex',
+  midnight: 'midnight',
+  nocny: 'midnight',
+  emerald: 'emerald',
+  zielony: 'emerald',
+  violet: 'violet',
+  fioletowy: 'violet',
+  fiolet: 'violet',
+};
+const ACCENT_ALIASES: Record<string, string> = {
+  cyan: 'cyan',
+  niebieski: 'cyan',
+  emerald: 'emerald',
+  zielony: 'emerald',
+  violet: 'violet',
+  fioletowy: 'violet',
+  fiolet: 'violet',
+  amber: 'amber',
+  bursztynowy: 'amber',
+  pomarańczowy: 'amber',
+  pomaranczowy: 'amber',
+};
+const TAB_ALIASES: Record<string, string> = {
+  czat: 'chat',
+  chat: 'chat',
+  apex: 'apex',
+  statek: 'svl364',
+  svl364: 'svl364',
+  infrastruktura: 'infrastructure',
+  agenci: 'agents',
+  maya: 'maya',
+  galeria: 'gallery',
+  terminale: 'terminals',
+  jądro: 'kernel',
+  jadro: 'kernel',
+  kernel: 'kernel',
+  linux: 'linux',
+};
+const UI_ALIASES: Record<WorkspaceUiKey, Record<string, string>> = {
+  gui_theme: THEME_ALIASES,
+  gui_accent: ACCENT_ALIASES,
+  active_workspace_tab: TAB_ALIASES,
+};
+const UI_KEY_ALIASES: Record<string, WorkspaceUiKey> = {
+  gui_theme: 'gui_theme',
+  theme: 'gui_theme',
+  motyw: 'gui_theme',
+  design: 'gui_theme',
+  wyglad: 'gui_theme',
+  gui_accent: 'gui_accent',
+  accent: 'gui_accent',
+  akcent: 'gui_accent',
+  kolor: 'gui_accent',
+  active_workspace_tab: 'active_workspace_tab',
+  tab: 'active_workspace_tab',
+  panel: 'active_workspace_tab',
+  zakladka: 'active_workspace_tab',
+};
+
+export type WorkspaceUiKey = 'gui_theme' | 'gui_accent' | 'active_workspace_tab';
+export const WORKSPACE_UI_VALUES: Record<WorkspaceUiKey, string[]> = {
+  gui_theme: Array.from(new Set(Object.values(THEME_ALIASES))),
+  gui_accent: Array.from(new Set(Object.values(ACCENT_ALIASES))),
+  active_workspace_tab: Array.from(new Set(Object.values(TAB_ALIASES))),
+};
+
+/** Normalizuje ustawienie interfejsu (np. z narzędzia modelu) do polecenia `ui_set`; null = nieznane. */
+export function workspaceUiCommand(setting: unknown, value: unknown): BielikSlashCommand | null {
+  const rawKey = String(setting || '').trim().toLowerCase().replace(/[ąa]/g, 'a').replace(/ł/g, 'l');
+  const key = UI_KEY_ALIASES[rawKey];
+  if (!key) return null;
+  const rawValue = String(value || '').trim().toLowerCase();
+  const normalized = key === 'active_workspace_tab' ? rawValue.replace(/[\s_-]/g, '') : rawValue;
+  const canonical = WORKSPACE_UI_VALUES[key].includes(normalized) ? normalized : undefined;
+  const mapped = UI_ALIASES[key][normalized] || canonical;
+  return mapped ? { kind: 'ui_set', key, value: mapped } : null;
+}
+
 function mapStatusWord(word: string): ModuleStatus | null {
   for (const [pattern, status] of STATUS_WORDS) {
     if (pattern.test(word)) return status;
@@ -190,58 +270,18 @@ export function parseChatDirectives(
 
   const theme = UI_THEME.exec(text);
   if (theme) {
-    const themeAliases: Record<string, string> = {
-      apex: 'apex',
-      ciemny: 'apex',
-      midnight: 'midnight',
-      nocny: 'midnight',
-      emerald: 'emerald',
-      zielony: 'emerald',
-      violet: 'violet',
-      fioletowy: 'violet',
-      fiolet: 'violet',
-    };
-    push({ kind: 'ui_set', key: 'gui_theme', value: themeAliases[theme[1].toLowerCase()] });
+  push({ kind: 'ui_set', key: 'gui_theme', value: THEME_ALIASES[theme[1].toLowerCase()] });
   }
 
   const accent = UI_ACCENT.exec(text);
   if (accent) {
-    const accentAliases: Record<string, string> = {
-      cyan: 'cyan',
-      niebieski: 'cyan',
-      emerald: 'emerald',
-      zielony: 'emerald',
-      violet: 'violet',
-      fioletowy: 'violet',
-      fiolet: 'violet',
-      amber: 'amber',
-      bursztynowy: 'amber',
-      pomarańczowy: 'amber',
-      pomaranczowy: 'amber',
-    };
-    push({ kind: 'ui_set', key: 'gui_accent', value: accentAliases[accent[1].toLowerCase()] });
+  push({ kind: 'ui_set', key: 'gui_accent', value: ACCENT_ALIASES[accent[1].toLowerCase()] });
   }
 
   const tab = UI_TAB.exec(text);
   if (tab) {
     const normalized = tab[1].toLowerCase().replace(/[\s_-]/g, '');
-    const tabAliases: Record<string, string> = {
-      czat: 'chat',
-      chat: 'chat',
-      apex: 'apex',
-      statek: 'svl364',
-      svl364: 'svl364',
-      infrastruktura: 'infrastructure',
-      agenci: 'agents',
-      maya: 'maya',
-      galeria: 'gallery',
-      terminale: 'terminals',
-      jądro: 'kernel',
-      jadro: 'kernel',
-      kernel: 'kernel',
-      linux: 'linux',
-    };
-    push({ kind: 'ui_set', key: 'active_workspace_tab', value: tabAliases[normalized] });
+  push({ kind: 'ui_set', key: 'active_workspace_tab', value: TAB_ALIASES[normalized] });
   }
 
   return commands;

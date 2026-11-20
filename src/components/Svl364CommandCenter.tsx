@@ -122,6 +122,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
     serverRevision,
     lastSyncedAt,
     wsState,
+    sseState,
     lastRefreshReport,
     conversations,
     refreshDomainModules,
@@ -909,7 +910,10 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               ) : (
                 <p className="text-slate-500">{telemetry ? 'Brak interfejsów poza loopback.' : NA}</p>
               )}
-              <p className="text-slate-400">WebSocket /ws/svl: {wsState}</p>
+              <p className="text-slate-400">
+                WebSocket /ws/svl: {wsState}
+                {sseState !== 'off' ? ` · zapasowy SSE /api/events: ${sseState}` : ''}
+              </p>
             </div>
 
             <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1.5 font-mono text-xs">

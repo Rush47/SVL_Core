@@ -4,6 +4,8 @@ Repozytorium: **Rush47/SVL_Core** (jedyne obsługiwane). Interfejs i komunikaty 
 
 ## Architektura
 - `server.ts` — brama Express + WebSocket `/ws/svl` (port 3000), czat `/api/chat`, MCP `/mcp/svl` i `/mcp/github`.
+- Synchronizacja na żywo: każda zmiana stanu idzie przez `LiveSyncBus` (`src/server/liveSyncBus.ts`) do `/ws/svl` i do zapasowego SSE `/api/events` (gdy proxy zrywa WebSocket).
+- Akcje czatu: modele bez natywnych narzędzi (Ollama) dostają protokół `<svl_action>{…}</svl_action>` (`src/server/chatActions.ts`); serwer wykonuje bloki tym samym kodem co narzędzia.
 - `backend/` — jądro Python (port 8085, SQLite WAL): `svl_core.py`, `app.py`, `agents_runtime.py`, `ship_monitor.py`.
 - `src/` — React + Vite; `src/server/*` — moduły serwera (Gemini, GitHub, MCP, logi).
 - AI w systemie to **wyłącznie Bielik i Maya** (Ollama, zapasowo Gemini). Nie dodawaj innych person AI.
