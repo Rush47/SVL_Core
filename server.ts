@@ -997,6 +997,13 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '25mb' }));
 
+  // Odkrywanie OAuth (konektor MCP w aplikacji Claude): serwer NIE ma OAuth. Bez tej trasy
+  // fallback SPA zwracał index.html z HTTP 200 i Claude uznawał konektor za wymagający
+  // logowania (stan „needs reconnect”). 404 JSON = konektor bez logowania.
+  app.all('/.well-known/*', (_req, res) => {
+    res.status(404).json({ ok: false, error: 'Brak OAuth — SVL MCP działa bez logowania (opcjonalnie klucz w adresie /mcp/svl/<SVL_MCP_URL_KEY>).' });
+  });
+
   app.all('/mcp/github', asyncRoute(async (req, res) => {
     const authorization = req.headers.authorization;
     const token = typeof authorization === 'string' && authorization.startsWith('Bearer ')

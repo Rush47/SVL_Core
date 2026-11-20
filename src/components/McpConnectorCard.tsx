@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Copy, Plug } from 'lucide-react';
-import { safeFetchJson } from '../utils/svlLogic';
+import { isSvlOperatorTokenRequired, safeFetchJson } from '../utils/svlLogic';
 
 /** Adres serwera MCP SVL dla Claude: konektor w aplikacji Claude (klucz w adresie) i Claude Code (nagłówek). */
 export const McpConnectorCard: React.FC = () => {
@@ -19,7 +19,8 @@ export const McpConnectorCard: React.FC = () => {
   }, []);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const connectorUrl = urlKeyPath ? `${origin}${urlKeyPath}` : '';
+  // Bez klucza w adresie: zwykły /mcp/svl (działa, gdy serwer nie wymaga tokenu operatora).
+  const connectorUrl = urlKeyPath ? `${origin}${urlKeyPath}` : !isSvlOperatorTokenRequired() && origin ? `${origin}/mcp/svl` : '';
   const masked = connectorUrl ? connectorUrl.replace(/(\/mcp\/svl\/).+$/, '$1••••••••') : '';
 
   const copy = async () => {
@@ -60,9 +61,10 @@ export const McpConnectorCard: React.FC = () => {
             </button>
           </div>
           <p className="text-[11px] text-slate-500">
-            Adres zawiera tajny klucz — nie udostępniaj go. Claude musi mieć dostęp do tego adresu z internetu:
-            podgląd w AI Studio jest za logowaniem Google, więc użyj wdrożenia (Cloud Run) albo serwera z SVL CoreOS 2.
-            Claude Code: <code>{origin}/mcp/svl</code> z nagłówkiem <code>Authorization: Bearer SVL_OPERATOR_TOKEN</code>.
+            {urlKeyPath ? 'Adres zawiera tajny klucz — nie udostępniaj go. ' : 'Konektor bez logowania (token operatora nie jest wymagany). '}
+            Claude musi mieć dostęp do tego adresu z internetu: podgląd w AI Studio jest za logowaniem Google,
+            więc użyj wdrożenia (Cloud Run) albo serwera z SVL CoreOS 2. Przy SVL_REQUIRE_OPERATOR_TOKEN=1 Claude Code
+            łączy się z <code>{origin}/mcp/svl</code> z nagłówkiem <code>Authorization: Bearer SVL_OPERATOR_TOKEN</code>.
           </p>
         </>
       )}
