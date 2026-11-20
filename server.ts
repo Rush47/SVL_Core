@@ -39,7 +39,16 @@ import {
   GitHubFileService,
   isAllowedGitHubFilePath,
 } from './src/utils/githubFiles.ts';
-import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
+import { commandKey, isMutatingCommand, parseChatDirectives, workspaceUiCommand, WORKSPACE_UI_VALUES } from './src/server/chatDirectives.ts';
+import {
+  buildTextActionProtocol,
+  extractTextActions,
+  formatActionReceipt,
+  isSystemCommandRequest,
+  renderActionReceipts,
+  toJsonSchema,
+} from './src/server/chatActions.ts';
+import { LiveSyncBus, formatSseFrame, sseKeepAlive } from './src/server/liveSyncBus.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { parseGalleryVerdict, galleryPromptForAgent } from './src/server/galleryVision.ts';
 import {
@@ -313,6 +322,8 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
 const PYTHON_PORT = Number(process.env.SVL_PYTHON_PORT || 8085);
 const PYTHON_BASE_URL = `http://127.0.0.1:${PYTHON_PORT}`;
 const SYNC_SCHEMA_VERSION = '2026.11.sync.v1';
+// Modele Ollamy, które odrzuciły parametr `tools` (HTTP 400) — od razu dostają protokół <svl_action>.
+const ollamaModelsWithoutTools = new Set<string>();
 
 function createGitHubFileService(): GitHubFileService {
   return new GitHubFileService({
@@ -1540,12 +1551,90 @@ async function startServer() {
     res.status(result.status).json(result.data);
   }));
 
+  // Strumień SSE ze zmianami stanu — zapasowy kanał na żywo, gdy WebSocket /ws/svl
+  // nie przechodzi przez proxy (AI Studio, tunel). Ramki są identyczne jak w /ws/svl.
+  app.get('/api/events', (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const clientOrigin = String(req.query.origin || 'unknown').slice(0, 100);
+    const clientId = `sse-${randomUUID().slice(0, 10)}`;
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    req.socket.setTimeout?.(0);
+    req.socket.setNoDelay?.(true);
+    let closed = false;
+    const write = (chunk: string) => {
+      if (closed) return;
+      try {
+        res.write(chunk);
+      } catch {
+        // połączenie zamknięte
+      }
+    };
+    write('retry: 3000\n\n');
+    const unsubscribe = liveSyncBus.subscribe((frame) => write(formatSseFrame(frame)));
+    const keepAlive = setInterval(() => {
+      write(sseKeepAlive());
+      write(formatSseFrame(JSON.stringify({
+        type: 'svl.ping',
+        serverRevision: lastRelayedServerRevision,
+        timestamp: new Date().toISOString(),
+      })));
+    }, 20000);
+    keepAlive.unref?.();
+    req.on('close', () => {
+      closed = true;
+      clearInterval(keepAlive);
+      unsubscribe();
+      svlFileLogger.log({
+        layer: 'WS',
+        level: 'INFO',
+        category: 'sse_disconnect',
+        origin: clientOrigin,
+        message: `Rozłączono strumień SSE ${clientId} (aktywnych=${liveSyncBus.size})`,
+      });
+    });
+    svlFileLogger.log({
+      layer: 'WS',
+      level: 'INFO',
+      category: 'sse_connect',
+      origin: clientOrigin,
+      message: `Połączono strumień SSE ${clientId} (aktywnych=${liveSyncBus.size})`,
+    });
+    void (async () => {
+      const statusRes = await callPythonBackend('GET', '/api/py/sync/status', undefined, `sse-hello-${clientId}`, 2);
+      const currentSrvRev = Number(statusRes.data?.serverRevision || lastRelayedServerRevision || 1);
+      if (!outboxCursorInitialized || liveClientCount() <= 1) {
+        lastRelayedServerRevision = Math.max(lastRelayedServerRevision, currentSrvRev);
+        outboxCursorInitialized = true;
+      }
+      write(formatSseFrame(JSON.stringify({
+        type: 'svl.hello',
+        channel: 'sse',
+        clientId,
+        schemaVersion: statusRes.data?.schemaVersion || SYNC_SCHEMA_VERSION,
+        serverRevision: currentSrvRev,
+        heartbeatIntervalMs: 20000,
+        timestamp: new Date().toISOString(),
+      })));
+    })().catch(() => undefined);
+  });
+
   interface WsClientMeta {
     clientId: string;
     origin: string;
     lastPongAt: number;
   }
   const wsClients = new Map<WebSocket, WsClientMeta>();
+  // Ta sama ramka trafia do klientów WebSocket i do strumieni SSE /api/events.
+  const liveSyncBus = new LiveSyncBus();
+  const liveClientCount = () => wsClients.size + liveSyncBus.size;
   let lastRelayedServerRevision = 0;
   let outboxCursorInitialized = false;
   const relayedEventIdsQueue: string[] = [];
@@ -1583,6 +1672,7 @@ async function startServer() {
         }
       }
     }
+    delivered += liveSyncBus.publish(frame);
     svlFileLogger.log({
       layer: 'WS',
       level: 'INFO',
@@ -1615,6 +1705,7 @@ async function startServer() {
         }
       }
     }
+    liveSyncBus.publish(frame);
   };
   (globalThis as any).__svlPublishOutbox = publishOutboxEvent;
   (globalThis as any).__svlBroadcastResync = broadcastResyncRequired;
@@ -1627,7 +1718,7 @@ async function startServer() {
       outboxPollRequested = true;
       return;
     }
-    if (wsClients.size === 0) return;
+    if (liveClientCount() === 0) return;
     outboxPollInFlight = true;
     try {
       if (!outboxCursorInitialized) {
@@ -3348,10 +3439,7 @@ async function startServer() {
         agentScopes.has('superuser.all'));
     const requestsRootSystemTools =
       hasAgentRootAuthority &&
-      (isOnboardComputerChannel ||
-        /\b(?:root|sudo|shell|bash|linux|ssh|sshd|demon\p{L}*|usług\p{L}*|uslug\p{L}*|serwis\p{L}*|moduł\p{L}*|modul\p{L}*|kana[łl]\p{L}*|komputer\p{L}*|pokładow\p{L}*|pokladow\p{L}*|pamię[ćc]\p{L}*|pamiec\p{L}*|zapamięt\p{L}*|zapamiet\p{L}*|wirus\p{L}*|antywirus\p{L}*|skan\p{L}*|raport\p{L}*|synchroniz\p{L}*|diagnost\p{L}*|status|proces\p{L}*|dysk|ram|cpu|port\p{L}*|jądr\p{L}*|jadr\p{L}*|apex|svl-?364|zadani\p{L}*|sprawdź|sprawdz|uruchom|napraw|popraw|ulepsz|rozwi[ńn]\p{L}*|rozwij\p{L}*|wykonaj|zainstaluj|skonfiguruj|ustaw|nadaj|przyznaj|zaktualizuj|pobierz|usuń|usun|dodaj|zmień|zmien|stwórz|stworz|utwórz|utworz|otwórz|otworz|uprawnie\p{L}*|wszystk\p{L}*|ollama|model\p{L}*|vision|plik\p{L}*|katalog\p{L}*|bielik|maya|agent\p{L}*|misj\p{L}*|pakiet\p{L}*|komend\p{L}*|polece[ńn]\p{L}*|log\p{L}*|mcp|api)\b/iu.test(
-          cleanMsg,
-        ));
+      (isOnboardComputerChannel || isSystemCommandRequest(cleanMsg));
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
     // Narzędzia GitHub tylko dla wiadomości o GitHubie (też w kontekście ostatnich wypowiedzi).
     // Wcześniej sam token GitHub włączał je dla każdej wiadomości: Ollama była wtedy zawsze
@@ -3954,6 +4042,25 @@ async function startServer() {
         });
         return { ok, reportMarkdown: String(repRes.data?.reportMarkdown || '').slice(0, 8000) };
       }
+      if (toolName === 'svl_workspace_ui') {
+        const uiCmd = workspaceUiCommand(args.setting ?? args.key, args.value);
+        if (!uiCmd) {
+          return {
+            ok: false,
+            error:
+              'Nieznane ustawienie interfejsu. Dozwolone: ' +
+              `gui_theme=${WORKSPACE_UI_VALUES.gui_theme.join('|')}, ` +
+              `gui_accent=${WORKSPACE_UI_VALUES.gui_accent.join('|')}, ` +
+              `active_workspace_tab=${WORKSPACE_UI_VALUES.active_workspace_tab.join('|')}`,
+          };
+        }
+        const actionsBefore = appliedActions.length;
+        const uiOutcome = await executeBielikCommand(uiCmd);
+        const uiAction = appliedActions.length > actionsBefore ? appliedActions[appliedActions.length - 1] : null;
+        const ok = Boolean(uiAction?.ok);
+        if (ok) pendingMutations = true;
+        return { ok, summary: uiAction?.summary || uiOutcome.text, serverRevision: latestActionSrvRev };
+      }
       if (toolName === 'svl_global_sync') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
         pendingMutations = true;
@@ -4235,6 +4342,30 @@ async function startServer() {
           name: 'svl_global_sync',
           description: 'Uruchamia globalną synchronizację wszystkich domen SVL (SQLite WAL + WebSocket).',
           parameters: { type: Type.OBJECT, properties: {} },
+        },
+        {
+          name: 'svl_workspace_ui',
+          description:
+            'Zmienia interfejs aplikacji SVL od razu we wszystkich otwartych oknach: motyw (gui_theme), ' +
+            'kolor akcentu (gui_accent) albo otwarty panel (active_workspace_tab).',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              setting: {
+                type: Type.STRING,
+                description: 'gui_theme | gui_accent | active_workspace_tab',
+                enum: ['gui_theme', 'gui_accent', 'active_workspace_tab'],
+              },
+              value: {
+                type: Type.STRING,
+                description:
+                  `gui_theme: ${WORKSPACE_UI_VALUES.gui_theme.join('|')}; ` +
+                  `gui_accent: ${WORKSPACE_UI_VALUES.gui_accent.join('|')}; ` +
+                  `active_workspace_tab: ${WORKSPACE_UI_VALUES.active_workspace_tab.join('|')}`,
+              },
+            },
+            required: ['setting', 'value'],
+          },
         },
         {
           name: 'svl_agent_task',
@@ -5084,6 +5215,64 @@ async function startServer() {
           : isBielikAgent
             ? `Bielik · Grok (${modelName} · ROOT)`
             : `SVL-364 · Grok (${modelName})`;
+    // --- Akcje tekstowe <svl_action> (modele bez natywnych narzędzi) ---------------
+    let textActionProtocolActive = false;
+    const textActionReceipts: string[] = [];
+    const textActionToolNames = () =>
+      imageBase64 ? [] : chatToolDeclarations.map((fn) => String(fn.name || '')).filter(Boolean);
+    /** Wykonuje bloki <svl_action> z odpowiedzi; null = brak akcji. */
+    const runTextActions = async (reply: string): Promise<{ text: string; resultsJson: string } | null> => {
+      const names = textActionToolNames();
+      if (names.length === 0) return null;
+      const extracted = extractTextActions(reply, names);
+      if (extracted.actions.length === 0) return null;
+      const receipts: string[] = [];
+      const results: Array<Record<string, unknown>> = [];
+      for (const action of extracted.actions) {
+        const before = appliedActions.length;
+        let result: Record<string, any>;
+        try {
+          result = await executeChatTool(action.tool, action.args);
+        } catch (err) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        const summaries = appliedActions.slice(before).map((a) => a.summary).filter(Boolean).join('; ');
+        const receipt = formatActionReceipt(action.tool, { ...result, summary: result?.summary || summaries || undefined });
+        receipts.push(receipt);
+        textActionReceipts.push(receipt);
+        results.push({ tool: action.tool, result });
+      }
+      return {
+        text: renderActionReceipts(extracted.text, receipts),
+        resultsJson: JSON.stringify(results).slice(0, 12000),
+      };
+    };
+    /** Ostatnia odpowiedź: wykonuje pozostałe bloki i dołącza potwierdzenia wykonanych akcji. */
+    const finalizeTextActionReply = async (reply: string): Promise<string> => {
+      let text = String(reply || '');
+      const earlierReceipts = textActionReceipts.slice();
+      const leftover = text ? await runTextActions(text) : null;
+      if (leftover) {
+        text = [leftover.text, ...earlierReceipts].filter(Boolean).join('\n\n');
+      } else if (textActionReceipts.length > 0) {
+        text = [text, ...textActionReceipts].filter(Boolean).join('\n\n');
+      }
+      if (
+        textActionProtocolActive &&
+        textActionReceipts.length === 0 &&
+        directiveReceipts.length === 0 &&
+        !appliedActions.some((a) => a.ok) &&
+        isSystemCommandRequest(cleanMsg) &&
+        !/\?\s*$/.test(cleanMsg) &&
+        text
+      ) {
+        text +=
+          '\n\nℹ️ Model nie wywołał żadnej akcji, więc w systemie nic nie zmieniono. ' +
+          'Napisz polecenie wprost (np. „zmień motyw na zielony”, „aktywuj moduł X”) albo użyj `/pomoc`.';
+      }
+      return text;
+    };
+
     // Ollama: zapas po Grok (albo pierwsza, gdy Grok nie jest skonfigurowany albo SVL_CHAT_ENGINE=ollama); potem Gemini.
     let ollamaAttempted = false;
     const tryOllama = async (): Promise<boolean> => {
@@ -5119,10 +5308,25 @@ async function startServer() {
                 function: {
                   name: fn.name,
                   description: fn.description,
-                  parameters: fn.parameters,
+                  parameters: toJsonSchema(fn.parameters),
                 },
               }))
             : [];
+        // Model bez natywnych narzędzi dostaje protokół tekstowy <svl_action>, więc polecenia
+        // z czatu nadal faktycznie się wykonują (wcześniej narzędzia były po cichu usuwane).
+        const textActionTools = imageBase64 ? [] : chatToolDeclarations;
+        const enableTextActionProtocol = () => {
+          if (textActionProtocolActive || textActionTools.length === 0) return;
+          textActionProtocolActive = true;
+          ollamaMessages.splice(agentMemoryContext ? 1 : 0, 0, {
+            role: 'system',
+            content: buildTextActionProtocol(textActionTools as any),
+          });
+        };
+        if (ollamaToolsPayload.length > 0 && ollamaModelsWithoutTools.has(selectedOllamaModelName)) {
+          ollamaToolsPayload = [];
+          enableTextActionProtocol();
+        }
         const ollamaTimeoutMs = ollamaChatTimeoutMs;
         ollamaGenerationStarted = true;
         let extReplyRaw = '';
@@ -5155,7 +5359,9 @@ async function startServer() {
           if (!oResp.ok) {
             const errBody = (await oResp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
             if (oResp.status === 400 && ollamaToolsPayload.length > 0 && /tool/i.test(errBody)) {
+              ollamaModelsWithoutTools.add(selectedOllamaModelName);
               ollamaToolsPayload = [];
+              enableTextActionProtocol();
               continue;
             }
             throw new Error(`HTTP ${oResp.status}${errBody ? `: ${errBody}` : ''}`);
@@ -5187,9 +5393,25 @@ async function startServer() {
             }
             continue;
           }
-          extReplyRaw = String(oData?.message?.content || oData?.response || '').trim();
+          const ollamaContent = String(oData?.message?.content || oData?.response || '').trim();
+          if (textActionProtocolActive && round < 4) {
+            const executed = await runTextActions(ollamaContent);
+            if (executed) {
+              ollamaMessages.push({ role: 'assistant', content: ollamaContent });
+              ollamaMessages.push({
+                role: 'user',
+                content:
+                  `[Wyniki akcji wykonanych przez serwer SVL]\n${executed.resultsJson}\n` +
+                  'Odpowiedz teraz krótko Operatorowi po polsku na podstawie tych wyników. ' +
+                  'Nie powtarzaj już wykonanych bloków <svl_action>.',
+              });
+              continue;
+            }
+          }
+          extReplyRaw = ollamaContent;
           break;
         }
+        extReplyRaw = await finalizeTextActionReply(extReplyRaw);
         if (extReplyRaw) {
           flushChatSync('ai_root_tool_applied');
           const finalReply = cleanReplyFor(extReplyRaw);
@@ -5281,7 +5503,7 @@ async function startServer() {
                 function: {
                   name: fn.name,
                   description: fn.description,
-                  parameters: fn.parameters,
+                  parameters: toJsonSchema(fn.parameters),
                 },
               }))
             : [];
@@ -5323,6 +5545,7 @@ async function startServer() {
           usedModel = result.model || grokModel;
           break;
         }
+        extReplyRaw = await finalizeTextActionReply(extReplyRaw);
         if (extReplyRaw) {
           displayModelBadge = grokBadgeFor(usedModel);
           flushChatSync('ai_root_tool_applied');
@@ -6666,7 +6889,7 @@ async function startServer() {
       const currentSrvRev = Number(statusRes.data?.serverRevision || lastRelayedServerRevision || 1);
       // Kursor relaya przesuwamy tylko, gdy nikt inny nie czeka na zdarzenia —
       // inaczej nowe połączenie „połykało” zdarzenia jeszcze niewysłane pozostałym klientom.
-      if (!outboxCursorInitialized || wsClients.size <= 1) {
+      if (!outboxCursorInitialized || liveClientCount() <= 1) {
         lastRelayedServerRevision = Math.max(lastRelayedServerRevision, currentSrvRev);
         outboxCursorInitialized = true;
       }

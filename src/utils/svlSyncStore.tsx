@@ -31,6 +31,7 @@ import {
   shouldPreserveLocalConversationsOnEmptyServer,
   shouldSkipResyncEcho,
 } from './syncGuards';
+import { createSseParser } from './sseStream';
 
 const BROADCAST_CHANNEL_NAME = 'svl_python_os_sync';
 const STORAGE_SIGNAL_KEY = 'svl_sync_signal_v1';
@@ -125,9 +126,13 @@ function normalizeConversationsFromServer(rawList: any[]): SyncableConversation[
     });
 }
 
+export type SseFallbackState = 'off' | 'connecting' | 'online';
+
 interface SvlSyncContextValue {
   tabOrigin: string;
   wsState: WsConnectionState;
+  /** Zapasowy kanał na żywo /api/events (SSE), aktywny, gdy WebSocket nie działa. */
+  sseState: SseFallbackState;
   wsAttempt: number;
   wsLastError: string | null;
   viteHmrDiagnostic: ViteHmrDiagnostic;
@@ -186,6 +191,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const tabOrigin = tabOriginRef.current;
 
   const [wsState, setWsState] = useState<WsConnectionState>('connecting');
+  const [sseState, setSseState] = useState<SseFallbackState>('off');
   const [wsAttempt, setWsAttempt] = useState(0);
   const [wsLastError, setWsLastError] = useState<string | null>(null);
 
@@ -1218,16 +1224,117 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [advanceServerRevision, applySyncEvent, catchUpFromEvents, refreshAllDomains, tabOrigin]);
 
-  // Low-frequency fallback heartbeat only when WS is offline/reconnecting and client is authenticated
+  // Zapasowy kanał na żywo: gdy WebSocket /ws/svl nie działa (proxy AI Studio, tunel,
+  // firewall), te same ramki przychodzą strumieniem SSE /api/events przez zwykłe HTTP.
+  // Bez tego zmiany wydane z czatu pojawiały się w innych widokach dopiero po 15 s albo
+  // po ręcznym odświeżeniu.
+  const wsOnline = wsState === 'online';
   useEffect(() => {
-    if (wsState === 'online') return;
+    if (wsOnline || typeof window === 'undefined' || typeof fetch !== 'function') {
+      setSseState('off');
+      return;
+    }
+    let stopped = false;
+    let controller: AbortController | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let failures = 0;
+
+    const handleFrame = (raw: string) => {
+      let frame: any;
+      try {
+        frame = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (!frame || typeof frame !== 'object') return;
+      if (frame.type === 'svl.hello') {
+        failures = 0;
+        setSseState('online');
+        if (Number(frame.serverRevision || 0) > serverRevisionRef.current) {
+          void catchUpFromEvents('sse_hello');
+        }
+        return;
+      }
+      if (frame.type === 'svl.ping') {
+        advanceServerRevision(frame.serverRevision);
+        return;
+      }
+      if (frame.type === 'svl.resync_required') {
+        if (shouldSkipResyncEcho(frame.origin, tabOrigin)) return;
+        void refreshAllDomains(`sse_${frame.reason || 'resync_required'}`);
+        return;
+      }
+      if (frame.type === 'svl.event' || (frame.eventId && frame.entity)) {
+        applySyncEvent(frame as SvlSyncEvent);
+      }
+    };
+
+    const scheduleRetry = () => {
+      if (stopped) return;
+      failures += 1;
+      retryTimer = setTimeout(run, Math.min(15000, 1000 * 2 ** Math.min(failures, 4)));
+    };
+
+    const run = async () => {
+      if (stopped) return;
+      if (!hasSvlOperatorAccessToken()) {
+        setSseState('off');
+        scheduleRetry();
+        return;
+      }
+      controller = new AbortController();
+      setSseState('connecting');
+      try {
+        const token = getSvlOperatorAccessToken();
+        const res = await fetch(`/api/events?origin=${encodeURIComponent(tabOrigin)}`, {
+          headers: {
+            Accept: 'text/event-stream',
+            ...(token ? { 'X-SVL-Operator-Token': token } : {}),
+          },
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        const parser = createSseParser();
+        while (!stopped) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          for (const data of parser.push(decoder.decode(value, { stream: true }))) handleFrame(data);
+        }
+      } catch {
+        // przerwane (WebSocket wrócił) albo błąd sieci — ponowimy
+      }
+      if (stopped) return;
+      setSseState('connecting');
+      scheduleRetry();
+    };
+
+    // WebSocket zwykle łączy się w < 1 s; SSE startuje tylko, gdy to się nie udało.
+    retryTimer = setTimeout(run, 2500);
+    return () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try {
+        controller?.abort();
+      } catch {
+        // ignore
+      }
+      setSseState('off');
+    };
+  }, [wsOnline, tabOrigin, applySyncEvent, refreshAllDomains, catchUpFromEvents, advanceServerRevision]);
+
+  // Low-frequency fallback heartbeat only when no live channel (WS or SSE) works and client is authenticated
+  useEffect(() => {
+    if (wsState === 'online' || sseState === 'online') return;
     const timer = setInterval(() => {
       if (hasSvlOperatorAccessToken()) {
         void refreshDomainModules(['health', 'agents', 'chat', 'workspace', 'modules', 'kernel']);
       }
     }, 15000);
     return () => clearInterval(timer);
-  }, [refreshDomainModules, wsState]);
+  }, [refreshDomainModules, wsState, sseState]);
 
   const reconnectWebSocket = useCallback(() => {
     wsReconnectNowRef.current?.();
@@ -1814,6 +1921,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     () => ({
       tabOrigin,
       wsState,
+      sseState,
       wsAttempt,
       wsLastError,
       viteHmrDiagnostic,
@@ -1894,6 +2002,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       wsAttempt,
       wsLastError,
       wsState,
+      sseState,
     ],
   );
 
