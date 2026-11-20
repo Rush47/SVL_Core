@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readLogTail } from './svlMcpServer.ts';
+import { readLogTail, resolveSvlGatewayChat } from './svlMcpServer.ts';
 
 test('svl_logs: tail with category and minimum level filters', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'svl-mcp-logs-'));
@@ -25,4 +25,22 @@ test('svl_logs: tail with category and minimum level filters', async () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('svl_chat gateway: System_SI_1 i aliasy idą na kanał infrastruktury', () => {
+  for (const agent of ['System_SI_1', 'system_si_1', 'system-si-1']) {
+    assert.deepEqual(resolveSvlGatewayChat({ agent }), {
+      agent: 'System_SI_1',
+      conversationId: 'conv-system-si-1',
+    });
+  }
+  assert.deepEqual(resolveSvlGatewayChat({ agent: 'Bielik', channel: 'system-si-1' }), {
+    agent: 'System_SI_1',
+    conversationId: 'conv-system-si-1',
+  });
+  assert.deepEqual(resolveSvlGatewayChat({ agent: 'Maya' }), {
+    agent: 'Maya',
+    conversationId: 'conv-agent-maya',
+  });
+  assert.equal(resolveSvlGatewayChat({}).agent, 'Bielik');
 });

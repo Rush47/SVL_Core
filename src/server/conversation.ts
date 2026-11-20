@@ -6,7 +6,8 @@
 
 import { normalizeAgentCanonicalName } from '../utils/svlLogic.ts';
 
-export type ConversationAgent = 'Bielik' | 'Maya';
+export type ConversationAgent = 'Bielik' | 'Maya' | 'System_SI_1';
+/** Uczestnicy swobodnej rozmowy na kanale rodzinnym. System_SI_1 ma własny kanał i nie wchodzi do tej pary. */
 export const CONVERSATION_AGENTS: ConversationAgent[] = ['Bielik', 'Maya'];
 export const OPERATOR_LABEL = 'Mateusz (Operator)';
 
@@ -26,7 +27,8 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 export function agentOf(turn: DialogueTurn): ConversationAgent | null {
   if (turn.role !== 'assistant') return null;
   const canonical = normalizeAgentCanonicalName(turn.sender);
-  return canonical === 'Bielik' || canonical === 'Maya' ? canonical : null;
+  if (canonical === 'Bielik' || canonical === 'Maya' || canonical === 'System_SI_1') return canonical;
+  return null;
 }
 
 /** Usuwa wklejone lub powtórzone przez model nagłówki „Weryfikacja SVL (...)” na początku wypowiedzi. */

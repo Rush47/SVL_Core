@@ -30,6 +30,8 @@ import {
   resolveChatTargetAgent,
   resolveInstalledOllamaModel,
   selectOllamaModelName,
+  formatOllamaChatBadge,
+  formatGrokChatBadge,
   type BielikSlashCommand,
   type ChatAppliedAction,
 } from './src/utils/svlLogic.ts';
@@ -3133,9 +3135,7 @@ async function startServer() {
         body = { ...body, sender: 'Komputer pokładowy', agentId: 'KomputerPokladowy' };
       } else if (
         replyConversationId === 'conv-system-si-1' ||
-        targetLower === 'system_si_1' ||
-        targetLower === 'system-si-1' ||
-        targetLower === 'systemsi1'
+        normalizeAgentCanonicalName(String(targetAgent || '')) === 'System_SI_1'
       ) {
         body = {
           ...body,
@@ -3532,10 +3532,7 @@ async function startServer() {
     const targetAgentNorm = String(targetAgent || '').trim().toLowerCase();
     const isSystemSi1Channel =
       String(conversationId || '').trim() === 'conv-system-si-1' ||
-      targetAgentNorm === 'system_si_1' ||
-      targetAgentNorm === 'system-si-1' ||
-      targetAgentNorm === 'systemsi1' ||
-      targetAgentNorm === 'system_si';
+      normalizeAgentCanonicalName(String(targetAgent || '')) === 'System_SI_1';
     const isOnboardComputerChannel =
       !isSystemSi1Channel &&
       (String(conversationId || '').trim() === 'conv-svl364-komputer-pokladowy' ||
@@ -3569,7 +3566,16 @@ async function startServer() {
         ? 'Bielik'
         : selectedAgent === 'Maya' || isOnboardComputerChannel
           ? 'Maya'
-          : null;
+          : selectedAgent === 'System_SI_1'
+            ? 'System_SI_1'
+            : null;
+    const agentIcon = selectedAgent === 'System_SI_1' ? '🛡️' : selectedAgent === 'Maya' ? '🛰️' : '🦅';
+    const rootPromptTag =
+      selectedAgent === 'System_SI_1' ? 'system_si_1@root#' : selectedAgent === 'Maya' ? 'maya@root#' : 'bielik@root#';
+    const sshPromptTag =
+      selectedAgent === 'System_SI_1' ? 'system_si_1@svl364-ssh#' : selectedAgent === 'Maya' ? 'maya@svl364-ssh#' : 'bielik@svl364-ssh#';
+    const rootOriginTag =
+      selectedAgent === 'System_SI_1' ? 'system-si-1-root' : selectedAgent === 'Maya' ? 'maya-root' : 'bielik-root';
     const historyTurns: DialogueTurn[] = conversationHistory.map((turn) => ({ ...turn }));
     const lastHistoryTurn = historyTurns[historyTurns.length - 1];
     if (lastHistoryTurn?.role === 'user' && lastHistoryTurn.content.trim() === cleanMsg) historyTurns.pop();
@@ -3903,7 +3909,7 @@ async function startServer() {
         const shellRes = await executeLinuxShellCommand(shellCmd);
         const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
         const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-        const actorPrefix = selectedAgent === 'Maya' ? 'maya@root#' : 'bielik@root#';
+        const actorPrefix = rootPromptTag;
         await persistTerminalOutput('linux', 'input', `${actorPrefix} ${shellCmd}`, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
         if (cleanStdout) await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
         if (cleanStderr) await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
@@ -3955,11 +3961,7 @@ async function startServer() {
           const shellRes = await executeLinuxShellCommand(sshCmd);
           const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
           const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-          const actorPrefix = isOnboardComputerChannel
-            ? 'root@svl-364-ship#'
-            : selectedAgent === 'Maya'
-              ? 'maya@svl364-ssh#'
-              : 'bielik@svl364-ssh#';
+          const actorPrefix = isOnboardComputerChannel ? 'root@svl-364-ship#' : sshPromptTag;
           await persistTerminalOutput('ssh-ship', 'input', `${actorPrefix} ${sshCmd}`, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
           if (cleanStdout) await persistTerminalOutput('ssh-ship', 'stdout', cleanStdout, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
           if (cleanStderr) await persistTerminalOutput('ssh-ship', 'stderr', cleanStderr, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
@@ -4675,22 +4677,23 @@ async function startServer() {
       : configuredOllamaModelName;
 
     const badgeForModel = (modelName: string) =>
-      isOnboardComputerChannel
-        ? `Komputer pokładowy SVL-364 (SSH + MCP · ${isExplicitGemini ? explicitGeminiModel : modelName})`
-        : isExplicitGemini
-          ? `${selectedDisplayName} · Gemini (${explicitGeminiModel})`
-          : selectedAgent === 'Maya'
-            ? `Maya Mitek · AI Statku SVL-364 (ROOT · ${modelName})`
-            : isExplicitOllama || isBielikAgent
-              ? `Bielik · Ollama (${modelName} · ROOT)`
-              : model === 'svl-hybrid-router'
-                ? `SVL-364 · Ollama (${modelName})`
-                : effectiveModel;
+      formatOllamaChatBadge({
+        selectedAgent,
+        selectedDisplayName,
+        modelName,
+        isOnboardComputer: isOnboardComputerChannel,
+        isExplicitGemini,
+        explicitGeminiModel,
+        isExplicitOllama,
+        isBielikAgent,
+        requestedModel: model,
+        effectiveModel,
+      });
     let displayModelBadge = badgeForModel(selectedOllamaModelName);
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
       if (cmd.kind === 'help') {
-        const icon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
+        const icon = agentIcon;
         return {
           text:
             `### ${icon} ${selectedDisplayName} (ROOT) — Procesor Poleceń Czatu (wykonuje serwer SVL, bez modelu AI)\n\n` +
@@ -4740,7 +4743,7 @@ async function startServer() {
         const runningLines = runningList
           .map((m: any) => `  - \`${m.name}\` (RAM: ${(Number(m.size || 0) / (1024 ** 3)).toFixed(2)} GB · wygasa: ${m.expires_at || 'aktywny'})`)
           .join('\n') || '  - *(żaden model nie jest aktualnie załadowany w pamięci)*';
-        const icon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
+        const icon = agentIcon;
         return {
           text:
             `### ${icon} ${selectedDisplayName} · Diagnostyka Ollama & SVL Python OS\n\n` +
@@ -4993,9 +4996,7 @@ async function startServer() {
         const shellRes = await executeLinuxShellCommand(shellCmd);
         const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
         const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-        const rootPromptTag = selectedAgent === 'Maya' ? 'maya@root#' : 'bielik@root#';
-        const rootOriginTag = selectedAgent === 'Maya' ? 'maya-root' : 'bielik-root';
-        const rootHeadingIcon = selectedAgent === 'Maya' ? '🛰️' : '🦅';
+        const rootHeadingIcon = agentIcon;
         await persistTerminalOutput('linux', 'input', `${rootPromptTag} ${shellCmd}`, shellCmd, rootOriginTag, corrId);
         if (cleanStdout) {
           await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, rootOriginTag, corrId);
@@ -5181,7 +5182,11 @@ async function startServer() {
       return;
     }
     // Recalled persistent SQLite memory for the active agent (shared 'global' + agent-scoped)
-    const memoryAgentName = isOnboardComputerChannel || selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
+    const memoryAgentName = isSystemSi1Channel
+      ? 'System_SI_1'
+      : isOnboardComputerChannel || selectedAgent === 'Maya'
+        ? 'Maya'
+        : 'Bielik';
     let recalledMemories: AgentMemoryRecord[] = [];
     if (hasOperatorAuth) {
       const memSearch = await callPythonBackend(
@@ -5202,9 +5207,11 @@ async function startServer() {
       : isOnboardComputerChannel
         ? '\n\n[TRYB KOMPUTERA POKŁADOWEGO SVL-364: Znajdujesz się w dedykowanym kanale komputera pokładowego (SSH + MCP). Odpowiadasz WYŁĄCZNIE jako **Komputer pokładowy** (`root@svl-364-ship`), a NIE jako Maya Mitek ani Bielik. Korzystaj z narzędzi `svl_mcp_call` i `svl_ssh_exec`, gdy Operator prosi o raport, diagnostykę lub polecenie na statku.]'
         : '';
+    const storedPersona = isSystemSi1Channel ? String(agentConfig.system_prompt || '').trim() : '';
     const agentMemoryContext = buildAgentSystemContext(
       formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + onboardComputerPrompt,
       selectedDisplayName,
+      storedPersona || undefined,
     );
 
     // Antivirus Scan & Chat Synchronization priority handler
@@ -5368,13 +5375,12 @@ async function startServer() {
                 ? 'pominięty — pytanie o źródła obsługuje Gemini z wyszukiwaniem'
                 : 'nie użyto dla tego zapytania';
     const grokBadgeFor = (modelName: string) =>
-      isOnboardComputerChannel
-        ? `Komputer pokładowy SVL-364 (SSH + MCP · Grok ${modelName})`
-        : selectedAgent === 'Maya'
-          ? `Maya Mitek · AI Statku SVL-364 (ROOT · Grok ${modelName})`
-          : isBielikAgent
-            ? `Bielik · Grok (${modelName} · ROOT)`
-            : `SVL-364 · Grok (${modelName})`;
+      formatGrokChatBadge({
+        selectedAgent,
+        modelName,
+        isOnboardComputer: isOnboardComputerChannel,
+        isBielikAgent,
+      });
     // --- Akcje tekstowe <svl_action> (modele bez natywnych narzędzi) ---------------
     let textActionProtocolActive = false;
     const textActionReceipts: string[] = [];
@@ -6554,17 +6560,20 @@ async function startServer() {
       if (isAutonomous && consecutiveAi >= SAFETY_MAX_AI_TURNS) return skip('ai_turn_limit');
 
       const isProactiveOnboardChannel = convId === 'conv-svl364-komputer-pokladowy';
+      const isProactiveSystemSi1 = convId === 'conv-system-si-1';
       const channelAgent: ConversationAgent | null =
         convId === 'conv-agent-bielik'
           ? 'Bielik'
           : convId === 'conv-agent-maya' || isProactiveOnboardChannel
             ? 'Maya'
-            : null;
+            : isProactiveSystemSi1
+              ? 'System_SI_1'
+              : null;
       const participants: ConversationAgent[] = channelAgent ? [channelAgent] : CONVERSATION_AGENTS;
       const reqTargetNorm = normalizeAgentCanonicalName(String(targetAgent || ''));
       const explicitTarget: ConversationAgent | null =
         channelAgent ||
-        (reqTargetNorm === 'Bielik' || reqTargetNorm === 'Maya' ? reqTargetNorm : null);
+        (reqTargetNorm === 'Bielik' || reqTargetNorm === 'Maya' || reqTargetNorm === 'System_SI_1' ? reqTargetNorm : null);
 
       const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
       const modelFor = (agent: ConversationAgent): string => {
@@ -6638,9 +6647,11 @@ async function startServer() {
       }
       const speakerDisplayName = isProactiveOnboardChannel ? 'Komputer pokładowy' : formatAgentDisplayName(speaker);
       const speakerAgentId = isProactiveOnboardChannel ? 'KomputerPokladowy' : speaker;
+      const speakerCfg: any = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === speaker)?.config || {};
       const speakerMemoryContext = buildAgentSystemContext(
         formatMemoryPromptContext(speakerMemories, speakerDisplayName, 12),
         speakerDisplayName,
+        speaker === 'System_SI_1' ? String(speakerCfg.system_prompt || '') : undefined,
       );
 
       // 2) Wskazana AI dopisuje swoją kwestię własnym modelem (lub inicjuje rozmowę na pustym kanale).

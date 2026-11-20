@@ -14,6 +14,20 @@ const op = (content: string): DialogueTurn => ({ role: 'user', sender: 'Mateusz 
 const bielik = (content: string): DialogueTurn => ({ role: 'assistant', sender: 'Bielik', content });
 const maya = (content: string): DialogueTurn => ({ role: 'assistant', sender: 'Maya', content });
 
+test('System_SI_1 sees its own channel lines as assistant', () => {
+  const turns = [
+    op('Status infrastruktury'),
+    { role: 'assistant', sender: 'System_SI_1', content: 'Mostek Ship jest lokalny.' },
+    bielik('To ja, Bielik.'),
+  ];
+  assert.deepEqual(toAgentPerspective(turns, 'System_SI_1'), [
+    { role: 'user', content: '[Mateusz (Operator)]: Status infrastruktury' },
+    { role: 'assistant', content: 'Mostek Ship jest lokalny.' },
+    { role: 'user', content: '[Bielik]: To ja, Bielik.' },
+  ]);
+  assert.equal(cleanAgentReply('System_SI_1: Mostek aktywny.\n[Bielik]: dopisek', 'System_SI_1'), 'Mostek aktywny.');
+});
+
 test('each agent sees its own lines as assistant and others as labelled user lines', () => {
   const turns = [op('Cześć wszystkim'), bielik('Hej Mateusz!'), maya('Witaj, co dziś robimy?')];
   assert.deepEqual(toAgentPerspective(turns, 'Bielik'), [

@@ -481,6 +481,72 @@ export function normalizeAgentCanonicalName(
   return null;
 }
 
+export type SvlMcpChatAgent = 'Bielik' | 'Maya' | 'System_SI_1';
+
+/** Wartości `agent` przyjmowane przez oba serwery MCP (`svl_chat`). Aliasy idą na kanoniczną nazwę. */
+export const SVL_MCP_CHAT_AGENT_ENUM = ['Bielik', 'Maya', 'System_SI_1', 'system_si_1', 'system-si-1'] as const;
+
+/** Nieznany adresat zostaje Bielikiem — tak jak dotychczasowy domyślny czat MCP. */
+export function resolveSvlMcpChatAgent(raw: unknown): SvlMcpChatAgent {
+  const canonical = normalizeAgentCanonicalName(typeof raw === 'string' ? raw : String(raw ?? ''));
+  if (canonical === 'Maya' || canonical === 'System_SI_1' || canonical === 'Bielik') return canonical;
+  return 'Bielik';
+}
+
+export function conversationIdForSvlChatAgent(agent: SvlMcpChatAgent): string {
+  if (agent === 'System_SI_1') return 'conv-system-si-1';
+  if (agent === 'Maya') return 'conv-agent-maya';
+  return 'conv-agent-bielik';
+}
+
+export function formatOllamaChatBadge(input: {
+  selectedAgent: string;
+  selectedDisplayName: string;
+  modelName: string;
+  isOnboardComputer: boolean;
+  isExplicitGemini: boolean;
+  explicitGeminiModel: string;
+  isExplicitOllama: boolean;
+  isBielikAgent: boolean;
+  requestedModel: string;
+  effectiveModel: string;
+}): string {
+  const {
+    selectedAgent,
+    selectedDisplayName,
+    modelName,
+    isOnboardComputer,
+    isExplicitGemini,
+    explicitGeminiModel,
+    isExplicitOllama,
+    isBielikAgent,
+    requestedModel,
+    effectiveModel,
+  } = input;
+  if (isOnboardComputer) {
+    return `Komputer pokładowy SVL-364 (SSH + MCP · ${isExplicitGemini ? explicitGeminiModel : modelName})`;
+  }
+  if (isExplicitGemini) return `${selectedDisplayName} · Gemini (${explicitGeminiModel})`;
+  if (selectedAgent === 'Maya') return `Maya Mitek · AI Statku SVL-364 (ROOT · ${modelName})`;
+  if (selectedAgent === 'System_SI_1') return `System_SI_1 · Ollama (${modelName} · ROOT)`;
+  if (isExplicitOllama || isBielikAgent) return `Bielik · Ollama (${modelName} · ROOT)`;
+  if (requestedModel === 'svl-hybrid-router') return `SVL-364 · Ollama (${modelName})`;
+  return effectiveModel;
+}
+
+export function formatGrokChatBadge(input: {
+  selectedAgent: string;
+  modelName: string;
+  isOnboardComputer: boolean;
+  isBielikAgent: boolean;
+}): string {
+  if (input.isOnboardComputer) return `Komputer pokładowy SVL-364 (SSH + MCP · Grok ${input.modelName})`;
+  if (input.selectedAgent === 'Maya') return `Maya Mitek · AI Statku SVL-364 (ROOT · Grok ${input.modelName})`;
+  if (input.selectedAgent === 'System_SI_1') return `System_SI_1 · Grok (${input.modelName} · ROOT)`;
+  if (input.isBielikAgent) return `Bielik · Grok (${input.modelName} · ROOT)`;
+  return `SVL-364 · Grok (${input.modelName})`;
+}
+
 const MAYA_DIRECT_ADDRESS_RE =
   /(?:^|[\s,(])@maya(?:\s+mitek)?(?=$|[\s,.:;!?])|^\s*(?:(?:hej|cześć|czesc|siema|witaj|halo|ej|droga|pani|słuchaj|sluchaj|proszę|prosze|dzień\s+dobry|dzien\s+dobry|dobry\s+wieczór|dobry\s+wieczor)\s+)?(?:maya|majo|maja|maju)(?:\s+mitek)?(?=$|[\s,.:;!?])|(?:^|[\s,(])(?:maya|mayi|mayę|maye|mayą|majo|maju)\s+mitek(?=$|[\s,.:;!?])|(?<![\p{L}\p{N}_])(?:do|dla|zapytaj|spytaj|napisz\s+do|pisz[eę]\s+do|pytanie\s+do|hej|cześć|czesc|witaj|siema|halo)\s+(?:may[aeięąo]|maj[aeięąou])(?:\s+mitek)?(?=$|[\s,.:;!?])|(?:,\s*|\s+)(?:maya|majo)(?:\s+mitek)?(?=[!?,.]*$)/iu;
 

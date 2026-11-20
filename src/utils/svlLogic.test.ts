@@ -25,6 +25,10 @@ import {
   unverifiedExecutionNote,
   resolveChatInteractiveButtonAction,
   resolveChatTargetAgent,
+  resolveSvlMcpChatAgent,
+  conversationIdForSvlChatAgent,
+  formatOllamaChatBadge,
+  formatGrokChatBadge,
   resolveInstalledOllamaModel,
   resolveAvatarProfileKey,
   safeFetchJson,
@@ -210,6 +214,52 @@ test('resolveChatTargetAgent routes direct Polish mentions and Maya channel/sele
       targetAgent: 'Bielik',
     }).agent,
     'Bielik',
+  );
+});
+
+test('System_SI_1 i aliasy trafiają do własnego agenta, a odznaka modelu nie jest Bielikiem', () => {
+  for (const targetAgent of ['System_SI_1', 'system_si_1', 'system-si-1']) {
+    assert.equal(
+      resolveChatTargetAgent({ message: 'Kim jesteś?', targetAgent }).agent,
+      'System_SI_1',
+    );
+    assert.equal(resolveSvlMcpChatAgent(targetAgent), 'System_SI_1');
+  }
+  assert.equal(resolveSvlMcpChatAgent(''), 'Bielik');
+  assert.equal(resolveSvlMcpChatAgent('Maya'), 'Maya');
+  assert.equal(conversationIdForSvlChatAgent('System_SI_1'), 'conv-system-si-1');
+  assert.equal(conversationIdForSvlChatAgent('Bielik'), 'conv-agent-bielik');
+  const ollama = formatOllamaChatBadge({
+    selectedAgent: 'System_SI_1',
+    selectedDisplayName: 'System_SI_1',
+    modelName: 'llama3.2:1b',
+    isOnboardComputer: false,
+    isExplicitGemini: false,
+    explicitGeminiModel: '',
+    isExplicitOllama: true,
+    isBielikAgent: true,
+    requestedModel: 'svl-hybrid-router',
+    effectiveModel: 'ollama:llama3.2:1b',
+  });
+  assert.equal(ollama, 'System_SI_1 · Ollama (llama3.2:1b · ROOT)');
+  assert.equal(
+    formatOllamaChatBadge({
+      selectedAgent: 'Bielik',
+      selectedDisplayName: 'Bielik',
+      modelName: 'llama3.2:1b',
+      isOnboardComputer: false,
+      isExplicitGemini: false,
+      explicitGeminiModel: '',
+      isExplicitOllama: true,
+      isBielikAgent: true,
+      requestedModel: 'svl-hybrid-router',
+      effectiveModel: 'ollama:llama3.2:1b',
+    }),
+    'Bielik · Ollama (llama3.2:1b · ROOT)',
+  );
+  assert.equal(
+    formatGrokChatBadge({ selectedAgent: 'System_SI_1', modelName: 'grok-4.7', isOnboardComputer: false, isBielikAgent: true }),
+    'System_SI_1 · Grok (grok-4.7 · ROOT)',
   );
 });
 

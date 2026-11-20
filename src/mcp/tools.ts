@@ -8,6 +8,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { resolveInRoot, toRootRelative } from './pathGuard.ts';
 import { readLogTail } from '../server/svlMcpServer.ts';
+import { conversationIdForSvlChatAgent, resolveSvlMcpChatAgent, SVL_MCP_CHAT_AGENT_ENUM } from '../utils/svlLogic.ts';
 
 export interface ToolContext {
   root: string;
@@ -292,7 +293,7 @@ async function shellTool(ctx: ToolContext, a: Args): Promise<string> {
 async function svlChatTool(ctx: ToolContext, a: Args): Promise<string> {
   const message = String(a.message || '').slice(0, 8000);
   if (!message) throw new Error('Brak message.');
-  const agent = ['Bielik', 'Maya'].includes(String(a.agent)) ? String(a.agent) : 'Bielik';
+  const agent = resolveSvlMcpChatAgent(a.agent);
   const res = await (ctx.fetchImpl || fetch)(`${ctx.svlBaseUrl}/api/chat`, {
     method: 'POST',
     headers: {
@@ -300,7 +301,13 @@ async function svlChatTool(ctx: ToolContext, a: Args): Promise<string> {
       'X-SVL-Origin': 'mcp-full',
       ...(ctx.svlOperatorToken ? { 'X-SVL-Operator-Token': ctx.svlOperatorToken } : {}),
     },
-    body: JSON.stringify({ message, targetAgent: agent, origin: 'mcp-full', history: [] }),
+    body: JSON.stringify({
+      message,
+      targetAgent: agent,
+      conversationId: conversationIdForSvlChatAgent(agent),
+      origin: 'mcp-full',
+      history: [],
+    }),
     signal: AbortSignal.timeout(240_000),
   });
   const text = await res.text();
@@ -378,8 +385,9 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'svl_chat',
-    description: 'Wysyła polecenie do AI systemu SVL (/api/chat: Grok → Ollama → Gemini) jako Bielik lub Maya i zwraca odpowiedź.',
-    inputSchema: obj({ message: S('Polecenie / pytanie'), agent: { type: 'string', enum: ['Bielik', 'Maya'] } }, ['message']),
+    description:
+      'Wysyła polecenie do AI systemu SVL (/api/chat: Grok → Ollama → Gemini) jako Bielik, Maya albo System_SI_1 (aliasy: system_si_1, system-si-1) i zwraca odpowiedź. System_SI_1 odpowiada własną personą infrastruktury ROOT i może wykonywać akcje <svl_action>.',
+    inputSchema: obj({ message: S('Polecenie / pytanie'), agent: { type: 'string', enum: [...SVL_MCP_CHAT_AGENT_ENUM] } }, ['message']),
     write: true, // AI SVL może wykonywać akcje w systemie
     handler: svlChatTool,
   },
