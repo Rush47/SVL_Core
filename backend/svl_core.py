@@ -34,12 +34,18 @@ MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verif
 
 # --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
-ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Claude (MCP)"}
+ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Komputer pokładowy", "Claude (MCP)"}
 # Rozpoznanie starszych, LEGALNYCH nazw kanonicznych agentów → mapowanie na nazwę kanoniczną.
 _AI_SENDER_ALIASES = {
     "bielik": "Bielik", "bielik ai": "Bielik",
     "maya": "Maya Mitek", "maya ai": "Maya Mitek", "maya svl-364": "Maya Mitek",
     "maya mitek": "Maya Mitek", "maya mitek ai": "Maya Mitek", "maya mitek svl-364": "Maya Mitek",
+    "komputer pokładowy": "Komputer pokładowy",
+    "komputer pokladowy": "Komputer pokładowy",
+    "komputerpokladowy": "Komputer pokładowy",
+    "komputer": "Komputer pokładowy",
+    "svl-364 komputer pokładowy": "Komputer pokładowy",
+    "komputer pokładowy svl-364": "Komputer pokładowy",
     "claude (mcp)": "Claude (MCP)",
 }
 # Wyłączone / nieautoryzowane persony AI i jawne podszywania pod kanonicznych agentów.
@@ -76,7 +82,7 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
         if canon is None:
             return None, (
                 f"Zablokowano wiadomość agenta AI od nieautoryzowanego nadawcy: „{sender}”. "
-                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Claude (MCP)."
+                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Komputer pokładowy, Claude (MCP)."
             )
         return canon, None
     if role_l == "system":
@@ -1115,8 +1121,8 @@ class SVLSystemKernel:
                                 welcome_meta = json.dumps(
                                     {
                                         "display_timestamp": now_iso,
-                                        "agentId": "Maya",
-                                        "modelUsed": "Maya Mitek · SVL-364 Komputer pokładowy (SSH + MCP · ROOT)",
+                                        "agentId": "KomputerPokladowy",
+                                        "modelUsed": "Komputer pokładowy SVL-364 (SSH + MCP · ROOT)",
                                         "provenance": "server_verified",
                                         "appliedActions": [
                                             {
@@ -1140,7 +1146,7 @@ class SVLSystemKernel:
                                     "| **ID kanału** | `conv-svl364-komputer-pokladowy` | [card: Aktywny|SQLite WAL|ok] |\n"
                                     "| **Mostek SSH** | `ssh://Ship` + lokalny mostek ROOT (`svl_ssh_exec`) | [card: SSH Bridge|Gotowy|ok] |\n"
                                     "| **Serwer MCP** | `/api/py/svl364/mcp` (`svl_mcp_call` · 12 narzędzi) | [card: MCP SVL-364|Aktywny|ok] |\n"
-                                    "| **Agenci dyżurni** | Maya Mitek (ROOT) & Bielik (ROOT) | [card: Uprawnienia|ROOT (29 zakresów)|ok] |\n\n"
+                                    "| **Nadawca** | Komputer pokładowy SVL-364 (ROOT) | [card: Konto|Aktywne|ok] |\n\n"
                                     "[btn: 📡 Telemetria MCP|send:Wywołaj svl_mcp_call z narzędziem svl364_linux_telemetry] "
                                     "[btn: 🔑 Test SSH + Host|send:Wywołaj svl_ssh_exec z poleceniem hostname && uname -a && uptime] "
                                     "[btn: 📊 Zasoby komputera pokładowego|send:Wywołaj svl_mcp_call z narzędziem svl364_resources dla area overview] "
@@ -1152,7 +1158,7 @@ class SVLSystemKernel:
                                         welcome_id,
                                         chan_id,
                                         "assistant",
-                                        "Maya Mitek",
+                                        "Komputer pokładowy",
                                         welcome_content,
                                         welcome_meta,
                                         now_iso,
@@ -1166,6 +1172,9 @@ class SVLSystemKernel:
             # Bezpieczna, niedestrukcyjna aktualizacja nazwy wyświetlanej Maya -> Maya Mitek w istniejących wiadomościach.
             conn.execute(
                 "UPDATE chat_messages SET sender = 'Maya Mitek' WHERE sender IN ('Maya', 'Maya AI', 'Maya SVL-364')"
+            )
+            conn.execute(
+                "UPDATE chat_messages SET sender = 'Komputer pokładowy' WHERE id = 'sys-svl364-onboard-init' AND sender = 'Maya Mitek'"
             )
 
         self.run_db(_seed_family, write=True)
@@ -2045,7 +2054,6 @@ class SVLSystemKernel:
 
     def list_conversations_with_messages(self) -> list[dict[str, Any]]:
         """Zwraca wszystkie wątki czatu wraz z wiadomościami i ich rewizjami z SQLite."""
-        self.ensure_mitek_family_channel()
         def _read(conn: sqlite3.Connection) -> tuple[list[sqlite3.Row], list[sqlite3.Row], dict[str, int]]:
             conv_rows = conn.execute(
                 "SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC"
@@ -2060,6 +2068,10 @@ class SVLSystemKernel:
             return conv_rows, msg_rows, revs
 
         conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
+        existing_ids = {str(r["id"]) for r in conv_rows}
+        if "conv-svl364-komputer-pokladowy" not in existing_ids or "conv-rodzina-mitek-wszyscy" not in existing_ids:
+            self.ensure_mitek_family_channel()
+            conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         msgs_by_conv: dict[str, list[dict[str, Any]]] = {}
         for mr in msg_rows:
             try:
@@ -3135,6 +3147,14 @@ class SVLSystemKernel:
                 return str(row["title"]) if row and row["title"] else None
 
             target_title = self.run_db(_lookup_title, write=False) or self.FAMILY_CHANNEL_TITLE
+        is_onboard_channel = target_conv_id == "conv-svl364-komputer-pokladowy"
+        report_sender = "Komputer pokładowy" if is_onboard_channel else self.NOTIFICATION_SENDER
+        report_agent_id = "KomputerPokladowy" if is_onboard_channel else self.NOTIFICATION_AGENT_ID
+        report_model_label = (
+            model_label.replace("Maya Mitek", "Komputer pokładowy SVL-364")
+            if is_onboard_channel
+            else model_label
+        )
         return self.save_chat_message(
             target_conv_id,
             target_title,
@@ -3142,9 +3162,9 @@ class SVLSystemKernel:
             {
                 "id": msg_id,
                 "role": "assistant",
-                "sender": self.NOTIFICATION_SENDER,
-                "agentId": self.NOTIFICATION_AGENT_ID,
-                "modelUsed": model_label,
+                "sender": report_sender,
+                "agentId": report_agent_id,
+                "modelUsed": report_model_label,
                 "provenance": "server_verified",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "content": str(content or "")[:20000],

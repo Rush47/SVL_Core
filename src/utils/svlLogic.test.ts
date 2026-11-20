@@ -631,4 +631,7 @@ test('formatAgentDisplayName nie przepuszcza podszywania', () => {
   assert.equal(formatAgentDisplayName('Iris'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('Maya'), 'Maya Mitek');
   assert.equal(formatAgentDisplayName('Bielik'), 'Bielik');
+  assert.equal(formatAgentDisplayName('KomputerPokladowy'), 'Komputer pokładowy');
+  assert.equal(formatAgentDisplayName('komputer pokladowy'), 'Komputer pokładowy');
+  assert.equal(resolveAvatarProfileKey('Komputer pokładowy', 'KomputerPokladowy'), 'KomputerPokladowy');
 });

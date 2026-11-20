@@ -1015,7 +1015,7 @@ export interface SvlSyncEvent<TPayload = Record<string, any>> {
   payload: TPayload;
 }
 
-export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya';
+export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
 
 export interface WorkspaceUiState {
   active_conversation_id?: string | null;
@@ -1027,7 +1027,7 @@ export interface WorkspaceUiState {
   revisions?: Record<string, number>;
 }
 
-export type AvatarProfileKey = 'Bielik' | 'Maya' | 'Operator';
+export type AvatarProfileKey = 'Bielik' | 'Maya' | 'KomputerPokladowy' | 'Operator';
 
 export type SvlAvatarMap = Partial<Record<AvatarProfileKey, string>>;
 
@@ -1471,6 +1471,18 @@ export function resolveAvatarProfileKey(
     rawSender === 'maya mitek svl-364'
   ) {
     return 'Maya';
+  }
+  if (
+    rawAgent === 'komputerpokladowy' ||
+    rawAgent === 'komputer pokładowy' ||
+    rawAgent === 'komputer pokladowy' ||
+    rawSender === 'komputer pokładowy' ||
+    rawSender === 'komputer pokladowy' ||
+    rawSender === 'komputerpokladowy' ||
+    rawSender === 'svl-364 komputer pokładowy' ||
+    rawSender === 'komputer pokładowy svl-364'
+  ) {
+    return 'KomputerPokladowy';
   }
   if (rawAgent === 'operator' || rawSender === 'operator' || rawSender.includes('mateusz mitek')) {
     return 'Operator';

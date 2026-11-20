@@ -145,7 +145,7 @@ interface SvlSyncContextValue {
   workspaceState: WorkspaceUiState;
 
   activeConvId: string;
-  targetAgent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya';
+  targetAgent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
   selectedAgentPanel: string;
 
   refreshAllDomains: (reason?: string) => Promise<RefreshExecutionReport>;
@@ -153,7 +153,7 @@ interface SvlSyncContextValue {
   reconnectWebSocket: () => void;
 
   setActiveConvId: (convId: string) => void;
-  setTargetAgent: (agent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya') => void;
+  setTargetAgent: (agent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy') => void;
   setSelectedAgentPanel: (agent: string) => void;
   openFamilyChannel: () => void;
   openAgentChannel: (agent: string) => void;
@@ -280,7 +280,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
   const activeConvIdRef = useRef<string>(activeConvIdState);
   activeConvIdRef.current = activeConvIdState;
-  const [targetAgentState, setTargetAgentState] = useState<'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya'>('Rodzina Mitek');
+  const [targetAgentState, setTargetAgentState] = useState<'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy'>('Rodzina Mitek');
   const [selectedAgentPanelState, setSelectedAgentPanelState] = useState<string>('Bielik');
 
   const pendingMsgIdsRef = useRef<Set<string>>(new Set());
@@ -573,7 +573,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             const rawConv = ws.active_conversation_id?.value ?? ws.active_conversation_id;
             refreshedActiveConversation = rawConv;
             const rawTarget = ws.selected_target_agent?.value ?? ws.selected_target_agent;
-            if (rawTarget === 'Auto' || rawTarget === 'Rodzina Mitek' || rawTarget === 'Bielik' || rawTarget === 'Maya') {
+            if (
+              rawTarget === 'Auto' ||
+              rawTarget === 'Rodzina Mitek' ||
+              rawTarget === 'Bielik' ||
+              rawTarget === 'Maya' ||
+              rawTarget === 'KomputerPokladowy'
+            ) {
               setTargetAgentState(rawTarget);
             }
             const rawPanel = ws.selected_agent_panel_id?.value ?? ws.selected_agent_panel_id;
@@ -807,7 +813,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setActiveConvIdState(val);
         } else if (
           key === 'selected_target_agent' &&
-          ['Auto', 'Rodzina Mitek', 'Bielik', 'Maya'].includes(String(val))
+          ['Auto', 'Rodzina Mitek', 'Bielik', 'Maya', 'KomputerPokladowy'].includes(String(val))
         ) {
           setTargetAgentState(val);
         } else if (
@@ -1278,16 +1284,19 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } else if (convId === 'conv-agent-bielik') {
         setTargetAgentState('Bielik');
         void persistWorkspaceKey('selected_target_agent', 'Bielik');
-      } else if (convId === 'conv-agent-maya' || convId === 'conv-svl364-komputer-pokladowy') {
+      } else if (convId === 'conv-agent-maya') {
         setTargetAgentState('Maya');
         void persistWorkspaceKey('selected_target_agent', 'Maya');
+      } else if (convId === 'conv-svl364-komputer-pokladowy') {
+        setTargetAgentState('KomputerPokladowy');
+        void persistWorkspaceKey('selected_target_agent', 'KomputerPokladowy');
       }
     },
     [persistWorkspaceKey],
   );
 
   const setTargetAgent = useCallback(
-    (agent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya') => {
+    (agent: 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy') => {
       setTargetAgentState(agent);
       void persistWorkspaceKey('selected_target_agent', agent);
     },

@@ -2859,7 +2859,10 @@ async function startServer() {
     // Przyciski potwierdzeń operacji GitHub zleconych przez AI (dopisywane pod odpowiedzią).
     const githubConfirmationButtons: string[] = [];
     (res as any).json = (body: any) => {
-      if (replyConversationId === 'conv-svl364-komputer-pokladowy') {
+      if (
+        replyConversationId === 'conv-svl364-komputer-pokladowy' ||
+        String(targetAgent || '').trim().toLowerCase() === 'komputerpokladowy'
+      ) {
         body = { ...body, sender: 'Komputer pokładowy', agentId: 'KomputerPokladowy' };
       }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
@@ -3246,7 +3249,9 @@ async function startServer() {
     }
 
     const parsedSlashCmd = parseBielikChatCommand(cleanMsg);
-    const isOnboardComputerChannel = String(conversationId || '').trim() === 'conv-svl364-komputer-pokladowy';
+    const isOnboardComputerChannel =
+      String(conversationId || '').trim() === 'conv-svl364-komputer-pokladowy' ||
+      String(targetAgent || '').trim().toLowerCase() === 'komputerpokladowy';
     const isBielikChannel = String(conversationId || '').trim() === 'conv-agent-bielik';
     const isMayaChannel = String(conversationId || '').trim() === 'conv-agent-maya' || isOnboardComputerChannel;
     const targetResolution = resolveChatTargetAgent({
@@ -3259,12 +3264,16 @@ async function startServer() {
     const mentionsMaya = targetResolution.mentionsMaya;
     const selectedAgent: string = isOnboardComputerChannel ? 'KomputerPokladowy' : targetResolution.agent;
     const selectedDisplayName = isOnboardComputerChannel ? 'Komputer pokładowy' : formatAgentDisplayName(selectedAgent);
-    const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya';
+    const isBielikAgent = selectedAgent === 'Bielik' || selectedAgent === 'Maya' || isOnboardComputerChannel;
 
     const conversationHistory = buildChatHistoryPayload(Array.isArray(history) ? history : [], 48);
-    // Bielik i Maya widzą rozmowę ze swojej perspektywy: cudze wypowiedzi jako „[Imię]: …”.
+    // Bielik, Maya i Komputer pokładowy widzą rozmowę ze swojej perspektywy: cudze wypowiedzi jako „[Imię]: …”.
     const conversationAgent: ConversationAgent | null =
-      selectedAgent === 'Bielik' || selectedAgent === 'Maya' ? selectedAgent : null;
+      selectedAgent === 'Bielik'
+        ? 'Bielik'
+        : selectedAgent === 'Maya' || isOnboardComputerChannel
+          ? 'Maya'
+          : null;
     const historyTurns: DialogueTurn[] = conversationHistory.map((turn) => ({ ...turn }));
     const lastHistoryTurn = historyTurns[historyTurns.length - 1];
     if (lastHistoryTurn?.role === 'user' && lastHistoryTurn.content.trim() === cleanMsg) historyTurns.pop();
@@ -3277,7 +3286,8 @@ async function startServer() {
     const ollamaInfo = healthRes.data?.ollama || {};
     const ollamaHost = String(ollamaInfo.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
 
-    const agentState = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === selectedAgent) || {};
+    const configLookupAgent = isOnboardComputerChannel ? 'Maya' : selectedAgent;
+    const agentState = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === configLookupAgent) || {};
     const agentConfig = agentState.config || {};
     const agentScopes = new Set<string>(
       Array.isArray(agentConfig.allowed_scopes)
@@ -3650,7 +3660,11 @@ async function startServer() {
           const shellRes = await executeLinuxShellCommand(sshCmd);
           const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
           const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-          const actorPrefix = selectedAgent === 'Maya' ? 'maya@svl364-ssh#' : 'bielik@svl364-ssh#';
+          const actorPrefix = isOnboardComputerChannel
+            ? 'root@svl-364-ship#'
+            : selectedAgent === 'Maya'
+              ? 'maya@svl364-ssh#'
+              : 'bielik@svl364-ssh#';
           await persistTerminalOutput('ssh-ship', 'input', `${actorPrefix} ${sshCmd}`, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
           if (cleanStdout) await persistTerminalOutput('ssh-ship', 'stdout', cleanStdout, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
           if (cleanStderr) await persistTerminalOutput('ssh-ship', 'stderr', cleanStderr, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
@@ -4316,15 +4330,17 @@ async function startServer() {
       : configuredOllamaModelName;
 
     const badgeForModel = (modelName: string) =>
-      isExplicitGemini
-        ? `${selectedDisplayName} · Gemini (${explicitGeminiModel})`
-        : selectedAgent === 'Maya'
-        ? `Maya Mitek · AI Statku SVL-364 (ROOT · ${modelName})`
-        : isExplicitOllama || isBielikAgent
-          ? `Bielik · Ollama (${modelName} · ROOT)`
-          : model === 'svl-hybrid-router'
-            ? `SVL-364 · Ollama (${modelName})`
-            : effectiveModel;
+      isOnboardComputerChannel
+        ? `Komputer pokładowy SVL-364 (SSH + MCP · ${isExplicitGemini ? explicitGeminiModel : modelName})`
+        : isExplicitGemini
+          ? `${selectedDisplayName} · Gemini (${explicitGeminiModel})`
+          : selectedAgent === 'Maya'
+            ? `Maya Mitek · AI Statku SVL-364 (ROOT · ${modelName})`
+            : isExplicitOllama || isBielikAgent
+              ? `Bielik · Ollama (${modelName} · ROOT)`
+              : model === 'svl-hybrid-router'
+                ? `SVL-364 · Ollama (${modelName})`
+                : effectiveModel;
     let displayModelBadge = badgeForModel(selectedOllamaModelName);
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
@@ -4820,7 +4836,7 @@ async function startServer() {
       return;
     }
     // Recalled persistent SQLite memory for the active agent (shared 'global' + agent-scoped)
-    const memoryAgentName = selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
+    const memoryAgentName = isOnboardComputerChannel || selectedAgent === 'Maya' ? 'Maya' : 'Bielik';
     let recalledMemories: AgentMemoryRecord[] = [];
     if (hasOperatorAuth) {
       const memSearch = await callPythonBackend(
@@ -4837,7 +4853,7 @@ async function startServer() {
     }
     // Kontekst systemowy: tożsamość agenta + zasady prawdomówności + elementy interaktywne + pamięć długotrwała.
     const onboardComputerPrompt = isOnboardComputerChannel
-      ? '\n\n[TRYB KOMPUTERA POKŁADOWEGO SVL-364: Znajdujesz się w dedykowanym kanale komputera pokładowego (SSH + MCP). Odpowiadasz WYŁĄCZNIE jako główny komputer statku (Maya Mitek, root@svl-364-ship). Pisz rzeczowo, technicznie i klimatycznie jak komputer pokładowy statku kosmicznego, integrując status systemowy, telemetrię SSH oraz narzędzia MCP.]'
+      ? '\n\n[TRYB KOMPUTERA POKŁADOWEGO SVL-364: Znajdujesz się w dedykowanym kanale komputera pokładowego (SSH + MCP). Odpowiadasz WYŁĄCZNIE jako **Komputer pokładowy** (`root@svl-364-ship`), a NIE jako Maya Mitek ani Bielik. Korzystaj z narzędzi `svl_mcp_call` i `svl_ssh_exec`, gdy Operator prosi o raport, diagnostykę lub polecenie na statku.]'
       : '';
     const agentMemoryContext = buildAgentSystemContext(
       formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + onboardComputerPrompt,
@@ -5538,9 +5554,11 @@ async function startServer() {
       const kernelReply = String(repFallback.data?.report || '').trim();
       res.json({
         ok: true,
-        sender: 'Maya Mitek',
-        agentId: 'Maya',
-        modelUsed: 'Maya Mitek · raport SVL_System (wynik serwera)',
+        sender: isOnboardComputerChannel ? 'Komputer pokładowy' : 'Maya Mitek',
+        agentId: isOnboardComputerChannel ? 'KomputerPokladowy' : 'Maya',
+        modelUsed: isOnboardComputerChannel
+          ? 'Komputer pokładowy SVL-364 · raport SVL_System (wynik serwera)'
+          : 'Maya Mitek · raport SVL_System (wynik serwera)',
         reply: withDirectiveReceipts(kernelReply),
         provenance: 'server_verified',
         followUpMessages: [],
@@ -5555,19 +5573,67 @@ async function startServer() {
       // Commands were already executed up front; report their real results.
       conversationalReply = directiveReceipts.join('\n\n');
     } else if (isOnboardComputerChannel) {
-      const tel = healthRes.data?.host?.telemetry || healthRes.data?.host_telemetry || {};
+      // Pobierz rzeczywisty odczyt telemetrii przez serwer MCP SVL-364 (zero zmyślonych wartości).
+      const mcpTelRes = await callPythonBackend(
+        'POST',
+        '/api/py/svl364/mcp',
+        {
+          jsonrpc: '2.0',
+          id: `onboard-tel-${Date.now()}`,
+          method: 'tools/call',
+          params: {
+            name: 'svl364_linux_telemetry',
+            arguments: { confirmed: true, origin: 'komputer-pokladowy-mcp', correlationId: corrId },
+          },
+        },
+        corrId,
+      ).catch(() => ({ status: 500, data: null }));
+      const mcpData: any = mcpTelRes.data?.result?.data ?? mcpTelRes.data?.result ?? {};
+      const mcpOk = mcpTelRes.status === 200 && !mcpTelRes.data?.error && mcpTelRes.data?.result?.isError !== true;
+      const hostInfo: any = mcpData.host || healthRes.data?.host || {};
+      const cpuObj: any = mcpData.cpu || hostInfo.cpu || {};
+      const memObj: any = mcpData.memory || hostInfo.memory || {};
+      const sshObj: any = mcpData.ssh || {};
+      const hostnameVal = hostInfo.hostname || os.hostname();
+      const cpuText =
+        typeof cpuObj.load_percent === 'number'
+          ? `${cpuObj.load_percent.toFixed(1)}%`
+          : typeof cpuObj.load_avg_1m === 'number'
+            ? `load ${cpuObj.load_avg_1m}`
+            : 'odczyt przez MCP';
+      const ramText =
+        typeof memObj.used_mb === 'number' && typeof memObj.total_mb === 'number'
+          ? `${Math.round(memObj.used_mb)} MB / ${Math.round(memObj.total_mb)} MB`
+          : typeof memObj.used_percent === 'number'
+            ? `${memObj.used_percent.toFixed(1)}%`
+            : 'brak danych /proc/meminfo';
+      const sshText = sshObj.host
+        ? `${sshObj.host} (${sshObj.reachable ? 'osiągalny' : 'mostek lokalny'})`
+        : 'mostek SVL-364 SSH';
+      if (mcpOk) {
+        appliedActions.push({
+          tool: 'svl_mcp_call',
+          entity: 'mcp',
+          entityId: 'svl364_linux_telemetry',
+          serverRevision: latestActionSrvRev,
+          summary: 'Komputer pokładowy MCP (svl364_linux_telemetry): OK',
+          ok: true,
+        });
+      }
       conversationalReply =
-        `### 🛰️ Komputer pokładowy SVL-364 — Odpowiedź systemu (\`root@svl-364-ship\`)\n\n` +
-        `Otrzymałem Twoją wiadomość: *„${cleanMsg}”*. Mostek SSH oraz serwer MCP SVL-364 działają w trybie operacyjnym (ROOT).\n\n` +
-        `| Podsystem statku | Status | Odczyt |\n` +
+        `### 🛰️ Komputer pokładowy SVL-364 — Raport MCP / SSH (\`${hostnameVal}\`)\n\n` +
+        `Odebrano zgłoszenie: *„${cleanMsg}”*. Ponieważ zewnętrzne modele LLM chwilowo nie odpowiedziały ` +
+        `(Ollama: *${ollamaFailure || 'niedostępna'}*; Gemini: *${geminiFailure || 'brak odpowiedzi'}*), ` +
+        `Komputer pokładowy wykonał bezpośredni odczyt przez serwer **MCP SVL-364**.\n\n` +
+        `| Podsystem statku | Status | Rzeczywisty odczyt |\n` +
         `| :--- | :--- | :--- |\n` +
-        `| **Jądro SVL-364** | [card: Aktywne|SQLite WAL|ok] | Wer. 2.9 (ROOT uid=0) |\n` +
-        `| **Mostek OpenSSH** | [card: Połączony|Host Ship|ok] | \`root@svl-364-ship\` |\n` +
-        `| **Serwer MCP** | [card: Aktywny|12 narzędzi|ok] | \`/api/py/svl364/mcp\` |\n` +
-        `| **Obciążenie CPU / RAM** | [card: Stabilne|${tel.cpu_load_pct || '1.4'}%|ok] | RAM: ${tel.ram_used_mb || '1420'} MB / ${tel.ram_total_mb || '8192'} MB |\n\n` +
-        `Wszystkie systemy statku są gotowe do przyjęcia poleceń powłoki lub wywołań MCP.\n\n` +
+        `| **Jądro SVL-364** | [card: Aktywne|SQLite WAL|ok] | rev ${latestActionSrvRev} · host \`${hostnameVal}\` |\n` +
+        `| **Mostek SSH** | [card: SSH Bridge|${sshObj.reachable ? 'Online' : 'Lokalny'}|${sshObj.reachable ? 'ok' : 'info'}] | \`${sshText}\` |\n` +
+        `| **Serwer MCP** | [card: MCP SVL-364|${mcpOk ? 'Aktywny' : 'Ostrzeżenie'}|${mcpOk ? 'ok' : 'warn'}] | \`/api/py/svl364/mcp\` (narzędzie \`svl364_linux_telemetry\`) |\n` +
+        `| **CPU / RAM** | [card: Telemetria|${cpuText}|ok] | RAM: ${ramText} |\n\n` +
         `[btn: 📡 Telemetria MCP|send:Wywołaj svl_mcp_call z narzędziem svl364_linux_telemetry] ` +
-        `[btn: 🔑 Test SSH|send:Wywołaj svl_ssh_exec z poleceniem uptime && free -m] ` +
+        `[btn: 🔑 Test SSH|send:Wywołaj svl_ssh_exec z poleceniem hostname && uptime && free -m] ` +
+        `[btn: 📊 Pełny raport SVL_System|send:Pełny raport SVL_System] ` +
         `[btn: 🛰️ Panel SVL-364|tab:svl364]`;
     } else {
       // Bez modelu nie ma rozmowy — mówimy to wprost zamiast udawać odpowiedź.
@@ -5585,7 +5651,11 @@ async function startServer() {
       ok: true,
       sender: selectedDisplayName,
       agentId: selectedAgent,
-      modelUsed: directiveReceipts.length > 0 || isOnboardComputerChannel ? displayModelBadge : 'Brak dostępnego modelu AI',
+      modelUsed: isOnboardComputerChannel
+        ? 'Komputer pokładowy SVL-364 · MCP / SSH (wynik serwera)'
+        : directiveReceipts.length > 0
+          ? displayModelBadge
+          : 'Brak dostępnego modelu AI',
       failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
       provenance: directiveReceipts.length > 0 || isOnboardComputerChannel ? 'server_verified' : 'error',
@@ -5839,8 +5909,13 @@ async function startServer() {
       const consecutiveAi = consecutiveAiTurns(turns);
       if (isAutonomous && consecutiveAi >= SAFETY_MAX_AI_TURNS) return skip('ai_turn_limit');
 
+      const isProactiveOnboardChannel = convId === 'conv-svl364-komputer-pokladowy';
       const channelAgent: ConversationAgent | null =
-        convId === 'conv-agent-bielik' ? 'Bielik' : convId === 'conv-agent-maya' ? 'Maya' : null;
+        convId === 'conv-agent-bielik'
+          ? 'Bielik'
+          : convId === 'conv-agent-maya' || isProactiveOnboardChannel
+            ? 'Maya'
+            : null;
       const participants: ConversationAgent[] = channelAgent ? [channelAgent] : CONVERSATION_AGENTS;
       const reqTargetNorm = normalizeAgentCanonicalName(String(targetAgent || ''));
       const explicitTarget: ConversationAgent | null =
@@ -5917,7 +5992,8 @@ async function startServer() {
       } else if (Array.isArray(agentsRes.data?.agent_memories?.[speaker])) {
         speakerMemories = agentsRes.data.agent_memories[speaker];
       }
-      const speakerDisplayName = formatAgentDisplayName(speaker);
+      const speakerDisplayName = isProactiveOnboardChannel ? 'Komputer pokładowy' : formatAgentDisplayName(speaker);
+      const speakerAgentId = isProactiveOnboardChannel ? 'KomputerPokladowy' : speaker;
       const speakerMemoryContext = buildAgentSystemContext(
         formatMemoryPromptContext(speakerMemories, speakerDisplayName, 12),
         speakerDisplayName,
@@ -5951,8 +6027,10 @@ async function startServer() {
         id: `asst-proactive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'assistant',
         sender: speakerDisplayName,
-        agentId: speaker,
-        modelUsed: `${line.label} · rozmowa obustronna`,
+        agentId: speakerAgentId,
+        modelUsed: isProactiveOnboardChannel
+          ? `Komputer pokładowy SVL-364 (${line.label}) · rozmowa obustronna`
+          : `${line.label} · rozmowa obustronna`,
         provenance: 'model_unverified',
         ...(guardedProactive.verificationNote ? { verificationNote: guardedProactive.verificationNote } : {}),
         timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),

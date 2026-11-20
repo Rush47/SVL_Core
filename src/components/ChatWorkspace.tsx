@@ -730,10 +730,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         targetAgent,
         hasSlashCommand: isBielikSlashCmd,
       });
-      const isExplicitMaya = resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
-      const isExplicitBielik = resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
+      const isOnboardChannel =
+        targetConvId === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy';
+      const isExplicitMaya = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
+      const isExplicitBielik = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
 
       const isFamilyDuplex =
+        !isOnboardChannel &&
         !isExplicitBielik &&
         !isExplicitMaya &&
         (targetConvId === 'conv-rodzina-mitek-wszyscy' ||
@@ -741,14 +744,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           targetAgent === 'Rodzina Mitek' ||
           duplexActive);
 
-      const effectiveTargetAgent = isExplicitMaya
-        ? 'Maya'
-        : isExplicitBielik
-          ? 'Bielik'
-          : isFamilyDuplex
-            ? 'Rodzina Mitek'
-            : targetAgent;
-      setPendingReplyAgent(formatAgentDisplayName(resolvedTarget.agent));
+      const effectiveTargetAgent = isOnboardChannel
+        ? 'KomputerPokladowy'
+        : isExplicitMaya
+          ? 'Maya'
+          : isExplicitBielik
+            ? 'Bielik'
+            : isFamilyDuplex
+              ? 'Rodzina Mitek'
+              : targetAgent;
+      setPendingReplyAgent(
+        isOnboardChannel ? 'Komputer pokładowy' : formatAgentDisplayName(resolvedTarget.agent),
+      );
 
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
@@ -1113,9 +1120,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       className={`font-semibold ${
                         agentMeta
                           ? agentMeta.textClass
-                          : isUser
-                            ? 'text-violet-300'
-                            : 'text-slate-200'
+                          : formattedSender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
+                            ? 'text-emerald-300'
+                            : isUser
+                              ? 'text-violet-300'
+                              : 'text-slate-200'
                       }`}
                     >
                       {formattedSender}
@@ -1157,11 +1166,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-amber-300/15 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">
                         <span className="inline-flex items-center gap-1.5">
                           <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
-                          {msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
-                            ? 'Powiadomienie od Mayi Mitek'
-                            : isFamilyChannel
-                              ? 'Powiadomienie · kanał grupowy'
-                              : 'Wiadomość systemowa'}
+                          {msg.sender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
+                            ? 'Raport Komputera pokładowego SVL-364'
+                            : msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
+                              ? 'Powiadomienie od Mayi Mitek'
+                              : isFamilyChannel
+                                ? 'Powiadomienie · kanał grupowy'
+                                : 'Wiadomość systemowa'}
                         </span>
                         {isFamilyChannel && (
                           <span className="rounded-full border border-amber-200/20 bg-amber-200/5 px-2 py-0.5 text-[9px]">
@@ -1419,12 +1430,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
+            const isOnboardChan = conv.id === 'conv-svl364-komputer-pokladowy';
             return (
               <div
                 key={conv.id}
                 className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-xs transition-colors ${
                   isActive
-                    ? isFamilyChan
+                    ? isFamilyChan || isOnboardChan
                       ? 'bg-emerald-600/20 text-slate-100 border border-emerald-500/40'
                       : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
                     : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent'
@@ -1438,8 +1450,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       setTargetAgent('Rodzina Mitek');
                     } else if (conv.id === 'conv-agent-bielik') {
                       setTargetAgent('Bielik');
-                    } else if (conv.id === 'conv-agent-maya' || conv.id === 'conv-svl364-komputer-pokladowy') {
+                    } else if (conv.id === 'conv-agent-maya') {
                       setTargetAgent('Maya');
+                    } else if (isOnboardChan) {
+                      setTargetAgent('KomputerPokladowy');
                     }
                     setMobileSidebarOpen(false);
                   }}
@@ -1447,6 +1461,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 >
                   <div className="font-medium truncate flex items-center gap-1.5">
                     {isFamilyChan && <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                    {isOnboardChan && <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     <span className="truncate">{conv.title}</span>
                     {unseenNotifications > 0 && (
                       <span
@@ -1557,9 +1572,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               id="openwebui-agent-select"
               value={targetAgent}
               onChange={(e) => {
-                const val = e.target.value as 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya';
+                const val = e.target.value as 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
+                } else if (val === 'KomputerPokladowy') {
+                  setActiveConvId('conv-svl364-komputer-pokladowy');
+                  setTargetAgent('KomputerPokladowy');
                 } else {
                   setTargetAgent(val);
                 }
@@ -1567,6 +1585,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[220px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
             >
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
+              <option value="KomputerPokladowy">Komputer pokładowy SVL-364 (SSH + MCP)</option>
               <option value="Bielik">Bielik (3.2 Vision 11B · ROOT)</option>
               <option value="Maya">Maya Mitek (AI Statku SVL-364 · ROOT)</option>
               <option value="Auto">Auto-Router</option>
@@ -2132,11 +2151,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               ref={composerRef}
               onEmptyChange={handleInputEmptyChange}
               placeholder={
-                targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
-                  ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
-                  : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
-                    ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
-                    : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
+                activeConv?.id === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy'
+                  ? 'Wydaj polecenie dla Komputera pokładowego SVL-364 (SSH + MCP · ROOT) lub zadaj pytanie...'
+                  : targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
+                    ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
+                    : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
+                      ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
+                      : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
               className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
