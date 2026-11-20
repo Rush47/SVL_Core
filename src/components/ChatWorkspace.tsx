@@ -1250,14 +1250,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            Zapisane zmiany w SQLite (czat -> system):
+                            Zapisane zmiany w SQLite (czat -{'>'} system):
                           </span>
                           <button
                             type="button"
                             onClick={() => onNavigateTab('kernel')}
                             className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-violet-300 text-[11px] font-medium whitespace-nowrap"
                           >
-                            Otwórz Jądro SVL & Sfera
+                            Otwórz Jądro SVL {'&'} Sfera
                           </button>
                         </div>
                         <div className="space-y-1 font-mono text-[11px]">
