@@ -169,7 +169,9 @@ export const LinuxDeployDashboard: React.FC = () => {
         ok: Boolean(res.ok && data?.ok),
         text:
           res.ok && data?.ok
-            ? `Pobrano / zarejestrowano model ${target} w lokalnym demonie Ollama.`
+            ? data?.completed === false
+              ? `Rozpoczęto pobieranie / reinstalację modelu ${target} w lokalnej Ollamie — postęp poniżej.`
+              : `Pobrano / zarejestrowano model ${target} w lokalnym demonie Ollama.`
             : (res.error || data?.error || 'Błąd pobierania modelu.'),
       });
     } finally {
@@ -369,7 +371,7 @@ export const LinuxDeployDashboard: React.FC = () => {
             <div className="flex justify-between py-1 border-b border-slate-800/70">
               <span className="text-slate-400">Aktywne w VRAM/RAM (/api/ps):</span>
               <span className="text-cyan-300 truncate max-w-[200px]">
-                {(ollama.loaded_models || []).length > 0 ? ollama.loaded_models.join(', ') : 'llama3.2-vision:11b'}
+                {(ollama.loaded_models || []).length > 0 ? ollama.loaded_models.join(', ') : 'brak załadowanych w RAM'}
               </span>
             </div>
           </div>
@@ -423,6 +425,11 @@ export const LinuxDeployDashboard: React.FC = () => {
                   {pullState?.active ? `${pullState.percent ?? 0}%` : 'ollama pull'}
                 </button>
               </div>
+              {pullState?.active && (
+                <div className="text-[11px] font-mono text-amber-300">
+                  {pullState.status || `Pobieranie ${pullState.model}...`} ({pullState.percent ?? 0}%)
+                </div>
+              )}
             </div>
           )}
 
@@ -435,7 +442,9 @@ export const LinuxDeployDashboard: React.FC = () => {
           <div className="p-3 rounded-lg bg-[#0B0D13] border border-slate-800 text-xs text-slate-300 leading-relaxed">
             Dostępne modele demona Ollama:{' '}
             <span className="font-mono text-emerald-300">
-              {(ollama.models || []).map((m: any) => m.name).join(', ') || 'llama3.2-vision:11b, qwen2.5-coder:14b'}
+              {(ollama.models || []).length > 0
+                ? ollama.models.map((m: any) => m.name).join(', ')
+                : 'brak pobranych modeli'}
             </span>
           </div>
         </div>

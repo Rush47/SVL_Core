@@ -193,7 +193,7 @@ export function enforceFactualExecutionGuard(
   };
 }
 
-/** Pełny zestaw uprawnień ROOT wspólny dla Operatora Mateusza Mitka, Bielika i Maya Mitek. */
+/** Pełny, najwyższy zestaw uprawnień ROOT wspólny dla Operatora Mateusza Mitka, Bielika i Maya Mitek. */
 export const FULL_ROOT_SCOPES: readonly string[] = [
   'chat',
   'chat.commands',
@@ -201,13 +201,19 @@ export const FULL_ROOT_SCOPES: readonly string[] = [
   'agents.pubsub',
   'agents.admin',
   'system.root',
+  'linux.root',
   'kernel.admin',
   'apex.control',
   'modules.write',
   'memory.write',
   'terminal.exec',
   'ssh.exec',
+  'packages.admin',
+  'services.admin',
+  'ollama.admin',
+  'maya.mission',
   'security.antivirus',
+  'security.admin',
   'mcp.tools',
   'files.read',
   'files.write',
@@ -217,6 +223,7 @@ export const FULL_ROOT_SCOPES: readonly string[] = [
   'svl364.telemetry',
   'user_notes.read',
   'broadcast.wszyscy',
+  'superuser.all',
 ];
 
 /** Słowa kluczowe przycisku w treści czatu: `[btn: Etykieta|akcja]` (też `button`, `action`, `przycisk`). */

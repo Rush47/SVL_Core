@@ -567,19 +567,26 @@ test('resolveChatInteractiveButtonAction resolves tabs, Polish aliases, system a
   assert.deepEqual(resolveChatInteractiveButtonAction('run:whoami'), { kind: 'unsafe' });
 });
 
-test('FULL_ROOT_SCOPES includes core system, kernel, terminal, SSH, antivirus, memory, and GitHub admin scopes', () => {
-  assert.ok(FULL_ROOT_SCOPES.length >= 20);
+test('FULL_ROOT_SCOPES includes all 29 superuser system, Linux root, kernel, terminal, SSH, Ollama, mission, antivirus, memory, agents, and GitHub admin scopes', () => {
+  assert.equal(FULL_ROOT_SCOPES.length, 29);
   for (const required of [
     'system.root',
+    'linux.root',
     'kernel.admin',
     'apex.control',
     'terminal.exec',
     'ssh.exec',
+    'packages.admin',
+    'services.admin',
+    'ollama.admin',
+    'maya.mission',
     'security.antivirus',
+    'security.admin',
     'modules.write',
     'memory.write',
     'github.admin',
     'agents.admin',
+    'superuser.all',
   ]) {
     assert.ok((FULL_ROOT_SCOPES as readonly string[]).includes(required), `Missing scope: ${required}`);
   }

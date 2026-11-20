@@ -192,6 +192,13 @@ class SVL364SshMcpController:
         else:
             cfg["ssh_host"] = self._configured_ssh_target(cfg)
 
+        try:
+            probe = self.telemetry.ssh_target(cfg["ssh_host"])
+            if isinstance(probe.get("port"), int) and probe["port"] > 0:
+                cfg["ssh_port"] = probe["port"]
+        except Exception:
+            pass
+
         desired_desc = (
             f"Ręcznie zatwierdzane polecenia przez OpenSSH host alias {cfg['ssh_host']}; "
             "uwierzytelnianie i klucze pochodzą z konfiguracji OpenSSH procesu."
@@ -274,6 +281,7 @@ class SVL364SshMcpController:
                 "targetReachable": bool(target_probe.get("reachable")),
                 "targetError": target_probe.get("error"),
                 "host": target,
+                "port": target_probe.get("port") or cfg.get("ssh_port"),
                 "mode": "OpenSSH config/agent",
                 "authentication": "OpenSSH config/agent",
                 "connectionUri": f"ssh://{target}",
@@ -383,11 +391,12 @@ class SVL364SshMcpController:
         natural_starters = {
             "sprawdź", "sprawdz", "pokaż", "pokaz", "wyświetl", "wyswietl", "ustaw",
             "uruchom", "włącz", "wlacz", "wyłącz", "wylacz", "stwórz", "stworz",
-            "utwórz", "utworz", "dodaj", "usuń", "usun", "napraw", "zaktualizuj",
-            "synchronizuj", "wyślij", "wyslij", "przeskanuj", "skanuj", "zbadaj",
-            "podaj", "jaki", "jaka", "jakie", "czy", "ile", "gdzie", "dlaczego",
-            "opisz", "wyjaśnij", "wyjasnij", "przetwórz", "przetworz", "daj",
-            "nadaj", "połącz", "polacz", "zresetuj", "raport", "telemetria",
+            "utwórz", "utworz", "dodaj", "usuń", "usun", "napraw", "popraw", "ulepsz",
+            "rozwiń", "rozwin", "rozwijaj", "misja", "misję", "misje", "audyt",
+            "zaktualizuj", "synchronizuj", "wyślij", "wyslij", "przeskanuj", "skanuj",
+            "zbadaj", "podaj", "jaki", "jaka", "jakie", "czy", "ile", "gdzie",
+            "dlaczego", "opisz", "wyjaśnij", "wyjasnij", "przetwórz", "przetworz",
+            "daj", "nadaj", "połącz", "polacz", "zresetuj", "raport", "telemetria",
             "diagnostyka", "pomoc", "wykonaj", "zrób", "zrob", "aktywuj", "odblokuj",
             "zablokuj", "przełącz", "przelacz", "skieruj", "leć", "lec", "kurs",
             "tarcze", "reaktor", "statek", "maya", "bielik", "check", "show", "report",
@@ -410,7 +419,23 @@ class SVL364SshMcpController:
 
         low = stripped.lower()
         synthesized = "id && hostname && uname -srm && uptime && free -m && df -h /"
-        if re.search(r"\b(?:ufw|zapor\w*|firewall|port(?:y|ów|ow|em|ach)?|sie[ćc]\w*|ip|qkd)\b", low):
+        sqlite_lookup = (
+            "db=next((p for p in (os.environ.get('SVL_SQLITE_PATH',''), "
+            "'data/svl_os.sqlite3', '/app/applet/data/svl_os.sqlite3') if p and os.path.exists(p)), ''); "
+            "c=sqlite3.connect(db) if db else None; "
+        )
+        if re.search(r"\b(?:ulepsz\w*|popraw\w*|napraw\w*|rozwi[ńn]\w*|rozwij\w*|misj\w*|audyt\w*)\b", low):
+            synthesized = (
+                "id && hostname && uname -srm && uptime && free -m && df -h / && "
+                "(ss -tlnp 2>/dev/null | grep -E ':(3000|8085|11434|2222)' || true) && "
+                "(ollama --version 2>/dev/null; OLLAMA_HOST=127.0.0.1:11434 ollama list 2>/dev/null || true) && "
+                'python3 -c "import glob, os, sqlite3; '
+                "parts=glob.glob('/root/.ollama/models/blobs/*.curlpart'); "
+                "parts and print('Pobieranie modelu Ollama (blob .curlpart MB):', [round(os.path.getsize(p)/1048576, 1) for p in parts]); "
+                + sqlite_lookup
+                + "print('\\n'.join(f'{r[0]} | {r[1]} | rev {r[2]}' for r in c.execute('SELECT id, status, revision FROM system_modules ORDER BY id')) if c else 'Brak bazy svl_os.sqlite3')\""
+            )
+        elif re.search(r"\b(?:ufw|zapor\w*|firewall|port(?:y|ów|ow|em|ach)?|sie[ćc]\w*|ip|qkd)\b", low):
             synthesized = "id && hostname && (ufw status 2>/dev/null || ss -tlnp 2>/dev/null) && ip -br addr"
         elif re.search(r"\b(?:proces\w*|worker\w*|daemon\w*|cpu|obci[ąa][żz]en\w*|top|ps)\b", low):
             synthesized = "id && ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -n 12"
@@ -422,8 +447,9 @@ class SVL364SshMcpController:
             synthesized = "id && (ollama --version && ollama list || echo 'Ollama: niedostępna lokalnie')"
         elif re.search(r"\b(?:baz\w*|sqlite|modu[łl]\w*|notatk\w*|maya|bielik)\b", low):
             synthesized = (
-                'id && python3 -c "import sqlite3; c=sqlite3.connect(\'data/svl_os.sqlite3\'); '
-                'print(\'\\n\'.join(f\'{r[0]} | {r[1]} | rev {r[2]}\' for r in c.execute(\'SELECT id, status, revision FROM system_modules ORDER BY revision DESC LIMIT 10\')))"'
+                'id && python3 -c "import os, sqlite3; '
+                + sqlite_lookup
+                + "print('\\n'.join(f'{r[0]} | {r[1]} | rev {r[2]}' for r in c.execute('SELECT id, status, revision FROM system_modules ORDER BY revision DESC LIMIT 10')) if c else 'Brak bazy svl_os.sqlite3')\""
             )
 
         return is_explicit_exec, "natural", synthesized, stripped

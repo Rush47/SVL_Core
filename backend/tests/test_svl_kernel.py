@@ -39,7 +39,9 @@ from svl_core import (
 
 
 from agents_runtime import (
+    BIELIK_ROOT_SCOPE_VERSION,
     CANONICAL_SVL_AGENTS,
+    FULL_ROOT_AGENT_SCOPES,
     GITHUB_AGENT_SCOPES,
     SVLAgentOrchestrator,
     _agent_github_tool_names,
@@ -745,24 +747,40 @@ class TestSVLKernelSuite(unittest.TestCase):
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             orchestrator = SVLAgentOrchestrator(kernel, SphericalEventBus())
             try:
+                self.assertEqual(BIELIK_ROOT_SCOPE_VERSION, 3)
+                self.assertEqual(len(FULL_ROOT_AGENT_SCOPES), 29)
                 for agent_name in ("Bielik", "Maya"):
                     cfg = orchestrator.agent_states[agent_name]["config"]
                     self.assertEqual(cfg["rbac_role"], "root")
                     self.assertEqual(cfg["autonomy_mode"], "ROOT_AUTHORIZED")
+                    self.assertEqual(cfg["root_scope_version"], BIELIK_ROOT_SCOPE_VERSION)
                     self.assertFalse(cfg.get("root_nopasswd", False))
                     scopes = set(cfg["allowed_scopes"])
+                    self.assertEqual(scopes, set(FULL_ROOT_AGENT_SCOPES))
                     for expected in (
                         "system.root",
+                        "linux.root",
                         "kernel.admin",
                         "apex.control",
                         "terminal.exec",
                         "ssh.exec",
+                        "packages.admin",
+                        "services.admin",
+                        "ollama.admin",
+                        "maya.mission",
                         "security.antivirus",
+                        "security.admin",
                         "modules.write",
                         "memory.write",
+                        "agents.admin",
                         "github.admin",
+                        "superuser.all",
                     ):
                         self.assertIn(expected, scopes, f"{agent_name} missing scope {expected}")
+                self.assertEqual(
+                    set(orchestrator.agent_states["Bielik"]["config"]["allowed_scopes"]),
+                    set(orchestrator.agent_states["Maya"]["config"]["allowed_scopes"]),
+                )
 
                 scope = VisualScope("operator:root-telemetry")
                 for reader in ("operator", "root", "Bielik", "Maya", "Maya Mitek", "Rodzina Mitek"):

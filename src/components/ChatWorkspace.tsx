@@ -127,7 +127,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
+  const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
   const [isSending, setIsSending] = useState(false);
   const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
   const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Maya Mitek');
@@ -731,9 +731,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         timeoutMs: 90000,
         body: JSON.stringify({
           message: fullPrompt,
-          model: (isExplicitBielik || isExplicitMaya) && selectedModel === 'svl-hybrid-router'
-            ? 'ollama:llama3.2-vision:11b'
-            : selectedModel,
+          model: selectedModel,
           targetAgent: effectiveTargetAgent,
           conversationId: targetConvId,
           conversationTitle: targetTitle,
@@ -1554,29 +1552,64 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             <label htmlFor="openwebui-model-select" className="sr-only">
               Silnik AI
             </label>
-            <select
-              id="openwebui-model-select"
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
-            >
-              <option value="svl-hybrid-router">
-                Bielik / Maya Mitek · Ollama ({ollamaReachable ? `${ollamaModels.length} modeli` : 'niedostępna — zapas'})
-              </option>
-              <option value="ollama:svl364-apex-uncensored:latest">
-                SVL CoreOS 2 · Apex-Uncensored (Maya Mitek · SVL-364 Ship)
-              </option>
-              <option value="ollama:llama3.2-vision:11b">
-                Ollama: llama3.2-vision:11b (Vision · 11B)
-              </option>
-              {ollamaModels
-                .filter((m: any) => m.name !== 'svl364-apex-uncensored:latest' && m.name !== 'llama3.2-vision:11b')
-                .map((m: any) => (
-                  <option key={m.name} value={`ollama:${m.name}`}>
-                    Ollama: {m.name} ({m.parameter_size || 'LLM'})
+            {(() => {
+              const hasVision11b = ollamaModels.some((m: any) =>
+                String(m?.name || '').startsWith('llama3.2-vision'),
+              );
+              const visionExactName =
+                ollamaModels.find((m: any) => String(m?.name || '').startsWith('llama3.2-vision'))?.name ||
+                'llama3.2-vision:11b';
+              const hasApexUncensored = ollamaModels.some(
+                (m: any) => String(m?.name || '') === 'svl364-apex-uncensored:latest',
+              );
+              const isPullingVision = Boolean(
+                pullState?.active && String(pullState?.model || '').includes('llama3.2-vision'),
+              );
+              const activeStandardName = hasVision11b
+                ? visionExactName
+                : ollamaModels[0]?.name || `${ollamaModels.length} modeli`;
+              return (
+                <select
+                  id="openwebui-model-select"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[245px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
+                >
+                  <option value="svl-hybrid-router">
+                    Ollama (standardowa ·{' '}
+                    {ollamaReachable && ollamaModels.length > 0
+                      ? activeStandardName
+                      : ollamaReachable
+                        ? 'online, brak modeli'
+                        : 'offline — zapas'}
+                    )
                   </option>
-                ))}
-            </select>
+                  {hasApexUncensored && (
+                    <option value="ollama:svl364-apex-uncensored:latest">
+                      SVL CoreOS 2 · Apex-Uncensored (Maya Mitek · SVL-364 Ship)
+                    </option>
+                  )}
+                  <option value="ollama:llama3.2-vision:11b">
+                    {hasVision11b
+                      ? `Ollama: ${visionExactName} (Vision · 11B · gotowy)`
+                      : isPullingVision
+                        ? `Ollama: llama3.2-vision:11b (Vision · 11B · pobieranie ${pullState?.percent ?? 0}%)`
+                        : 'Ollama: llama3.2-vision:11b (Vision · 11B — do pobrania)'}
+                  </option>
+                  {ollamaModels
+                    .filter(
+                      (m: any) =>
+                        m.name !== 'svl364-apex-uncensored:latest' &&
+                        !String(m?.name || '').startsWith('llama3.2-vision'),
+                    )
+                    .map((m: any) => (
+                      <option key={m.name} value={`ollama:${m.name}`}>
+                        Ollama: {m.name} ({m.parameter_size || 'LLM'})
+                      </option>
+                    ))}
+                </select>
+              );
+            })()}
           </div>
 
           <div className="flex items-center justify-between sm:justify-end gap-1.5 shrink-0 overflow-x-auto no-scrollbar">

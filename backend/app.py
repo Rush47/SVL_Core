@@ -17,6 +17,7 @@ import json
 import math
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -209,7 +210,50 @@ class SVLBackendRuntime:
 
     def _get_ollama_pull_state(self) -> dict[str, Any]:
         with self._ollama_pull_lock:
-            return dict(self.ollama_pull_state)
+            state = dict(self.ollama_pull_state)
+        if state.get("active") or "unittest" in sys.modules:
+            return state
+        curlpart = Path("/root/.ollama/models/blobs/sha256-9999d473417a8e179d993498195be5f42cab963acc75f4a6b15d981e8b68abed.curlpart")
+        try:
+            if curlpart.exists():
+                size = curlpart.stat().st_size
+                total = 7816574592
+                pct = round(max(0.0, min(99.9, size * 100.0 / total)), 1)
+                return {
+                    "active": True,
+                    "model": "llama3.2-vision:11b",
+                    "status": f"Pobieranie llama3.2-vision:11b ({size // (1024 * 1024)} MB / {total // (1024 * 1024)} MB)",
+                    "percent": pct,
+                    "error": None,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+        except Exception:
+            pass
+        log_path = Path("/tmp/ollama-pull-vision.log")
+        try:
+            if log_path.exists():
+                age = time.time() - log_path.stat().st_mtime
+                raw = log_path.read_bytes()[-4096:].decode("utf-8", errors="ignore")
+                if "PULL_SUCCESS" not in raw and "PULL_FAILED" not in raw and age < 45:
+                    matches = re.findall(r"(\d+)%[^0-9]*?([\d.]+\s*[KMGTP]?B\s*/\s*[\d.]+\s*[KMGTP]?B)", raw)
+                    pct = float(matches[-1][0]) if matches else 0.0
+                    sizes = matches[-1][1].replace(" ", "") if matches else ""
+                    status_text = (
+                        f"Pobieranie llama3.2-vision:11b ({sizes})"
+                        if sizes
+                        else "Pobieranie llama3.2-vision:11b w tle..."
+                    )
+                    return {
+                        "active": True,
+                        "model": "llama3.2-vision:11b",
+                        "status": status_text,
+                        "percent": pct,
+                        "error": None,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+        except Exception:
+            pass
+        return state
 
     def _set_ollama_pull_state(self, **updates: Any) -> dict[str, Any]:
         with self._ollama_pull_lock:

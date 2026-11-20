@@ -168,6 +168,24 @@ class SshTerminalTests(unittest.TestCase):
         self.assertIn("df -h /", shell_cmd)
         self.assertNotIn("ss -tlnp", shell_cmd)
 
+    def test_system_improvement_mission_synthesizes_full_ship_audit(self) -> None:
+        is_exec, mode, shell_cmd, natural = SVL364SshMcpController._parse_ssh_ship_input(
+            "ulepsz popraw i napraw oraz rozwiń ten system"
+        )
+        self.assertFalse(is_exec)
+        self.assertEqual(mode, "natural")
+        self.assertEqual(natural, "ulepsz popraw i napraw oraz rozwiń ten system")
+        self.assertIn("uname -srm", shell_cmd)
+        self.assertIn("system_modules", shell_cmd)
+        self.assertIn("/app/applet/data/svl_os.sqlite3", shell_cmd)
+        self.assertIn("ollama list", shell_cmd)
+
+    def test_sqlite_lookup_handles_remote_root_cwd(self) -> None:
+        _, mode, shell_cmd, _ = SVL364SshMcpController._parse_ssh_ship_input("Pokaż moduły w bazie sqlite")
+        self.assertEqual(mode, "natural")
+        self.assertIn("/app/applet/data/svl_os.sqlite3", shell_cmd)
+        self.assertIn("Brak bazy svl_os.sqlite3", shell_cmd)
+
 
 if __name__ == "__main__":
     unittest.main()

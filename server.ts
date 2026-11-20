@@ -1205,7 +1205,7 @@ async function startServer() {
       return;
     }
     const corrId: string = (req as any).correlationId || '';
-    const healthRes = await callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId);
+    const healthRes = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
     const ollama = healthRes.data?.ollama || {};
     const image = healthRes.data?.image_engine || {};
     const ship = getShipTunnelStatus();
@@ -1254,8 +1254,12 @@ async function startServer() {
         },
         image: {
           engine: String(image.engine || process.env.SVL_IMAGE_ENGINE || 'comfyui'),
-          available: image.available === undefined ? null : Boolean(image.available),
-          detail: image.detail || image.status || null,
+          available: image.available !== undefined
+            ? Boolean(image.available)
+            : image.deferred
+              ? null
+              : Boolean(image.reachable ?? image.ok),
+          detail: image.detail || image.status || image.error || (image.model ? String(image.model) : null),
         },
       },
     });
@@ -3179,10 +3183,12 @@ async function startServer() {
     );
     const hasAgentRootAuthority =
       hasOperatorAuth &&
-      (String(agentConfig.rbac_role || 'root').toLowerCase() === 'root' || agentScopes.has('system.root'));
+      (String(agentConfig.rbac_role || 'root').toLowerCase() === 'root' ||
+        agentScopes.has('system.root') ||
+        agentScopes.has('superuser.all'));
     const requestsRootSystemTools =
       hasAgentRootAuthority &&
-      /\b(?:root|sudo|shell|bash|linux|ssh|sshd|demon\p{L}*|usług\p{L}*|uslug\p{L}*|serwis\p{L}*|moduł\p{L}*|modul\p{L}*|pamię[ćc]\p{L}*|pamiec\p{L}*|zapamięt\p{L}*|zapamiet\p{L}*|wirus\p{L}*|antywirus\p{L}*|skan\p{L}*|raport\p{L}*|synchroniz\p{L}*|diagnost\p{L}*|status|proces\p{L}*|dysk|ram|cpu|port\p{L}*|jądr\p{L}*|jadr\p{L}*|apex|svl-?364|zadani\p{L}*|sprawdź|sprawdz|uruchom|napraw|wykonaj)\b/iu.test(
+      /\b(?:root|sudo|shell|bash|linux|ssh|sshd|demon\p{L}*|usług\p{L}*|uslug\p{L}*|serwis\p{L}*|moduł\p{L}*|modul\p{L}*|pamię[ćc]\p{L}*|pamiec\p{L}*|zapamięt\p{L}*|zapamiet\p{L}*|wirus\p{L}*|antywirus\p{L}*|skan\p{L}*|raport\p{L}*|synchroniz\p{L}*|diagnost\p{L}*|status|proces\p{L}*|dysk|ram|cpu|port\p{L}*|jądr\p{L}*|jadr\p{L}*|apex|svl-?364|zadani\p{L}*|sprawdź|sprawdz|uruchom|napraw|popraw|ulepsz|rozwi[ńn]\p{L}*|rozwij\p{L}*|wykonaj|zainstaluj|skonfiguruj|ustaw|nadaj|przyznaj|zaktualizuj|pobierz|usuń|usun|dodaj|zmień|zmien|stwórz|stworz|utwórz|utworz|otwórz|otworz|uprawnie\p{L}*|wszystk\p{L}*|ollama|model\p{L}*|vision|plik\p{L}*|katalog\p{L}*|bielik|maya|agent\p{L}*|misj\p{L}*|pakiet\p{L}*|komend\p{L}*|polece[ńn]\p{L}*|log\p{L}*|mcp|api)\b/iu.test(
         cleanMsg,
       );
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
@@ -3683,6 +3689,134 @@ async function startServer() {
         });
         return { ok, taskId: taskRes.data?.task?.id, targetAgent: formatAgentDisplayName(taskTarget) };
       }
+      if (toolName === 'svl_ollama_admin') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const action = String(args.action || 'status').trim().toLowerCase();
+        if (action === 'pull') {
+          const targetModel = String(args.model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b').trim();
+          const pullRes = await callPythonBackend('POST', '/api/py/ollama/pull', { model: targetModel, origin, correlationId: corrId }, corrId);
+          const ok = pullRes.status === 200 && Boolean(pullRes.data?.ok);
+          if (ok) pendingMutations = true;
+          appliedActions.push({
+            tool: toolName,
+            entity: 'ollama',
+            entityId: targetModel,
+            serverRevision: Number(pullRes.data?.serverRevision || latestActionSrvRev),
+            summary: ok ? `Zlecono pobranie modelu Ollama: ${targetModel}` : String(pullRes.data?.error || 'Błąd pull Ollama'),
+            ok,
+          });
+          return { ok, ...(pullRes.data || {}) };
+        }
+        const statusRes = await callPythonBackend('GET', '/api/py/ollama/pull-status', undefined, corrId);
+        const ok = statusRes.status === 200 && Boolean(statusRes.data?.ok);
+        appliedActions.push({
+          tool: toolName,
+          entity: 'ollama',
+          entityId: 'pull-status',
+          serverRevision: latestActionSrvRev,
+          summary: ok ? `Odczytano status Ollama i pobierania modeli` : 'Błąd statusu Ollama',
+          ok,
+        });
+        return { ok, ...(statusRes.data || {}) };
+      }
+      if (toolName === 'svl_maya_mission') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const action = String(args.action || 'status').trim().toLowerCase();
+        if (action === 'run') {
+          const runResult = await runMayaMission('ai_root_tool');
+          pendingMutations = true;
+          appliedActions.push({
+            tool: toolName,
+            entity: 'maya_mission',
+            entityId: 'run',
+            serverRevision: latestActionSrvRev,
+            summary: runResult ? `Misja Maya: ${runResult.severity} — ${runResult.headline}` : 'Misja już trwa',
+            ok: Boolean(runResult),
+          });
+          return { ok: Boolean(runResult), run: runResult };
+        }
+        appliedActions.push({
+          tool: toolName,
+          entity: 'maya_mission',
+          entityId: 'status',
+          serverRevision: latestActionSrvRev,
+          summary: `Status misji Maya: ${mayaMission.status} (enabled=${mayaMission.enabled})`,
+          ok: true,
+        });
+        return {
+          ok: true,
+          enabled: mayaMission.enabled,
+          status: mayaMission.status,
+          currentActivity: mayaMission.currentActivity,
+          lastRunAt: mayaMission.lastRunAt,
+          recentRuns: mayaMission.runs.slice(0, 3),
+        };
+      }
+      if (toolName === 'svl_agents_admin') {
+        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
+        const action = String(args.action || 'status').trim().toLowerCase();
+        if (action === 'grant_root') {
+          const updatedAgents: string[] = [];
+          for (const targetName of ['Bielik', 'Maya']) {
+            const cfgRes = await callPythonBackend(
+              'POST',
+              '/api/py/agents/config',
+              {
+                agent: targetName,
+                origin,
+                correlationId: corrId,
+                config: {
+                  rbac_role: 'root',
+                  autonomy_mode: 'ROOT_AUTHORIZED',
+                  allowed_scopes: [...FULL_ROOT_SCOPES],
+                },
+              },
+              corrId,
+            );
+            if (cfgRes.status === 200 && cfgRes.data?.ok) {
+              updatedAgents.push(targetName);
+              latestActionSrvRev = Math.max(latestActionSrvRev, Number(cfgRes.data?.serverRevision || 0));
+            }
+          }
+          const ok = updatedAgents.length === 2;
+          if (ok) pendingMutations = true;
+          appliedActions.push({
+            tool: toolName,
+            entity: 'agent_config',
+            entityId: 'Bielik+Maya',
+            serverRevision: latestActionSrvRev,
+            summary: `Nadano najwyższe uprawnienia ROOT (${FULL_ROOT_SCOPES.length} zakresów) dla: ${updatedAgents.join(', ')}`,
+            ok,
+          });
+          return { ok, updatedAgents, scopesCount: FULL_ROOT_SCOPES.length, serverRevision: latestActionSrvRev };
+        }
+        if (action === 'connect_workers') {
+          const connRes = await callPythonBackend('POST', '/api/py/agents/connect', { triggered_by: 'ai-root-tool' }, corrId);
+          const ok = connRes.status === 200 && Boolean(connRes.data?.ok);
+          if (ok) pendingMutations = true;
+          latestActionSrvRev = Math.max(latestActionSrvRev, Number(connRes.data?.serverRevision || 0));
+          appliedActions.push({
+            tool: toolName,
+            entity: 'agent_runtime',
+            entityId: 'workers',
+            serverRevision: latestActionSrvRev,
+            summary: ok ? 'Połączono workerów Bielik i Maya Mitek' : 'Błąd uruchamiania workerów',
+            ok,
+          });
+          return { ok, ...(connRes.data || {}) };
+        }
+        const statusRes = await callPythonBackend('GET', '/api/py/agents/status', undefined, corrId);
+        const ok = statusRes.status === 200;
+        appliedActions.push({
+          tool: toolName,
+          entity: 'agent_runtime',
+          entityId: 'status',
+          serverRevision: latestActionSrvRev,
+          summary: ok ? 'Odczytano stan i uprawnienia agentów Bielik i Maya Mitek' : 'Błąd odczytu agentów',
+          ok,
+        });
+        return { ok, agents: (statusRes.data?.agents || []).map((a: any) => ({ name: a.display_name, status: a.status, pid: a.pid, rbac_role: a.config?.rbac_role, scopesCount: (a.config?.allowed_scopes || []).length })) };
+      }
       return { ok: false, error: `Narzędzie wycofane lub niedostępne: ${toolName}` };
     };
 
@@ -3775,6 +3909,37 @@ async function startServer() {
               payload: { type: Type.STRING, description: 'Szczegółowy opis zadania.' },
             },
             required: ['title'],
+          },
+        },
+        {
+          name: 'svl_ollama_admin',
+          description: 'Zarządza lokalną Ollamą: sprawdza status modeli i postęp pobierania (status) albo zleca pobranie modelu (pull).',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: 'status lub pull.' },
+              model: { type: Type.STRING, description: 'Nazwa modelu, np. llama3.2-vision:11b.' },
+            },
+          },
+        },
+        {
+          name: 'svl_maya_mission',
+          description: 'Odczytuje stan Misji Maya (status) lub uruchamia pojedynczy cykl diagnostyczno-naprawczy (run).',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: 'status lub run.' },
+            },
+          },
+        },
+        {
+          name: 'svl_agents_admin',
+          description: 'Zarządza agentami Bielik i Maya Mitek: status, grant_root (pełne uprawnienia ROOT), connect_workers.',
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              action: { type: Type.STRING, description: 'status, grant_root lub connect_workers.' },
+            },
           },
         },
       );
@@ -4509,7 +4674,7 @@ async function startServer() {
           ollamaOpts.historyTurns,
           ollamaOpts.maxTurnChars,
         );
-        const ollamaMessages = [
+        const ollamaMessages: any[] = [
           ...(agentMemoryContext ? [{ role: 'system', content: agentMemoryContext }] : []),
           ...compactOllamaHistory,
           {
@@ -4518,65 +4683,111 @@ async function startServer() {
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
+        let ollamaToolsPayload: any[] =
+          chatToolDeclarations.length > 0 && !imageBase64
+            ? chatToolDeclarations.map((fn) => ({
+                type: 'function',
+                function: {
+                  name: fn.name,
+                  description: fn.description,
+                  parameters: fn.parameters,
+                },
+              }))
+            : [];
         const ollamaTimeoutMs = ollamaChatTimeoutMs;
         ollamaGenerationStarted = true;
-        const oResp = await fetch(`${ollamaHost}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(ollamaTimeoutMs),
-          body: JSON.stringify({
-            model: selectedOllamaModelName,
-            stream: false,
-            keep_alive: ollamaOpts.keep_alive,
-            options: {
-              temperature: effectiveTemperature,
-              num_ctx: ollamaOpts.num_ctx,
-              num_predict: ollamaOpts.num_predict,
-              ...ollamaOpts.perf,
-            },
-            messages: ollamaMessages,
-          }),
-        });
-        if (oResp.ok) {
+        let extReplyRaw = '';
+        for (let round = 0; round < 5; round++) {
+          const oResp = await fetch(`${ollamaHost}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(ollamaTimeoutMs),
+            body: JSON.stringify({
+              model: selectedOllamaModelName,
+              stream: false,
+              keep_alive: ollamaOpts.keep_alive,
+              options: {
+                temperature: effectiveTemperature,
+                num_ctx: ollamaOpts.num_ctx,
+                num_predict: ollamaOpts.num_predict,
+                ...ollamaOpts.perf,
+              },
+              messages: ollamaMessages,
+              ...(ollamaToolsPayload.length > 0 ? { tools: ollamaToolsPayload } : {}),
+            }),
+          });
+          if (!oResp.ok) {
+            const errBody = (await oResp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+            if (oResp.status === 400 && ollamaToolsPayload.length > 0 && /tool/i.test(errBody)) {
+              ollamaToolsPayload = [];
+              continue;
+            }
+            throw new Error(`HTTP ${oResp.status}${errBody ? `: ${errBody}` : ''}`);
+          }
           const oRaw = await oResp.text();
           const oData: any = oRaw && !oRaw.trim().startsWith('<') ? JSON.parse(oRaw) : {};
-          const extReplyRaw = String(oData?.message?.content || oData?.response || '').trim();
-          if (extReplyRaw) {
-            const finalReply = cleanReplyFor(extReplyRaw);
-            const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
-            if (agentState?.canonical_name && cleanMsg) {
-              void callPythonBackend(
-                'POST',
-                '/api/py/agents/memory',
-                {
-                  agent: selectedAgent,
-                  kind: 'episode',
-                  content: `Czat (${displayModelBadge}): "${cleanMsg.slice(0, 120)}" -> "${safeReply.slice(0, 180)}"`,
-                  origin,
-                  correlationId: corrId,
-                },
-                corrId,
-              ).then((memRes) => {
-                if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
-              }).catch(() => undefined);
+          const toolCalls = Array.isArray(oData?.message?.tool_calls) ? oData.message.tool_calls : [];
+          if (toolCalls.length > 0 && round < 4) {
+            ollamaMessages.push(oData.message);
+            for (const tc of toolCalls) {
+              const fnName = String(tc?.function?.name || '');
+              let fnArgs: Record<string, any> = {};
+              const rawArgs = tc?.function?.arguments;
+              if (rawArgs && typeof rawArgs === 'object') {
+                fnArgs = rawArgs;
+              } else if (typeof rawArgs === 'string') {
+                try {
+                  fnArgs = JSON.parse(rawArgs);
+                } catch {
+                  fnArgs = {};
+                }
+              }
+              const resultObj = await executeChatTool(fnName, fnArgs);
+              ollamaMessages.push({
+                role: 'tool',
+                tool_name: fnName,
+                content: JSON.stringify(resultObj).slice(0, 12000),
+              });
             }
-            res.json({
-              ok: true,
-              sender: selectedDisplayName,
-              agentId: selectedAgent,
-              modelUsed: displayModelBadge,
-              reply: safeReply,
-              provenance: 'model_unverified',
-              ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
-              followUpMessages: [],
-              appliedActions,
-              latestServerRevision: latestActionSrvRev,
-            });
-            return true;
+            continue;
           }
-        } else {
-          const errBody = (await oResp.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
-          throw new Error(`HTTP ${oResp.status}${errBody ? `: ${errBody}` : ''}`);
+          extReplyRaw = String(oData?.message?.content || oData?.response || '').trim();
+          break;
+        }
+        if (extReplyRaw) {
+          flushChatSync('ai_root_tool_applied');
+          const finalReply = cleanReplyFor(extReplyRaw);
+          const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
+          const hasVerifiedToolAction = appliedActions.some((a) => a.ok);
+          if (agentState?.canonical_name && cleanMsg) {
+            void callPythonBackend(
+              'POST',
+              '/api/py/agents/memory',
+              {
+                agent: selectedAgent,
+                kind: 'episode',
+                content: `Czat (${displayModelBadge}): "${cleanMsg.slice(0, 120)}" -> "${safeReply.slice(0, 180)}"`,
+                origin,
+                correlationId: corrId,
+              },
+              corrId,
+            ).then((memRes) => {
+              if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
+            }).catch(() => undefined);
+          }
+          res.json({
+            ok: true,
+            sender: selectedDisplayName,
+            agentId: selectedAgent,
+            modelUsed: displayModelBadge,
+            reply: safeReply,
+            provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
+            ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
+            followUpMessages: [],
+            appliedActions,
+            latestServerRevision: latestActionSrvRev,
+          });
+          return true;
         }
         ollamaFailure = ollamaFailure || 'model zwrócił pustą odpowiedź';
       } catch (error) {

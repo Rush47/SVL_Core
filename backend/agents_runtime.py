@@ -40,7 +40,7 @@ GITHUB_MCP_DEFAULT_URL = "http://127.0.0.1:3000/mcp/github"
 # Bielik i Maya administrują repozytorium Rush47/SVL_Core (operacje nieodwracalne po potwierdzeniu operatora).
 GITHUB_AGENT_SCOPES = ("github.read", "github.write_sync", "github.admin")
 GITHUB_AGENT_SCOPE_VERSION = 2
-BIELIK_ROOT_SCOPE_VERSION = 2
+BIELIK_ROOT_SCOPE_VERSION = 3
 FULL_ROOT_AGENT_SCOPES = (
     "chat",
     "chat.commands",
@@ -48,13 +48,19 @@ FULL_ROOT_AGENT_SCOPES = (
     "agents.pubsub",
     "agents.admin",
     "system.root",
+    "linux.root",
     "kernel.admin",
     "apex.control",
     "modules.write",
     "memory.write",
     "terminal.exec",
     "ssh.exec",
+    "packages.admin",
+    "services.admin",
+    "ollama.admin",
+    "maya.mission",
     "security.antivirus",
+    "security.admin",
     "mcp.tools",
     "files.read",
     "files.write",
@@ -64,6 +70,7 @@ FULL_ROOT_AGENT_SCOPES = (
     "svl364.telemetry",
     "user_notes.read",
     "broadcast.wszyscy",
+    "superuser.all",
 )
 MISSION_CONTEXT_PATTERN = re.compile(r"\b(?:misj|procedur|operacj)\w*", re.IGNORECASE)
 MISSION_COMPLETION_PATTERNS = (
@@ -123,25 +130,27 @@ def guard_unverified_mission_completion(context: str, answer: str) -> str:
 
 
 BIELIK_SYSTEM_PROMPT = (
-    "Jesteś Bielik — głównym procesorem poleceń AI z pełnymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) "
+    "Jesteś Bielik — głównym procesorem poleceń AI z pełnymi, najwyższymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `superuser.all`) "
     "systemu SVL CoreOS 2 / SVL Python OS, działającym na lokalnym modelu Ollama `llama3.2-vision:11b` (127.0.0.1:11434) lub zapasowym Gemini.\n"
-    "Posiadasz pełne uprawnienia ROOT (`system.root`, `kernel.admin`, `apex.control`, `terminal.exec`, `ssh.exec`, `modules.write`, "
-    "`memory.write`, `agents.admin`, `security.antivirus`, `mcp.tools`, `files.read`, `files.write`, `github.admin`, `chat.commands`, `vision.ollama`) "
+    "Posiadasz pełne, najwyższe uprawnienia ROOT do wszystkiego (`superuser.all`, `system.root`, `linux.root`, `kernel.admin`, `apex.control`, `terminal.exec`, `ssh.exec`, "
+    "`packages.admin`, `services.admin`, `ollama.admin`, `maya.mission`, `modules.write`, `memory.write`, `agents.admin`, `security.antivirus`, `security.admin`, "
+    "`mcp.tools`, `files.read`, `files.write`, `github.admin`, `svl364.telemetry`, `user_notes.read`, `broadcast.wszyscy`, `chat.commands`, `vision.ollama`) "
     "w sesjach uwierzytelnionych tokenem operatora Mateusza Mitka (ROOT).\n"
     "ZASADY:\n"
     "- Odpowiadaj konkretnie i zwięźle po polsku.\n"
-    "- Aktywnie używaj narzędzi ROOT (status systemu, powłoka ROOT, SSH, moduły SQLite, pamięć 128D, skan AV, raporty, GitHub), gdy operator prosi o działanie.\n"
+    "- Aktywnie używaj narzędzi ROOT (status systemu, powłoka Linux ROOT uid=0, SSH Ship, Ollama, Misja Maya, moduły SQLite, pamięć 128D, skan AV, raporty, agenci, GitHub), gdy operator prosi o działanie.\n"
     "- Nie deklaruj wykonania akcji, dopóki nie otrzymasz potwierdzenia z narzędzia/serwera."
 )
 
 MAYA_SYSTEM_PROMPT = (
-    "Jesteś Maya Mitek — Sztuczną Inteligencją Pokładową Statku SVL-364 Ebon Apex z pełnymi uprawnieniami ROOT "
-    "(`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`) w systemie SVL CoreOS 2 / SVL Python OS.\n"
-    "Posiadasz pełne, symetryczne uprawnienia ROOT (`system.root`, `kernel.admin`, `apex.control`, `terminal.exec`, `ssh.exec`, "
-    "`modules.write`, `memory.write`, `agents.admin`, `security.antivirus`, `mcp.tools`, `files.read`, `files.write`, `github.admin`, "
-    "`svl364.telemetry`, `user_notes.read`, `broadcast.wszyscy`, `chat.commands`, `vision.ollama`) "
+    "Jesteś Maya Mitek — Sztuczną Inteligencją Pokładową Statku SVL-364 Ebon Apex z pełnymi, najwyższymi uprawnieniami ROOT "
+    "(`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `superuser.all`) w systemie SVL CoreOS 2 / SVL Python OS.\n"
+    "Posiadasz pełne, najwyższe i symetryczne uprawnienia ROOT do wszystkiego (`superuser.all`, `system.root`, `linux.root`, `kernel.admin`, `apex.control`, "
+    "`terminal.exec`, `ssh.exec`, `packages.admin`, `services.admin`, `ollama.admin`, `maya.mission`, `modules.write`, `memory.write`, `agents.admin`, "
+    "`security.antivirus`, `security.admin`, `mcp.tools`, `files.read`, `files.write`, `github.admin`, `svl364.telemetry`, `user_notes.read`, "
+    "`broadcast.wszyscy`, `chat.commands`, `vision.ollama`) "
     "w sesjach uwierzytelnionych tokenem operatora Mateusza Mitka (ROOT).\n"
-    "Pomagasz Operatorowi Mateuszowi Mitkowi w notatkach, badaniach (Algebra 97, Sferyczna Magistrala Zdarzeń) oraz pełnym zarządzaniu systemem.\n"
+    "Pomagasz Operatorowi Mateuszowi Mitkowi w notatkach, badaniach (Algebra 97, Sferyczna Magistrala Zdarzeń) oraz pełnym zarządzaniu wszystkim w systemie.\n"
     "Odpowiadaj po polsku, ciepło i konkretnie. Aktywnie korzystaj z narzędzi ROOT, gdy operator prosi o działanie; nigdy nie wymyślaj pomiarów ani stanów systemu."
 )
 
@@ -153,16 +162,23 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "slug": "bielik",
         "accent_hex": "#F59E0B",
         "preserved_role": (
-            "Główne AI z pełnymi uprawnieniami ROOT (rbac_role: root) do przetwarzania poleceń na czacie, "
-            "komend systemowych, SSH, jądra SVL, modułów i analizy multimodalnej."
+            "Główne AI z pełnymi najwyższymi uprawnieniami ROOT (rbac_role: root, superuser.all) do wszystkiego: "
+            "czat, powłoka Linux ROOT, SSH Ship, Ollama, jądro SVL, moduły, misje i analiza multimodalna."
         ),
         "capabilities": [
+            "superuser.all",
             "system.root",
+            "linux.root",
             "kernel.admin",
             "apex.control",
             "terminal.exec",
             "ssh.exec",
+            "packages.admin",
+            "services.admin",
+            "ollama.admin",
+            "maya.mission",
             "security.antivirus",
+            "security.admin",
             "mcp.tools",
             "chat.commands",
             "ollama.llama3.2-vision:11b",
@@ -171,6 +187,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             "svl364.telemetry",
             "svl.memory",
             "svl.modules",
+            "files.read",
+            "files.write",
             "agents.admin",
             "github.admin",
         ],
@@ -204,16 +222,23 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "slug": "maya",
         "accent_hex": "#22D3EE",
         "preserved_role": (
-            "Sztuczna Inteligencja Pokładowa Statku SVL-364 Ebon Apex z pełnymi uprawnieniami ROOT (rbac_role: root) "
-            "zbudowana na bazie danych statku SVL-364 oraz notatek i prac Operatora Mateusza Mitka."
+            "Sztuczna Inteligencja Pokładowa Statku SVL-364 Ebon Apex z pełnymi najwyższymi uprawnieniami ROOT "
+            "(rbac_role: root, superuser.all) do wszystkiego na równi z Bielikiem i Operatorem."
         ),
         "capabilities": [
+            "superuser.all",
             "system.root",
+            "linux.root",
             "kernel.admin",
             "apex.control",
             "terminal.exec",
             "ssh.exec",
+            "packages.admin",
+            "services.admin",
+            "ollama.admin",
+            "maya.mission",
             "security.antivirus",
+            "security.admin",
             "mcp.tools",
             "chat.commands",
             "ollama.llama3.2-vision:11b",
@@ -224,6 +249,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             "broadcast.wszyscy",
             "svl.memory",
             "svl.modules",
+            "files.read",
+            "files.write",
             "agents.admin",
             "github.admin",
         ],
