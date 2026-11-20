@@ -58,7 +58,7 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y &&
   apt-get install -y --no-install-recommends \
-    nodejs npm python3 python3-venv python3-pip git rsync curl ca-certificates jq sqlite3 \
+    python3 python3-venv python3-pip git rsync curl ca-certificates xz-utils jq sqlite3 \
     openssh-client nftables gh debootstrap
 }
 
@@ -71,6 +71,8 @@ copy_system() {
 }
 
 build_system() {
+  # Debian 13 ships Node 20; package.json / lockfile require Node >= 22.
+  sh "${REPO_DIR}/SVL_CoreOS_2/debian13/install-node22.sh" &&
   cd "${SVL_ROOT}" &&
   npm ci --no-audit --no-fund &&
   npx vite build &&

@@ -60,13 +60,12 @@ openssh-client
 nftables
 curl
 ca-certificates
+xz-utils
 git
 gh
 rsync
 jq
 sqlite3
-nodejs
-npm
 python3
 python3-venv
 python3-pip
@@ -106,8 +105,10 @@ MOTD
 
 cat > config/hooks/normal/0500-svl-coreos2.hook.chroot <<'HOOK'
 #!/bin/sh
-# Budowa SVL CoreOS 2 wewnątrz obrazu: zależności Node i Python, interfejs, usługi.
+# Budowa SVL CoreOS 2 wewnątrz obrazu: Node 22, zależności, interfejs, usługi.
 set -e
+# Debian 13 ships Node 20; package.json / lockfile require Node >= 22.
+sh /opt/svl-coreos-2/SVL_CoreOS_2/debian13/install-node22.sh
 cd /opt/svl-coreos-2
 npm ci --no-audit --no-fund
 npx vite build
