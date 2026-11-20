@@ -2,7 +2,7 @@
 
 **SVL Python OS** to zintegrowane środowisko operacyjne łączące **Python 3 Kernel (`SVLSystemKernel`)**, **Długotrwałą Pamięć Semantyczną 128D (`BinaryHyperspaceKernel` + SQLite WAL)**, **lokalną Ollamę (`127.0.0.1:11434`, jeśli zainstalowana)**, **Centrum Dowodzenia Statkiem Kosmicznym `SVL-364 Ebon Apex`** (z holograficzną mapą w stylu Mass Effect CIC) oraz **Moduł Infrastruktury Floty, Placówek, Botaniki Hydroponicznej i Badań z ETA**.
 
-Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `XAI_API_KEY`. Gdy klucza nie ma albo API zawiedzie, system przełącza się na **darmową lokalną Ollamę**, a następnie opcjonalnie na Gemini. Szczegóły: [deploy/AI_ENGINES.md](deploy/AI_ENGINES.md).
+Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `XAI_API_KEY` i `SVL_CHAT_ENGINE` nie jest `ollama`. Gdy klucza nie ma, API zwróci 401/402/403 (zły klucz albo brak kredytów) albo ustawiono `SVL_CHAT_ENGINE=ollama`, system używa **lokalnej Ollamy**, a następnie opcjonalnie Gemini. Szczegóły: [deploy/AI_ENGINES.md](deploy/AI_ENGINES.md).
 
 ---
 

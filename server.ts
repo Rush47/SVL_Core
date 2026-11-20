@@ -154,9 +154,12 @@ import {
 } from './src/server/fileLogger.ts';
 import {
   completeXaiChat,
+  getSvlChatEngine,
   getXaiModel,
   getXaiTimeoutMs,
+  isXaiAuthOrBillingStatus,
   isXaiConfigured,
+  shouldAttemptGrok,
   type XaiChatMessage,
 } from './src/server/xaiGrok.ts';
 
@@ -1307,8 +1310,10 @@ async function startServer() {
           diskFreeGb: typeof ollama.host_disk_free_gb === 'number' ? ollama.host_disk_free_gb : null,
           error: ollama.error || null,
         },
+        chatEngine: getSvlChatEngine(),
         grok: {
           configured: isXaiConfigured(),
+          skipped: getSvlChatEngine() === 'ollama',
           model: getXaiModel(),
           timeoutMs: getXaiTimeoutMs(),
           paid: true,
@@ -5181,23 +5186,27 @@ async function startServer() {
     const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
+    const chatEngine = getSvlChatEngine();
     const grokConfigured = isXaiConfigured();
-    const shouldTryGrok =
-      grokConfigured &&
-      !isExplicitGemini &&
-      !isExplicitOllama &&
-      !(wantsWebSources && ai);
+    const shouldTryGrok = shouldAttemptGrok(process.env, {
+      explicitOllama: isExplicitOllama,
+      explicitGemini: isExplicitGemini,
+      webSearchViaGemini: Boolean(wantsWebSources && ai),
+    });
+    let grokFailureStatus: number | undefined;
     let grokFailure = shouldTryGrok
       ? ''
-      : !grokConfigured
-        ? 'brak klucza XAI_API_KEY'
-        : isExplicitGemini
-          ? 'pominięty — wybrano konkretny model Gemini bez fallbacku'
-          : isExplicitOllama
-            ? 'pominięty — wybrano konkretny model Ollama bez fallbacku'
-            : wantsWebSources && ai
-              ? 'pominięty — pytanie o źródła obsługuje Gemini z wyszukiwaniem'
-              : 'nie użyto dla tego zapytania';
+      : chatEngine === 'ollama'
+        ? 'pominięty — SVL_CHAT_ENGINE=ollama'
+        : !grokConfigured
+          ? 'brak klucza XAI_API_KEY'
+          : isExplicitGemini
+            ? 'pominięty — wybrano konkretny model Gemini bez fallbacku'
+            : isExplicitOllama
+              ? 'pominięty — wybrano konkretny model Ollama bez fallbacku'
+              : wantsWebSources && ai
+                ? 'pominięty — pytanie o źródła obsługuje Gemini z wyszukiwaniem'
+                : 'nie użyto dla tego zapytania';
     const grokBadgeFor = (modelName: string) =>
       isOnboardComputerChannel
         ? `Komputer pokładowy SVL-364 (SSH + MCP · Grok ${modelName})`
@@ -5264,8 +5273,10 @@ async function startServer() {
       return text;
     };
 
-    // Ollama: zapas po Grok (albo pierwsza, gdy Grok nie jest skonfigurowany); potem Gemini.
+    // Ollama: zapas po Grok (albo pierwsza, gdy Grok nie jest skonfigurowany albo SVL_CHAT_ENGINE=ollama); potem Gemini.
+    let ollamaAttempted = false;
     const tryOllama = async (): Promise<boolean> => {
+      ollamaAttempted = true;
       try {
         const ready = await resolveCachedOllamaModel(ollamaHost, selectedOllamaModelName, {
           requireVision: Boolean(imageBase64),
@@ -5507,6 +5518,7 @@ async function startServer() {
           });
           if (!result.ok) {
             grokFailure = result.reason;
+            grokFailureStatus = result.status;
             return false;
           }
           if (result.toolCalls.length > 0 && round < 4) {
@@ -5577,7 +5589,13 @@ async function startServer() {
       return false;
     };
     if (shouldTryGrok && (await tryGrok())) return;
-    if (shouldTryOllama && (await tryOllama())) return;
+    // 401/402/403 (zły klucz albo brak kredytów) oraz SVL_CHAT_ENGINE=ollama idą od razu do Ollamy.
+    const ollamaNow =
+      shouldTryOllama ||
+      ((chatEngine === 'ollama' || isXaiAuthOrBillingStatus(grokFailureStatus)) &&
+        !isExplicitGemini &&
+        !wantsGitHubTools);
+    if (ollamaNow && (await tryOllama())) return;
 
     // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models via failover, SVL-364 Router, and Gemini models)
     if (ai) {
@@ -5953,7 +5971,7 @@ async function startServer() {
 
     // Gemini nie odpowiedziało (albo brak klucza), a Ollamy jeszcze nie pytano — próbujemy jej,
     // zanim zgłosimy brak modelu (np. Maya na kanale z hybrydowym routerem).
-    if (!shouldTryOllama && !wantsGitHubTools && !isExplicitGemini) {
+    if (!ollamaAttempted && !wantsGitHubTools && !isExplicitGemini) {
       ollamaFailure = '';
       if (await tryOllama()) return;
     }
@@ -6117,7 +6135,7 @@ async function startServer() {
   ): Promise<{ predicted: ConversationAgent | 'operator' | null; providerOnline: boolean }> => {
     const useGeminiOnly = requestedModel.startsWith('gemini-');
     const useOllamaRequested = requestedModel.startsWith('ollama:');
-    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
+    if (!useGeminiOnly && !useOllamaRequested && shouldAttemptGrok(process.env, { explicitOllama: false, explicitGemini: false, webSearchViaGemini: false })) {
       const choices = [...participants, 'Operator'].join(', ');
       const fromGrok = await completeXaiChat({
         messages: [
@@ -6217,7 +6235,7 @@ async function startServer() {
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
     const useGeminiOnly = requestedModel.startsWith('gemini-');
     const useOllamaRequested = requestedModel.startsWith('ollama:');
-    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
+    if (!useGeminiOnly && !useOllamaRequested && shouldAttemptGrok(process.env, { explicitOllama: false, explicitGemini: false, webSearchViaGemini: false })) {
       const perspective = toAgentPerspective(turns, speaker, 16);
       const grokMessages: XaiChatMessage[] = [];
       if (memoryContext) grokMessages.push({ role: 'system', content: memoryContext });
@@ -7082,9 +7100,11 @@ async function startServer() {
       layer: 'GATEWAY',
       level: 'INFO',
       category: 'ai_models',
-      message: isXaiConfigured()
-        ? `Grok (xAI) włączony jako główny silnik — model ${getXaiModel()}`
-        : 'Grok (xAI) wyłączony (brak XAI_API_KEY) — używana darmowa Ollama jako zapas',
+      message: getSvlChatEngine() === 'ollama'
+        ? 'Czat: Ollama (SVL_CHAT_ENGINE=ollama) — Grok nie jest wołany'
+        : isXaiConfigured()
+          ? `Grok (xAI) włączony jako główny silnik — model ${getXaiModel()}; przy 401/402/403 zapasem jest Ollama`
+          : 'Grok (xAI) wyłączony (brak XAI_API_KEY) — używana darmowa Ollama jako zapas',
     });
     // Wstępne pobranie listy modeli Gemini w tle, żeby pierwsza wiadomość na czacie nie czekała na models.list().
     const startupAi = getGeminiClient();

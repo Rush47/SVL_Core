@@ -13,7 +13,22 @@ XAI_MODEL="grok-4.7"      # opcjonalnie
 XAI_TIMEOUT_MS="60000"    # opcjonalnie, ms na jedną próbę
 ```
 
-Status silnika widać na karcie silników AI (`GET /api/ai/engines`). Po zmianie `.env` uruchom ponownie gateway. Brak kredytów na koncie xAI jest zgłaszany jako `Grok: brak kredytów na koncie xAI` i nie jest ponawiany.
+Status silnika widać na karcie silników AI (`GET /api/ai/engines`, pole `engines.chatEngine` oraz `engines.ollama.reachable`). Po zmianie `.env` uruchom ponownie gateway. Brak kredytów na koncie xAI (HTTP 402/403) i odrzucony klucz (HTTP 401) nie kończą czatu: `/api/chat` przechodzi na Ollamę. Komunikat `Grok: brak kredytów na koncie xAI` pojawia się tylko wtedy, gdy Ollama też nie odpowie.
+
+## Ollama jako jedyny silnik czatu
+
+Gdy konto xAI nie ma kredytów, ustaw w `.env` (albo w środowisku procesu bramy):
+
+```bash
+SVL_CHAT_ENGINE="ollama"          # nie woła Groka, nawet gdy XAI_API_KEY jest ustawiony
+OLLAMA_HOST="http://127.0.0.1:11434"
+OLLAMA_PREFERRED_MODEL="llama3.2:1b"   # model, który naprawdę jest w `ollama list`
+OLLAMA_CHAT_TIMEOUT_MS="120000"
+```
+
+`SVL_CHAT_ENGINE=auto` (albo puste) zostawia Groka jako pierwszego, gdy klucz jest poprawny, i i tak wraca do Ollamy przy 401/402/403. Jawny model w żądaniu `model: "ollama:nazwa"` też pomija Groka dla tej jednej wiadomości.
+
+Demon Ollama musi działać (`ollama serve`, domyślnie port 11434) i mieć pobrany model (`ollama pull llama3.2:1b`). Bez żadnego modelu czat uczciwie zgłasza brak modelu.
 
 Konfiguracja dodaje model tekstowy Qwen 3.8 27B do Ollama oraz Qwen Image 2.1 w ComfyUI. Instalator przeznaczony jest dla Debian 13 z działającym sterownikiem NVIDIA i wcześniej zainstalowanym Ollama/SVL.
 
