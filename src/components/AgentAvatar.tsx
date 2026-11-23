@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ImagePlus, RefreshCw, RotateCcw, UploadCloud, X } from 'lucide-react';
 import operatorAvatarImg from '../assets/images/avatar_operator_mitek_1794750564484.jpg';
-import jynCoreAvatarImg from '../assets/images/avatar_jyn_core_1795287629705.jpg';
+import jynMitekCoreAvatarImg from '../assets/images/avatar_jyn_core_1795287629705.jpg';
 import {
   AvatarProfileKey,
   SvlAvatarMap,
@@ -12,7 +12,7 @@ import {
 import { useSvlSync } from '../utils/svlSyncStore';
 
 export const DEFAULT_AGENT_AVATARS: Partial<Record<AvatarProfileKey, string>> = {
-  System_SI_1: jynCoreAvatarImg,
+  System_SI_1: jynMitekCoreAvatarImg,
   Operator: operatorAvatarImg,
 };
 
@@ -21,14 +21,14 @@ const PROFILE_META: Record<
   { label: string; short: string; ringClass: string; bgClass: string; textClass: string }
 > = {
   System_SI_1: {
-    label: 'Jyn (System_SI_1 · Infrastruktura · ROOT)',
-    short: 'JY',
+    label: 'Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)',
+    short: 'JM',
     ringClass: 'border-cyan-400/80',
     bgClass: 'bg-cyan-950/70',
     textClass: 'text-cyan-200',
   },
-  SI_System_2: {
-    label: 'SI_System_2 (Rdzeń Floty SVL-465 · ROOT)',
+  SI_Sphere: {
+    label: 'SI_Sphere (Rdzeń Floty SVL-465 · ROOT)',
     short: 'S2',
     ringClass: 'border-violet-400/80',
     bgClass: 'bg-violet-950/70',
@@ -51,8 +51,8 @@ const PROFILE_META: Record<
 };
 
 const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
-  { key: 'System_SI_1', label: 'Jyn (System_SI_1 · Infrastruktura · ROOT)' },
-  { key: 'SI_System_2', label: 'SI_System_2 (Rdzeń Floty SVL-465 · ROOT)' },
+  { key: 'System_SI_1', label: 'Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)' },
+  { key: 'SI_Sphere', label: 'SI_Sphere (Rdzeń Floty SVL-465 · ROOT)' },
   { key: 'JEDI_Omni_OS', label: 'JEDI Omni-OS v11.5 (VM + AI Generatywne)' },
   { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
 ];
@@ -232,7 +232,7 @@ export const AvatarSettingsModal: React.FC<{
       <div className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-xl border border-slate-700/80 bg-[#111520] p-4 sm:p-5 text-slate-100 shadow-2xl space-y-4">
         <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-slate-100">Awatary Jyn, SI_System_2, JEDI Omni-OS i Operatora</h2>
+            <h2 className="text-base font-bold text-slate-100">Awatary Jyn Mitek, SI_Sphere, JEDI Omni-OS i Operatora</h2>
             <p className="text-xs text-slate-400">
               Zmiany zapisywane są w SQLite i odświeżane natychmiast na czacie oraz w panelu agentów.
             </p>

@@ -21,6 +21,9 @@ test('isSystemCommandRequest rozumie polskie litery na końcu słów', () => {
   assert.equal(isSystemCommandRequest('otwórz zakładkę terminale'), true);
   assert.equal(isSystemCommandRequest('Pokaż rejestr floty System_SI_1'), true);
   assert.equal(isSystemCommandRequest('uruchom diagnostykę infrastruktury'), true);
+  assert.equal(isSystemCommandRequest('odblokuj kernel Debiana i zrestartuj usługę'), true);
+  assert.equal(isSystemCommandRequest('przeanalizuj kod i uruchom testy'), true);
+  assert.equal(isSystemCommandRequest('zbuduj nowy plik w repozytorium git'), true);
   assert.equal(isSystemCommandRequest('Cześć, jak się masz'), false);
   assert.equal(isSystemCommandRequest('dobranoc'), false);
 });

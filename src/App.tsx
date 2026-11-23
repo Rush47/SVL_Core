@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { Palette, RefreshCw } from 'lucide-react';
 import { ChatWorkspace } from './components/ChatWorkspace';
 import { AgentsPanel } from './components/AgentsPanel';
 import { TerminalsWorkspace } from './components/TerminalsWorkspace';
@@ -73,9 +74,12 @@ function SVLWorkspaceShell() {
       void refreshAllDomains('operator_token_saved');
     }
   };
+  const [localThemeOverride, setLocalThemeOverride] = useState<string | null>(null);
   const {
     agentsData,
     isSyncing,
+    wsState,
+    serverRevision,
     workspaceState,
     refreshAllDomains,
     refreshDomainModules,
@@ -87,9 +91,20 @@ function SVLWorkspaceShell() {
     const value = typeof raw === 'object' && raw !== null ? raw.value : raw;
     return typeof value === 'string' ? value : undefined;
   };
-  const guiTheme = workspaceValue('gui_theme') || 'apex';
+  const guiTheme = localThemeOverride || workspaceValue('gui_theme') || 'apex';
   const guiAccent = workspaceValue('gui_accent') || 'cyan';
   const syncedWorkspaceTab = workspaceValue('active_workspace_tab');
+
+  const cycleTheme = () => {
+    const order = ['apex', 'midnight', 'emerald', 'violet'] as const;
+    const idx = order.indexOf(guiTheme as (typeof order)[number]);
+    const nextTheme = order[(idx + 1) % order.length];
+    setLocalThemeOverride(nextTheme);
+    void safeFetchJson('/api/workspace/ui', {
+      method: 'POST',
+      body: JSON.stringify({ key: 'gui_theme', value: nextTheme }),
+    }).then(() => void refreshDomainModules(['workspace']));
+  };
 
   useEffect(() => {
     if (
@@ -193,8 +208,8 @@ function SVLWorkspaceShell() {
       data-theme={guiTheme}
       data-accent={guiAccent}
     >
-      {/* Apex-Dark Responsive Top Bar */}
-      <header className="relative z-20 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 gap-y-1 lg:gap-4 px-2.5 sm:px-4 lg:px-5 py-1.5 border-b border-cyan-500/30 bg-[#090F1E] shrink-0">
+      {/* Apex-Dark Responsive Command Header */}
+      <header className="relative z-20 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 gap-y-1 lg:gap-4 px-2.5 sm:px-4 lg:px-5 py-1.5 border-b border-cyan-500/30 bg-[#090F1E]/95 backdrop-blur-md shadow-[0_6px_28px_-14px_rgba(0,240,255,0.28)] shrink-0">
         {/* Zone 1: Wordmark */}
         <a
           href="#top"
@@ -202,36 +217,42 @@ function SVLWorkspaceShell() {
             e.preventDefault();
             selectWorkspaceTab('chat');
           }}
-          className="order-1 min-h-[38px] lg:min-h-0 flex items-center text-sm md:text-base font-bold tracking-tight text-cyan-300 whitespace-nowrap shrink-0"
+          className="order-1 min-h-[38px] lg:min-h-0 flex items-center gap-2 text-sm md:text-base font-bold tracking-tight text-cyan-300 whitespace-nowrap shrink-0"
         >
-          ⚡ SVL CoreOS 2: Apex
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-500/15 text-xs shadow-[0_0_12px_rgba(0,240,255,0.25)]">
+            ⚡
+          </span>
+          <span>SVL CoreOS 2</span>
+          <span className="hidden sm:inline-flex items-center rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
+            Apex
+          </span>
         </a>
 
-        {/* Zone 2: Horizontal navigation bar (Desktop/Tablet inline scrollable + Mobile scrollable + Menu drawer trigger) */}
+        {/* Zone 2: Horizontal navigation bar */}
         <div className="order-3 lg:order-2 w-full lg:w-auto lg:min-w-0 lg:flex-1 flex items-center gap-1.5 border-t border-cyan-500/20 lg:border-t-0 pt-1 lg:pt-0">
           <nav
             aria-label="Główna nawigacja systemu"
-            className="flex-1 min-w-0 flex items-center gap-2.5 md:gap-3.5 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar pr-4 lg:pr-2 [mask-image:linear-gradient(to_right,black_0%,black_calc(100%-24px),transparent_100%)] lg:[mask-image:none]"
+            className="flex-1 min-w-0 flex items-center gap-1.5 md:gap-2 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar pr-4 lg:pr-2 [mask-image:linear-gradient(to_right,black_0%,black_calc(100%-24px),transparent_100%)] lg:[mask-image:none]"
           >
             {WORKSPACE_TABS.map((tab) => {
               const isActive = activeTab === tab.id;
               const displayLabel = tab.id === 'agents' ? agentsTabLabel : tab.label;
               const activeBorder =
                 tab.accent === 'emerald'
-                  ? 'text-emerald-300 border-emerald-400 font-semibold'
+                  ? 'text-emerald-300 border-emerald-400 bg-emerald-500/10 font-semibold'
                   : tab.accent === 'violet'
-                    ? 'text-violet-300 border-violet-400 font-semibold'
-                    : 'text-cyan-300 border-cyan-400 font-semibold';
+                    ? 'text-violet-300 border-violet-400 bg-violet-500/10 font-semibold'
+                    : 'text-cyan-300 border-cyan-400 bg-cyan-500/10 font-semibold';
               const idleClass =
                 tab.accent === 'cyan'
-                  ? 'text-cyan-400/90 border-transparent hover:text-cyan-200'
-                  : 'border-transparent hover:text-slate-100';
+                  ? 'text-cyan-400/90 border-transparent hover:text-cyan-200 hover:bg-white/[0.03]'
+                  : 'border-transparent hover:text-slate-100 hover:bg-white/[0.03]';
               return (
                 <button
                   key={tab.id}
                   type="button"
                   onClick={() => selectWorkspaceTab(tab.id)}
-                  className={`min-h-[36px] lg:min-h-0 py-1 px-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+                  className={`min-h-[36px] lg:min-h-0 py-1 px-2 rounded-t-md transition-all whitespace-nowrap shrink-0 border-b-2 ${
                     tab.id === 'apex' || tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
                   }${isActive ? activeBorder : idleClass}`}
                 >
@@ -297,7 +318,7 @@ function SVLWorkspaceShell() {
                 ? 'border-rose-700 bg-rose-950/30 text-rose-300'
                 : 'border-slate-700 bg-[#0B0D13] text-slate-300 hover:border-slate-600'}`}
             title={operatorAuthStatus === 'authorized'
-              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · System_SI_1, SI_System_2 & JEDI Omni-OS v12 VM)`
+              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · System_SI_1, SI_Sphere & JEDI Omni-OS v12 VM)`
               : operatorAuthStatus === 'denied'
                 ? 'Serwer odrzucił token operatora'
                 : 'Wpisz prywatny SVL_OPERATOR_TOKEN'}
@@ -339,13 +360,41 @@ function SVLWorkspaceShell() {
                 : operatorAuthStatus === 'checking' ? 'Sprawdzanie tokenu operatora' : 'Brak autoryzacji operatora'}
           </span>
 
+          <span
+            className="hidden xl:inline-flex items-center gap-1.5 rounded-md border border-slate-700/80 bg-[#0B0D13]/90 px-2 py-1 font-mono text-[10px] text-slate-300 tabular-nums"
+            title={`Kanał synchronizacji: ${wsState} · Rewizja SQLite: ${serverRevision}`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                wsState === 'online'
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.85)]'
+                  : 'bg-amber-400'
+              }`}
+            />
+            <span>{wsState === 'online' ? 'LIVE' : 'SSE'}</span>
+            <span className="text-slate-500">·</span>
+            <span className="text-cyan-300">rev {serverRevision}</span>
+          </span>
+
+          <button
+            type="button"
+            onClick={cycleTheme}
+            aria-label={`Zmień motyw GUI (aktualny: ${guiTheme})`}
+            title={`Motyw: ${guiTheme} (kliknij, aby przełączyć)`}
+            className="hidden sm:inline-flex min-h-[38px] lg:min-h-[30px] items-center gap-1 px-2 py-1 rounded-md border border-slate-700/80 bg-[#0B0D13]/90 hover:border-cyan-500/40 text-[11px] font-mono text-slate-300 transition-colors"
+          >
+            <Palette className="w-3.5 h-3.5 text-cyan-300" aria-hidden="true" />
+            <span className="hidden md:inline capitalize">{guiTheme}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => void refreshAllDomains('operator_header_sync')}
             disabled={isSyncing}
-            className="min-h-[38px] lg:min-h-[30px] px-2.5 py-1 text-[11px] md:text-xs font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-md transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[38px] lg:min-h-[30px] inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] md:text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 rounded-md shadow-sm shadow-violet-950/50 transition-all whitespace-nowrap shrink-0"
           >
-            {isSyncing ? 'Sync...' : 'Synchronizuj'}
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <span>{isSyncing ? 'Sync...' : 'Synchronizuj'}</span>
           </button>
         </div>
 
@@ -393,20 +442,22 @@ function SVLWorkspaceShell() {
       </header>
 
       {/* Main Workspace Viewport */}
-      <main className="flex-1 min-h-0 w-full overflow-hidden">
-        {activeTab === 'chat' && <ChatWorkspace onNavigateTab={setActiveTab} />}
-        {activeTab === 'apex' && <ApexCommandDock onNavigateTab={setActiveTab} />}
-        {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={setActiveTab} />}
-        {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={setActiveTab} />}
-        {activeTab === 'agents' && (
-          <AgentsPanel
-            onNavigateToChat={() => setActiveTab('chat')}
-          />
-        )}
-        {activeTab === 'gallery' && <GalleryPanel />}
-        {activeTab === 'terminals' && <TerminalsWorkspace />}
-        {activeTab === 'kernel' && <KernelDiagnosticsView />}
-        {activeTab === 'linux' && <LinuxDeployDashboard />}
+      <main className="svl-telemetry-grid flex-1 min-h-0 w-full overflow-hidden">
+        <div key={activeTab} className="svl-view-enter h-full w-full">
+          {activeTab === 'chat' && <ChatWorkspace onNavigateTab={setActiveTab} />}
+          {activeTab === 'apex' && <ApexCommandDock onNavigateTab={setActiveTab} />}
+          {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={setActiveTab} />}
+          {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={setActiveTab} />}
+          {activeTab === 'agents' && (
+            <AgentsPanel
+              onNavigateToChat={() => setActiveTab('chat')}
+            />
+          )}
+          {activeTab === 'gallery' && <GalleryPanel />}
+          {activeTab === 'terminals' && <TerminalsWorkspace />}
+          {activeTab === 'kernel' && <KernelDiagnosticsView />}
+          {activeTab === 'linux' && <LinuxDeployDashboard />}
+        </div>
       </main>
     </div>
   );

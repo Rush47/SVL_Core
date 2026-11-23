@@ -91,7 +91,7 @@ SVL_SQLITE_PATH=${STATE_DIR}/svl_os.sqlite3
 SVL_LOG_DIR=${SVL_ROOT}/logi
 SVL_COREOS_EDITION=Apex
 OLLAMA_HOST=http://127.0.0.1:11434
-OLLAMA_PREFERRED_MODEL=llama3.2-vision:11b
+OLLAMA_PREFERRED_MODEL=svl364-apex-uncensored:latest
 # Ollama ze statku SVL-364 jako standardowy silnik przez SSH:
 #   ustaw SVL_SHIP_OLLAMA=1 — gateway sam zestawi tunel ssh do aliasu SVL_SSH_TARGET
 #   (konfiguracja ~/.ssh/config użytkownika svl) i skieruje na niego OLLAMA_HOST.
@@ -130,13 +130,26 @@ Environment=PATH=${SVL_ROOT}/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/npx tsx server.ts
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+TasksMax=infinity
+OOMScoreAdjust=-500
 
 [Install]
 WantedBy=multi-user.target
 EOF
   sed "s#/opt/svl-coreos-2#${SVL_ROOT}#g" "${SCRIPT_DIR}/svl-sentinel.service" > /etc/systemd/system/svl-sentinel.service &&
+  if [ -f "${SCRIPT_DIR}/svl-coreos2-modules.conf" ]; then
+    mkdir -p /etc/modules-load.d &&
+    cp "${SCRIPT_DIR}/svl-coreos2-modules.conf" /etc/modules-load.d/svl-coreos2.conf &&
+    systemctl restart systemd-modules-load.service >/dev/null 2>&1 || true
+  fi
   if [ -f "${SCRIPT_DIR}/svl-coreos2-sysctl.conf" ]; then
     cp "${SCRIPT_DIR}/svl-coreos2-sysctl.conf" /etc/sysctl.d/99-svl-coreos2.conf && sysctl --system >/dev/null
+  fi
+  if [ -f "${SCRIPT_DIR}/grub_svl_kernel.cfg" ] && [ -d /etc/default/grub.d ]; then
+    cp "${SCRIPT_DIR}/grub_svl_kernel.cfg" /etc/default/grub.d/99-svl-kernel.cfg &&
+    (command -v update-grub >/dev/null 2>&1 && update-grub >/dev/null 2>&1 || true)
   fi
   systemctl daemon-reload &&
   systemctl enable --now svl-coreos2.service &&

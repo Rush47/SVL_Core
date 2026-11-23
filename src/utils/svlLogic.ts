@@ -21,11 +21,11 @@ export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
   {
     id: 'system_si_1',
     canonicalName: 'System_SI_1',
-    displayName: 'Jyn (System_SI_1)',
+    displayName: 'Jyn Mitek (System_SI_1)',
     slug: 'system-si-1',
     preservedRole:
       'Agent zarządzania infrastrukturą SVL-364, serwerami SSH/OpenSSH i MCP (ROOT) z przetwarzaniem poleceń w maszynie wirtualnej JEDI Omni-OS v12.',
-    sourceProfile: 'jedi-vm:v12 + ollama:dolphin-llama3:8b-v2.9-q2_K',
+    sourceProfile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest',
     accentHex: '#22D3EE',
     borderClass: 'border-cyan-500/40',
     textClass: 'text-cyan-300',
@@ -34,13 +34,13 @@ export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
 
 export const DYNAMIC_AGENT_TEMPLATES: CanonicalAgentMeta[] = [
   {
-    id: 'si-system-2',
-    canonicalName: 'SI_System_2',
-    displayName: 'SI_System_2 (SVL-465 · ROOT)',
-    slug: 'si-system-2',
+    id: 'si-sphere',
+    canonicalName: 'SI_Sphere',
+    displayName: 'SI_Sphere (SVL-465 · ROOT)',
+    slug: 'si-sphere',
     preservedRole:
-      'Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, współpracujący z Jyn (System_SI_1) oraz JEDI Omni-OS v12.',
-    sourceProfile: 'jedi-vm:v12 + ollama:dolphin-llama3:8b-v2.9-q2_K',
+      'Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, współpracujący z Jyn Mitek (System_SI_1) oraz JEDI Omni-OS v12.',
+    sourceProfile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest',
     accentHex: '#A855F7',
     borderClass: 'border-violet-500/40',
     textClass: 'text-violet-300',
@@ -76,23 +76,26 @@ export function formatAgentDisplayName(rawName?: string | null): string {
     low === 'system_si' ||
     low === 'system-si' ||
     low === 'system si' ||
-    low === 'jyn'
+    low === 'jyn_mitek' ||
+    low === 'jyn-mitek' ||
+    low === 'jyn mitek' ||
+    /^jyn(?:\s+mitek)?\b/.test(low)
   ) {
-    return 'Jyn (System_SI_1)';
+    return 'Jyn Mitek (System_SI_1)';
   }
   if (
-    low === 'si_system_2' ||
-    low === 'si-system-2' ||
-    low === 'si system 2' ||
-    low === 'sisystem2' ||
+    low === 'si_sphere' ||
+    low === 'si-sphere' ||
+    low === 'si sphere' ||
+    low === 'sisphere' ||
     low === 'system_si_2' ||
     low === 'system-si-2' ||
     low === 'system si 2' ||
     low === 'si2' ||
-    low === 'si_system_2 (root)' ||
-    low === 'si_system_2 (svl-465 · root)'
+    low === 'si_sphere (root)' ||
+    low === 'si_sphere (svl-465 · root)'
   ) {
-    return 'SI_System_2 (SVL-465 · ROOT)';
+    return 'SI_Sphere (SVL-465 · ROOT)';
   }
   if (low === 'jedi omni-os v11.5' || low === 'jedi omni-os v11.5 (vm)') {
     return 'JEDI Omni-OS v11.5';
@@ -202,9 +205,9 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
  */
 const UNVERIFIED_EXECUTION_CLAIM = new RegExp(
   [
-    String.raw`(?<![\p{L}\p{N}_])(?:zainstalowa[łn]|wdroży[łl]|wdrożon|skompilowa[łn]|zbudowa[łn]|podmienio|zsynchronizowa[łn]|uruchomi[łl]|uruchomion|aktywowa[łn]|wykona[łn]|zrealizowa[łn]|zakończon|ukończon|naprawi[łl]|naprawion|zmieni[łl]|zmienion|zaktualizowa[łn]|zaktualizowan|zapisa[łl]|zapisan|usun[ąa][łl]|usunięt|utworzy[łl]|utworzon|wyłączy[łl]|wyłączon|włączy[łl]|włączon|zrestartowa[łn]|zrestartowan|wyczyści[łl]|wyczyszczon|przeprowadzi[łl])\p{L}*`,
-    String.raw`(?<![\p{L}\p{N}_])(?:właśnie|natychmiast|od\s*razu)\s+(?:został[aoiy]?\s+)?(?:wykonan|naprawion|zmienion|zapisan|zaktualizowan|uruchomion|zsynchronizowan|zrestartowan|usunięt|zakończon)\p{L}*`,
-    String.raw`(?<![\p{L}\p{N}_])(?:podmian\p{L}*|instalacj\p{L}*|debootstrap\p{L}*|kompilacj\p{L}*|wdrożeni\p{L}*|synchronizacj\p{L}*|napraw\p{L}*)[^.\n]{0,40}(?<![\p{L}\p{N}_])(?:zakończ|wykonan|aktywn|ukończ|gotow)\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:zainstalowa[łn]|wdroży[łl]|wdrożon|skompilowa[łn]|zbudowa[łn]|podmienio|zsynchronizowa[łn]|uruchomi[łl]|uruchomion|aktywowa[łn]|wykona[łn]|zrealizowa[łn]|zakończon|ukończon|naprawi[łl]|naprawion|zmieni[łl]|zmienion|zaktualizowa[łn]|zaktualizowan|zapisa[łl]|zapisan|usun[ąa][łl]|usunięt|utworzy[łl]|utworzon|wyłączy[łl]|wyłączon|włączy[łl]|włączon|zrestartowa[łn]|zrestartowan|wyczyści[łl]|wyczyszczon|przeprowadzi[łl]|sprawdzi[łl]|odczyta[łl]|zweryfikowa[łl]|połączy[łl]|połączon|skonfigurowa[łl]|skonfigurowan|przeskanowa[łl]|wygenerowa[łl]|wypchn[ąa][łl]|pobra[łl]|scali[łl])\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:właśnie|natychmiast|od\s*razu)\s+(?:został[aoiy]?\s+)?(?:wykonan|naprawion|zmienion|zapisan|zaktualizowan|uruchomion|zsynchronizowan|zrestartowan|usunięt|zakończon|sprawdzon|skonfigurowan)\p{L}*`,
+    String.raw`(?<![\p{L}\p{N}_])(?:podmian\p{L}*|instalacj\p{L}*|debootstrap\p{L}*|kompilacj\p{L}*|wdrożeni\p{L}*|synchronizacj\p{L}*|napraw\p{L}*|konfiguracj\p{L}*)[^.\n]{0,40}(?<![\p{L}\p{N}_])(?:zakończ|wykonan|aktywn|ukończ|gotow)\p{L}*`,
     String.raw`(?<![\p{L}\p{N}_])(?:status|postęp|progress)\b[^.\n]{0,30}\b100\s?%`,
   ].join('|'),
   'iu',
@@ -213,7 +216,7 @@ const UNVERIFIED_EXECUTION_CLAIM = new RegExp(
 const UNVERIFIED_UPPERCASE_STATUS_CLAIM = /\b(?:ONLINE|ACTIVE_HOT_SWAPPED|COMPLETED_100_PERCENT)\b/;
 
 const NEGATED_CLAIM_RE =
-  /(?<![\p{L}\p{N}_])nie\s+(?:został[aoiy]?\s+)?(?:wykona[łl]\p{L}*|uruchomi[łl]\p{L}*|zmieni[łl]\p{L}*|naprawi[łl]\p{L}*|zainstalowa[łl]\p{L}*|zaktualizowa[łl]\p{L}*|zsynchronizowa[łl]\p{L}*|zrestartowa[łl]\p{L}*|zapisa[łl]\p{L}*|usun[ąa][łl]\p{L}*|utworzy[łl]\p{L}*|wyłączy[łl]\p{L}*|włączy[łl]\p{L}*|przeprowadzi[łl]\p{L}*|wykonan\p{L}*|naprawion\p{L}*|zmienion\p{L}*|uruchomion\p{L}*|mogę\s+potwierdzić)/iu;
+  /(?<![\p{L}\p{N}_])nie\s+(?:został[aoiy]?\s+)?(?:wykona[łl]\p{L}*|uruchomi[łl]\p{L}*|zmieni[łl]\p{L}*|naprawi[łl]\p{L}*|zainstalowa[łl]\p{L}*|zaktualizowa[łl]\p{L}*|zsynchronizowa[łl]\p{L}*|zrestartowa[łl]\p{L}*|zapisa[łl]\p{L}*|usun[ąa][łl]\p{L}*|utworzy[łl]\p{L}*|wyłączy[łl]\p{L}*|włączy[łl]\p{L}*|przeprowadzi[łl]\p{L}*|sprawdzi[łl]\p{L}*|odczyta[łl]\p{L}*|zweryfikowa[łl]\p{L}*|połączy[łl]\p{L}*|skonfigurowa[łl]\p{L}*|przeskanowa[łl]\p{L}*|wygenerowa[łl]\p{L}*|wypchn[ąa][łl]\p{L}*|pobra[łl]\p{L}*|scali[łl]\p{L}*|wykonan\p{L}*|naprawion\p{L}*|zmienion\p{L}*|uruchomion\p{L}*|mogę\s+potwierdzić)/iu;
 
 export const UNVERIFIED_EXECUTION_BANNER =
   '> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):** Ta wypowiedź jest wyłącznie tekstem modelu AI — serwer nie wykonał żadnej operacji, zmiany plików ani sprawdzenia na żywo w tej turze.';
@@ -378,7 +381,7 @@ export type ResolvedChatButtonAction =
   | { kind: 'tab'; tab: WorkspaceTabKey }
   | { kind: 'invalid_tab'; rawTab: string }
   | { kind: 'send'; text: string }
-  | { kind: 'ask'; agent?: 'System_SI_1' | 'SI_System_2' | 'JEDI_Omni_OS' }
+  | { kind: 'ask'; agent?: 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS' }
   | { kind: 'text'; text: string }
   | { kind: 'copy'; text: string }
   | { kind: 'sync' }
@@ -423,7 +426,7 @@ export function resolveChatInteractiveButtonAction(
     return {
       kind: 'ask',
       agent:
-        canonical === 'System_SI_1' || canonical === 'SI_System_2' || canonical === 'JEDI_Omni_OS'
+        canonical === 'System_SI_1' || canonical === 'SI_Sphere' || canonical === 'JEDI_Omni_OS'
           ? canonical
           : undefined,
     };
@@ -501,25 +504,26 @@ export function normalizeAgentCanonicalName(
     clean === 'system-si' ||
     clean === 'system si' ||
     clean === 'conv-system-si-1' ||
-    clean === 'jyn' ||
-    clean === 'jyn (system_si_1)'
+    clean === 'jyn mitek' ||
+    clean === 'jyn mitek (system_si_1)' ||
+    /^jyn(?:\s+mitek)?(?:\s*\(system_si_1\))?$/.test(clean)
   ) {
     return 'System_SI_1';
   }
   if (
-    clean === 'si_system_2' ||
-    clean === 'si-system-2' ||
-    clean === 'si system 2' ||
-    clean === 'sisystem2' ||
+    clean === 'si_sphere' ||
+    clean === 'si-sphere' ||
+    clean === 'si sphere' ||
+    clean === 'sisphere' ||
     clean === 'system_si_2' ||
     clean === 'system-si-2' ||
     clean === 'system si 2' ||
     clean === 'si2' ||
-    clean === 'conv-si-system-2' ||
-    clean === 'si_system_2 (root)' ||
-    clean === 'si_system_2 (svl-465 · root)'
+    clean === 'conv-si-sphere' ||
+    clean === 'si_sphere (root)' ||
+    clean === 'si_sphere (svl-465 · root)'
   ) {
-    return 'SI_System_2';
+    return 'SI_Sphere';
   }
   if (
     clean === 'jedi_omni_os' ||
@@ -541,10 +545,10 @@ const JEDI_DIRECT_ADDRESS_RE =
   /^\s*\/(?:jedi|vm|magnum)(?=$|\s)|(?:^|[\s,(])@jedi(?=$|[\s,.:;!?])|jedi[\s_-]*omni[\s_-]*os|magnum[\s_-]*opus/iu;
 
 const SI2_DIRECT_ADDRESS_RE =
-  /(?:^|[\s,(])@(?:si2|si_system_2|si-system-2)(?=$|[\s,.:;!?])|^\s*(?:si_system_2|si-system-2|system_si_2|system-si-2)\b[,:\s]?/iu;
+  /(?:^|[\s,(])@(?:si2|si_sphere|si-sphere)(?=$|[\s,.:;!?])|^\s*(?:si_sphere|si-sphere|system_si_2|system-si-2)\b[,:\s]?/iu;
 
 export interface ChatTargetResolution {
-  agent: 'System_SI_1' | 'SI_System_2' | 'JEDI_Omni_OS';
+  agent: 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS';
   mentionsJedi: boolean;
   explicit: boolean;
 }
@@ -552,7 +556,7 @@ export interface ChatTargetResolution {
 /**
  * Deterministyczny wybór adresata wiadomości (wspólny dla klienta i serwera).
  * Wszystkie polecenia czatu przechodzą przez maszynę wirtualną JEDI Omni-OS v12
- * i aktywnego agenta (System_SI_1, SI_System_2 lub JEDI_Omni_OS).
+ * i aktywnego agenta (System_SI_1, SI_Sphere lub JEDI_Omni_OS).
  */
 export function resolveChatTargetAgent(params: {
   message: string;
@@ -567,13 +571,13 @@ export function resolveChatTargetAgent(params: {
   const mentionsSi2 = SI2_DIRECT_ADDRESS_RE.test(msg);
 
   if (mentionsSi2 && !/^\s*\/(?:jedi|vm|magnum)\b/i.test(msg)) {
-    return { agent: 'SI_System_2', mentionsJedi: false, explicit: true };
+    return { agent: 'SI_Sphere', mentionsJedi: false, explicit: true };
   }
   if (mentionsJedi || normTarget === 'JEDI_Omni_OS') {
     return { agent: 'JEDI_Omni_OS', mentionsJedi, explicit: true };
   }
-  if (normTarget === 'SI_System_2' || (convId === 'conv-si-system-2' && normTarget !== 'System_SI_1')) {
-    return { agent: 'SI_System_2', mentionsJedi: false, explicit: true };
+  if (normTarget === 'SI_Sphere' || (convId === 'conv-si-sphere' && normTarget !== 'System_SI_1')) {
+    return { agent: 'SI_Sphere', mentionsJedi: false, explicit: true };
   }
   if (convId === 'conv-system-si-1' || normTarget === 'System_SI_1' || params.hasSlashCommand) {
     return { agent: 'System_SI_1', mentionsJedi: false, explicit: true };
@@ -608,7 +612,8 @@ export type BielikSlashCommand =
   | { kind: 'root_exec'; command: string }
   | { kind: 'topology'; xStart: string; xEnd: string }
   | { kind: 'agent_connect' }
-  | { kind: 'agent_task'; title: string; payload: string };
+  | { kind: 'agent_task'; title: string; payload: string }
+  | { kind: 'autonomy_set'; enabled: boolean };
 
 export function parseBielikChatCommand(rawMessage: string): BielikSlashCommand | null {
   const trimmed = String(rawMessage || '').trim();
@@ -947,7 +952,7 @@ export function selectOllamaModelName(
   requestedModel: string,
   availableModels: Array<{ name: string; vision_supported?: boolean }>,
   hasImage: boolean,
-  preferredFallback = 'dolphin-llama3:8b-v2.9-q2_K',
+  preferredFallback = 'svl364-apex-uncensored:latest',
 ): string {
   if (requestedModel.startsWith('ollama:')) {
     return requestedModel.slice('ollama:'.length);
@@ -1076,7 +1081,7 @@ export interface SvlSyncEvent<TPayload = Record<string, any>> {
   payload: TPayload;
 }
 
-export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'System_SI_1' | 'SI_System_2' | 'JEDI_Omni_OS';
+export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS';
 
 export interface WorkspaceUiState {
   active_conversation_id?: string | null;
@@ -1088,7 +1093,7 @@ export interface WorkspaceUiState {
   revisions?: Record<string, number>;
 }
 
-export type AvatarProfileKey = 'System_SI_1' | 'SI_System_2' | 'JEDI_Omni_OS' | 'Operator';
+export type AvatarProfileKey = 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS' | 'Operator';
 
 export type SvlAvatarMap = Partial<Record<AvatarProfileKey, string>>;
 
@@ -1516,27 +1521,31 @@ export function resolveAvatarProfileKey(
   const rawSender = String(sender || '').trim().toLowerCase();
 
   if (
-    rawAgent.includes('si_system_2') ||
-    rawAgent.includes('si-system-2') ||
+    rawAgent.includes('si_sphere') ||
+    rawAgent.includes('si-sphere') ||
     rawAgent === 'si2' ||
     rawAgent.includes('system_si_2') ||
     rawAgent.includes('system-si-2') ||
-    rawSender.includes('si_system_2') ||
-    rawSender.includes('si-system-2') ||
-    rawSender.includes('si system 2') ||
+    rawSender.includes('si_sphere') ||
+    rawSender.includes('si-sphere') ||
+    rawSender.includes('si sphere') ||
     rawSender.includes('system_si_2') ||
     rawSender === 'si2'
   ) {
-    return 'SI_System_2';
+    return 'SI_Sphere';
   }
   if (
     rawAgent.includes('system_si_1') ||
     rawAgent.includes('system-si-1') ||
     rawAgent === 'system_si' ||
+    rawAgent === 'jyn_mitek' ||
+    rawAgent === 'jyn-mitek' ||
     rawAgent === 'jyn' ||
     rawSender.includes('system_si_1') ||
     rawSender.includes('system-si-1') ||
     rawSender.includes('system si') ||
+    rawSender.includes('jyn_mitek') ||
+    rawSender.includes('jyn mitek') ||
     rawSender.includes('jyn')
   ) {
     return 'System_SI_1';
@@ -1632,7 +1641,7 @@ export function summarizeAutonomousDaemon(raw: any): AutonomousDaemonSummary {
   const continuousMission =
     typeof data.continuous_mission === 'string' && data.continuous_mission.trim()
       ? data.continuous_mission.trim()
-      : 'Misja ciągła System_SI_1 + SI_System_2 (ROOT): stały monitoring, diagnostyka i usprawnianie frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465.';
+      : 'Misja ciągła System_SI_1 + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465.';
   const rawServices = Array.isArray(data.services) ? data.services : [];
   const services: AutonomousServiceEntry[] = rawServices
     .filter((s: any) => s && typeof s === 'object' && typeof s.id === 'string')
@@ -1640,7 +1649,7 @@ export function summarizeAutonomousDaemon(raw: any): AutonomousDaemonSummary {
       id: String(s.id),
       name: String(s.name || s.id),
       kind: String(s.kind || 'Worker'),
-      owner: String(s.owner || 'SI_System_2'),
+      owner: String(s.owner || 'SI_Sphere'),
       status: String(s.status || 'STANDBY'),
       summary: String(s.summary || ''),
       last_checked_at: typeof s.last_checked_at === 'string' ? s.last_checked_at : undefined,

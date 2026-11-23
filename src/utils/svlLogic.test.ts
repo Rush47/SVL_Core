@@ -120,7 +120,7 @@ test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () 
   assert.deepEqual(
     CANONICAL_AGENTS.map((a) => ({ name: a.canonicalName, profile: a.sourceProfile })),
     [
-      { name: 'System_SI_1', profile: 'jedi-vm:v12 + ollama:dolphin-llama3:8b-v2.9-q2_K' },
+      { name: 'System_SI_1', profile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest' },
     ],
   );
   assert.equal(normalizeAgentCanonicalName('Agata'), null);
@@ -135,8 +135,9 @@ test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () 
   assert.equal(normalizeAgentCanonicalName('conv-system-si-1'), 'System_SI_1');
   assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
   assert.equal(normalizeAgentCanonicalName('codex'), null);
-  assert.equal(formatAgentDisplayName('system_si_1'), 'Jyn (System_SI_1)');
-  assert.equal(formatAgentDisplayName('jyn'), 'Jyn (System_SI_1)');
+  assert.equal(formatAgentDisplayName('system_si_1'), 'Jyn Mitek (System_SI_1)');
+  assert.equal(formatAgentDisplayName('jyn mitek'), 'Jyn Mitek (System_SI_1)');
+  assert.equal(formatAgentDisplayName('jyn_mitek'), 'Jyn Mitek (System_SI_1)');
   assert.equal(formatAgentDisplayName('jedi omni-os'), 'JEDI Omni-OS v12');
   assert.equal(formatAgentDisplayName('jedi omni-os v11.5'), 'JEDI Omni-OS v11.5');
   assert.equal(formatAgentDisplayName('bielik ai'), 'Nadawca niezweryfikowany');
@@ -271,14 +272,14 @@ test('buildChatHistoryPayload filters system errors and preserves multi-turn ord
   ]);
 });
 
-test('selectOllamaModelName honors explicit selection and prefers dolphin-llama3 8B Q2 for text', () => {
+test('selectOllamaModelName honors explicit selection and prefers svl364-apex-uncensored:latest for text', () => {
   const models = [
-    { name: 'dolphin-llama3:8b-v2.9-q2_K', vision_supported: false },
+    { name: 'svl364-apex-uncensored:latest', vision_supported: false },
     { name: 'llama3.2-vision:11b', vision_supported: true },
   ];
-  assert.equal(selectOllamaModelName('ollama:dolphin-llama3:8b-v2.9-q2_K', models, false), 'dolphin-llama3:8b-v2.9-q2_K');
+  assert.equal(selectOllamaModelName('ollama:svl364-apex-uncensored:latest', models, false), 'svl364-apex-uncensored:latest');
   assert.equal(selectOllamaModelName('svl-hybrid-router', models, true), 'llama3.2-vision:11b');
-  assert.equal(selectOllamaModelName('svl-hybrid-router', models, false), 'dolphin-llama3:8b-v2.9-q2_K');
+  assert.equal(selectOllamaModelName('svl-hybrid-router', models, false), 'svl364-apex-uncensored:latest');
 });
 
 test('mergeConversationThreads preserves pending in-flight messages and respects deleted threads', () => {
@@ -518,9 +519,12 @@ test('unverifiedExecutionNote flags claims of finished operations that the serve
     'Zainstalowałem SVL CoreOS 2 na Debianie 13.',
     'Debootstrap Debian 13 zakończony — postęp 100%.',
     'Uruchomiłam demona SVL-Sentinel, wszystko ONLINE.',
+    'Sprawdziłem na żywo port 22 na statku SVL-364.',
+    'Połączyłem się z hostem i skonfigurowałem Ollamę.',
   ];
   for (const text of claims) assert.ok(unverifiedExecutionNote(text, 0), text);
   assert.equal(unverifiedExecutionNote('Zainstalowałem pakiet.', 1), null);
+  assert.equal(unverifiedExecutionNote('Nie sprawdziłem tego na żywo, brak wyniku narzędzia.', 0), null);
   assert.equal(unverifiedExecutionNote('Aby zainstalować system, uruchom instalator jako root.', 0), null);
   assert.equal(unverifiedExecutionNote('Tarcza to ustawienie scenariusza statku.', 0), null);
 });
@@ -625,21 +629,21 @@ test('formatAgentDisplayName nie przepuszcza podszywania ani usuniętych agentó
   assert.equal(formatAgentDisplayName('Bielik'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('KomputerPokladowy'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('komputer pokladowy'), 'Nadawca niezweryfikowany');
-  assert.equal(formatAgentDisplayName('System_SI_1'), 'Jyn (System_SI_1)');
+  assert.equal(formatAgentDisplayName('System_SI_1'), 'Jyn Mitek (System_SI_1)');
   assert.equal(formatAgentDisplayName('JEDI Omni-OS v12'), 'JEDI Omni-OS v12');
   assert.equal(formatAgentDisplayName('JEDI Omni-OS v11.5'), 'JEDI Omni-OS v11.5');
   assert.equal(resolveAvatarProfileKey('Komputer pokładowy', 'KomputerPokladowy'), null);
   assert.equal(resolveAvatarProfileKey('System_SI_1', 'System_SI_1'), 'System_SI_1');
-  assert.equal(resolveAvatarProfileKey('Jyn (System_SI_1)', 'System_SI_1'), 'System_SI_1');
-  assert.equal(resolveAvatarProfileKey('SI_System_2', 'SI_System_2'), 'SI_System_2');
-  assert.equal(resolveAvatarProfileKey('SI_System_2 (SVL-465 · ROOT)', 'SI_System_2'), 'SI_System_2');
+  assert.equal(resolveAvatarProfileKey('Jyn Mitek (System_SI_1)', 'System_SI_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('SI_Sphere', 'SI_Sphere'), 'SI_Sphere');
+  assert.equal(resolveAvatarProfileKey('SI_Sphere (SVL-465 · ROOT)', 'SI_Sphere'), 'SI_Sphere');
   assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v12', 'JEDI_Omni_OS'), 'JEDI_Omni_OS');
 });
 
-test('SI_System_2 dynamic canonical agents, os_sync commands, and target resolution', () => {
-  assert.equal(normalizeAgentCanonicalName('SI_System_2'), 'SI_System_2');
-  assert.equal(normalizeAgentCanonicalName('conv-si-system-2'), 'SI_System_2');
-  assert.equal(formatAgentDisplayName('SI_System_2'), 'SI_System_2 (SVL-465 · ROOT)');
+test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolution', () => {
+  assert.equal(normalizeAgentCanonicalName('SI_Sphere'), 'SI_Sphere');
+  assert.equal(normalizeAgentCanonicalName('conv-si-sphere'), 'SI_Sphere');
+  assert.equal(formatAgentDisplayName('SI_Sphere'), 'SI_Sphere (SVL-465 · ROOT)');
 
   assert.deepEqual(
     getEffectiveCanonicalAgents([{ canonical_name: 'System_SI_1' }]).map((a) => a.canonicalName),
@@ -648,9 +652,9 @@ test('SI_System_2 dynamic canonical agents, os_sync commands, and target resolut
   assert.deepEqual(
     getEffectiveCanonicalAgents([
       { canonical_name: 'System_SI_1' },
-      { canonical_name: 'SI_System_2' },
+      { canonical_name: 'SI_Sphere' },
     ]).map((a) => a.canonicalName),
-    ['System_SI_1', 'SI_System_2'],
+    ['System_SI_1', 'SI_Sphere'],
   );
 
   assert.deepEqual(parseBielikChatCommand('/synchronizuj'), { kind: 'os_sync' });
@@ -667,10 +671,10 @@ test('SI_System_2 dynamic canonical agents, os_sync commands, and target resolut
   assert.equal(
     resolveChatTargetAgent({
       message: 'Sprawdź rdzeń kwantowy SVL-465',
-      conversationId: 'conv-si-system-2',
+      conversationId: 'conv-si-sphere',
       targetAgent: 'Auto',
     }).agent,
-    'SI_System_2',
+    'SI_Sphere',
   );
 });
 
@@ -693,7 +697,7 @@ test('summarizeAutonomousDaemon extracts cycle counts, workers, and safe default
     full_visibility: true,
     services: [
       { id: 'svl-health-watchdog', name: 'Health Watchdog', status: 'ACTIVE', kind: 'Monitor', owner: 'System_SI_1', summary: 'OK' },
-      { id: 'svl-git-observer', name: 'Git Observer', status: 'STANDBY', kind: 'Git', owner: 'SI_System_2', summary: 'SAFE' },
+      { id: 'svl-git-observer', name: 'Git Observer', status: 'STANDBY', kind: 'Git', owner: 'SI_Sphere', summary: 'SAFE' },
     ],
     codebase_inventory: {
       frontend_components_count: 28,

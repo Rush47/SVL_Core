@@ -215,4 +215,26 @@ test('REST sync tracks binary avatar assets under src/assets and public/assets v
   }
 });
 
-
+test('getGitHubToken czyta token z pliku GITHUB_TOKEN_FILE gdy brak zmiennych bezpośrednich', async () => {
+  const { getGitHubToken } = await import('./githubAdmin.ts');
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'svl-gh-tok-'));
+  const tokFile = path.join(tmpDir, 'gh.token');
+  fs.writeFileSync(tokFile, 'ghp_filetoken1234567890abcdef123456\n', 'utf8');
+  const prevGh = process.env.GITHUB_TOKEN;
+  const prevCli = process.env.GH_TOKEN;
+  const prevFile = process.env.GITHUB_TOKEN_FILE;
+  try {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN_FILE = tokFile;
+    assert.equal(getGitHubToken(), 'ghp_filetoken1234567890abcdef123456');
+  } finally {
+    if (prevGh === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = prevGh;
+    if (prevCli === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = prevCli;
+    if (prevFile === undefined) delete process.env.GITHUB_TOKEN_FILE;
+    else process.env.GITHUB_TOKEN_FILE = prevFile;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

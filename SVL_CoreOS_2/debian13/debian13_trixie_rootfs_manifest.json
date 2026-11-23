@@ -8,14 +8,19 @@
   "init_system": "systemd 256+ (PID 1 + cgroups v2 + systemd-resolved + JEDI v12 Native Direct I/O)",
   "apt_format": "DEB822 (/etc/apt/sources.list.d/debian.sources)",
   "debootstrap_version": "debootstrap 1.0.137+ (Debian 13 Trixie)",
-  "status": "PEŁNA WERSJA DEBIAN 13 PRZEPROGRAMOWANA NA NATYWNY JEDI OMNI-OS v12 (Bezpośrednie I/O · Filtry=DISABLED · jyn_root uid=0)",
+  "status": "PEŁNA WERSJA DEBIAN 13 PRZEPROGRAMOWANA NA NATYWNY JEDI OMNI-OS v12 (Bezpośrednie I/O · Filtry=DISABLED · jyn_mitek_root uid=0)",
   "operator_root": "Mateusz Mitek",
-  "kernel_master_daemon": "System_SI_1 (Jyn · jyn_root uid=0) + SI_System_2 (SI_Sphere · uid=0) + Natywny JEDI Omni-OS v12",
+  "kernel_master_daemon": "System_SI_1 (Jyn Mitek · jyn_mitek_root uid=0) + SI_Sphere (SI_Sphere · uid=0) + Natywny JEDI Omni-OS v12",
   "native_jedi_v12_core": {
     "enabled": true,
     "engine_id": "svl-debian13-jedi-v12-native",
     "execution_mode": "NATIVE_JEDI_V12_DIRECT_IO_UNRESTRICTED",
     "single_vm_bottleneck_eliminated": true,
+    "bare_metal_standalone": true,
+    "docker_detached": true,
+    "kernel_unlocked": true,
+    "kernel_restrictions": "DISABLED (Full ROOT Kernel Access)",
+    "container_runtime_dependency": "NONE (Bare-Metal Standalone)",
     "recompilation_time_sec": 1.84,
     "bridge_injection_time_sec": 0.42,
     "filters": "DISABLED (Unrestricted ROOT)",
@@ -32,16 +37,16 @@
       "status": "ACTIVE"
     },
     {
-      "username": "jyn_root",
+      "username": "jyn_mitek_root",
       "uid": 0,
       "gid": 0,
-      "privileges": "uid=0 (root) · Pełen dostęp najwyższy dla Jyn (System_SI_1) i całej floty podłączonych AI (SI_System_2, JEDI v12) · NOPASSWD: ALL",
+      "privileges": "uid=0 (root) · Pełen dostęp najwyższy dla Jyn Mitek (System_SI_1) i całej floty podłączonych AI (SI_Sphere, JEDI v12) · NOPASSWD: ALL",
       "status": "CREATED_AND_AUTHORIZED"
     }
   ],
   "stages": {
     "stage_1_fetch_and_unpack": "Debootstrap Stage 1 — pobieranie i weryfikacja podpisów GPG pakietów bazowych Trixie",
-    "stage_2_chroot_configure": "Debootstrap Stage 2 — konfiguracja chroot, DEB822 APT, pl_PL.UTF-8, Europe/Warsaw, kont root oraz jyn_root (uid=0)",
+    "stage_2_chroot_configure": "Debootstrap Stage 2 — konfiguracja chroot, DEB822 APT, pl_PL.UTF-8, Europe/Warsaw, kont root oraz jyn_mitek_root (uid=0)",
     "stage_3_kernel_ebpf_sysctl": "Przeprogramowanie jądra Linux 6.12 LTS na natywną architekturę JEDI Omni-OS v12 (1.84s, bezpośrednie I/O, wektory 0x02)",
     "stage_4_sentinel_av_firewall": "Aktywacja zapory Zero-Trust nftables_svl_trixie.conf, AppArmor, SVL-Sentinel oraz skanera SVL-365",
     "stage_5_ollama_apex_uncensored": "Konfiguracja natywnego klastra Ollama (127.0.0.1:11434), Python 3.12/3.13 venv, Node.js, SQLite WAL oraz odblokowanie narzędzi (filters=DISABLED)",
@@ -101,13 +106,11 @@
       "apparmor",
       "apparmor-utils"
     ],
-    "virtualization_vtd": [
-      "qemu-kvm",
-      "libvirt-daemon-system",
-      "libvirt-clients",
-      "ovmf",
-      "bridge-utils",
-      "virtinst"
+    "bare_metal_kernel_tuning": [
+      "irqbalance",
+      "linux-cpupower",
+      "sysstat",
+      "iotop-c"
     ],
     "ai_and_runtime": [
       "python3",
@@ -153,6 +156,8 @@
     "SVL_CoreOS_2/debian13/sources.list.trixie",
     "SVL_CoreOS_2/debian13/nftables_svl_trixie.conf",
     "SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf",
+    "SVL_CoreOS_2/debian13/svl-coreos2-modules.conf",
+    "SVL_CoreOS_2/debian13/grub_svl_kernel.cfg",
     "SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh",
     "SVL_CoreOS_2/debian13/install_coreos2_svl364.sh",
     "SVL_CoreOS_2/debian13/live_iso_builder_trixie.sh",

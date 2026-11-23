@@ -22,7 +22,7 @@ BASE_PACKAGES=(
   iproute2 iputils-ping netbase nftables ufw wireguard-tools openvpn
   openssh-client openssh-server ca-certificates curl wget git jq zstd lz4
   python3 python3-pip python3-venv python3-dev build-essential sqlite3
-  bpftool libbpf1 qemu-kvm libvirt-daemon-system
+  bpftool libbpf1 irqbalance linux-cpupower
 )
 
 echo "[Stage 1/2] Pobieranie i rozpakowywanie drzewa bazowego (${#BASE_PACKAGES[@]} grup pakietów)..."

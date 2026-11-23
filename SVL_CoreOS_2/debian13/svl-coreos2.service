@@ -1,11 +1,13 @@
 [Unit]
-Description=SVL CoreOS 2: Apex (brama SVL + jądro Python + interfejs)
+Description=SVL CoreOS 2: Apex (brama SVL + jądro Python + interfejs · Pełny Odblokowany Kernel ROOT)
 After=network-online.target svl-coreos2-firstboot.service ollama.service
 Wants=network-online.target
 Requires=svl-coreos2-firstboot.service
 
 [Service]
 Type=simple
+User=root
+Group=root
 WorkingDirectory=/opt/svl-coreos-2
 EnvironmentFile=/etc/svl-coreos2/svl.env
 Environment=NODE_ENV=production
@@ -13,6 +15,16 @@ Environment=PATH=/opt/svl-coreos-2/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/npx tsx server.ts
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=1048576
+LimitMEMLOCK=infinity
+TasksMax=infinity
+OOMScoreAdjust=-500
+NoNewPrivileges=no
+ProtectSystem=false
+ProtectKernelTunables=false
+ProtectKernelModules=false
+ProtectKernelLogs=false
+ProtectControlGroups=false
 
 [Install]
 WantedBy=multi-user.target

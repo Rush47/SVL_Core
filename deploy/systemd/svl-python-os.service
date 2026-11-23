@@ -1,6 +1,6 @@
 [Unit]
-Description=SVL Python OS Kernel & Spherical Agent Workers (Debian 13 Trixie)
-After=network-online.target docker.service ollama.service
+Description=SVL Python OS Kernel & Spherical Agent Workers (Debian 13 Trixie Bare-Metal Standalone)
+After=network-online.target ollama.service
 Wants=network-online.target ollama.service
 
 [Service]

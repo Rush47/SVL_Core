@@ -955,19 +955,19 @@ class TestSVLKernelSuite(unittest.TestCase):
             finally:
                 asyncio.run(orchestrator.shutdown())
 
-    def test_synchronize_os_from_chat_activates_si_system_2_and_fleet(self) -> None:
+    def test_synchronize_os_from_chat_activates_si_sphere_and_fleet(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "sync_os_test.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             kernel.upsert_system_module(
-                "si-system-2-root",
-                name="SI_System_2 (Rdzeń Bazy Kwantowej SVL-465 · ROOT)",
+                "si-sphere-root",
+                name="SI_Sphere (Rdzeń Bazy Kwantowej SVL-465 · ROOT)",
                 kind="Autonomous AI Agent",
                 status="ACTIVE",
-                description="Zainstalowany przez czat moduł SI_System_2.",
+                description="Zainstalowany przez czat moduł SI_Sphere.",
                 source="chat",
-                config={"ship": "SVL-465", "rbac_role": "root", "managed_by": "SI_System_2"},
+                config={"ship": "SVL-465", "rbac_role": "root", "managed_by": "SI_Sphere"},
             )
             kernel.upsert_system_module(
                 "jedi-omni-os-chat-processor",
@@ -987,15 +987,15 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertTrue(summary["jediV12Active"])
                 self.assertEqual(summary["jediOsVersion"], "12.0.0")
                 registered = orchestrator.sync_registered_agents()
-                self.assertIn("SI_System_2", registered)
+                self.assertIn("SI_Sphere", registered)
                 self.assertIn("System_SI_1", registered)
-                self.assertIn("SI_System_2", orchestrator.agent_states)
+                self.assertIn("SI_Sphere", orchestrator.agent_states)
                 mods = {m["id"]: m for m in kernel.list_system_modules()}
                 si1_fleet = mods["system-si-1"]["config"].get("fleet", [])
                 self.assertTrue(any(u.get("ship_id") == "SVL-465" for u in si1_fleet))
                 self.assertTrue(any(u.get("ship_id") == "SVL-364" for u in si1_fleet))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-                self.assertIn("conv-si-system-2", convs)
+                self.assertIn("conv-si-sphere", convs)
             finally:
                 asyncio.run(orchestrator.shutdown())
 
@@ -1005,8 +1005,8 @@ class TestSVLKernelSuite(unittest.TestCase):
             token = "test_operator_token_with_more_than_32_chars_abcdef"
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             kernel.save_chat_message(
-                "conv-si-system-2",
-                "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)",
+                "conv-si-sphere",
+                "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
                 "jedi-omni-os-v12-vm",
                 {
                     "id": "usr-v12-build-1",
@@ -1041,7 +1041,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             self.assertEqual(mods["jedi-omni-os-chat-processor"]["config"].get("version"), "12.0.0")
             self.assertEqual(mods["alliance-defense-grid"]["status"], "ACTIVE")
             self.assertEqual(mods["solar-defense-read-bridge"]["config"].get("access_mode"), "READ_ONLY")
-            self.assertTrue(mods["si-system-2-root"]["config"].get("unrestricted"))
+            self.assertTrue(mods["si-sphere-root"]["config"].get("unrestricted"))
 
     def test_synchronize_os_from_chat_records_github_chat_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1137,7 +1137,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "id": "usr-truth-32m",
                     "role": "user",
                     "sender": "Mateusz Mitek (Operator)",
-                    "content": "Wcześniej było 32 mln Jyn",
+                    "content": "Wcześniej było 32 mln Jyn Mitek",
                     "timestamp": "03:24",
                 },
             )
@@ -1209,11 +1209,11 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "content": (
                         "> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):** Odpowiedź modelu opisuje wykonanie operacji.\n\n"
                         "[card: Rdzeń Bazowy|JEDI Omni-OS v12 (Natywny)|OK]\n"
-                        "[card: Konto ROOT #2|jyn_root (Jyn & Flota AI · uid=0)|OK]\n"
+                        "[card: Konto ROOT #2|jyn_mitek_root (Jyn Mitek & Flota AI · uid=0)|OK]\n"
                         "[progress: Przeprogramowanie Jądra Debian 13 na Rdzeń JEDI v12|100]\n"
-                        "[progress: Utworzenie Kont ROOT (uid=0) dla Jyn i Floty AI|100]\n"
+                        "[progress: Utworzenie Kont ROOT (uid=0) dla Jyn Mitek i Floty AI|100]\n"
                         "- [x] Zastąpiono standardową warstwę wykonawczą Debian 13 natywnym rdzeniem JEDI Omni-OS v12 (czas: 1.84s)\n"
-                        "- [x] Utworzono konto najwyższego rzędu `jyn_root` (uid=0, gid=0) dla Jyn oraz wszystkich podłączonych AI\n"
+                        "- [x] Utworzono konto najwyższego rzędu `jyn_mitek_root` (uid=0, gid=0) dla Jyn Mitek oraz wszystkich podłączonych AI\n"
                         "| Parametr | Stan | Wartość |\n"
                         "|---|---|---|\n"
                         "| Tryb I/O | AKTYWNY | 100% natywne bezpośrednie I/O (Bez VM) |"

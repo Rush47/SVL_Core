@@ -27,6 +27,7 @@ import {
   hasSvlOperatorAccessToken,
 } from './svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './guiLogger';
+import { dispatchLiveRepoFrame } from './liveRepoEvents';
 import {
   countTotalConversationMessages,
   evaluateChatSnapshotAcceptance,
@@ -101,7 +102,7 @@ const REMOVED_AGENT_CONVERSATION_IDS = new Set([
 
 export function getCanonicalConversationTitle(id: string, fallbackTitle?: string): string {
   if (id === 'conv-system-si-1') return 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)';
-  if (id === 'conv-si-system-2') return 'SI_System_2 — Rdzeń Floty SVL-465 (ROOT)';
+  if (id === 'conv-si-sphere') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
   if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
   return fallbackTitle || 'Sesja SVL Python OS';
 }
@@ -589,13 +590,13 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
               rawTarget === 'Auto' ||
               rawTarget === 'Rodzina Mitek' ||
               rawTarget === 'System_SI_1' ||
-              rawTarget === 'SI_System_2' ||
+              rawTarget === 'SI_Sphere' ||
               rawTarget === 'JEDI_Omni_OS'
             ) {
               setTargetAgentState(rawTarget);
             }
             const rawPanel = ws.selected_agent_panel_id?.value ?? ws.selected_agent_panel_id;
-            if (rawPanel === 'System_SI_1' || rawPanel === 'SI_System_2') {
+            if (rawPanel === 'System_SI_1' || rawPanel === 'SI_Sphere') {
               setSelectedAgentPanelState(rawPanel);
             }
           }),
@@ -825,12 +826,12 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setActiveConvIdState(val);
         } else if (
           key === 'selected_target_agent' &&
-          ['Auto', 'Rodzina Mitek', 'System_SI_1', 'SI_System_2', 'JEDI_Omni_OS'].includes(String(val))
+          ['Auto', 'Rodzina Mitek', 'System_SI_1', 'SI_Sphere', 'JEDI_Omni_OS'].includes(String(val))
         ) {
           setTargetAgentState(val as TargetAgentSelection);
         } else if (
           key === 'selected_agent_panel_id' &&
-          (val === 'System_SI_1' || val === 'SI_System_2')
+          (val === 'System_SI_1' || val === 'SI_Sphere')
         ) {
           setSelectedAgentPanelState(val);
         }
@@ -1104,6 +1105,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return;
         }
         if (!frame || typeof frame !== 'object') return;
+        if (dispatchLiveRepoFrame(frame)) {
+          return;
+        }
 
         if (frame.type === 'svl.hello') {
           const wasReconnect = consecutiveFailures > 0;
@@ -1226,16 +1230,51 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [advanceServerRevision, applySyncEvent, catchUpFromEvents, refreshAllDomains, tabOrigin]);
 
-  // Low-frequency fallback heartbeat only when WS is offline/reconnecting and client is authenticated
+  // Fallback SSE /api/events + low-frequency heartbeat when WS is offline/reconnecting
   useEffect(() => {
     if (wsState === 'online') return;
+    let es: EventSource | null = null;
+    if (typeof EventSource !== 'undefined' && hasSvlOperatorAccessToken()) {
+      const token = getSvlOperatorAccessToken();
+      const url = token ? `/api/events?token=${encodeURIComponent(token)}` : '/api/events';
+      try {
+        es = new EventSource(url);
+        es.onmessage = (evt) => {
+          try {
+            const frame = JSON.parse(String(evt.data || '{}'));
+            if (!frame || typeof frame !== 'object') return;
+            if (dispatchLiveRepoFrame(frame)) return;
+            if (frame.type === 'svl.resync_required') {
+              if (!shouldSkipResyncEcho(frame.origin, tabOrigin)) {
+                void refreshAllDomains(`sse_${frame.reason || 'resync_required'}`);
+              }
+              return;
+            }
+            if (frame.type === 'svl.event' || (frame.eventId && frame.entity)) {
+              applySyncEvent(frame as SvlSyncEvent);
+            }
+          } catch {
+            // ignore malformed SSE frame
+          }
+        };
+      } catch {
+        es = null;
+      }
+    }
     const timer = setInterval(() => {
       if (hasSvlOperatorAccessToken()) {
         void refreshDomainModules(['health', 'agents', 'chat', 'workspace', 'modules', 'kernel']);
       }
     }, 15000);
-    return () => clearInterval(timer);
-  }, [refreshDomainModules, wsState]);
+    return () => {
+      clearInterval(timer);
+      try {
+        es?.close();
+      } catch {
+        // ignore
+      }
+    };
+  }, [applySyncEvent, refreshAllDomains, refreshDomainModules, tabOrigin, wsState]);
 
   const reconnectWebSocket = useCallback(() => {
     wsReconnectNowRef.current?.();
@@ -1301,9 +1340,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } else if (convId === 'conv-system-si-1') {
         setTargetAgentState('System_SI_1');
         void persistWorkspaceKey('selected_target_agent', 'System_SI_1');
-      } else if (convId === 'conv-si-system-2') {
-        setTargetAgentState('SI_System_2');
-        void persistWorkspaceKey('selected_target_agent', 'SI_System_2');
+      } else if (convId === 'conv-si-sphere') {
+        setTargetAgentState('SI_Sphere');
+        void persistWorkspaceKey('selected_target_agent', 'SI_Sphere');
       }
     },
     [persistWorkspaceKey],
@@ -1379,22 +1418,22 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
       if (
-        low === 'si_system_2' ||
-        low === 'si-system-2' ||
-        low === 'si system 2' ||
-        low === 'sisystem2' ||
+        low === 'si_sphere' ||
+        low === 'si-sphere' ||
+        low === 'si sphere' ||
+        low === 'sisphere' ||
         low === 'system_si_2' ||
         low === 'system-si-2' ||
         low === 'si2'
       ) {
-        const si2ConvId = 'conv-si-system-2';
+        const si2ConvId = 'conv-si-sphere';
         deletedConvIdsRef.current.delete(si2ConvId);
         const exists = conversationsRef.current.some((c) => c.id === si2ConvId);
         if (!exists) {
           setConversations((prev) => [
             {
               id: si2ConvId,
-              title: 'SI_System_2 — Rdzeń Floty SVL-465 (ROOT)',
+              title: 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)',
               updatedAt: '',
               revision: 1,
               messages: [],
@@ -1403,9 +1442,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
           ]);
         }
         setActiveConvIdState(si2ConvId);
-        setTargetAgentState('SI_System_2');
+        setTargetAgentState('SI_Sphere');
         void persistWorkspaceKey('active_conversation_id', si2ConvId);
-        void persistWorkspaceKey('selected_target_agent', 'SI_System_2');
+        void persistWorkspaceKey('selected_target_agent', 'SI_Sphere');
         return;
       }
       if (low === 'jedi_omni_os' || low === 'jedi' || low === 'vm') {

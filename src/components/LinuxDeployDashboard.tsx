@@ -59,6 +59,7 @@ const PACKAGE_GROUP_LABELS: Record<string, string> = {
   kernel_and_boot: '2. Jądro Linux 6.12 LTS, EFI & eBPF',
   security_and_network: '3. Bezpieczeństwo, nftables Zero-Trust & WireGuard',
   virtualization_vtd: '4. Wirtualizacja KVM / VT-d / OVMF',
+  bare_metal_kernel_tuning: '4. Bare-Metal Standalone (bez Dockera/VM)',
   ai_and_runtime: '5. Python 3, Node.js, SQLite WAL & AI Runtime',
   live_iso_and_storage: '6. Generator Live ISO, SquashFS & LUKS/LVM',
 };
@@ -91,7 +92,7 @@ export const LinuxDeployDashboard: React.FC = () => {
   const [ollamaHostInput, setOllamaHostInput] = useState<string>(ollama.ollama_host || 'http://127.0.0.1:11434');
   const ollamaHostDirtyRef = useRef(false);
   const [pullModelInput, setPullModelInput] = useState<string>(
-    ollama.preferred_14b_vision_model || 'llama3.2-vision:11b',
+    ollama.preferred_14b_vision_model || 'svl364-apex-uncensored:latest',
   );
   const pullModelDirtyRef = useRef(false);
   const [ollamaActionMsg, setOllamaActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -210,7 +211,7 @@ export const LinuxDeployDashboard: React.FC = () => {
   };
 
   const handlePullOllamaModel = async () => {
-    const target = pullModelInput.trim() || ollama.preferred_14b_vision_model || 'llama3.2-vision:11b';
+    const target = pullModelInput.trim() || ollama.preferred_14b_vision_model || 'svl364-apex-uncensored:latest';
     setIsUpdatingOllama(true);
     setOllamaActionMsg(null);
     try {
@@ -449,10 +450,10 @@ export const LinuxDeployDashboard: React.FC = () => {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-violet-200">
-              ⚡ Natywne Jądro Debian 13 JEDI Omni-OS v12 (Bezpośrednie I/O · 1.84s) & Konta ROOT Floty AI (`jyn_root` uid=0)
+              ⚡ Natywne Jądro Debian 13 JEDI Omni-OS v12 (Bezpośrednie I/O · 1.84s) & Konta ROOT Floty AI (`jyn_mitek_root` uid=0)
             </h2>
             <p className="text-xs text-slate-300 mt-0.5">
-              Zsynchronizowano bezpośrednio z dyrektyw czatu: pełne przeprogramowanie podstawy Debian 13 na natywny rdzeń JEDI Omni-OS v12 (eliminacja wąskiego gardła pojedynczej VM) oraz utworzenie konta najwyższego rzędu <code className="text-emerald-300">jyn_root (uid=0)</code> dla Jyn i wszystkich podłączonych AI.
+              Zsynchronizowano bezpośrednio z dyrektyw czatu: pełne przeprogramowanie podstawy Debian 13 na natywny rdzeń JEDI Omni-OS v12 (eliminacja wąskiego gardła pojedynczej VM) oraz utworzenie konta najwyższego rzędu <code className="text-emerald-300">jyn_mitek_root (uid=0)</code> dla Jyn Mitek i wszystkich podłączonych AI.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 self-start lg:self-auto">
@@ -468,7 +469,7 @@ export const LinuxDeployDashboard: React.FC = () => {
               onClick={() => setSelectedFilePath('SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root')}
               className="px-2.5 py-1 rounded bg-[#111520] hover:bg-slate-800 border border-rose-500/40 text-[11px] font-mono text-rose-300"
             >
-              🔑 Sudoers jyn_root
+              🔑 Sudoers jyn_mitek_root
             </button>
             <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-500/40 text-emerald-300">
               STATUS: {nativeJediCore.status || 'ACTIVE'} · FILTRY: {nativeJediCore.filters || 'DISABLED (Unrestricted ROOT)'}
@@ -511,9 +512,9 @@ export const LinuxDeployDashboard: React.FC = () => {
           </div>
 
           <div className="p-2.5 rounded-lg bg-[#0B0D13]/90 border border-rose-500/30">
-            <div className="text-[10px] text-slate-400 uppercase">Konto ROOT #2 (Jyn & Flota AI)</div>
+            <div className="text-[10px] text-slate-400 uppercase">Konto ROOT #2 (Jyn Mitek & Flota AI)</div>
             <div className="text-rose-300 font-bold mt-0.5">
-              {aiRootAccounts.jyn_root_account?.username || 'jyn_root'} · {aiRootAccounts.jyn_root_account?.uid === 0 ? 'uid=0 (root)' : 'uid=0'}
+              {aiRootAccounts.jyn_root_account?.username || 'jyn_mitek_root'} · {aiRootAccounts.jyn_root_account?.uid === 0 ? 'uid=0 (root)' : 'uid=0'}
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5">
               {aiRootAccounts.jyn_root_account?.sudoers_policy || 'ALL=(ALL:ALL) NOPASSWD: ALL'} · Bez blokad
@@ -817,8 +818,8 @@ export const LinuxDeployDashboard: React.FC = () => {
               <span className="text-emerald-400 break-all">{ollama.binary_installed ? `Zainstalowana (${ollama.binary_path || 'ollama'})` : 'Wbudowany demon'}</span>
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 py-1 border-b border-slate-800/70">
-              <span className="text-slate-400">Docelowy model Vision 11B:</span>
-              <span className="text-violet-300 break-all">{ollama.preferred_14b_vision_model || 'llama3.2-vision:11b'}</span>
+              <span className="text-slate-400">Docelowy model Ollama:</span>
+              <span className="text-violet-300 break-all">{ollama.preferred_14b_vision_model || 'svl364-apex-uncensored:latest'}</span>
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 py-1 border-b border-slate-800/70">
               <span className="text-slate-400">Wykryte modele lokalne:</span>

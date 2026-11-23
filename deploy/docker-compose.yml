@@ -17,7 +17,7 @@ services:
     environment:
       SVL_OPERATOR_TOKEN: "${SVL_OPERATOR_TOKEN:?Wymagany sekret SVL_OPERATOR_TOKEN o dlugosci min. 32 znakow}"
       OLLAMA_HOST: "http://ollama:11434"
-      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-dolphin-llama3:8b-v2.9-q2_K}"
+      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-svl364-apex-uncensored:latest}"
       COMFYUI_HOST: "http://comfyui:8188"
       SVL_SQLITE_PATH: "/var/lib/svl-os/svl_os.sqlite3"
       SVL_PYTHON_PORT: "8085"
@@ -63,7 +63,7 @@ services:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-ec"]
     command: |
-      MODEL="${OLLAMA_PREFERRED_MODEL:-llama3.2-vision:11b}"
+      MODEL="${OLLAMA_PREFERRED_MODEL:-svl364-apex-uncensored:latest}"
       if [ "$$MODEL" = "qwen3.8-27b-q5" ] && [ -f /opt/svl-ai-models/llm/Modelfile ]; then
         echo "[SVL Ollama Init] Importowanie lokalnego GGUF: $$MODEL"
         OLLAMA_HOST=http://ollama:11434 ollama create "$$MODEL" -f /opt/svl-ai-models/llm/Modelfile
@@ -72,7 +72,7 @@ services:
         OLLAMA_HOST=http://ollama:11434 ollama pull "$$MODEL"
       fi
     environment:
-      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-dolphin-llama3:8b-v2.9-q2_K}"
+      OLLAMA_PREFERRED_MODEL: "${OLLAMA_PREFERRED_MODEL:-svl364-apex-uncensored:latest}"
 
   comfyui:
     profiles: ["image"]

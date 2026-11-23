@@ -12,7 +12,7 @@ from svl_core import sanitize_message_identity
 
 class MessageIdentityGuardTests(unittest.TestCase):
     def test_canonical_ai_senders_pass(self) -> None:
-        for name in ("System_SI_1", "SI_System_2", "JEDI Omni-OS v12", "JEDI Omni-OS v11.5", "Claude (MCP)"):
+        for name in ("System_SI_1", "SI_Sphere", "JEDI Omni-OS v12", "JEDI Omni-OS v11.5", "Claude (MCP)"):
             sender, reason = sanitize_message_identity("assistant", name)
             self.assertIsNone(reason, name)
             self.assertEqual(sender, name)
@@ -149,11 +149,11 @@ class MessageIdentityGuardTests(unittest.TestCase):
             msgs = convs_after["conv-system-si-1"]["messages"]
             self.assertTrue(any(m["sender"] == "System_SI_1" for m in msgs))
 
-    def test_si_system_2_identity_and_aliases(self) -> None:
-        for raw in ("SI_System_2", "si_system_2", "SI_System_2 (SVL-465 · ROOT)"):
+    def test_si_sphere_identity_and_aliases(self) -> None:
+        for raw in ("SI_Sphere", "si_sphere", "SI_Sphere (SVL-465 · ROOT)"):
             sender, reason = sanitize_message_identity("assistant", raw)
             self.assertIsNone(reason, raw)
-            self.assertEqual(sender, "SI_System_2")
+            self.assertEqual(sender, "SI_Sphere")
 
 
 if __name__ == "__main__":

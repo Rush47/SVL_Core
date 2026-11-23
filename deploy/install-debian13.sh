@@ -45,7 +45,7 @@ if [ ! -f /etc/svl-os/svl.env ]; then
   cat > /etc/svl-os/svl.env <<EOF
 SVL_OPERATOR_TOKEN=${TOKEN}
 OLLAMA_HOST=http://127.0.0.1:11434
-OLLAMA_PREFERRED_MODEL=dolphin-llama3:8b-v2.9-q2_K
+OLLAMA_PREFERRED_MODEL=svl364-apex-uncensored:latest
 SVL_SQLITE_PATH=/var/lib/svl-os/svl_os.sqlite3
 EOF
   chown root:svlos /etc/svl-os/svl.env
@@ -62,7 +62,7 @@ systemctl enable --now ollama
 set -a
 . /etc/svl-os/svl.env
 set +a
-OLLAMA_MODEL="${OLLAMA_PREFERRED_MODEL:-llama3.2-vision:11b}"
+OLLAMA_MODEL="${OLLAMA_PREFERRED_MODEL:-svl364-apex-uncensored:latest}"
 echo "Pobieranie skonfigurowanego modelu Ollama: ${OLLAMA_MODEL}"
 ollama pull "$OLLAMA_MODEL"
 

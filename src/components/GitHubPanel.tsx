@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, GitBranch, Link2, RefreshCw } from 'lucide-react';
 import { safeFetchJson } from '../utils/svlLogic';
+import { useRepoChangeRefresh } from '../utils/liveRepoEvents';
 import { useSvlSync } from '../utils/svlSyncStore';
 
 type SyncAction = 'status' | 'pull' | 'push' | 'sync' | 'init';
@@ -179,6 +180,10 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
       void load(false);
     }
   }, [serverRevision, load]);
+
+  useRepoChangeRefresh(() => {
+    void load(false);
+  }, { debounceMs: 250 });
 
   const run = async (action: SyncAction) => {
     setBusy(action);
@@ -523,7 +528,7 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
         </div>
       )}
       <p className="text-[11px] text-slate-500">
-        System_SI_1 oraz silnik Git Data REST API synchronizują obustronnie folder <code>SVL_CoreOS_2/</code> (w tym pełny Debian 13 + natywne jądro JEDI v12 + <code>jyn_root</code>) oraz całe repozytorium <code>Rush47/SVL_Core</code>.
+        System_SI_1 oraz silnik Git Data REST API synchronizują obustronnie folder <code>SVL_CoreOS_2/</code> (w tym pełny Debian 13 + natywne jądro JEDI v12 + <code>jyn_mitek_root</code>) oraz całe repozytorium <code>Rush47/SVL_Core</code>.
       </p>
     </div>
   );

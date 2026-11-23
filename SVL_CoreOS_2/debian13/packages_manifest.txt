@@ -48,13 +48,11 @@ gnupg
 apparmor
 apparmor-utils
 
-# --- 4. Wirtualizacja Sprzętowa (Apex-Virtualization VT-d / KVM) ---
-qemu-kvm
-libvirt-daemon-system
-libvirt-clients
-ovmf
-bridge-utils
-virtinst
+# --- 4. Natywne Strojenie Bare-Metal Standalone (bez Dockera i bez VM) ---
+irqbalance
+linux-cpupower
+sysstat
+iotop-c
 
 # --- 5. Środowisko Wykonawcze Python 3.12/3.13, Node.js, Baza SQLite WAL i Narzędzia AI ---
 python3
