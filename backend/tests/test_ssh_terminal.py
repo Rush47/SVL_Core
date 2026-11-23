@@ -126,8 +126,8 @@ class SshTerminalTests(unittest.TestCase):
     def test_onboard_account_is_visible_in_ssh_status(self) -> None:
         controller = build_controller()
         status = controller.get_status()
-        self.assertEqual(status["ssh"]["computerAccount"], "SVL-364 Komputer pokładowy")
-        self.assertEqual(status["ssh"]["agentAccounts"], ["Bielik", "Maya"])
+        self.assertEqual(status["ssh"]["computerAccount"], "SVL-364 Ship Host")
+        self.assertEqual(status["ssh"]["agentAccounts"], ["System_SI_1"])
 
     def test_remote_execution_requires_explicit_confirmation(self) -> None:
         controller = build_controller()

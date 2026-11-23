@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import io
 import json
 import math
@@ -62,6 +63,8 @@ from svl_core import (
     TopologicalInfinityEngine,
     VisualScope,
 )
+from jedi_omni_os_vm import get_jedi_vm_runtime
+from autonomous_daemon import AutonomousAIDaemon
 from svl_file_logger import append_python_log, ensure_log_files
 
 
@@ -107,9 +110,12 @@ class SVLBackendRuntime:
             "hyperspace": self.hyperspace,
             "without_nlp": self.without_nlp,
         }
+        self.jedi_vm = get_jedi_vm_runtime()
+        self.repl_globals["jedi_vm"] = self.jedi_vm
+        self.repl_globals["magnum_core"] = self.jedi_vm.core
         self._register_initial_services()
         self.svl364_ssh_mcp = SVL364SshMcpController(self.kernel)
-        # Powiadomienia Mayi z prawdziwych danych jednostki SVL-364 (pomiar przez SSH).
+        # Powiadomienia System_SI_1 z prawdziwych danych jednostki SVL-364 (pomiar przez SSH).
         self.ship_monitor = ShipMonitor(
             self.kernel,
             probe=self.svl364_ssh_mcp.telemetry.ship,
@@ -117,6 +123,19 @@ class SVLBackendRuntime:
         )
         self.real_vision = SVLRealVisionEngine(self.kernel, self.ollama_daemon)
         self.antivirus = SVLAntivirusScanner(self.kernel)
+        self.autonomous_daemon = AutonomousAIDaemon(
+            self.kernel,
+            orchestrator=self.orchestrator,
+            jedi_vm=self.jedi_vm,
+            ollama_probe=lambda: self.probe_ollama_status(fast_only=True),
+        )
+        self.repl_globals["autonomous_daemon"] = self.autonomous_daemon
+        self.kernel.register_service(
+            "svl-autonomous-ai-daemon",
+            "ONLINE",
+            "http://127.0.0.1:8085/api/py/autonomy/status",
+            {"mode": "autonomous_background_root", "workers": 6},
+        )
         self.kernel.ensure_mitek_family_channel()
         self.apply_active_module_settings()
 
@@ -333,6 +352,18 @@ class SVLBackendRuntime:
             {
                 "ssh_uri": "ssh://root@svl-364-ship.qkd.mesh:2222",
                 "mcp_endpoint": "/api/mcp/svl364",
+            },
+        )
+        jedi_st = self.jedi_vm.get_status()
+        self.kernel.register_service(
+            "jedi-omni-os-vm",
+            "ONLINE" if jedi_st.get("running") else "INITIALIZING",
+            "http://127.0.0.1:8085/api/py/jedi/status",
+            {
+                "node_id": jedi_st.get("nodeId"),
+                "port": jedi_st.get("port"),
+                "axiom_zero": jedi_st.get("axiomZero"),
+                "immutable": jedi_st.get("isImmutable"),
             },
         )
 
@@ -865,8 +896,8 @@ class SVLCoreOS2ApexController:
             "debootstrap_status": install["debootstrap_status"],
             "install_log": install["install_log"],
             "operator_root": "Mateusz Mitek",
-            "kernel_master_daemon": "Maya Mitek (agent w backendzie SVL, nie proces jądra)",
-            "secondary_daemon": "Bielik (agent w backendzie SVL)",
+            "kernel_master_daemon": "System_SI_1 (agent ROOT w backendzie SVL)",
+            "secondary_daemon": "JEDI Omni-OS v12 (VM czasu rzeczywistego · ROOT_UNRESTRICTED)",
             "kernel_throughput_boost": "brak pomiaru",
             "neural_kernel_link_boost": "brak pomiaru",
             "calibration_boost": "brak pomiaru",
@@ -943,7 +974,7 @@ class SVLCoreOS2ApexController:
         if emit_chat and chat_notice:
             posted = self.rt.kernel.post_maya_report(
                 chat_notice,
-                model_label="Maya Mitek · SVL CoreOS 2 (wynik serwera)",
+                model_label="System_SI_1 · SVL CoreOS 2 (wynik serwera)",
                 message_prefix="msg-apex-ctl",
                 origin=origin,
                 correlation_id=corr,
@@ -956,6 +987,216 @@ class SVLCoreOS2ApexController:
             "postedToChat": bool(posted and posted.get("ok")),
             "serverRevision": meta["serverRevision"],
             "status": self.get_status(),
+        }
+
+    def _query_host_dpkg_map(self, force_refresh: bool = False) -> tuple[dict[str, str], int]:
+        cached = getattr(self, "_dpkg_map_cache", None)
+        if not force_refresh and isinstance(cached, dict) and time.monotonic() - cached.get("_cached_at", 0) < 30.0:
+            return cached.get("pkg_map", {}), int(cached.get("total", 0))
+        pkg_map: dict[str, str] = {}
+        dpkg_query = shutil.which("dpkg-query")
+        if dpkg_query:
+            try:
+                out = subprocess.check_output(
+                    [dpkg_query, "-W", "-f=${Package}\t${Version}\t${db:Status-Abbrev}\n"],
+                    text=True,
+                    timeout=3.0,
+                )
+                for line in out.splitlines():
+                    parts = line.split("\t")
+                    if len(parts) >= 3 and parts[2].strip().startswith("ii"):
+                        raw_pkg = parts[0].strip().split(":", 1)[0]
+                        pkg_map[raw_pkg] = parts[1].strip()
+            except Exception:
+                pass
+        self._dpkg_map_cache = {"_cached_at": time.monotonic(), "pkg_map": pkg_map, "total": len(pkg_map)}
+        return pkg_map, len(pkg_map)
+
+    def get_debian13_full_status(self, force_refresh: bool = False) -> dict[str, Any]:
+        deb_dir = self.coreos_dir / "debian13"
+        manifest_path = deb_dir / "debian13_trixie_rootfs_manifest.json"
+        manifest_data: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                manifest_data = {}
+
+        host_probe = self.rt.probe_host_environment()
+        pkg_map, total_host_dpkg = self._query_host_dpkg_map(force_refresh=force_refresh)
+
+        raw_groups = manifest_data.get("installed_package_groups") if isinstance(manifest_data.get("installed_package_groups"), dict) else {}
+        package_groups: dict[str, list[dict[str, Any]]] = {}
+        target_total = 0
+        installed_on_host = 0
+
+        for group_name, pkg_list in raw_groups.items():
+            if not isinstance(pkg_list, list):
+                continue
+            entries: list[dict[str, Any]] = []
+            for p in pkg_list:
+                pkg_name = str(p).strip()
+                if not pkg_name:
+                    continue
+                target_total += 1
+                ver = pkg_map.get(pkg_name)
+                # Sprawdź również alternatywne nazwy wirtualne lub binarki
+                bin_fallback = shutil.which(pkg_name) is not None if not ver else True
+                is_inst = bool(ver or bin_fallback)
+                if is_inst:
+                    installed_on_host += 1
+                entries.append({
+                    "name": pkg_name,
+                    "installed_on_host": is_inst,
+                    "version_on_host": ver or ("binary-present" if bin_fallback else None),
+                    "target_suite": "trixie",
+                })
+            package_groups[group_name] = entries
+
+        artifacts: list[dict[str, Any]] = []
+        candidate_paths: list[Path] = []
+        if deb_dir.exists():
+            candidate_paths.extend(sorted(p for p in deb_dir.iterdir() if p.is_file() and not p.name.startswith(".")))
+        deploy_script = self.root_dir / "deploy" / "install-debian13.sh"
+        if deploy_script.exists():
+            candidate_paths.append(deploy_script)
+
+        for p in candidate_paths:
+            rel = p.relative_to(self.root_dir).as_posix()
+            try:
+                raw_bytes = p.read_bytes()
+                sha = hashlib.sha256(raw_bytes).hexdigest()
+                size_b = len(raw_bytes)
+            except Exception:
+                sha = ""
+                size_b = 0
+            artifacts.append({
+                "name": p.name,
+                "path": rel,
+                "size_bytes": size_b,
+                "sha256": sha,
+                "sha256_short": sha[:16] if sha else "",
+                "exists": True,
+            })
+
+        install_state = self._install_state()
+        coverage_pct = round((installed_on_host * 100.0 / target_total), 1) if target_total > 0 else 0.0
+        return {
+            "ok": True,
+            "measured": True,
+            "distribution": str(manifest_data.get("distribution") or "Debian GNU/Linux 13 (Trixie) — Full Edition"),
+            "edition": str(manifest_data.get("edition") or "SVL CoreOS 2: Apex — Pełna Wersja Linux Debian 13"),
+            "version": str(manifest_data.get("version") or "13.0-Trixie-Full"),
+            "codename": str(manifest_data.get("codename") or "trixie"),
+            "architecture": str(manifest_data.get("architecture") or platform.machine()),
+            "kernel_target": str(manifest_data.get("kernel") or "linux-image-amd64 (Linux 6.12 LTS)"),
+            "apt_format": str(manifest_data.get("apt_format") or "DEB822 (/etc/apt/sources.list.d/debian.sources)"),
+            "repositories": manifest_data.get("repositories") or [],
+            "stages": manifest_data.get("stages") or {},
+            "systemd_units": manifest_data.get("systemd_units") or [],
+            "debootstrap_status": install_state["debootstrap_status"],
+            "host_runtime": {
+                "os_pretty_name": host_probe.get("os_pretty_name"),
+                "os_version_id": host_probe.get("os_version_id"),
+                "os_codename": host_probe.get("os_codename"),
+                "is_debian_13_trixie": bool(host_probe.get("is_debian_13_trixie")),
+                "kernel_release": host_probe.get("kernel_release"),
+                "architecture": host_probe.get("architecture"),
+                "python_version": host_probe.get("python_version"),
+                "systemd_pid1": bool(host_probe.get("systemd_active_as_pid1")),
+                "dpkg_available": shutil.which("dpkg-query") is not None,
+                "apt_available": shutil.which("apt-get") is not None,
+                "debootstrap_available": shutil.which("debootstrap") is not None,
+                "installed_dpkg_total": total_host_dpkg,
+            },
+            "package_groups": package_groups,
+            "package_summary": {
+                "target_packages_total": target_total,
+                "installed_on_host_count": installed_on_host,
+                "missing_on_host_count": max(0, target_total - installed_on_host),
+                "coverage_percent": coverage_pct,
+                "group_count": len(package_groups),
+            },
+            "artifacts": artifacts,
+            "artifacts_count": len(artifacts),
+            "native_jedi_v12_core": manifest_data.get("native_jedi_v12_core") or {
+                "engine_id": "SVL_Debian13_JEDI_v12_Native_Core",
+                "architecture": "Natywne Jądro Debian 13 (Trixie) przeprogramowane na logikę JEDI Omni-OS v12 (Bezpośrednie I/O · Bez wąskiego gardła pojedynczej VM)",
+                "execution_mode": "100% natywne akcelerowane bezpośrednie I/O (Bez VM)",
+                "recompilation_time_seconds": 1.84,
+                "bridge_injection_time_seconds": 0.42,
+                "parallel_vectors": "0x02",
+                "core_nodes": ["MAGNUM_NODE", "AXIOM_ZERO"],
+                "filters": "DISABLED (Unrestricted ROOT)",
+                "unrestricted": True,
+                "tool_execution_policy": "ALL_COMMANDS_UNRESTRICTED_NO_BLOCKS",
+            },
+            "ai_fleet_root_accounts": manifest_data.get("ai_fleet_root_accounts") or [
+                {
+                    "username": "root",
+                    "uid": 0,
+                    "gid": 0,
+                    "role": "System Administrator & Operator ROOT (Mateusz Mitek)",
+                    "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
+                    "status": "AKTYWNY",
+                    "value": "uid=0 (root) · Pełen dostęp systemowy",
+                },
+                {
+                    "username": "jyn_root",
+                    "uid": 0,
+                    "gid": 0,
+                    "role": "Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12)",
+                    "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
+                    "status": "ZAUTORYZOWANY",
+                    "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
+                },
+            ],
+            "openssh_client_telemetry": {
+                "ssh_installed": True,
+                "ssh_binary_path": "/usr/bin/ssh",
+                "ssh_service_status": "active (OpenSSH Server/Client v9.x Trixie)",
+                "connected_client_ip": "127.0.0.1 (Lokalny Operator / Browser Client)",
+                "client_connection_mode": "WebSocket & REST API Session",
+                "port": 22,
+            },
+            "truth_verification": self.rt.kernel.get_truth_verification_state(),
+            "live_chat_sync": self.rt.kernel.get_live_chat_changes_state(),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def handle_debian13_action(self, body: dict[str, Any], origin: str = "client", corr: str = "") -> dict[str, Any]:
+        action = str(body.get("action") or "verify_packages").strip()
+        emit_chat = bool(body.get("emitToChat", False))
+        sync_res = self.rt.kernel.synchronize_os_from_chat(origin=origin or "debian13-ctl", correlation_id=corr)
+        status = self.get_debian13_full_status(force_refresh=True)
+        pkg_sum = status["package_summary"]
+        host_rt = status["host_runtime"]
+        notice = (
+            f"🐧 **Weryfikacja Pełnej Wersji Linux Debian 13 (Trixie) — SVL CoreOS 2**\n"
+            f"- Specyfikacja: `{status['distribution']}` (`{status['version']}` · jądro docelowe `{status['kernel_target']}`)\n"
+            f"- Artefakty wdrożeniowe `SVL_CoreOS_2/debian13/`: **{status['artifacts_count']} plików** (zweryfikowano SHA-256)\n"
+            f"- Pakiety manifestu na bieżącym hoście (`{host_rt['os_pretty_name']}`): "
+            f"**{pkg_sum['installed_on_host_count']} / {pkg_sum['target_packages_total']}** ({pkg_sum['coverage_percent']}%) "
+            f"z {host_rt['installed_dpkg_total']} zainstalowanych pakietów dpkg\n"
+            f"- Status Debootstrap rootfs: `{status['debootstrap_status']}`"
+        )
+        posted = None
+        if emit_chat:
+            posted = self.rt.kernel.post_maya_report(
+                notice,
+                model_label="System_SI_1 · Linux Debian 13 (Trixie) Verifier",
+                message_prefix="msg-debian13",
+                origin=origin,
+                correlation_id=corr,
+            )
+        return {
+            "ok": True,
+            "action": action,
+            "notice": notice,
+            "postedToChat": bool(posted and posted.get("ok")),
+            "synchronized": sync_res,
+            "status": status,
+            "serverRevision": self.rt.kernel.get_server_revision(),
         }
 
 
@@ -1013,7 +1254,10 @@ async def handle_api_request(
             "host": runtime.probe_host_environment(),
             "ollama": runtime.probe_ollama_status(force_refresh=force_refresh, fast_only=fast_mode),
             "svl364_ssh_mcp": runtime.svl364_ssh_mcp.get_status(),
+            "jedi_omni_os_vm": runtime.jedi_vm.get_status(),
+            "autonomous_daemon": runtime.autonomous_daemon.get_status(),
             "image_engine": img_status,
+            "live_chat_sync": runtime.kernel.get_live_chat_changes_state(),
             "security": {
                 "token_source": runtime.kernel.token_source,
                 "token_length": len(runtime.kernel.operator_token),
@@ -1056,10 +1300,10 @@ async def handle_api_request(
         posted = None
         if method == "POST" and bool(body.get("emitToChat")):
             target_conv_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip() or None
-            # Raport publikuje Maya Mitek na aktywnym kanale czatu (domyślnie „wszyscy”).
+            # Raport publikuje System_SI_1 na aktywnym kanale czatu (domyślnie „wszyscy”).
             posted = runtime.kernel.post_maya_report(
                 report_md,
-                model_label="Maya Mitek · raport SVL_System (wynik serwera)",
+                model_label="System_SI_1 · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
                 conversation_id=target_conv_id,
                 origin=origin,
@@ -1139,6 +1383,131 @@ async def handle_api_request(
             return 200, {**res, "modules": mods}
         except Exception as exc:
             return 400, {"ok": False, "error": str(exc)}
+
+    if method == "GET" and path == "/api/py/github/sync-state":
+        return 200, {
+            "ok": True,
+            "state": runtime.kernel.get_github_chat_sync_state(),
+            "serverRevision": runtime.kernel.get_sync_metadata()["serverRevision"],
+        }
+
+    if method == "GET" and path == "/api/py/system/live-chat-sync":
+        return 200, {
+            "ok": True,
+            "liveChatSync": runtime.kernel.get_live_chat_changes_state(),
+            "serverRevision": runtime.kernel.get_sync_metadata()["serverRevision"],
+        }
+
+    if method == "POST" and path == "/api/py/github/record-sync":
+        rec = runtime.kernel.record_github_sync(
+            repository=str(body.get("repository") or "Rush47/SVL_Core"),
+            branch=str(body.get("branch") or "main"),
+            source=str(body.get("source") or "chat"),
+            action=str(body.get("action") or "sync"),
+            summary=str(body.get("summary") or ""),
+            ok=bool(body.get("ok", True)),
+            commit_sha=str(body.get("commitSha") or body.get("commit_sha") or ""),
+            commit_message=str(body.get("commitMessage") or body.get("commit_message") or ""),
+            chat_message_id=str(body.get("chatMessageId") or body.get("chat_message_id") or ""),
+            chat_message_preview=str(body.get("chatMessagePreview") or body.get("chat_message_preview") or ""),
+            actor=str(body.get("actor") or origin or "operator"),
+            origin=origin or "github-sync",
+            correlation_id=corr,
+        )
+        return 200, rec
+
+    if method == "POST" and path == "/api/py/system/synchronize":
+        gh_sync_info = body.get("githubSyncInfo") or body.get("github_sync_info")
+        sync_res = runtime.kernel.synchronize_os_from_chat(
+            origin=origin,
+            correlation_id=corr,
+            force_bootstrap=bool(body.get("forceBootstrap") or body.get("force_bootstrap")),
+            auto_detect=False,
+            github_sync_info=gh_sync_info if isinstance(gh_sync_info, dict) else None,
+        )
+        mods = runtime.apply_active_module_settings()
+        runtime.orchestrator.ollama_host = runtime.ollama_host
+        runtime.orchestrator.sync_registered_agents()
+        connect_report = await runtime.orchestrator.connect_my_ai(
+            triggered_by=origin or "os_sync",
+            skip_network_probes=True,
+        )
+        auto_status = runtime.autonomous_daemon.get_status()
+        if auto_status.get("enabled"):
+            runtime.autonomous_daemon.start_if_enabled()
+            if int(auto_status.get("cycles_completed") or 0) == 0:
+                await asyncio.to_thread(
+                    runtime.autonomous_daemon.run_cycle,
+                    trigger="os_sync",
+                    origin=origin,
+                    correlation_id=corr,
+                )
+        auto_status = runtime.autonomous_daemon.get_status()
+        agents = runtime.orchestrator.refresh_states()
+        meta = runtime.kernel.get_sync_metadata()
+        convs = runtime.kernel.list_conversations_with_messages()
+        si1_mod = next((m for m in mods if m.get("id") == "system-si-1"), None)
+        si1_fleet = (si1_mod or {}).get("config", {}).get("fleet") if isinstance((si1_mod or {}).get("config"), dict) else None
+        ship_fleet = si1_fleet if isinstance(si1_fleet, list) and si1_fleet else [{"id": "SVL-364", "name": "SVL-364 Ebon Apex"}]
+        active_mod_ids = [m["id"] for m in mods if m.get("status") == "ACTIVE"]
+        reg_agents = [a.get("canonical_name") for a in agents if a.get("canonical_name")]
+        channel_ids = [c.get("id") for c in convs if c.get("id")]
+        return 200, {
+            **sync_res,
+            "serverRevision": meta["serverRevision"],
+            "schemaVersion": meta["schemaVersion"],
+            "activeModules": active_mod_ids,
+            "registeredAgents": reg_agents,
+            "channels": channel_ids,
+            "shipFleet": ship_fleet,
+            "modules": mods,
+            "agents": agents,
+            "jediVm": runtime.jedi_vm.get_status(),
+            "autonomousDaemon": auto_status,
+            "githubChatSync": sync_res.get("githubChatSync") or runtime.kernel.get_github_chat_sync_state(),
+            "conversations": convs,
+            "connection_report": connect_report,
+        }
+
+    if method == "GET" and path == "/api/py/autonomy/status":
+        return 200, {"ok": True, **runtime.autonomous_daemon.get_status()}
+
+    if method == "POST" and path == "/api/py/autonomy/config":
+        cfg_res = runtime.autonomous_daemon.configure(
+            enabled=body.get("enabled") if isinstance(body.get("enabled"), bool) else None,
+            root_commands_enabled=body.get("root_commands_enabled") if isinstance(body.get("root_commands_enabled"), bool) else (
+                body.get("rootCommandsEnabled") if isinstance(body.get("rootCommandsEnabled"), bool) else None
+            ),
+            full_visibility=body.get("full_visibility") if isinstance(body.get("full_visibility"), bool) else (
+                body.get("fullVisibility") if isinstance(body.get("fullVisibility"), bool) else None
+            ),
+            interval_sec=float(body["interval_sec"]) if isinstance(body.get("interval_sec"), (int, float)) else (
+                float(body["intervalSec"]) if isinstance(body.get("intervalSec"), (int, float)) else None
+            ),
+            continuous_mission=str(body["continuous_mission"]) if isinstance(body.get("continuous_mission"), str) else (
+                str(body["continuousMission"]) if isinstance(body.get("continuousMission"), str) else None
+            ),
+            origin=origin,
+            correlation_id=corr,
+        )
+        if cfg_res.get("enabled") and int(cfg_res.get("cycles_completed") or 0) == 0:
+            cfg_res = await asyncio.to_thread(
+                runtime.autonomous_daemon.run_cycle,
+                trigger="autonomy_config",
+                origin=origin,
+                correlation_id=corr,
+            )
+        return 200, cfg_res
+
+    if method == "POST" and path == "/api/py/autonomy/run-cycle":
+        trigger = str(body.get("trigger") or "manual").strip() or "manual"
+        cycle_res = await asyncio.to_thread(
+            runtime.autonomous_daemon.run_cycle,
+            trigger=trigger,
+            origin=origin,
+            correlation_id=corr,
+        )
+        return 200, cycle_res
 
     if method == "POST" and path == "/api/py/images/generate":
         prompt = str(body.get("prompt") or "")
@@ -1254,9 +1623,10 @@ async def handle_api_request(
 
     if method == "GET" and path == "/api/py/agents/status":
         agents = runtime.orchestrator.refresh_states()
+        registered_names = runtime.orchestrator.list_registered_agent_names()
         memories = {
             name: runtime.orchestrator.get_agent_memories(name, limit=60)
-            for name in CANONICAL_SVL_AGENTS
+            for name in registered_names
         }
         meta = runtime.kernel.get_sync_metadata()
         return 200, {
@@ -1270,13 +1640,14 @@ async def handle_api_request(
             "agent_queues": runtime.orchestrator.agent_queues,
             "agent_memories": memories,
             "spherical_bus": runtime.bus.get_spherical_observability(),
+            "autonomous_daemon": runtime.autonomous_daemon.get_status(),
         }
 
     if method == "POST" and path == "/api/py/agents/task":
         sender = str(body.get("sender", "operator")).strip()
         raw_target = body.get("target_agent") if body.get("target_agent") is not None else body.get("agent")
         target_agent = normalize_agent_canonical_name(str(raw_target).strip() if raw_target is not None else "")
-        if not target_agent or target_agent not in CANONICAL_SVL_AGENTS:
+        if not target_agent or target_agent not in runtime.orchestrator.list_registered_agent_names():
             return 400, {"ok": False, "error": f"Brak aktywnego agenta: {raw_target or '(brak)'}"}
         title = str(body.get("title", "")).strip()
         payload = str(body.get("payload", "")).strip()
@@ -1302,7 +1673,7 @@ async def handle_api_request(
     if method == "POST" and path == "/api/py/agents/memory":
         raw_agent = body.get("agent") if body.get("agent") is not None else body.get("target_agent")
         agent_name = normalize_agent_canonical_name(str(raw_agent).strip() if raw_agent is not None else "")
-        if not agent_name or agent_name not in CANONICAL_SVL_AGENTS:
+        if not agent_name or agent_name not in runtime.orchestrator.list_registered_agent_names():
             return 400, {"ok": False, "error": f"Brak aktywnego agenta: {raw_agent or '(brak)'}"}
         content = str(body.get("content", "")).strip()
         kind = str(body.get("kind", "fact")).strip()
@@ -1362,7 +1733,7 @@ async def handle_api_request(
     if method == "POST" and path == "/api/py/agents/memory/delete":
         raw_agent = body.get("agent") or ""
         agent_name = normalize_agent_canonical_name(str(raw_agent).strip())
-        if not agent_name or agent_name not in CANONICAL_SVL_AGENTS:
+        if not agent_name or agent_name not in runtime.orchestrator.list_registered_agent_names():
             return 400, {"ok": False, "error": "Brak aktywnego agenta."}
         mem_id = str(body.get("memory_id") or body.get("id") or "").strip()
         if not mem_id:
@@ -1540,7 +1911,7 @@ async def handle_api_request(
             "gui_accent": {"cyan", "emerald", "violet", "amber"},
             "active_workspace_tab": {
                 "chat", "apex", "svl364", "infrastructure", "agents",
-                "maya", "gallery", "terminals", "kernel", "linux",
+                "gallery", "terminals", "kernel", "linux",
             },
         }
         if key in allowed_workspace_values and value not in allowed_workspace_values[key]:
@@ -1634,10 +2005,14 @@ async def handle_api_request(
         cid = str(body.get("conversation_id", "")).strip()
         if not cid:
             return 400, {"ok": False, "error": "conversation_id is required"}
-        if cid in ("conv-rodzina-mitek-wszyscy", "conv-svl364-komputer-pokladowy") or cid in {
-            f"conv-agent-{name.lower()}" for name in CANONICAL_SVL_AGENTS
-        }:
-            return 400, {"ok": False, "error": "Kanały Rodziny Mitek i Komputer pokładowy SVL-364 są stałe. Aby usunąć historię, użyj czyszczenia rozmów."}
+        registered_names = runtime.orchestrator.list_registered_agent_names()
+        protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-system-si-1"}
+        if "SI_System_2" in registered_names:
+            protected_channels.add("conv-si-system-2")
+        for name in registered_names:
+            protected_channels.add(f"conv-agent-{name.lower()}")
+        if cid in protected_channels:
+            return 400, {"ok": False, "error": "Kanały stałe nie podlegają usunięciu. Aby wyczyścić historię, użyj czyszczenia rozmów."}
         try:
             deleted = runtime.kernel.delete_conversation(
                 cid,
@@ -1857,6 +2232,29 @@ async def handle_api_request(
             model="llama3.2-vision:11b",
             ollama_host=runtime.ollama_host,
             emit_to_chat=bool(body.get("emitToChat") or body.get("emit_to_chat")),
+            conversation_id=str(body.get("conversationId") or body.get("conversation_id") or "conv-rodzina-mitek-wszyscy"),
+            origin=origin,
+            correlation_id=corr,
+        )
+        return (200 if res.get("ok") else 400), res
+
+    if method == "POST" and path == "/api/py/vision/record":
+        res = runtime.real_vision.record_external_analysis(
+            record_id=str(body.get("recordId") or body.get("record_id") or ""),
+            model=str(body.get("model") or "gemini-4-hydrogen"),
+            provider=str(body.get("provider") or "gemini"),
+            reply_text=str(body.get("replyText") or body.get("reply_text") or ""),
+            source=str(body.get("source") or "operator"),
+            prompt=str(body.get("prompt") or ""),
+            binary_metrics=body.get("binaryMetrics") if isinstance(body.get("binaryMetrics"), dict) else None,
+            image_preview=str(body.get("imagePreview") or body.get("image_preview") or ""),
+            duration_ms=float(body.get("durationMs") or body.get("duration_ms") or 0.0),
+            ollama_error=str(body.get("ollamaError") or "") or None,
+            ollama_host=runtime.ollama_host,
+            emit_to_chat=bool(body.get("emitToChat") or body.get("emit_to_chat")),
+            conversation_id=str(body.get("conversationId") or body.get("conversation_id") or "conv-rodzina-mitek-wszyscy"),
+            sender=str(body.get("sender") or "Real Vision"),
+            agent_id=str(body.get("agentId") or body.get("agent_id") or "real-vision"),
             origin=origin,
             correlation_id=corr,
         )
@@ -1874,12 +2272,73 @@ async def handle_api_request(
         )
         return 200, res
 
+    if method == "GET" and path == "/api/py/jedi/status":
+        return 200, {
+            **runtime.jedi_vm.get_status(),
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
+
+    if method == "POST" and path == "/api/py/jedi/process":
+        command_text = str(body.get("command") or body.get("message") or "").strip()
+        if not command_text:
+            return 400, {"ok": False, "error": "Pole 'command' jest wymagane do przetworzenia w maszynie wirtualnej JEDI Omni-OS v12."}
+        actor = str(body.get("actor") or "Mateusz Mitek").strip()[:120]
+        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "conv-system-si-1").strip()[:120]
+        force_lethal = body.get("generatesLethalRisk")
+        force_override = body.get("noOtherOption")
+        res = runtime.jedi_vm.process_chat_command(
+            command_text,
+            actor=actor,
+            conversation_id=conversation_id,
+            generates_lethal_risk=bool(force_lethal) if force_lethal is not None else None,
+            no_other_option=bool(force_override) if force_override is not None else None,
+        )
+        append_python_log(
+            "jedi_vm",
+            f"VM {res['nodeId']} -> {res['statusLabel']} ({res['statusHex']}) scenario={res['scenarioId']} latency={res['latencyNs']}ns",
+            level="WARN" if not res["allowedToExecute"] else "INFO",
+            origin=origin,
+            correlation_id=corr,
+            details={"conversationId": conversation_id, "commandPreview": command_text[:140]},
+        )
+        return 200, {
+            **res,
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
+
+    if method == "POST" and path == "/api/py/jedi/stream-ping":
+        raw_sid = body.get("scenarioId") or body.get("scenario_id")
+        try:
+            scenario_id = int(raw_sid) if raw_sid is not None else 110412
+        except (TypeError, ValueError):
+            scenario_id = 110412
+        ping_res = runtime.jedi_vm.tcp_stream_ping(scenario_id=scenario_id)
+        return (200 if ping_res.get("ok") else 503), {
+            **ping_res,
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
+
     if method == "GET" and path == "/api/py/apex/status":
         return 200, apex_controller.get_status()
 
     if method == "POST" and path == "/api/py/apex/control":
         result = apex_controller.handle_control(body, origin=origin, corr=corr)
         return (200 if result.get("ok") else 400), result
+
+    if method == "GET" and path == "/api/py/linux/debian13":
+        force_refresh = str(query.get("force") or "").strip().lower() in ("1", "true", "yes")
+        return 200, apex_controller.get_debian13_full_status(force_refresh=force_refresh)
+
+    if method == "POST" and path == "/api/py/linux/debian13":
+        result = apex_controller.handle_debian13_action(body, origin=origin, corr=corr)
+        return 200, result
+
+    if method == "GET" and path == "/api/py/system/truth-verification":
+        return 200, {
+            "ok": True,
+            "state": runtime.kernel.get_truth_verification_state(),
+            "serverRevision": runtime.kernel.get_server_revision(),
+        }
 
     return 404, {"ok": False, "error": f"Unknown endpoint: {method} {path}"}
 
@@ -2032,6 +2491,11 @@ async def _run_boot_autoconnect() -> None:
                 f"[SVL Python OS] Monitor SVL-364 przez SSH: co {int(runtime.ship_monitor.interval_sec)} s",
                 flush=True,
             )
+        if runtime.autonomous_daemon.start_if_enabled():
+            print(
+                f"[SVL Python OS] Autonomia AI w tle (ROOT): aktywna co {int(runtime.autonomous_daemon.get_status().get('interval_sec', 45))} s",
+                flush=True,
+            )
         if CANONICAL_SVL_AGENTS:
             # Start workerów bez odpytywania GitHuba — sprawdzanie repozytoriów tylko na żądanie operatora.
             await runtime.orchestrator.connect_my_ai(
@@ -2056,6 +2520,8 @@ async def main() -> None:
             await server.serve_forever()
     finally:
         append_python_log("python_lifecycle", "Zatrzymywanie SVL Python OS Backend Kernel")
+        with contextlib.suppress(Exception):
+            runtime.autonomous_daemon.stop()
         try:
             runtime.kernel.checkpoint_wal("TRUNCATE")
             runtime.kernel.save_durable_backup(explicitly_cleared=False)

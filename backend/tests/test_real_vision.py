@@ -114,6 +114,50 @@ class TestSVLRealVisionSuite(unittest.TestCase):
         finally:
             server.shutdown()
 
+    def test_record_external_analysis_persists_gemini_fallback_and_chat_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kernel = self._kernel(tmpdir)
+            engine = SVLRealVisionEngine(kernel, None)
+            png = base64.b64encode(generate_svl364_sensor_png_bytes(64, 32)).decode()
+            data_uri = f"data:image/png;base64,{png}"
+            failed = engine.analyze_image(
+                image_base64=data_uri,
+                prompt="Co widać?",
+                ollama_host=f"http://127.0.0.1:{self._free_port()}",
+                emit_to_chat=False,
+            )
+            self.assertFalse(failed["ok"])
+            rec = failed["record"]
+            saved = engine.record_external_analysis(
+                record_id=rec["id"],
+                model="gemini-4-hydrogen",
+                provider="gemini",
+                reply_text="Na obrazie widać niebiesko-cyjanową siatkę telemetryczną z jasnym centrum.",
+                source="Załącznik testowy",
+                prompt="Co widać?",
+                binary_metrics=rec["binaryMetrics"],
+                image_preview=rec["imagePreview"],
+                duration_ms=412.5,
+                ollama_error=failed["error"],
+                emit_to_chat=True,
+                conversation_id="conv-system-si-1",
+            )
+            self.assertTrue(saved["ok"])
+            self.assertTrue(saved["fallbackUsed"])
+            self.assertEqual(saved["record"]["id"], rec["id"])
+            self.assertEqual(saved["record"]["provider"], "gemini")
+            self.assertIn("niebiesko-cyjanową siatkę telemetryczną", saved["record"]["reportMarkdown"])
+            self.assertEqual(engine.inspections_count, 1)
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertEqual(mods["svl-real-vision"]["config"]["last_test_status"], "PASSED")
+            self.assertEqual(mods["svl-real-vision"]["config"]["active_provider"], "gemini")
+            convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+            self.assertIn("conv-system-si-1", convs)
+            self.assertEqual(convs["conv-system-si-1"]["title"], "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)")
+            self.assertTrue(
+                any("niebiesko-cyjanową siatkę telemetryczną" in m["content"] for m in convs["conv-system-si-1"]["messages"])
+            )
+
     def test_antivirus_scanner_purges_rogue_modules_and_virus_chat_payloads(self) -> None:
         from antivirus_scanner import SVLAntivirusScanner
 

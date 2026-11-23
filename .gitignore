@@ -32,3 +32,6 @@ data/svl_coreos2_*.json
 
 # Obrazy ISO SVL CoreOS 2 (budowane lokalnie / w CI)
 out/
+
+# Serwer MCP (pełny R/W): bieżący adres tunelu (token jest w data/*.secret)
+data/svl_mcp_tunnel.json

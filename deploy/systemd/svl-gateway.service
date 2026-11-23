@@ -1,0 +1,29 @@
+# SVL Gateway (GUI + API, `npm start`) pod systemd — zalecane, bo po zmianie kodu serwera
+# (git pull / edycja przez AI) gateway restartuje się sam i od razu działa nowa wersja.
+# Instalacja:
+#   sudo cp deploy/systemd/svl-gateway.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now svl-gateway
+# Dostosuj User/WorkingDirectory do swojego katalogu z repozytorium.
+[Unit]
+Description=SVL Gateway (GUI + API) with live repository sync
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=svlos
+Group=svlos
+WorkingDirectory=/opt/svl-python-os
+EnvironmentFile=-/etc/svl-os/svl.env
+EnvironmentFile=-/opt/svl-python-os/.env
+Environment=NODE_ENV=production
+Environment=SVL_SUPERVISED=1
+ExecStart=/usr/bin/env npm start
+Restart=always
+RestartSec=2s
+KillMode=mixed
+TimeoutStopSec=20s
+
+[Install]
+WantedBy=multi-user.target

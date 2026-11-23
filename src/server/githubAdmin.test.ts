@@ -174,3 +174,11 @@ test('gitSync init recovers an unborn .git directory without overwriting workspa
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('computeGitBlobSha matches canonical git hash-object output', async () => {
+  const { computeGitBlobSha } = await import('./githubAdmin.ts');
+  const buf = Buffer.from('SVL CoreOS 2 Debian 13 Trixie\n', 'utf8');
+  const expected = execFileSync('git', ['hash-object', '--stdin'], { input: buf, encoding: 'utf8' }).trim();
+  assert.equal(computeGitBlobSha(buf), expected);
+});
+

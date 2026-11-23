@@ -22,13 +22,18 @@ import {
   FileBarChart2,
   Shield,
   Loader2,
+  Cpu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ArrowDown,
 } from 'lucide-react';
 import {
-  CANONICAL_AGENTS,
   SyncableMessage,
+  TargetAgentSelection,
   buildChatHistoryPayload,
   createUniqueId,
   formatAgentDisplayName,
+  getEffectiveCanonicalAgents,
   parseBielikChatCommand,
   resolveChatInteractiveButtonAction,
   resolveChatTargetAgent,
@@ -36,55 +41,24 @@ import {
   hasSvlOperatorAccessToken,
   validateOllamaHostUrl,
 } from '../utils/svlLogic';
+import {
+  CHAT_WINDOW_STEP,
+  DEFAULT_CHAT_WINDOW_SIZE,
+  computeMessageWindow,
+  nextMessageWindowLimit,
+} from '../utils/chatViewport';
 import { useSvlSync, getCanonicalConversationTitle } from '../utils/svlSyncStore';
 import { AvatarSettingsModal, SvlAvatar } from './AgentAvatar';
 import { RealVisionPanel } from './RealVisionPanel';
 import { renderFormattedContent, renderFormattedLine } from './ChatContentRenderer';
 import { ChatInputField, type ChatInputHandle } from './ChatInputField';
+import { ChatMessageRow } from './ChatMessageRow';
 
 export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
 
-/** Oznaczenie pochodzenia treści odpowiedzi AI (widoczne pod wiadomością). */
-const PROVENANCE_STYLE: Record<NonNullable<ChatMessage['provenance']>, { label: string; hint: string; icon: string; className: string }> = {
-  model_unverified: {
-    label: 'Wiedza modelu — niezweryfikowana',
-    hint: 'Treść wygenerował model językowy z własnej wiedzy; może zawierać błędy. Sprawdź ważne informacje.',
-    icon: '⚠️',
-    className: 'border-amber-500/30 bg-amber-950/20 text-amber-200',
-  },
-  web_sources: {
-    label: 'Ze źródłami z internetu',
-    hint: 'Model korzystał z wyszukiwarki; źródła są podane pod odpowiedzią. Zweryfikuj je przed użyciem.',
-    icon: '🔗',
-    className: 'border-cyan-500/30 bg-cyan-950/20 text-cyan-200',
-  },
-  server_verified: {
-    label: 'Wynik serwera',
-    hint: 'Treść pochodzi z danych systemu lub wykonanego polecenia, nie z modelu językowego.',
-    icon: '✅',
-    className: 'border-emerald-500/30 bg-emerald-950/20 text-emerald-200',
-  },
-  error: {
-    label: 'Brak odpowiedzi modelu',
-    hint: 'Żaden model nie odpowiedział — powód podano w treści.',
-    icon: '❌',
-    className: 'border-rose-500/30 bg-rose-950/20 text-rose-200',
-  },
-};
-
 interface ChatWorkspaceProps {
   onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
-}
-
-/** Usuwa z etykiety modelu powtórzoną na początku nazwę nadawcy (np. „Maya Mitek · …”). */
-function stripSenderPrefix(label: string, names: Array<string | undefined>): string {
-  let out = label.trim();
-  for (const name of names) {
-    const n = String(name || '').trim();
-    if (n && out.toLowerCase().startsWith(`${n.toLowerCase()} · `)) out = out.slice(n.length + 3).trim();
-  }
-  return out;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {
@@ -118,6 +92,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   } = useSvlSync();
 
   const agentsStatus: any[] = agentsData?.agents || [];
+  const effectiveAgents = useMemo(() => getEffectiveCanonicalAgents(agentsStatus), [agentsStatus]);
+  const hasSi2Agent = useMemo(
+    () =>
+      effectiveAgents.some((a) => a.canonicalName === 'SI_System_2') ||
+      systemModules.some((m) => String(m.id || '').startsWith('si-system-2')) ||
+      conversations.some((c) => c.id === 'conv-si-system-2'),
+    [conversations, effectiveAgents, systemModules],
+  );
 
   // Tekst pola wpisywania żyje w ChatInputField (pisanie nie przerysowuje czatu); tu tylko „czy jest tekst”.
   const composerRef = useRef<ChatInputHandle | null>(null);
@@ -130,7 +112,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
-  const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Maya Mitek');
+  const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('System_SI_1');
+  const [jediVmStatus, setJediVmStatus] = useState<any>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
   const [isScanningAv, setIsScanningAv] = useState(false);
@@ -138,6 +121,25 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const queuedMessagesRef = useRef<Array<{ text: string; convId: string }>>([]);
   const [queuedCount, setQueuedCount] = useState(0);
   const handleSendRef = useRef<(text?: string, convId?: string) => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    if (healthData?.jedi_omni_os_vm) {
+      setJediVmStatus(healthData.jedi_omni_os_vm);
+    }
+  }, [healthData?.jedi_omni_os_vm]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void safeFetchJson<any>('/api/jedi/status', { timeoutMs: 8000 }).then((r) => {
+      const vmData = r.data?.vm || (r.data?.nodeId || r.data?.port ? r.data : null);
+      if (!cancelled && r.ok && r.data?.ok && vmData) {
+        setJediVmStatus(vmData);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [serverRevision, isSending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,6 +175,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     return () => window.clearInterval(timer);
   }, [isSending]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const [messageWindowLimit, setMessageWindowLimit] = useState<number>(DEFAULT_CHAT_WINDOW_SIZE);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [controlsExpanded, setControlsExpanded] = useState(false);
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
   const [attachedTextFile, setAttachedTextFile] = useState<{ name: string; content: string } | null>(null);
@@ -216,6 +221,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const prevConvIdRef = useRef('');
   const prevMsgCountRef = useRef<number>(0);
+  const prevScrollHeightRef = useRef<number | null>(null);
 
   const [duplexActive, setDuplexActive] = useState(false);
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
@@ -229,7 +235,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
   const activeConv = conversations.find((c) => c.id === activeConvId) || conversations[0];
 
-  // Ile wiadomości każdego kanału Operator już widział — nowe powiadomienia Mayi na innym kanale
+  // Ile wiadomości każdego kanału Operator już widział — nowe powiadomienia na innym kanale
   // dostają znacznik na liście kanałów.
   const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -278,10 +284,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     const prevCount = prevMsgCountRef.current;
     prevMsgCountRef.current = msgCount;
     const container = messagesScrollRef.current;
-    // Zmiana kanału: zawsze najnowsze wiadomości (np. świeże powiadomienia Mayi na „wszyscy”).
+    // Zmiana kanału: zawsze najnowsze wiadomości i domyślne okno renderu.
     const convId = activeConv?.id || '';
     if (convId !== prevConvIdRef.current) {
       prevConvIdRef.current = convId;
+      prevScrollHeightRef.current = null;
+      setMessageWindowLimit(DEFAULT_CHAT_WINDOW_SIZE);
+      setShowScrollToBottom(false);
       requestAnimationFrame(() => {
         const box = messagesScrollRef.current;
         if (box) box.scrollTop = box.scrollHeight;
@@ -294,8 +303,39 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < 180 || isSending) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setShowScrollToBottom(false);
     }
   }, [activeConv?.id, activeConv?.messages.length, isSending]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const box = messagesScrollRef.current;
+    if (!box) return;
+    const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+    const shouldShow = distanceFromBottom > 260;
+    setShowScrollToBottom((prev) => (prev === shouldShow ? prev : shouldShow));
+  }, []);
+
+  const handleExpandOlderMessages = useCallback((showAll: boolean, totalCount: number) => {
+    const box = messagesScrollRef.current;
+    if (box) {
+      prevScrollHeightRef.current = box.scrollHeight;
+    }
+    setMessageWindowLimit((prev) =>
+      showAll ? Math.max(prev, totalCount) : nextMessageWindowLimit(prev, totalCount, CHAT_WINDOW_STEP),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (prevScrollHeightRef.current === null) return;
+    const prevHeight = prevScrollHeightRef.current;
+    prevScrollHeightRef.current = null;
+    const box = messagesScrollRef.current;
+    if (!box) return;
+    const delta = box.scrollHeight - prevHeight;
+    if (delta > 0) {
+      box.scrollTop += delta;
+    }
+  }, [messageWindowLimit]);
 
   useEffect(() => {
     lastInteractionTimeRef.current = Date.now();
@@ -327,7 +367,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     try {
       const chosenTarget =
         agentOverride ||
-        (targetAgent === 'Bielik' || targetAgent === 'Maya' ? targetAgent : 'Auto');
+        (targetAgent === 'System_SI_1' || targetAgent === 'SI_System_2' || targetAgent === 'JEDI_Omni_OS'
+          ? targetAgent
+          : 'System_SI_1');
       const recentMsgs = (activeConv.messages || []).slice(-12);
       const lastMsg = recentMsgs[recentMsgs.length - 1];
       const historyPayload = recentMsgs.map((m) => ({
@@ -702,8 +744,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const targetConvId = overrideConvId || targetConvObj.id;
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
-        targetConvId === 'conv-svl364-komputer-pokladowy' ||
-        targetConvId.startsWith('conv-agent-');
+        targetConvId === 'conv-system-si-1' ||
+        targetConvId === 'conv-si-system-2';
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
         : targetConvObj.messages.length <= 1 && trimmed
@@ -723,43 +765,54 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
       const historyPayload = buildChatHistoryPayload(targetConvObj.messages, 16);
 
-      const isBielikSlashCmd = Boolean(parseBielikChatCommand(trimmed));
+      const isSlashCmd = Boolean(parseBielikChatCommand(trimmed));
       const resolvedTarget = resolveChatTargetAgent({
         message: trimmed,
         conversationId: targetConvId,
         targetAgent,
-        hasSlashCommand: isBielikSlashCmd,
+        hasSlashCommand: isSlashCmd,
       });
-      const isOnboardChannel =
-        targetConvId === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy';
-      const isExplicitMaya = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Maya';
-      const isExplicitBielik = !isOnboardChannel && resolvedTarget.explicit && resolvedTarget.agent === 'Bielik';
-
+      const isJediVmTarget =
+        targetAgent === 'JEDI_Omni_OS' || resolvedTarget.agent === 'JEDI_Omni_OS';
+      const isSi2Channel =
+        !isJediVmTarget &&
+        (targetConvId === 'conv-si-system-2' ||
+          resolvedTarget.agent === 'SI_System_2' ||
+          targetAgent === 'SI_System_2');
+      const isSystemSi1Channel =
+        !isJediVmTarget &&
+        !isSi2Channel &&
+        (targetConvId === 'conv-system-si-1' || targetAgent === 'System_SI_1');
       const isFamilyDuplex =
-        !isOnboardChannel &&
-        !isExplicitBielik &&
-        !isExplicitMaya &&
+        !isJediVmTarget &&
+        !isSi2Channel &&
+        !isSystemSi1Channel &&
         (targetConvId === 'conv-rodzina-mitek-wszyscy' ||
           targetConvObj.title.toLowerCase().includes('rodzina mitek') ||
           targetAgent === 'Rodzina Mitek' ||
           duplexActive);
 
-      const effectiveTargetAgent = isOnboardChannel
-        ? 'KomputerPokladowy'
-        : isExplicitMaya
-          ? 'Maya'
-          : isExplicitBielik
-            ? 'Bielik'
+      const effectiveTargetAgent = isJediVmTarget
+        ? 'JEDI_Omni_OS'
+        : isSi2Channel
+          ? 'SI_System_2'
+          : isSystemSi1Channel
+            ? 'System_SI_1'
             : isFamilyDuplex
               ? 'Rodzina Mitek'
               : targetAgent;
       setPendingReplyAgent(
-        isOnboardChannel ? 'Komputer pokładowy' : formatAgentDisplayName(resolvedTarget.agent),
+        isJediVmTarget
+          ? 'JEDI Omni-OS v11.5 (AI + VM)'
+          : isSi2Channel
+            ? 'SI_System_2 (SVL-465 · ROOT)'
+            : 'Jyn (System_SI_1)',
       );
 
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
-        timeoutMs: 90000,
+        // Musi pokrywać budżety silników (Grok 60 s, Ollama 75 s, Gemini do 150 s) plus zapas na przełączenie.
+        timeoutMs: 210000,
         body: JSON.stringify({
           message: fullPrompt,
           model: selectedModel,
@@ -807,11 +860,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const replyMsg: ChatMessage = {
         id: serverMsg.id || createUniqueId('asst'),
         role: 'assistant',
-        sender: formatAgentDisplayName(data.sender || 'Bielik'),
-        agentId: data.agentId || 'Bielik',
+        sender: formatAgentDisplayName(data.sender || 'System_SI_1'),
+        agentId: data.agentId || 'System_SI_1',
         modelUsed: data.modelUsed || selectedModel,
         timestamp: serverMsg.timestamp || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: data.reply || 'Brak odpowiedzi z serwera.',
+        imagePreview: data.imagePreview || serverMsg.imagePreview,
         connectionReport: data.connectionReport,
         appliedActions,
         provenance: data.provenance,
@@ -831,12 +885,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         setChatActionError(`Błąd zapisu odpowiedzi w SQLite: ${replyPersist.error}`);
       }
 
-      if (appliedActions || data.connectionReport) {
-        notifyLocalMutation('module', 'chat', data.latestServerRevision || undefined);
-        void refreshAllDomains('chat_command_applied');
-      } else if (!data.persisted) {
-        void refreshDomainModules(['chat']).catch(() => undefined);
-      }
+      void refreshAllDomains('chat_message_global_sync');
     } catch (error: any) {
       setChatActionError(`Błąd wysyłania wiadomości: ${error?.message || String(error)}`);
     } finally {
@@ -933,8 +982,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   };
 
   /**
-   * Obsługa przycisków z wiadomości (pisanych przez Bielika, Maya Mitek lub serwer):
-   * `send:` wysyła wiadomość do AI, `ask:Bielik|Maya` oddaje głos AI, `text:` wstawia tekst
+   * Obsługa przycisków z wiadomości (pisanych przez System_SI_1, JEDI Omni-OS v11.5 lub serwer):
+   * `send:` wysyła wiadomość do VM/AI, `ask:System_SI_1` oddaje głos AI, `text:` wstawia tekst
    * do pola, `tab:`/`nav:` otwiera zakładkę, `action:` uruchamia akcję systemu.
    */
   const handleInteractiveAction = async (actionValue: string, label?: string) => {
@@ -1089,188 +1138,31 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     [],
   );
 
-  // Lista wiadomości (Markdown) renderowana ponownie tylko, gdy zmienią się wiadomości lub kanał —
+  const messageWindow = useMemo(
+    () => computeMessageWindow(visibleMessages.length, messageWindowLimit),
+    [visibleMessages.length, messageWindowLimit],
+  );
+  const windowedMessages = useMemo(
+    () => visibleMessages.slice(messageWindow.startIndex),
+    [visibleMessages, messageWindow.startIndex],
+  );
+
+  // Lista wiadomości (Markdown) renderowana ponownie tylko, gdy zmienią się wiadomości lub okno —
   // nie przy pisaniu, wysyłaniu czy odświeżaniu statusu.
-  const messageListNode = useMemo(() => visibleMessages.map((msg) => {
-              const isUser = msg.role === 'user';
-              const isNotification = msg.role === 'system';
-              const isFamilyChannel = currentConvId === 'conv-rodzina-mitek-wszyscy';
-              const formattedSender = isUser ? msg.sender : formatAgentDisplayName(msg.sender);
-              // Etykieta modelu bez powtórzonej nazwy nadawcy („Maya Mitek · Maya Mitek · …”).
-              const modelLabel = stripSenderPrefix(String(msg.modelUsed || ''), [formattedSender, msg.sender]);
-              const agentMeta = CANONICAL_AGENTS.find(
-                (a) =>
-                  a.canonicalName === msg.sender ||
-                  a.displayName === formattedSender ||
-                  a.id === msg.agentId,
-              );
-
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-1.5 px-1">
-                    <SvlAvatar
-                      sender={formattedSender}
-                      agentId={isUser ? 'operator' : msg.agentId || agentMeta?.id}
-                      size={26}
-                    />
-                    <span
-                      className={`font-semibold ${
-                        agentMeta
-                          ? agentMeta.textClass
-                          : formattedSender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
-                            ? 'text-emerald-300'
-                            : isUser
-                              ? 'text-violet-300'
-                              : 'text-slate-200'
-                      }`}
-                    >
-                      {formattedSender}
-                    </span>
-                    {modelLabel && (
-                      <>
-                        <span aria-hidden="true">·</span>
-                        <span className="font-mono text-slate-500">{modelLabel}</span>
-                      </>
-                    )}
-                    <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums text-slate-500">
-                      {/^\d{4}-\d{2}-\d{2}T/.test(String(msg.timestamp || ''))
-                        ? new Date(msg.timestamp).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-                        : msg.timestamp}
-                    </span>
-                    {msg.sourceOrigin && (
-                      <span
-                        className="max-w-[120px] truncate font-mono text-slate-500/80"
-                        title="Źródło zgłoszone przez klienta aplikacji. Identyfikator nie potwierdza tożsamości autora."
-                      >
-                        sesja: {msg.sourceOrigin.slice(0, 16)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div
-                    className={`max-w-4xl w-full rounded-xl p-4 border shadow-md ${
-                      isUser
-                        ? 'bg-violet-950/30 border-violet-500/35 text-slate-100 max-w-2xl'
-                        : isNotification
-                          ? isFamilyChannel
-                            ? 'bg-gradient-to-br from-amber-950/45 via-[#171520] to-[#111520] border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/10'
-                            : 'bg-amber-950/20 border-amber-500/40 text-amber-100'
-                          : 'bg-[#111520] border-slate-800/90 text-slate-200'
-                    }`}
-                  >
-                    {isNotification && (
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-amber-300/15 pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">
-                        <span className="inline-flex items-center gap-1.5">
-                          <BellRing className="h-3.5 w-3.5" aria-hidden="true" />
-                          {msg.sender === 'Komputer pokładowy' || msg.agentId === 'KomputerPokladowy'
-                            ? 'Raport Komputera pokładowego SVL-364'
-                            : msg.sender === 'Maya' || msg.sender === 'Maya Mitek' || msg.agentId === 'Maya'
-                              ? 'Powiadomienie od Mayi Mitek'
-                              : isFamilyChannel
-                                ? 'Powiadomienie · kanał grupowy'
-                                : 'Wiadomość systemowa'}
-                        </span>
-                        {isFamilyChannel && (
-                          <span className="rounded-full border border-amber-200/20 bg-amber-200/5 px-2 py-0.5 text-[9px]">
-                            Wszyscy
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {msg.imagePreview && (
-                      <div className="mb-3">
-                        <img
-                          src={msg.imagePreview}
-                          alt={msg.fileName || 'Załączony obraz Vision'}
-                          referrerPolicy="no-referrer"
-                          className="max-h-56 rounded-lg border border-slate-700 object-contain"
-                        />
-                      </div>
-                    )}
-
-                    <div className="text-xs sm:text-sm break-words space-y-1">
-                      {renderFormattedContent(msg.content, stableInteractiveAction)}
-                    </div>
-
-                    {msg.connectionReport && (
-                      <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
-                            <CheckCircle2 className="w-4 h-4" />
-                            Raport środowiska SVL_System
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onNavigateTab('agents')}
-                            className="px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-xs font-medium transition-colors whitespace-nowrap"
-                          >
-                            Przejdź do Panelu Agentów
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {msg.role === 'assistant' && msg.provenance && (
-                      <div
-                        className={`mt-3 flex items-start gap-1.5 rounded-md border px-2 py-1 text-[11px] ${
-                          PROVENANCE_STYLE[msg.provenance].className
-                        }`}
-                        title={PROVENANCE_STYLE[msg.provenance].hint}
-                      >
-                        <span aria-hidden="true">{PROVENANCE_STYLE[msg.provenance].icon}</span>
-                        <span>
-                          <strong>{PROVENANCE_STYLE[msg.provenance].label}</strong>
-                          {msg.verificationNote ? ` — ${msg.verificationNote}` : ` — ${PROVENANCE_STYLE[msg.provenance].hint}`}
-                        </span>
-                      </div>
-                    )}
-
-                    {Array.isArray(msg.appliedActions) && msg.appliedActions.length > 0 && (
-                      <div className="mt-4 pt-3 border-t border-slate-800 space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Zapisane zmiany w SQLite (czat -&gt; system):
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onNavigateTab('kernel')}
-                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-violet-300 text-[11px] font-medium whitespace-nowrap"
-                          >
-                            Otwórz Jądro SVL &amp; Sfera
-                          </button>
-                        </div>
-                        <div className="space-y-1 font-mono text-[11px]">
-                          {msg.appliedActions.map((act, actIdx) => (
-                            <div
-                              key={`${act.entity}-${act.entityId}-${actIdx}`}
-                              className={`flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded border ${
-                                act.ok
-                                  ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
-                                  : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
-                              }`}
-                            >
-                              <span className="font-semibold text-violet-300">
-                                {act.entity}:{act.entityId}
-                              </span>
-                              <span className="flex-1 text-slate-300 truncate">{act.summary}</span>
-                              <span className="tabular-nums text-slate-400">
-                                {act.revision ? `rev ${act.revision} · ` : ''}
-                                {act.ok ? 'OK' : 'ERR'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            }), [visibleMessages, currentConvId, stableInteractiveAction, onNavigateTab]);
+  const isFamilyChannel = currentConvId === 'conv-rodzina-mitek-wszyscy';
+  const messageListNode = useMemo(
+    () =>
+      windowedMessages.map((msg) => (
+        <ChatMessageRow
+          key={msg.id}
+          msg={msg}
+          isFamilyChannel={isFamilyChannel}
+          onInteractiveAction={stableInteractiveAction}
+          onNavigateTab={onNavigateTab}
+        />
+      )),
+    [windowedMessages, isFamilyChannel, stableInteractiveAction, onNavigateTab],
+  );
 
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-[#0B0D13] cpd-theme-dark">
@@ -1287,8 +1179,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       {/* Left Open WebUI Sidebar: Conversation History & Agent Status Summary */}
       <aside
         className={`${
-          mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-40 flex shadow-2xl' : 'hidden lg:flex'
-        } w-72 lg:w-60 xl:w-64 shrink-0 flex-col border-r border-slate-800/80 bg-[#111520]`}
+          mobileSidebarOpen
+            ? 'fixed inset-y-0 left-0 z-40 flex w-[min(86vw,320px)] max-w-full pb-safe shadow-2xl'
+            : desktopSidebarOpen
+              ? 'hidden lg:flex lg:w-64 xl:w-72'
+              : 'hidden'
+        } shrink-0 flex-col border-r border-slate-800/80 bg-[#111520]`}
       >
         <div className="p-3 border-b border-slate-800/80 space-y-2">
           <button
@@ -1430,15 +1326,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
-            const isOnboardChan = conv.id === 'conv-svl364-komputer-pokladowy';
+            const isSystemSi1Chan = conv.id === 'conv-system-si-1';
+            const isSi2Chan = conv.id === 'conv-si-system-2';
             return (
               <div
                 key={conv.id}
                 className={`group flex items-center justify-between rounded-lg px-3 py-2.5 text-xs transition-colors ${
                   isActive
-                    ? isFamilyChan || isOnboardChan
+                    ? isFamilyChan
                       ? 'bg-emerald-600/20 text-slate-100 border border-emerald-500/40'
-                      : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
+                      : isSi2Chan
+                        ? 'bg-violet-600/20 text-slate-100 border border-violet-500/40'
+                        : isSystemSi1Chan
+                          ? 'bg-cyan-600/20 text-slate-100 border border-cyan-500/40'
+                          : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
                     : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent'
                 }`}
               >
@@ -1448,12 +1349,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                     setActiveConvId(conv.id);
                     if (isFamilyChan) {
                       setTargetAgent('Rodzina Mitek');
-                    } else if (conv.id === 'conv-agent-bielik') {
-                      setTargetAgent('Bielik');
-                    } else if (conv.id === 'conv-agent-maya') {
-                      setTargetAgent('Maya');
-                    } else if (isOnboardChan) {
-                      setTargetAgent('KomputerPokladowy');
+                    } else if (isSi2Chan) {
+                      setTargetAgent('SI_System_2');
+                    } else if (isSystemSi1Chan) {
+                      setTargetAgent('System_SI_1');
                     }
                     setMobileSidebarOpen(false);
                   }}
@@ -1461,12 +1360,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 >
                   <div className="font-medium truncate flex items-center gap-1.5">
                     {isFamilyChan && <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                    {isOnboardChan && <Terminal className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                    {isSystemSi1Chan && <Shield className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                    {isSi2Chan && <Cpu className="w-3.5 h-3.5 text-violet-400 shrink-0" />}
                     <span className="truncate">{conv.title}</span>
                     {unseenNotifications > 0 && (
                       <span
                         className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200"
-                        title="Nowe powiadomienia od Mayi Mitek"
+                        title="Nowe powiadomienia systemowe"
                       >
                         <BellRing className="w-3 h-3" aria-hidden="true" />
                         {unseenNotifications}
@@ -1487,8 +1387,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </button>
                 {conversations.length > 1 &&
                   !isFamilyChan &&
-                  conv.id !== 'conv-svl364-komputer-pokladowy' &&
-                  !conv.id.startsWith('conv-agent-') && (
+                  conv.id !== 'conv-system-si-1' &&
+                  conv.id !== 'conv-si-system-2' && (
                   <button
                     type="button"
                     aria-label={`Usuń konwersację ${conv.title}`}
@@ -1507,7 +1407,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         <div className="p-4 border-t border-slate-800/80 bg-[#0D1018] space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-300">
-              Rodzina Mitek ({CANONICAL_AGENTS.length} AI)
+              Rodzina Mitek ({effectiveAgents.length} AI)
             </span>
             <button
               type="button"
@@ -1521,7 +1421,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             </button>
           </div>
           <div className="space-y-1.5">
-            {CANONICAL_AGENTS.map((meta) => {
+            {effectiveAgents.map((meta) => {
               const live = agentsStatus.find((a) => a.canonical_name === meta.canonicalName);
               const isOnline = ['ONLINE_LOCAL_WORKER', 'BUSY_LOCAL_WORKER'].includes(live?.status);
               return (
@@ -1552,17 +1452,32 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
       {/* Main Full-Screen ChatGPT-Work Responsive Chat Column */}
       <div className="flex-1 flex flex-col h-full min-w-0">
-        {/* Responsive Toolbar: stacked clean 2-row on Android (<sm), compact single-row on Desktop (sm+) */}
-        <div className="px-2.5 sm:px-3 py-1.5 border-b border-slate-800/80 bg-[#111520]/95 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 shrink-0">
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {/* Responsive Toolbar: stacked clean 2-row on Mobile/Tablet (<lg), compact single-row on Desktop */}
+        <div className="px-2.5 sm:px-3 py-1.5 border-b border-slate-800/80 bg-[#111520]/95 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1.5 shrink-0">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 flex-1">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
               aria-label={`Historia konwersacji (${conversations.length})`}
-              className="lg:hidden min-h-[38px] sm:min-h-0 px-2.5 py-1 rounded-md bg-[#0B0D13] border border-slate-700/80 text-xs font-medium text-slate-200 flex items-center gap-1 whitespace-nowrap shrink-0"
+              className="lg:hidden min-h-[38px] px-2.5 py-1 rounded-md bg-[#0B0D13] border border-slate-700/80 text-xs font-medium text-slate-200 flex items-center gap-1 whitespace-nowrap shrink-0"
             >
               <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
               <span>({conversations.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDesktopSidebarOpen((v) => !v)}
+              aria-expanded={desktopSidebarOpen}
+              aria-label={desktopSidebarOpen ? 'Zwiń panel konwersacji' : 'Rozwiń panel konwersacji'}
+              title={desktopSidebarOpen ? 'Zwiń panel konwersacji' : 'Rozwiń panel konwersacji'}
+              className="hidden lg:inline-flex items-center justify-center h-[30px] w-[30px] rounded-md bg-[#0B0D13] hover:bg-slate-800 border border-slate-700/80 text-slate-300 shrink-0 transition-colors cursor-pointer"
+            >
+              {desktopSidebarOpen ? (
+                <PanelLeftClose className="w-3.5 h-3.5 text-violet-400" />
+              ) : (
+                <PanelLeftOpen className="w-3.5 h-3.5 text-violet-400" />
+              )}
             </button>
 
             <label htmlFor="openwebui-agent-select" className="sr-only">
@@ -1572,23 +1487,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               id="openwebui-agent-select"
               value={targetAgent}
               onChange={(e) => {
-                const val = e.target.value as 'Auto' | 'Rodzina Mitek' | 'Bielik' | 'Maya' | 'KomputerPokladowy';
+                const val = e.target.value as TargetAgentSelection;
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
-                } else if (val === 'KomputerPokladowy') {
-                  setActiveConvId('conv-svl364-komputer-pokladowy');
-                  setTargetAgent('KomputerPokladowy');
+                } else if (val === 'System_SI_1') {
+                  setActiveConvId('conv-system-si-1');
+                  setTargetAgent('System_SI_1');
+                } else if (val === 'SI_System_2') {
+                  openAgentChannel('SI_System_2');
                 } else {
                   setTargetAgent(val);
                 }
               }}
-              className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[220px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
+              className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
             >
+              <option value="System_SI_1">Jyn (System_SI_1 · Infrastruktura · ROOT)</option>
+              {(hasSi2Agent || targetAgent === 'SI_System_2') && (
+                <option value="SI_System_2">SI_System_2 (Rdzeń Floty SVL-465 · ROOT)</option>
+              )}
+              <option value="JEDI_Omni_OS">JEDI Omni-OS v12 (AI + VM · ROOT)</option>
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
-              <option value="KomputerPokladowy">Komputer pokładowy SVL-364 (SSH + MCP)</option>
-              <option value="Bielik">Bielik (3.2 Vision 11B · ROOT)</option>
-              <option value="Maya">Maya Mitek (AI Statku SVL-364 · ROOT)</option>
-              <option value="Auto">Auto-Router</option>
+              <option value="Auto">Auto-Router (JEDI VM -&gt; System_SI_1)</option>
             </select>
 
             <label htmlFor="openwebui-model-select" className="sr-only">
@@ -1621,7 +1540,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   id="openwebui-model-select"
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
-                  className="min-w-0 min-h-[38px] sm:min-h-0 flex-1 sm:max-w-[245px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
+                  className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[245px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
                   <optgroup label={`Gemini${geminiConfigured ? ' · serwer AI Studio' : ' · brak GEMINI_API_KEY'}`}>
                     {geminiModels.map((name) => (
@@ -1630,56 +1549,76 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       </option>
                     ))}
                   </optgroup>
-                  <optgroup label="Ollama · Llama 3.2 Vision & Lokalny LLM">
-                  <option value="ollama:llama3.2-vision:11b">
-                    {hasVision11b
-                      ? `Ollama: ${visionExactName} (Llama 3.2 Vision 11B · multimodalny · gotowy)`
-                      : isPullingVision
-                        ? `Ollama: llama3.2-vision:11b (Vision 11B · pobieranie ${pullState?.percent ?? 0}%)`
-                        : 'Ollama: llama3.2-vision:11b (Llama 3.2 Vision 11B · skonfigurowany)'}
-                  </option>
-                  <option value="ollama:llama3.2-vision:90b">
-                    {hasVision90b
-                      ? 'Ollama: llama3.2-vision:90b (Llama 3.2 Vision 90B · GPU · gotowy)'
-                      : 'Ollama: llama3.2-vision:90b (Llama 3.2 Vision 90B · statek/GPU)'}
-                  </option>
-                  <option value="ollama:dolphin-llama3:8b-v2.9-q2_K">
-                    {hasDolphin8b
-                      ? 'Ollama: dolphin-llama3:8b-v2.9-q2_K (standardowy lokalny · uncensored · gotowy)'
-                      : 'Ollama: dolphin-llama3:8b-v2.9-q2_K (standardowy lokalny · niedostępny)'}
-                  </option>
-                  {hasApexUncensored && (
-                    <option value="ollama:svl364-apex-uncensored:latest">
-                      SVL CoreOS 2 · Apex-Uncensored (Maya Mitek · SVL-364 Ship)
-                    </option>
-                  )}
-                  {ollamaModels
-                    .filter(
-                      (m: any) =>
-                        m.name !== 'svl364-apex-uncensored:latest' &&
-                        m.name !== 'dolphin-llama3:8b-v2.9-q2_K' &&
-                        !String(m?.name || '').startsWith('llama3.2-vision'),
-                    )
-                    .map((m: any) => (
-                      <option key={m.name} value={`ollama:${m.name}`}>
-                        Ollama: {m.name} ({m.parameter_size || 'LLM'})
-                      </option>
-                    ))}
+                  <optgroup label="Ollama & Lokalny AI (W pełni odcenzurowane / Root)">
+                    <option value="ollama:dolphin-llama3:8b-v2.9-q2_K">Ollama: dolphin-llama3:8b (Lokalny · 100% Uncensored)</option>
+                    <option value="ollama:svl364-apex-uncensored:latest">SVL CoreOS 2 · Apex-Uncensored (SVL-364 Ship)</option>
+                    <option value="ollama:deepseek-r1:7b">Ollama: deepseek-r1:7b (DeepSeek Reasoning · Uncensored)</option>
+                    <option value="ollama:qwen2.5:7b">Ollama: qwen2.5:7b (Qwen 2.5 7B · Lokalny Multilingual)</option>
+                    <option value="ollama:llama3:8b">Ollama: llama3:8b (Llama 3 8B · Open Local)</option>
+                    <option value="ollama:mistral:7b">Ollama: mistral:7b (Mistral 7B Instruct · Uncensored)</option>
+                    <option value="ollama:gemma2:9b">Ollama: gemma2:9b (Gemma 2 9B · Google Open)</option>
+                    <option value="ollama:phi3:3.8b">Ollama: phi3:3.8b (Phi-3 3.8B · Compact Local)</option>
+                    <option value="ollama:codellama:7b">Ollama: codellama:7b (Code Llama 7B · Developer)</option>
+                    <option value="ollama:llama3:70b">Ollama: llama3:70b (Llama 3 70B · Massive GPU)</option>
+                    <option value="ollama:qwen2.5-coder:7b">Ollama: qwen2.5-coder:7b (Qwen 2.5 Coder 7B)</option>
+                    <option value="ollama:llama3.2-vision:11b">Ollama: llama3.2-vision:11b (Vision 11B Multimodal)</option>
+                    <option value="ollama:llama3.2-vision:90b">Ollama: llama3.2-vision:90b (Vision 90B GPU)</option>
+                    {ollamaModels
+                      .filter(
+                        (m: any) =>
+                          m.name !== 'svl364-apex-uncensored:latest' &&
+                          m.name !== 'dolphin-llama3:8b-v2.9-q2_K' &&
+                          m.name !== 'deepseek-r1:7b' &&
+                          m.name !== 'qwen2.5:7b' &&
+                          m.name !== 'llama3:8b' &&
+                          m.name !== 'mistral:7b' &&
+                          m.name !== 'gemma2:9b' &&
+                          m.name !== 'phi3:3.8b' &&
+                          m.name !== 'codellama:7b' &&
+                          m.name !== 'llama3:70b' &&
+                          m.name !== 'qwen2.5-coder:7b' &&
+                          !String(m?.name || '').startsWith('llama3.2-vision'),
+                      )
+                      .map((m: any) => (
+                        <option key={m.name} value={`ollama:${m.name}`}>
+                          Ollama: {m.name} ({m.parameter_size || 'LLM'})
+                        </option>
+                      ))}
                   </optgroup>
                 </select>
               );
             })()}
           </div>
 
-          <div className="flex items-center justify-between sm:justify-end gap-1.5 shrink-0 overflow-x-auto no-scrollbar">
+          <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center justify-end gap-1.5 shrink-0 w-full lg:w-auto">
+            <button
+              type="button"
+              onClick={() => void handleSendMessage('/jedi status')}
+              disabled={isSending}
+              title={
+                jediVmStatus?.running
+                  ? `JEDI Omni-OS v12 VM online (${jediVmStatus.node_id} · TCP :${jediVmStatus.port} · ROOT_UNRESTRICTED · przetworzono: ${jediVmStatus.metrics?.processed ?? 0}). Kliknij, aby sprawdzić status na czacie.`
+                  : 'Sprawdź stan maszyny wirtualnej JEDI Omni-OS v12 (/jedi status)'
+              }
+              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 text-[11px] font-mono font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Cpu className={`w-3.5 h-3.5 shrink-0 ${jediVmStatus?.running ? 'text-emerald-300' : 'text-amber-300'}`} />
+              <span className="hidden xl:inline">
+                {jediVmStatus?.running
+                  ? `JEDI VM v12 :${jediVmStatus.port} (${jediVmStatus.metrics?.processed ?? 0})`
+                  : 'JEDI VM v12'}
+              </span>
+              <span className="xl:hidden">JEDI v12</span>
+            </button>
+
             <button
               type="button"
               onClick={() => void handleRunAntivirusScan()}
               disabled={isScanningAv || isSending}
               title="Przeskanuj system pod kątem wirusów (SVL-365 Sentinel AV), usuń zagrożenia i zsynchronizuj zmiany z czatu"
-              className="min-h-[36px] sm:min-h-0 px-2.5 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <Shield className={`w-3.5 h-3.5 text-emerald-300 ${isScanningAv ? 'animate-spin' : ''}`} />
+              <Shield className={`w-3.5 h-3.5 shrink-0 text-emerald-300 ${isScanningAv ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">{isScanningAv ? 'Skanowanie AV...' : 'Skanuj Wirusy (AV)'}</span>
               <span className="sm:hidden">AV</span>
             </button>
@@ -1688,10 +1627,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               type="button"
               onClick={() => void handleEmitComprehensiveSvlReport()}
               disabled={isGeneratingSvlReport || isSending}
-              title="Wygeneruj pełny, estetyczny raport SVL_System (Bielik / System) na kanale wszyscy"
-              className="min-h-[36px] sm:min-h-0 px-2.5 py-1 rounded-md bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
+              title="Wygeneruj pełny, estetyczny raport SVL_System (System_SI_1) na aktywnym kanale"
+              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <FileBarChart2 className={`w-3.5 h-3.5 text-cyan-300 ${isGeneratingSvlReport ? 'animate-spin' : ''}`} />
+              <FileBarChart2 className={`w-3.5 h-3.5 shrink-0 text-cyan-300 ${isGeneratingSvlReport ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Raport SVL_System</span>
               <span className="sm:hidden">Raport</span>
             </button>
@@ -1701,13 +1640,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               onClick={() => setDuplexActive((v) => !v)}
               title={duplexActive ? 'Czat obustronny aktywny (AI rozmawia swobodnie i przejmuje inicjatywę)' : 'Czat obustronny wstrzymany'}
               aria-label="Przełącz czat obustronny"
-              className={`min-h-[36px] sm:min-h-0 px-2 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
+              className={`min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
                 duplexActive
                   ? 'bg-violet-600/25 border-violet-500/50 text-violet-200 hover:bg-violet-600/35 shadow-sm'
                   : 'bg-[#0B0D13] border-slate-700/80 text-slate-400 hover:text-slate-300'
               }`}
             >
-              <Radio className={`w-3 h-3 ${duplexActive ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
+              <Radio className={`w-3 h-3 shrink-0 ${duplexActive ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
               <span className="hidden sm:inline">{duplexActive ? 'Czat obustronny: WŁ' : 'Obustronny: WYŁ'}</span>
               <span className="sm:hidden">{duplexActive ? '2-Way' : 'Ręczny'}</span>
             </button>
@@ -1717,20 +1656,20 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               disabled={isSyncing}
               title="Synchronizuj aplikację"
               aria-label="Synchronizuj aplikację"
-              className="min-h-[36px] sm:min-h-0 px-2 py-1 rounded-md bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium flex items-center gap-1 whitespace-nowrap shrink-0"
+              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium flex items-center gap-1 whitespace-nowrap shrink-0"
             >
-              <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3 h-3 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
               <span>{isSyncing ? 'Sync...' : 'Sync'}</span>
             </button>
             <button
               type="button"
               onClick={() => setControlsExpanded((v) => !v)}
               aria-expanded={controlsExpanded}
-              className="min-h-[36px] sm:min-h-0 px-2 py-1 rounded-md bg-[#0B0D13] hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 flex items-center gap-1 whitespace-nowrap shrink-0"
+              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-[#0B0D13] hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 flex items-center gap-1 whitespace-nowrap shrink-0"
             >
-              <SlidersHorizontal className="w-3 h-3 text-violet-400" />
+              <SlidersHorizontal className="w-3 h-3 shrink-0 text-violet-400" />
               <span>{controlsExpanded ? 'Ukryj' : 'Opcje'}</span>
-              {controlsExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {controlsExpanded ? <ChevronUp className="w-3 h-3 shrink-0" /> : <ChevronDown className="w-3 h-3 shrink-0" />}
             </button>
           </div>
         </div>
@@ -1740,7 +1679,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           <div className="border-b border-slate-800/80 bg-[#0D1018] shrink-0">
             <div className="px-3 py-1.5 border-b border-slate-800/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-400 font-mono tabular-nums">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-emerald-300 font-semibold">Tryb czatu: SQLite WAL (Bielik i Maya Mitek)</span>
+                <span className="text-emerald-300 font-semibold">
+                  Tryb czatu: JEDI Omni-OS v12 (ROOT_UNRESTRICTED · AI + VM) + {effectiveAgents.map((a) => a.canonicalName).join(' + ')} (SQLite WAL)
+                </span>
                 <span aria-hidden="true">·</span>
                 <span>Vision: {selectedModelSupportsVision ? 'Tak' : 'Nie'}</span>
                 <span aria-hidden="true">·</span>
@@ -1983,63 +1924,117 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         )}
 
-        {/* Chat Messages Stream — Fullscreen ChatGPT-Work Column */}
-        <div ref={messagesScrollRef} className="flex-1 min-h-0 overflow-y-auto px-2.5 py-3 md:p-6">
-          <div className="max-w-6xl mx-auto w-full space-y-4">
-          {visibleMessages.length === 0 && (
-            <div className="my-6 sm:my-12 rounded-2xl border border-slate-800/80 bg-[#111520]/80 p-5 sm:p-7 text-center space-y-4 shadow-lg">
-              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600/20 border border-violet-500/35 text-violet-300">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <div className="space-y-1.5">
-                <h2 className="text-base sm:text-lg font-semibold text-slate-100">
-                  {activeConv?.title || 'SVL CoreOS 2 · Czat Roboczy'}
-                </h2>
-                <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
-                  {hasAnyChatAuth
-                    ? 'Kanał zsynchronizowany z bazą SQLite WAL. Możesz prowadzić rozmowę z Bielikiem i wydawać mu polecenia (/pomoc, /status, /root).'
-                    : 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wczytać historię z SQLite WAL i prowadzić rozmowę.'}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setInput('Sprawdź stan jądra SVL i modułów w bazie SQLite.');
-                    composerRef.current?.focus();
-                  }}
-                  className="px-3 py-2 rounded-lg bg-[#0B0D13] hover:bg-slate-800/90 border border-slate-700/80 text-xs text-slate-200 transition-colors"
+        {/* Chat Messages Stream — Responsive Progressive Window + Scroll FAB */}
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <div
+            ref={messagesScrollRef}
+            onScroll={handleMessagesScroll}
+            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden svl-scroll-smooth px-2.5 py-3 sm:px-4 md:p-6"
+          >
+            <div className="max-w-6xl mx-auto w-full space-y-4">
+              {messageWindow.hasMore && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-[#111520]/90 px-3 py-2 text-xs">
+                  <span className="font-mono tabular-nums text-slate-400">
+                    Wyświetlono {windowedMessages.length} z {visibleMessages.length} wiadomości
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleExpandOlderMessages(false, visibleMessages.length)}
+                      className="min-h-[34px] px-2.5 py-1 rounded-lg bg-violet-600/20 hover:bg-violet-600/35 border border-violet-500/40 text-violet-200 font-semibold transition-colors cursor-pointer"
+                    >
+                      Pokaż starsze (+{Math.min(CHAT_WINDOW_STEP, messageWindow.hiddenCount)})
+                    </button>
+                    {messageWindow.hiddenCount > CHAT_WINDOW_STEP && (
+                      <button
+                        type="button"
+                        onClick={() => handleExpandOlderMessages(true, visibleMessages.length)}
+                        className="min-h-[34px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors cursor-pointer"
+                      >
+                        Wszystkie ({visibleMessages.length})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {visibleMessages.length === 0 && (
+                <div className="my-6 sm:my-12 rounded-2xl border border-slate-800/80 bg-[#111520]/80 p-5 sm:p-7 text-center space-y-4 shadow-lg">
+                  <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-violet-600/20 border border-violet-500/35 text-violet-300">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h2 className="text-base sm:text-lg font-semibold text-slate-100">
+                      {activeConv?.title || 'SVL CoreOS 2 · Czat Roboczy'}
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-400 max-w-lg mx-auto leading-relaxed">
+                      {hasAnyChatAuth
+                        ? 'Kanał zsynchronizowany z bazą SQLite WAL. JEDI Omni-OS v12 (ROOT_UNRESTRICTED) generuje pełne odpowiedzi AI i przetwarza polecenia OS w czasie rzeczywistym (/jedi status, /jedi apply-v12-core, /synchronizuj, /pomoc, /status, /root).'
+                        : 'Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby wczytać historię z SQLite WAL i prowadzić rozmowę.'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleSendMessage('/jedi status')}
+                      className="min-h-[38px] px-3 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-xs text-emerald-200 font-mono transition-colors"
+                    >
+                      /jedi status (VM v12)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInput('Sprawdź stan jądra SVL i modułów w bazie SQLite.');
+                        composerRef.current?.focus();
+                      }}
+                      className="min-h-[38px] px-3 py-2 rounded-lg bg-[#0B0D13] hover:bg-slate-800/90 border border-slate-700/80 text-xs text-slate-200 transition-colors"
+                    >
+                      Diagnostyka systemu SVL
+                    </button>
+                  </div>
+                </div>
+              )}
+              {messageListNode}
+              {isSending && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-center gap-2.5 rounded-xl border border-indigo-500/25 bg-[#121623]/90 px-3.5 py-2.5 text-xs text-slate-300 max-w-md"
                 >
-                  Diagnostyka systemu SVL
-                </button>
-              </div>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" aria-hidden="true" />
+                  <span>
+                    <strong className="font-semibold text-indigo-200">{pendingReplyAgent}</strong> przygotowuje odpowiedź
+                    {sendingElapsedSec > 0 ? ` (${sendingElapsedSec} s)…` : '…'}
+                  </span>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
-          )}
-          {messageListNode}
-          {isSending && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="flex items-center gap-2.5 rounded-xl border border-indigo-500/25 bg-[#121623]/90 px-3.5 py-2.5 text-xs text-slate-300 max-w-md"
-            >
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400 shrink-0" aria-hidden="true" />
-              <span>
-                <strong className="font-semibold text-indigo-200">{pendingReplyAgent}</strong> przygotowuje odpowiedź
-                {sendingElapsedSec > 0 ? ` (${sendingElapsedSec} s)…` : '…'}
-              </span>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
           </div>
+
+          {showScrollToBottom && (
+            <button
+              type="button"
+              onClick={() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                setShowScrollToBottom(false);
+              }}
+              aria-label="Przewiń na dół konwersacji"
+              className="absolute bottom-3 right-3 sm:right-6 z-20 min-h-[38px] px-3 py-1.5 rounded-full bg-violet-600/95 hover:bg-violet-500 text-white text-xs font-semibold shadow-xl border border-violet-400/50 flex items-center gap-1.5 backdrop-blur-sm transition-all cursor-pointer"
+            >
+              <ArrowDown className="w-3.5 h-3.5" />
+              <span>Na dół</span>
+            </button>
+          )}
         </div>
 
         {/* Attachment Preview Strip */}
         {(attachedImage || attachedTextFile) && (
-          <div className="px-4 py-2 bg-[#111520] border-t border-slate-800 flex items-center gap-3">
+          <div className="px-2.5 sm:px-4 py-2 bg-[#111520] border-t border-slate-800 flex flex-wrap items-center gap-2">
             {attachedImage && (
-              <div className="flex items-center gap-2 bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-1.5 text-xs">
-                <ImageIcon className="w-4 h-4 text-violet-400" />
-                <span className="truncate max-w-[180px]">{attachedImage.name}</span>
+              <div className="flex flex-wrap items-center gap-2 bg-[#0B0D13] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs max-w-full">
+                <ImageIcon className="w-4 h-4 text-violet-400 shrink-0" />
+                <span className="truncate max-w-[160px] sm:max-w-[240px]">{attachedImage.name}</span>
                 {!selectedModelSupportsVision && (
                   <span className="text-amber-400 text-[11px]">
                     (Wybrany model nie obsługuje Vision!)
@@ -2047,21 +2042,23 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 )}
                 <button
                   type="button"
+                  aria-label="Usuń załączony obraz"
                   onClick={() => setAttachedImage(null)}
-                  className="text-slate-400 hover:text-rose-400"
+                  className="text-slate-400 hover:text-rose-400 p-0.5"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
             {attachedTextFile && (
-              <div className="flex items-center gap-2 bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-1.5 text-xs">
-                <FileText className="w-4 h-4 text-emerald-400" />
-                <span className="truncate max-w-[180px]">{attachedTextFile.name}</span>
+              <div className="flex items-center gap-2 bg-[#0B0D13] border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs max-w-full">
+                <FileText className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="truncate max-w-[160px] sm:max-w-[240px]">{attachedTextFile.name}</span>
                 <button
                   type="button"
+                  aria-label="Usuń załączony plik"
                   onClick={() => setAttachedTextFile(null)}
-                  className="text-slate-400 hover:text-rose-400"
+                  className="text-slate-400 hover:text-rose-400 p-0.5"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -2076,39 +2073,42 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             e.preventDefault();
             void handleSendMessage();
           }}
-          className="p-2.5 sm:p-3.5 border-t border-slate-800/80 bg-[#111520] shrink-0"
+          className="p-2 sm:p-3.5 pb-safe border-t border-slate-800/80 bg-[#111520] shrink-0"
         >
           {/* Quick Action Toolbar / Duplex Trigger */}
-          <div className="max-w-6xl mx-auto mb-2 flex items-center justify-between gap-2 px-0.5">
-            <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:flex-wrap py-0.5 no-scrollbar min-w-0 flex-1">
+          <div className="max-w-6xl mx-auto mb-1.5 sm:mb-2 flex items-center justify-between gap-2 px-0.5">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 py-0.5 min-w-0 flex-1">
               <button
                 type="button"
                 onClick={() => void handleTriggerProactiveChat()}
                 disabled={isSending || isProactiveLoading}
                 aria-label="Swobodna rozmowa AI — niech agent zainicjuje rozmowę"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 active:scale-95 text-white text-xs font-semibold transition-all shadow-md disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 active:scale-95 text-white text-[11px] sm:text-xs font-semibold transition-all shadow-md disabled:opacity-50 cursor-pointer whitespace-nowrap"
               >
-                <Sparkles className={`w-3.5 h-3.5 ${isProactiveLoading ? 'animate-spin' : ''}`} />
-                <span>{isProactiveLoading ? 'AI myśli i pisze...' : '🎙️ Swobodna rozmowa AI'}</span>
+                <Sparkles className={`w-3.5 h-3.5 shrink-0 ${isProactiveLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">{isProactiveLoading ? 'AI myśli i pisze...' : '🎙️ Swobodna rozmowa AI'}</span>
+                <span className="sm:hidden">{isProactiveLoading ? 'AI pisze...' : 'Swobodna AI'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => void handleEmitComprehensiveSvlReport()}
                 disabled={isSending || isGeneratingSvlReport}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/45 text-cyan-200 text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/45 text-cyan-200 text-[11px] sm:text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
               >
-                <FileBarChart2 className="w-3.5 h-3.5 text-cyan-300" />
-                <span>{isGeneratingSvlReport ? 'Generowanie raportu...' : '📊 Raport SVL_System'}</span>
+                <FileBarChart2 className="w-3.5 h-3.5 shrink-0 text-cyan-300" />
+                <span className="hidden sm:inline">{isGeneratingSvlReport ? 'Generowanie raportu...' : '📊 Raport SVL_System'}</span>
+                <span className="sm:hidden">{isGeneratingSvlReport ? 'Raport...' : 'Raport SVL'}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setRealVisionOpen(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/45 text-violet-200 text-xs font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/45 text-violet-200 text-[11px] sm:text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
               >
-                <ImageIcon className="w-3.5 h-3.5 text-violet-300" />
-                <span>👁️ Real Vision (Ollama 3.2)</span>
+                <ImageIcon className="w-3.5 h-3.5 shrink-0 text-violet-300" />
+                <span className="hidden sm:inline">👁️ Real Vision (Ollama 3.2)</span>
+                <span className="sm:hidden">Real Vision</span>
               </button>
 
               <button
@@ -2117,9 +2117,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 disabled={isSending}
                 title={hasInput ? 'Wygeneruj obraz z wpisanego promptu' : 'Wpisz opis obrazu w polu poniżej, a potem kliknij tutaj'}
                 aria-label="Wygeneruj obraz z wpisanego promptu"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-medium transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap shrink-0"
+                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 text-[11px] sm:text-xs font-medium transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
               >
-                <ImageIcon className={`w-3.5 h-3.5 text-cyan-400 ${isGeneratingImage ? 'animate-pulse' : ''}`} />
+                <ImageIcon className={`w-3.5 h-3.5 shrink-0 text-cyan-400 ${isGeneratingImage ? 'animate-pulse' : ''}`} />
                 <span>{isGeneratingImage ? 'Generowanie...' : 'Generuj obraz'}</span>
               </button>
             </div>
@@ -2130,7 +2130,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             </div>
           </div>
 
-          <div className="max-w-6xl mx-auto flex items-center gap-2">
+          <div className="max-w-6xl mx-auto flex items-end gap-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -2150,17 +2150,24 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             <ChatInputField
               ref={composerRef}
               onEmptyChange={handleInputEmptyChange}
+              compactPlaceholder={
+                targetAgent === 'JEDI_Omni_OS'
+                  ? 'Prompt / polecenie dla JEDI Omni-OS...'
+                  : targetAgent === 'SI_System_2' || activeConv?.id === 'conv-si-system-2'
+                    ? 'Polecenie dla SI_System_2...'
+                    : 'Wpisz polecenie lub wiadomość...'
+              }
               placeholder={
-                activeConv?.id === 'conv-svl364-komputer-pokladowy' || targetAgent === 'KomputerPokladowy'
-                  ? 'Wydaj polecenie dla Komputera pokładowego SVL-364 (SSH + MCP · ROOT) lub zadaj pytanie...'
-                  : targetAgent === 'Bielik' || activeConv?.id === 'conv-agent-bielik'
-                    ? 'Wydaj polecenie dla Bielik (/pomoc, /status, /root, /pamiec, /modul...) lub zadaj pytanie...'
-                    : targetAgent === 'Maya' || activeConv?.id === 'conv-agent-maya'
-                      ? 'Wydaj polecenie dla Mayi Mitek (AI Statku SVL-364 · ROOT) lub zadaj pytanie...'
-                      : 'Wpisz wiadomość, @Bielik, @Maya Mitek lub polecenie dla systemu SVL...'
+                targetAgent === 'JEDI_Omni_OS'
+                  ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
+                  : targetAgent === 'SI_System_2' || activeConv?.id === 'conv-si-system-2'
+                    ? 'Wydaj polecenie dla SI_System_2 (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
+                    : activeConv?.id === 'conv-system-si-1' || targetAgent === 'System_SI_1'
+                      ? 'Wydaj polecenie dla Jyn (System_SI_1) przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
+                      : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn i SI_System_2...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
-              className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
+              className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-[13px] sm:text-sm leading-snug text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"
             />
 
             <button
@@ -2169,7 +2176,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               title={isSending ? 'AI odpowiada — wiadomość zostanie wysłana zaraz po odpowiedzi' : undefined}
               className="min-h-[44px] px-3.5 md:px-5 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 md:gap-2 transition-colors whitespace-nowrap shrink-0"
             >
-              <Send className="w-4 h-4" />
+              <Send className="w-4 h-4 shrink-0" />
               <span>
                 {isSending ? (hasInput ? 'Do kolejki' : 'Wysyłanie...') : 'Wyślij'}
                 {queuedCount > 0 ? ` (${queuedCount} w kolejce)` : ''}
@@ -2186,7 +2193,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           role="dialog"
           aria-modal="true"
           aria-label="SVL Real Vision Ollama 3.2 Vision Studio"
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 md:p-6"
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6"
         >
           <RealVisionPanel
             mode="modal"
