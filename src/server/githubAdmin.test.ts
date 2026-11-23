@@ -182,3 +182,37 @@ test('computeGitBlobSha matches canonical git hash-object output', async () => {
   assert.equal(computeGitBlobSha(buf), expected);
 });
 
+test('REST sync tracks binary avatar assets under src/assets and public/assets via base64', async () => {
+  const { isAllowedBinaryAssetPath, restGitSyncStatus } = await import('./githubAdmin.ts');
+  assert.equal(isAllowedBinaryAssetPath('src/assets/images/avatar_jyn_core_1795287629705.jpg'), true);
+  assert.equal(isAllowedBinaryAssetPath('public/assets/avatar_jyn_core.jpg'), true);
+  assert.equal(isAllowedBinaryAssetPath('public/assets/aistudio/Screenshot_test.jpg'), false);
+  assert.equal(isAllowedBinaryAssetPath('data/secret.jpg'), false);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'svl-gh-bin-'));
+  const prevToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'ghp_testtokentesttokentesttoken123456';
+  try {
+    fs.mkdirSync(path.join(root, 'src', 'assets', 'images'), { recursive: true });
+    // Fake JPEG bytes containing NUL bytes so binary handling is exercised
+    const fakeJpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0xff, 0xd9]);
+    fs.writeFileSync(path.join(root, 'src', 'assets', 'images', 'avatar_jyn_core_test.jpg'), fakeJpg);
+
+    const fakeFetch = (async (url: string) => {
+      if (url.includes('/commits/')) {
+        return new Response(JSON.stringify({ sha: 'a'.repeat(40), commit: { tree: { sha: 'b'.repeat(40) } } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ sha: 'b'.repeat(40), tree: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const status = await restGitSyncStatus(root, true, fakeFetch);
+    assert.equal(status.ok, true);
+    assert.equal(status.dirtyFiles?.includes('src/assets/images/avatar_jyn_core_test.jpg'), true);
+  } finally {
+    if (prevToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = prevToken;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
