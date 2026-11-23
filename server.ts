@@ -7739,39 +7739,6 @@ async function startServer() {
     }
   }));
 
-  // Guarantee no /api/* route ever falls through to Vite/SPA index.html (<!doctype html>)
-  app.use('/api', (req, res) => {
-    res.status(404).json({
-      ok: false,
-      error: `Nieznany endpoint API: ${req.method} ${req.originalUrl}`,
-    });
-  });
-
-  // Global JSON error middleware (handles PayloadTooLargeError, malformed JSON, and async rejections)
-  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (res.headersSent) {
-      next(err);
-      return;
-    }
-    const status = typeof err?.status === 'number' ? err.status : typeof err?.statusCode === 'number' ? err.statusCode : 500;
-    const msg =
-      err?.type === 'entity.too.large'
-        ? 'Przesłany załącznik lub ładunek żądania przekracza limit 25 MB.'
-        : err?.message || String(err);
-    console.error(`[API Error] ${req.method} ${req.originalUrl}:`, msg);
-    svlFileLogger.log({
-      layer: 'GATEWAY',
-      level: 'ERROR',
-      category: 'api_error',
-      correlationId: (req as any).correlationId || '',
-      message: `${req.method} ${req.originalUrl.split('?')[0]} -> HTTP ${status}: ${scrubSensitiveText(msg)}`,
-    });
-    res.status(status).json({
-      ok: false,
-      error: msg,
-    });
-  });
-
   // Endpointy synchronizacji na żywo (SSE /api/events + /api/live/status + /api/live/rebuild + /api/live/restart)
   app.get('/api/events', (req, res) => {
     const tokenParam = typeof req.query.token === 'string' ? req.query.token : undefined;
@@ -7847,6 +7814,39 @@ async function startServer() {
     }
     liveRepoSync.scheduleRestart('operator', 300);
     res.json({ ok: true, restarting: true });
+  });
+
+  // Guarantee no /api/* route ever falls through to Vite/SPA index.html (<!doctype html>)
+  app.use('/api', (req, res) => {
+    res.status(404).json({
+      ok: false,
+      error: `Nieznany endpoint API: ${req.method} ${req.originalUrl}`,
+    });
+  });
+
+  // Global JSON error middleware (handles PayloadTooLargeError, malformed JSON, and async rejections)
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    const status = typeof err?.status === 'number' ? err.status : typeof err?.statusCode === 'number' ? err.statusCode : 500;
+    const msg =
+      err?.type === 'entity.too.large'
+        ? 'Przesłany załącznik lub ładunek żądania przekracza limit 25 MB.'
+        : err?.message || String(err);
+    console.error(`[API Error] ${req.method} ${req.originalUrl}:`, msg);
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: 'ERROR',
+      category: 'api_error',
+      correlationId: (req as any).correlationId || '',
+      message: `${req.method} ${req.originalUrl.split('?')[0]} -> HTTP ${status}: ${scrubSensitiveText(msg)}`,
+    });
+    res.status(status).json({
+      ok: false,
+      error: msg,
+    });
   });
 
   // Create HTTP server first so both Vite HMR (when enabled) and /ws/svl share it cleanly
