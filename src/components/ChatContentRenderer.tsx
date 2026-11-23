@@ -33,24 +33,24 @@ const InteractiveCodeBlock: React.FC<{
   };
 
   return (
-    <div className="my-2.5 rounded-lg border border-slate-800 bg-[#070A10] overflow-hidden text-xs font-mono shadow-sm">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[#101624] border-b border-slate-800 text-[11px] text-slate-400">
-        <span className="font-semibold uppercase tracking-wider text-cyan-400">
+    <div className="my-2.5 w-full max-w-full min-w-0 rounded-lg border border-slate-800 bg-[#070A10] overflow-hidden text-xs font-mono shadow-sm">
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#101624] border-b border-slate-800 text-[11px] text-slate-400">
+        <span className="font-semibold uppercase tracking-wider text-cyan-400 truncate">
           {cleanLang || 'TERMINAL / KOD'}
         </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
             onClick={handleCopy}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+            className="min-h-[28px] flex items-center gap-1 px-2.5 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
           >
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             <span>{copied ? 'Skopiowano!' : 'Kopiuj'}</span>
           </button>
         </div>
       </div>
-      <div className="p-3 overflow-auto text-slate-200 leading-relaxed max-h-96">
-        <pre>{cleanCode}</pre>
+      <div className="p-2.5 sm:p-3 overflow-x-auto overflow-y-auto text-slate-200 leading-relaxed max-h-96 max-w-full">
+        <pre className="whitespace-pre">{cleanCode}</pre>
       </div>
     </div>
   );
@@ -214,12 +214,12 @@ const InteractiveMarkdownTable: React.FC<{
   };
 
   return (
-    <div className="my-2.5 rounded-lg border border-cyan-500/30 bg-[#070B12] shadow-sm overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[#0C1422] border-b border-cyan-500/20 text-[11px] text-slate-400">
-        <span className="font-mono text-cyan-300/90">
+    <div className="my-2.5 w-full max-w-full min-w-0 rounded-lg border border-cyan-500/30 bg-[#070B12] shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 sm:px-3 py-1.5 bg-[#0C1422] border-b border-cyan-500/20 text-[11px] text-slate-400">
+        <span className="font-mono text-cyan-300/90 tabular-nums">
           Tabela ({visibleRows.length}/{normalizedRows.length})
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {normalizedRows.length >= 4 && (
             <input
               type="text"
@@ -227,25 +227,25 @@ const InteractiveMarkdownTable: React.FC<{
               onChange={(e) => setFilterText(e.target.value)}
               placeholder="Filtruj wiersze..."
               aria-label="Filtruj wiersze tabeli"
-              className="w-32 md:w-40 px-2 py-0.5 rounded bg-[#070A10] border border-slate-700 text-slate-200 text-[11px] focus:outline-none focus:border-cyan-400"
+              className="w-28 sm:w-40 min-h-[28px] px-2 py-0.5 rounded bg-[#070A10] border border-slate-700 text-slate-200 text-[11px] focus:outline-none focus:border-cyan-400"
             />
           )}
           <button
             type="button"
             onClick={handleCopyCsv}
-            className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+            className="min-h-[28px] flex items-center gap-1 px-2.5 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors shrink-0"
           >
             {copiedCsv ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
             <span>{copiedCsv ? 'CSV skopiowano' : 'CSV'}</span>
           </button>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="w-full max-w-full overflow-x-auto svl-scroll-smooth">
         <table className="w-full text-left border-collapse text-xs">
           <thead>
             <tr className="border-b border-cyan-500/25 bg-[#0C1422]/80 text-cyan-300 font-mono text-[11px] uppercase tracking-wider">
               {headers.map((hCell, hIdx) => (
-                <th key={`th-${hIdx}`} className="py-2 px-3 font-semibold whitespace-nowrap">
+                <th key={`th-${hIdx}`} className="py-2 px-2.5 sm:px-3 font-semibold whitespace-nowrap">
                   <button
                     type="button"
                     onClick={() => handleSort(hIdx)}
@@ -266,7 +266,7 @@ const InteractiveMarkdownTable: React.FC<{
             {visibleRows.map((rCells, rIdx) => (
               <tr key={`tr-${rIdx}`} className="hover:bg-cyan-500/5 transition-colors">
                 {rCells.map((cText, cIdx) => (
-                  <td key={`td-${rIdx}-${cIdx}`} className="py-1.5 px-3 align-top leading-relaxed">
+                  <td key={`td-${rIdx}-${cIdx}`} className="py-1.5 px-2.5 sm:px-3 align-top leading-relaxed">
                     {renderFormattedLine(cText, `${keyPrefix}-td-${rIdx}-${cIdx}`, onAction)}
                   </td>
                 ))}
@@ -336,12 +336,12 @@ export function renderFormattedLine(
       return (
         <span
           key={`${keyPrefix}-${i}`}
-          className={`inline-flex flex-col mr-2 my-1 px-2.5 py-1.5 rounded-lg border align-middle ${CARD_TONE_CLASS[card.tone]}`}
+          className={`inline-flex flex-col max-w-full mr-2 my-1 px-2.5 py-1.5 rounded-lg border align-middle break-words ${CARD_TONE_CLASS[card.tone]}`}
         >
           <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono leading-tight">
             {card.label}
           </span>
-          <span className="text-xs font-semibold font-mono leading-snug">
+          <span className="text-xs font-semibold font-mono leading-snug tabular-nums break-words">
             {card.value}
           </span>
         </span>
@@ -352,11 +352,11 @@ export function renderFormattedLine(
       return (
         <div
           key={`${keyPrefix}-${i}`}
-          className="my-1.5 rounded-lg border border-cyan-500/25 bg-[#070B12] px-3 py-2"
+          className="my-1.5 w-full max-w-full rounded-lg border border-cyan-500/25 bg-[#070B12] px-3 py-2"
         >
-          <div className="flex items-center justify-between text-[11px] font-mono mb-1">
-            <span className="text-slate-200">{progress.label}</span>
-            <span className="text-cyan-300 font-semibold">{progress.percent}%</span>
+          <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums mb-1">
+            <span className="text-slate-200 truncate">{progress.label}</span>
+            <span className="text-cyan-300 font-semibold shrink-0">{progress.percent}%</span>
           </div>
           <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
             <div
@@ -403,7 +403,7 @@ export function renderFormattedLine(
           href={link[2]}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200"
+          className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200 break-all"
         >
           {link[1]}
         </a>
@@ -414,7 +414,7 @@ export function renderFormattedLine(
       return (
         <code
           key={`${keyPrefix}-${i}`}
-          className="px-1.5 py-0.5 rounded bg-[#070A10] border border-cyan-500/25 font-mono text-[12px] text-cyan-200"
+          className="px-1.5 py-0.5 rounded bg-[#070A10] border border-cyan-500/25 font-mono text-[12px] text-cyan-200 break-words"
         >
           {codeContent}
         </code>

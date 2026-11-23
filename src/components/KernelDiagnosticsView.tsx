@@ -167,7 +167,7 @@ export const KernelDiagnosticsView: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 space-y-6 bg-[#0B0D13]">
+    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#0B0D13]">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
@@ -193,8 +193,8 @@ export const KernelDiagnosticsView: React.FC = () => {
 
       {/* Top 2-Column Split: SVLProtectedVariable RBAC Vault & TopologicalInfinityEngine */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               02. SVLProtectedVariable — chronione zmienne
             </h2>
@@ -280,11 +280,11 @@ export const KernelDiagnosticsView: React.FC = () => {
             {Object.values(protectedVars).map((v: any) => (
               <div
                 key={v.name}
-                className="flex items-center justify-between py-1.5 px-2.5 rounded bg-[#0B0D13] border border-slate-800/80"
+                className="flex flex-wrap items-center justify-between gap-2 py-1.5 px-2.5 rounded bg-[#0B0D13] border border-slate-800/80 min-w-0"
               >
                 <span className="text-violet-300 font-semibold">{v.name}</span>
-                <span className="text-slate-300 truncate max-w-[220px]">{String(v.value)}</span>
-                <span className="text-slate-500 tabular-nums">
+                <span className="text-slate-300 truncate max-w-[220px] min-w-0">{String(v.value)}</span>
+                <span className="text-slate-500 tabular-nums shrink-0">
                   Audyt: {(v.audit_trail || []).length}
                 </span>
               </div>
@@ -293,8 +293,8 @@ export const KernelDiagnosticsView: React.FC = () => {
         </div>
 
         {/* Right: TopologicalInfinityEngine Math Verifier */}
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               03. TopologicalInfinityEngine (Uzwarcenie Stereograficzne)
             </h2>
@@ -379,7 +379,7 @@ export const KernelDiagnosticsView: React.FC = () => {
 
       {/* Middle Section: VisualScope Registry & Spherical Event Bus Observability */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3 min-w-0">
           <h2 className="text-sm font-semibold text-slate-100">
             04. Rejestr VisualScope (Widoczność Zasobów i Geometria Sferyczna)
           </h2>
@@ -409,7 +409,7 @@ export const KernelDiagnosticsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               05. Telemetria Sferycznej Magistrali Zdarzeń (SphericalEventBus)
@@ -463,7 +463,7 @@ export const KernelDiagnosticsView: React.FC = () => {
       </div>
 
       {/* Section 06: Synchronized System Modules Registry (Chat -> SQLite -> Runtime) */}
-      <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
+      <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-slate-100">
@@ -617,7 +617,7 @@ export const KernelDiagnosticsView: React.FC = () => {
 
       {/* Recorded Update History in SQLite */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               07. Zapisana historia aktualizacji w SQLite
@@ -630,7 +630,7 @@ export const KernelDiagnosticsView: React.FC = () => {
                 key={`${u.wersja}-${idx}`}
                 className="p-3 rounded-lg border text-xs space-y-1 bg-[#0B0D13] border-slate-800 text-slate-200"
               >
-                <div className="flex items-center justify-between font-mono tabular-nums text-[11px]">
+                <div className="flex flex-wrap items-center justify-between gap-2 font-mono tabular-nums text-[11px]">
                   <span className="font-semibold text-violet-300">
                     {u.wersja} · {u.typ}
                   </span>
@@ -643,7 +643,7 @@ export const KernelDiagnosticsView: React.FC = () => {
         </div>
 
         {/* Live Structured JSON Report Output from SVLSystemKernel */}
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3 min-w-0">
           <h2 className="text-sm font-semibold text-slate-100">
             08. Rzeczywisty Zrzut Stanu Systemu (SVLSystemKernel.generate_system_status_report)
           </h2>

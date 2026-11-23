@@ -150,7 +150,7 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
   const { apex, busyAction, lastNotice, sendControl, fetchStatus } = useApexState();
 
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 space-y-6 bg-[#060911] text-slate-100">
+    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#060911] text-slate-100">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-cyan-500/25">
         <div className="space-y-1">
@@ -214,7 +214,7 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
       </div>
 
       {lastNotice && (
-        <div className="p-3.5 rounded-xl bg-cyan-950/35 border border-cyan-400/40 text-xs font-mono text-cyan-100 flex items-center justify-between gap-3">
+        <div className="p-3.5 rounded-xl bg-cyan-950/35 border border-cyan-400/40 text-xs font-mono text-cyan-100 flex flex-wrap items-center justify-between gap-3">
           <span>{lastNotice}</span>
           {onNavigateTab && (
             <button
@@ -231,12 +231,12 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
       {/* Row 2: Interactive Network Daemons (5) & Open-Source AI Swarm Packages (4) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* 5 Network & Virtualization Daemons */}
-        <div className="p-5 rounded-xl bg-[#0B101E] border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#0B101E] border border-slate-800 space-y-3 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               04. Daemony Sieciowe i Wirtualizacji (Kliknij, aby przełączyć ONLINE / STANDBY)
             </h2>
-            <span className="text-xs font-mono text-cyan-300">SVL_CoreOS_2/security/network_suite.py</span>
+            <span className="text-xs font-mono text-cyan-300 break-all">SVL_CoreOS_2/security/network_suite.py</span>
           </div>
           <div className="space-y-2">
             {Object.entries(apex.daemons || {}).map(([id, d]) => {
@@ -255,7 +255,7 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
                   <button
                     type="button"
                     onClick={() => void sendControl({ action: 'toggle_daemon', daemonId: id })}
-                    className={`px-3 py-1 rounded text-xs font-mono font-semibold border transition-colors cursor-pointer shrink-0 ${
+                    className={`min-h-[36px] px-3 py-1 rounded text-xs font-mono font-semibold border transition-colors cursor-pointer shrink-0 ${
                       isOnline
                         ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/70'
                         : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
@@ -270,12 +270,12 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
         </div>
 
         {/* 4 Open-Source AI Packages (Hugging Face / GitHub / GitLab) */}
-        <div className="p-5 rounded-xl bg-[#0B101E] border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#0B101E] border border-slate-800 space-y-3 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-100">
               05. Pakiety Open-Source AI (Hugging Face / GitHub / GitLab)
             </h2>
-            <span className="text-xs font-mono text-violet-300">SVL_CoreOS_2/ai_core/huggingface_swarm_toolkit.py</span>
+            <span className="text-xs font-mono text-violet-300 break-all">SVL_CoreOS_2/ai_core/huggingface_swarm_toolkit.py</span>
           </div>
           <div className="space-y-2">
             {Object.entries(apex.ai_packages || {}).map(([id, pkg]) => {
@@ -292,7 +292,7 @@ export const ApexCommandDock: React.FC<{ onNavigateTab?: (tab: any) => void }> =
                   <button
                     type="button"
                     onClick={() => void sendControl({ action: 'toggle_ai_package', packageId: id })}
-                    className={`px-3 py-1 rounded text-xs font-mono font-semibold border transition-colors cursor-pointer shrink-0 ${
+                    className={`min-h-[36px] px-3 py-1 rounded text-xs font-mono font-semibold border transition-colors cursor-pointer shrink-0 ${
                       isActive
                         ? 'bg-violet-950/60 border-violet-500/50 text-violet-300 hover:bg-violet-900/70'
                         : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'

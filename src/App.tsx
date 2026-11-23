@@ -9,19 +9,31 @@ import { AgentsPanel } from './components/AgentsPanel';
 import { TerminalsWorkspace } from './components/TerminalsWorkspace';
 import { KernelDiagnosticsView } from './components/KernelDiagnosticsView';
 import { LinuxDeployDashboard } from './components/LinuxDeployDashboard';
-import { MayaMissionPanel } from './components/MayaMissionPanel';
 import { GalleryPanel } from './components/GalleryPanel';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
 import { ApexCommandDock } from './components/ApexCommandDock';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
-import { CANONICAL_AGENTS, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
+import { getEffectiveCanonicalAgents, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
-type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'maya' | 'gallery' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
+
+const WORKSPACE_TABS: Array<{ id: ActiveWorkspaceTab; label: string; shortLabel?: string; accent?: string }> = [
+  { id: 'chat', label: 'Czat' },
+  { id: 'apex', label: '⚡ Apex OS', accent: 'cyan' },
+  { id: 'svl364', label: 'SVL-364' },
+  { id: 'infrastructure', label: 'Infrastruktura', shortLabel: 'Infra', accent: 'emerald' },
+  { id: 'agents', label: 'Agenci' },
+  { id: 'gallery', label: 'Galeria', accent: 'violet' },
+  { id: 'terminals', label: 'Terminale (5)', shortLabel: 'Terminale' },
+  { id: 'kernel', label: 'Jądro SVL', shortLabel: 'Jądro' },
+  { id: 'linux', label: 'Linux' },
+];
 
 function SVLWorkspaceShell() {
   const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('chat');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [operatorToken, setOperatorToken] = useState(() => getSvlOperatorAccessToken());
   const [operatorAuthVisible, setOperatorAuthVisible] = useState(false);
   const [operatorAuthStatus, setOperatorAuthStatus] = useState<'none' | 'checking' | 'authorized' | 'denied'>('checking');
@@ -82,7 +94,7 @@ function SVLWorkspaceShell() {
   useEffect(() => {
     if (
       syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'apex' || syncedWorkspaceTab === 'svl364' ||
-      syncedWorkspaceTab === 'infrastructure' || syncedWorkspaceTab === 'agents' || syncedWorkspaceTab === 'maya' ||
+      syncedWorkspaceTab === 'infrastructure' || syncedWorkspaceTab === 'agents' ||
       syncedWorkspaceTab === 'gallery' || syncedWorkspaceTab === 'terminals' || syncedWorkspaceTab === 'kernel' ||
       syncedWorkspaceTab === 'linux'
     ) {
@@ -102,8 +114,6 @@ function SVLWorkspaceShell() {
       void refreshDomainModules(['modules', 'agents', 'health', 'kernel']);
     } else if (activeTab === 'agents') {
       void refreshDomainModules(['agents', 'health', 'workspace']);
-    } else if (activeTab === 'maya') {
-      void refreshDomainModules(['health', 'agents', 'chat']);
     } else if (activeTab === 'gallery') {
       void refreshDomainModules(['health']);
     } else if (activeTab === 'terminals') {
@@ -166,167 +176,134 @@ function SVLWorkspaceShell() {
   }, [operatorToken, refreshAllDomains, reconnectWebSocket]);
 
   const agentsList: any[] = agentsData?.agents || [];
+  const effectiveAgents = getEffectiveCanonicalAgents(agentsList);
   const activeWorkersCount = agentsList.filter((a) =>
     ['ONLINE_LOCAL_WORKER', 'BUSY_LOCAL_WORKER'].includes(a.status),
   ).length;
+  const agentsTabLabel = `Agenci (${effectiveAgents.length > 0 ? `${activeWorkersCount}/${effectiveAgents.length}` : '0'})`;
+
+  const selectWorkspaceTab = (tab: ActiveWorkspaceTab) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
+  };
 
   return (
     <div
-      className="svl-workspace flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#050810] text-[#F1F5F9]"
+      className="svl-workspace flex flex-col h-[100dvh] w-full max-w-full overflow-hidden bg-[#050810] text-[#F1F5F9]"
       data-theme={guiTheme}
       data-accent={guiAccent}
     >
-      {/* Apex-Dark 3-Zone Top Bar for Desktop & Android */}
-      <header className="relative flex flex-wrap md:flex-nowrap items-center justify-between gap-x-2 gap-y-1.5 md:gap-5 px-2.5 md:px-5 py-1.5 border-b border-cyan-500/30 bg-[#090F1E] shrink-0">
-        {/* Zone 1: Single text element wordmark */}
+      {/* Apex-Dark Responsive Top Bar */}
+      <header className="relative z-20 flex flex-wrap lg:flex-nowrap items-center justify-between gap-x-2 gap-y-1 lg:gap-4 px-2.5 sm:px-4 lg:px-5 py-1.5 border-b border-cyan-500/30 bg-[#090F1E] shrink-0">
+        {/* Zone 1: Wordmark */}
         <a
           href="#top"
           onClick={(e) => {
             e.preventDefault();
-            setActiveTab('chat');
+            selectWorkspaceTab('chat');
           }}
-          className="order-1 text-sm md:text-base font-bold tracking-tight text-cyan-300 whitespace-nowrap shrink-0"
+          className="order-1 min-h-[38px] lg:min-h-0 flex items-center text-sm md:text-base font-bold tracking-tight text-cyan-300 whitespace-nowrap shrink-0"
         >
           ⚡ SVL CoreOS 2: Apex
         </a>
 
-        {/* Zone 2: Horizontal navigation bar */}
-        <nav
-          aria-label="Główna nawigacja systemu"
-          className="order-3 md:order-2 w-full md:w-auto flex items-center gap-3 md:gap-4 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar border-t border-cyan-500/20 md:border-t-0 pt-1 md:pt-0"
-        >
+        {/* Zone 2: Horizontal navigation bar (Desktop/Tablet inline scrollable + Mobile scrollable + Menu drawer trigger) */}
+        <div className="order-3 lg:order-2 w-full lg:w-auto lg:min-w-0 lg:flex-1 flex items-center gap-1.5 border-t border-cyan-500/20 lg:border-t-0 pt-1 lg:pt-0">
+          <nav
+            aria-label="Główna nawigacja systemu"
+            className="flex-1 min-w-0 flex items-center gap-2.5 md:gap-3.5 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar pr-4 lg:pr-2 [mask-image:linear-gradient(to_right,black_0%,black_calc(100%-24px),transparent_100%)] lg:[mask-image:none]"
+          >
+            {WORKSPACE_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const displayLabel = tab.id === 'agents' ? agentsTabLabel : tab.label;
+              const activeBorder =
+                tab.accent === 'emerald'
+                  ? 'text-emerald-300 border-emerald-400 font-semibold'
+                  : tab.accent === 'violet'
+                    ? 'text-violet-300 border-violet-400 font-semibold'
+                    : 'text-cyan-300 border-cyan-400 font-semibold';
+              const idleClass =
+                tab.accent === 'cyan'
+                  ? 'text-cyan-400/90 border-transparent hover:text-cyan-200'
+                  : 'border-transparent hover:text-slate-100';
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => selectWorkspaceTab(tab.id)}
+                  className={`min-h-[36px] lg:min-h-0 py-1 px-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+                    tab.id === 'apex' || tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
+                  }${isActive ? activeBorder : idleClass}`}
+                >
+                  {displayLabel}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Compact mobile/tablet all-tabs menu button so overflow tabs are always 1 tap away */}
           <button
             type="button"
-            onClick={() => setActiveTab('chat')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'chat'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
+            aria-expanded={mobileNavOpen}
+            aria-label="Wszystkie moduły nawigacji"
+            onClick={() => setMobileNavOpen((v) => !v)}
+            className={`lg:hidden min-h-[36px] px-2 py-1 rounded-md border text-[11px] font-mono whitespace-nowrap shrink-0 transition-colors ${
+              mobileNavOpen
+                ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200'
+                : 'border-slate-700 bg-[#0B0D13] text-slate-300 hover:border-cyan-500/50'
             }`}
           >
-            Czat
+            Moduły ({WORKSPACE_TABS.length}) {mobileNavOpen ? '▴' : '▾'}
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('apex')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 font-mono ${
-              activeTab === 'apex'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'text-cyan-400/90 border-transparent hover:text-cyan-200'
-            }`}
+        </div>
+
+        {/* Full mobile/tablet module grid drawer when toggled */}
+        {mobileNavOpen && (
+          <div
+            aria-label="Szybki wybór modułu systemu"
+            className="order-5 lg:hidden w-full grid grid-cols-3 gap-1.5 pt-2 pb-1 border-t border-cyan-500/20"
           >
-            ⚡ Apex OS
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('svl364')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'svl364'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            SVL-364
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('infrastructure')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'infrastructure'
-                ? 'text-emerald-300 border-emerald-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Infrastruktura
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('agents')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 font-mono tabular-nums ${
-              activeTab === 'agents'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Agenci ({CANONICAL_AGENTS.length > 0 ? `${activeWorkersCount}/${CANONICAL_AGENTS.length}` : '0'})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('maya')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'maya'
-                ? 'text-violet-300 border-violet-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Misja Maya
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('gallery')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'gallery'
-                ? 'text-violet-300 border-violet-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Galeria
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('terminals')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'terminals'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Terminale (5)
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('kernel')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'kernel'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Jądro SVL
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('linux')}
-            className={`min-h-[32px] md:min-h-0 py-1 md:py-0.5 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
-              activeTab === 'linux'
-                ? 'text-cyan-300 border-cyan-400 font-semibold'
-                : 'border-transparent hover:text-slate-100'
-            }`}
-          >
-            Linux
-          </button>
-        </nav>
+            {WORKSPACE_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const labelText = tab.id === 'agents' ? agentsTabLabel : tab.label;
+              return (
+                <button
+                  key={`drawer-${tab.id}`}
+                  type="button"
+                  onClick={() => selectWorkspaceTab(tab.id)}
+                  className={`min-h-[42px] px-2 py-1.5 rounded-lg border text-xs font-medium text-center truncate transition-colors ${
+                    isActive
+                      ? 'border-cyan-400/70 bg-cyan-500/20 text-cyan-200 font-semibold'
+                      : 'border-slate-800 bg-[#0B0D13] text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  {labelText}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Zone 3: Operator authorization (memory only) + Primary CTA */}
-        <div className="order-2 md:order-3 flex items-center gap-1.5 shrink-0 ml-auto md:ml-0">
+        <div className="order-2 lg:order-3 flex items-center gap-1.5 shrink-0 ml-auto lg:ml-0">
           <button
             type="button"
             aria-expanded={operatorAuthVisible}
             aria-label="Otwórz autoryzację operatora"
             onClick={() => setOperatorAuthVisible((visible) => !visible)}
-            className={`min-h-[34px] md:min-h-0 px-2.5 py-1 rounded-md border text-[11px] font-medium whitespace-nowrap transition-colors ${operatorAuthStatus === 'authorized'
+            className={`min-h-[38px] lg:min-h-[30px] px-2.5 py-1 rounded-md border text-[11px] font-medium whitespace-nowrap transition-colors ${operatorAuthStatus === 'authorized'
               ? 'border-emerald-700 bg-emerald-950/30 text-emerald-300'
               : operatorAuthStatus === 'denied'
                 ? 'border-rose-700 bg-rose-950/30 text-rose-300'
                 : 'border-slate-700 bg-[#0B0D13] text-slate-300 hover:border-slate-600'}`}
             title={operatorAuthStatus === 'authorized'
-              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · Bielik & Maya Mitek ROOT)`
+              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · System_SI_1, SI_System_2 & JEDI Omni-OS v12 VM)`
               : operatorAuthStatus === 'denied'
                 ? 'Serwer odrzucił token operatora'
                 : 'Wpisz prywatny SVL_OPERATOR_TOKEN'}
           >{operatorAuthStatus === 'authorized' ? '🔐 ROOT · SVL' : '🔒 SVL'}</button>
           {operatorAuthVisible && (
-            <div className="hidden md:flex items-center gap-1.5">
+            <div className="hidden lg:flex items-center gap-1.5">
               <input
                 type="password"
                 autoComplete="off"
@@ -366,7 +343,7 @@ function SVLWorkspaceShell() {
             type="button"
             onClick={() => void refreshAllDomains('operator_header_sync')}
             disabled={isSyncing}
-            className="min-h-[34px] md:min-h-0 px-2.5 py-1 text-[11px] md:text-xs font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-md transition-colors whitespace-nowrap shrink-0"
+            className="min-h-[38px] lg:min-h-[30px] px-2.5 py-1 text-[11px] md:text-xs font-semibold text-white bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-md transition-colors whitespace-nowrap shrink-0"
           >
             {isSyncing ? 'Sync...' : 'Synchronizuj'}
           </button>
@@ -374,7 +351,7 @@ function SVLWorkspaceShell() {
 
         {/* Full-width mobile operator token drawer when toggled */}
         {operatorAuthVisible && (
-          <div className="order-4 w-full md:hidden flex items-center gap-2 pt-1.5 pb-0.5 border-t border-slate-800/70">
+          <div className="order-4 w-full lg:hidden flex items-center gap-2 pt-1.5 pb-0.5 border-t border-slate-800/70">
             <input
               type="password"
               autoComplete="off"
@@ -393,12 +370,12 @@ function SVLWorkspaceShell() {
                   handleSaveOperatorToken();
                 }
               }}
-              className="flex-1 min-w-0 min-h-[38px] bg-[#0B0D13] border border-slate-700 rounded-md px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+              className="flex-1 min-w-0 min-h-[40px] bg-[#0B0D13] border border-slate-700 rounded-md px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
             />
             <button
               type="button"
               onClick={handleSaveOperatorToken}
-              className="min-h-[38px] px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold whitespace-nowrap shrink-0"
+              className="min-h-[40px] px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold whitespace-nowrap shrink-0"
             >
               Zapisz
             </button>
@@ -426,7 +403,6 @@ function SVLWorkspaceShell() {
             onNavigateToChat={() => setActiveTab('chat')}
           />
         )}
-        {activeTab === 'maya' && <MayaMissionPanel />}
         {activeTab === 'gallery' && <GalleryPanel />}
         {activeTab === 'terminals' && <TerminalsWorkspace />}
         {activeTab === 'kernel' && <KernelDiagnosticsView />}

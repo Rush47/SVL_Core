@@ -72,7 +72,7 @@ export function containsLikelySecret(content: string): boolean {
   );
   const hasNonPlaceholderCredential = Array.from(credentialAssignments).some((match) => {
     const value = match[2].trim();
-    return !/^(?:<[^>]+>|\$\{[^}]+\}|(?:your|my|change|replace|example|placeholder|redacted)(?:[_-]|$))/i.test(
+    return !/^(?:<[^>]+>|\$\{[^}]+\}|(?:your|my|change|replace|example|placeholder|redacted|wstaw|podaj|wpisz|twoj|twój|klucz|test)(?:[_-\s]|$))/i.test(
       value,
     );
   });

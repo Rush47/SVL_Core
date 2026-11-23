@@ -1,4 +1,4 @@
-// Galeria: każdy agent AI (Bielik, Maya Mitek) ogląda zdjęcie Operatora i wydaje werdykt
+// Galeria: agent AI System_SI_1 ogląda zdjęcie Operatora i wydaje werdykt
 // (like/dislike) oraz komentarz. Ten moduł zawiera czyste, testowalne funkcje:
 // budowę promptu i parsowanie odpowiedzi modelu. Samo wywołanie modelu robi serwer.
 
@@ -11,11 +11,10 @@ export interface GalleryAgentOpinion {
   model: string;
 }
 
-/** Persona agenta do promptu — żeby komentarze Bielika i Mayi się różniły. */
+/** Persona agenta do promptu galerii. */
 export function galleryPromptForAgent(agentDisplayName: string): string {
-  const persona = /maya/i.test(agentDisplayName)
-    ? 'Jesteś Maya Mitek — AI pokładowe statku SVL-364. Piszesz ciepło, osobiście, ale szczerze.'
-    : 'Jesteś Bielik — AI systemu SVL. Piszesz rzeczowo, technicznie i konkretnie.';
+  const label = String(agentDisplayName || 'System_SI_1').trim() || 'System_SI_1';
+  const persona = `Jesteś ${label} — główny autonomiczny agent ROOT systemu SVL-364 Ebon Apex. Piszesz rzeczowo, technicznie i konkretnie.`;
   return (
     `${persona}\n` +
     'Obejrzyj dokładnie to zdjęcie przesłane przez Operatora Mateusza. ' +

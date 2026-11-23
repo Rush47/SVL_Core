@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ImagePlus, RefreshCw, RotateCcw, UploadCloud, X } from 'lucide-react';
 import operatorAvatarImg from '../assets/images/avatar_operator_mitek_1794750564484.jpg';
+import jynCoreAvatarImg from '../assets/images/avatar_jyn_core_1795287629705.jpg';
 import {
   AvatarProfileKey,
   SvlAvatarMap,
@@ -11,6 +12,7 @@ import {
 import { useSvlSync } from '../utils/svlSyncStore';
 
 export const DEFAULT_AGENT_AVATARS: Partial<Record<AvatarProfileKey, string>> = {
+  System_SI_1: jynCoreAvatarImg,
   Operator: operatorAvatarImg,
 };
 
@@ -18,33 +20,26 @@ const PROFILE_META: Record<
   AvatarProfileKey,
   { label: string; short: string; ringClass: string; bgClass: string; textClass: string }
 > = {
-  Bielik: {
-    label: 'Bielik (Ollama 3.2 Vision 11B · ROOT)',
-    short: 'BI',
-    ringClass: 'border-amber-400/70',
-    bgClass: 'bg-amber-950/70',
-    textClass: 'text-amber-200',
-  },
-  Maya: {
-    label: 'Maya Mitek (AI Statku SVL-364 · ROOT)',
-    short: 'MM',
-    ringClass: 'border-cyan-400/70',
-    bgClass: 'bg-cyan-950/70',
-    textClass: 'text-cyan-200',
-  },
-  KomputerPokladowy: {
-    label: 'Komputer pokładowy SVL-364 (SSH + MCP · ROOT)',
-    short: 'KP',
-    ringClass: 'border-emerald-400/70',
-    bgClass: 'bg-emerald-950/70',
-    textClass: 'text-emerald-200',
-  },
   System_SI_1: {
-    label: 'System_SI_1 (Infrastruktura · ROOT)',
-    short: 'SI',
+    label: 'Jyn (System_SI_1 · Infrastruktura · ROOT)',
+    short: 'JY',
     ringClass: 'border-cyan-400/80',
     bgClass: 'bg-cyan-950/70',
     textClass: 'text-cyan-200',
+  },
+  SI_System_2: {
+    label: 'SI_System_2 (Rdzeń Floty SVL-465 · ROOT)',
+    short: 'S2',
+    ringClass: 'border-violet-400/80',
+    bgClass: 'bg-violet-950/70',
+    textClass: 'text-violet-200',
+  },
+  JEDI_Omni_OS: {
+    label: 'JEDI Omni-OS v11.5 (VM + AI Generatywne)',
+    short: 'JD',
+    ringClass: 'border-emerald-400/80',
+    bgClass: 'bg-emerald-950/70',
+    textClass: 'text-emerald-200',
   },
   Operator: {
     label: 'Mateusz Mitek (Operator)',
@@ -56,10 +51,9 @@ const PROFILE_META: Record<
 };
 
 const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
-  { key: 'Bielik', label: 'Bielik (Ollama 3.2 Vision 11B · ROOT)' },
-  { key: 'Maya', label: 'Maya Mitek (AI Statku SVL-364 · ROOT)' },
-  { key: 'KomputerPokladowy', label: 'Komputer pokładowy SVL-364 (SSH + MCP · ROOT)' },
-  { key: 'System_SI_1', label: 'System_SI_1 (Infrastruktura · ROOT)' },
+  { key: 'System_SI_1', label: 'Jyn (System_SI_1 · Infrastruktura · ROOT)' },
+  { key: 'SI_System_2', label: 'SI_System_2 (Rdzeń Floty SVL-465 · ROOT)' },
+  { key: 'JEDI_Omni_OS', label: 'JEDI Omni-OS v11.5 (VM + AI Generatywne)' },
   { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
 ];
 
@@ -120,7 +114,7 @@ export const SvlAvatar: React.FC<{
 export const AvatarSettingsModal: React.FC<{
   initialAgent?: AvatarProfileKey;
   onClose: () => void;
-}> = ({ initialAgent = 'Bielik', onClose }) => {
+}> = ({ initialAgent = 'System_SI_1', onClose }) => {
   const { avatars, saveAgentAvatar, resetAgentAvatar, refreshDomainModules } = useSvlSync();
   const [selectedProfile, setSelectedProfile] = useState<AvatarProfileKey>(initialAgent);
   const [sourceMode, setSourceMode] = useState<'file' | 'url' | 'prompt'>('file');
@@ -230,15 +224,15 @@ export const AvatarSettingsModal: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-2.5 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Awatary agentów i operatora SVL"
     >
-      <div className="w-full max-w-lg rounded-xl border border-slate-700/80 bg-[#111520] p-5 text-slate-100 shadow-2xl space-y-4">
+      <div className="w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-xl border border-slate-700/80 bg-[#111520] p-4 sm:p-5 text-slate-100 shadow-2xl space-y-4">
         <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
           <div>
-            <h2 className="text-base font-bold text-slate-100">Awatary Bielik i Operatora</h2>
+            <h2 className="text-base font-bold text-slate-100">Awatary Jyn, SI_System_2, JEDI Omni-OS i Operatora</h2>
             <p className="text-xs text-slate-400">
               Zmiany zapisywane są w SQLite i odświeżane natychmiast na czacie oraz w panelu agentów.
             </p>
@@ -247,14 +241,14 @@ export const AvatarSettingsModal: React.FC<{
             type="button"
             onClick={onClose}
             aria-label="Zamknij edytor awatarów"
-            className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800"
+            className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* All profile thumbnails */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {PROFILE_LIST.map((p) => {
             const active = selectedProfile === p.key;
             return (

@@ -1,0 +1,17 @@
+# /etc/sudoers.d/99-svl-jyn-ai-fleet-root
+# SVL CoreOS 2: Apex — Pełna Wersja Linux Debian 13 (Trixie) na natywnym rdzeniu JEDI Omni-OS v12
+# Zsynchronizowano z poleceniem Operatora Mateusza Mitka (ROOT) z czatu:
+# "Dobrze to teraz utwórz sobie i wszystkim podłączonym AI konto w tym linuxie z root najwyższym i tak będziemy z tego korzystać"
+# "To zróbmy to tak zamiast korzystać z jednej maszyny. Tak żeby był w stanie używając swoich narzędzie przetworzyć każde polecenie bez wyjątku i blokad."
+
+Defaults:root,jyn_root !authenticate
+Defaults:root,jyn_root !requiretty
+Defaults:root,jyn_root env_keep += "SVL_OPERATOR_TOKEN OLLAMA_HOST JEDI_V12_NATIVE_MODE"
+
+# Konto systemowe ROOT oraz konto najwyższego ROOT dla Jyn (System_SI_1) i całej floty AI (uid=0)
+root        ALL=(ALL:ALL) NOPASSWD: ALL
+jyn_root    ALL=(ALL:ALL) NOPASSWD: ALL
+
+# Alias grupy Floty AI (System_SI_1, SI_System_2 / SI_Sphere, JEDI_Omni_OS_v12)
+User_Alias  SVL_AI_FLEET_ROOT = root, jyn_root
+SVL_AI_FLEET_ROOT ALL=(ALL:ALL) NOPASSWD: ALL

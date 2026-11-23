@@ -58,7 +58,7 @@ const SIMPLE_RULES: Array<[RegExp, () => BielikSlashCommand]> = [
   [re(`${B}(?:sprawd(?:ź|z)|poka(?:ż|z))\\s+(?:status|stan)\\s+ollam\\p{L}*`), () => ({ kind: 'ollama' })],
   [re(`${B}(?:sprawd(?:ź|z)|poka(?:ż|z))\\s+(?:status|stan|telemetri\\p{L}*)\\s+(?:systemu|j(?:ą|a)dra|svl)${E}`), () => ({ kind: 'status' })],
   [re(`${B}(?:(?:poka(?:ż|z)|wy(?:ś|s)wietl|wypisz)\\s+(?:wszystkie\\s+)?|lista\\s+)modu(?:ł|l)(?:y|(?:ó|o)w)${E}`), () => ({ kind: 'modules_list' })],
-  [re(`${B}(?:pod(?:ł|l)(?:ą|a)cz|po(?:ł|l)(?:ą|a)cz|uruchom|zsynchronizuj|synchronizuj)\\s+(?:lokaln\\p{L}+\\s+)?(?:worker\\p{L}*|agent(?:a|ów|ow|y)?|bielika?)${E}`), () => ({ kind: 'agent_connect' })],
+  [re(`${B}(?:pod(?:ł|l)(?:ą|a)cz|po(?:ł|l)(?:ą|a)cz|uruchom|zsynchronizuj|synchronizuj)\\s+(?:lokaln\\p{L}+\\s+)?(?:worker\\p{L}*|agent(?:a|ów|ow|y)?|system_si_1)${E}`), () => ({ kind: 'agent_connect' })],
   [re(`${B}(?:oblicz|policz|wyznacz)\\s+topologi\\p{L}*`), () => ({ kind: 'topology', xStart: '-inf', xEnd: 'inf' })],
 ];
 
@@ -71,7 +71,7 @@ const UI_ACCENT = re(
   `${B}(?:zmie(?:ń|n)|ustaw)\\s+(?:kolor\\s+)?akcent(?:u|em|owy)?${E}\\s*(?:na\\s+)?(cyan|niebieski|emerald|zielony|violet|fioletowy|fiolet|amber|bursztynowy|pomara(?:ń|n)czowy)${E}`,
 );
 const UI_TAB = re(
-  `${B}(?:otw(?:ó|o)rz|poka(?:ż|z)|prze(?:ł|l)(?:ą|a)cz|wy(?:ś|s)wietl)\\s+(?:panel|zak(?:ł|l)adk(?:ę|e))\\s+(?:na\\s+)?(czat|chat|apex|statek|svl[ -]?364|infrastruktura|agenci|maya|galeria|terminale|j(?:ą|a)dro|kernel|linux)${E}`,
+  `${B}(?:otw(?:ó|o)rz|poka(?:ż|z)|prze(?:ł|l)(?:ą|a)cz|wy(?:ś|s)wietl)\\s+(?:panel|zak(?:ł|l)adk(?:ę|e))\\s+(?:na\\s+)?(czat|chat|apex|statek|svl[ -]?364|infrastruktura|agenci|galeria|terminale|j(?:ą|a)dro|kernel|linux)${E}`,
 );
 
 function mapStatusWord(word: string): ModuleStatus | null {
@@ -99,6 +99,10 @@ function statusChange(id: string, status: ModuleStatus, known: Map<string, Known
   };
 }
 
+const OS_SYNC_RE = re(
+  `${B}z?synchronizuj\\s+(?:ca(?:ł|l)y\\s+)?(?:system(?:\\s+operacyjny)?|z\\s+github\\p{L}*|github\\p{L}*|repozytori\\p{L}*|kod)(?:${E}|$)|${B}synchronizuj\\s+i\\s+przetw(?:ó|o)rz${E}`,
+);
+
 /** Stable identity of a command, used to avoid executing the same command twice in one chat turn. */
 export function commandKey(cmd: BielikSlashCommand): string {
   return JSON.stringify(cmd, Object.keys(cmd).sort());
@@ -107,6 +111,7 @@ export function commandKey(cmd: BielikSlashCommand): string {
 /** Commands that change persisted state and therefore must be broadcast to every client. */
 export function isMutatingCommand(cmd: BielikSlashCommand): boolean {
   return (
+    cmd.kind === 'os_sync' ||
     cmd.kind === 'module_upsert' ||
     cmd.kind === 'memory_save' ||
     cmd.kind === 'root_exec' ||
@@ -151,6 +156,10 @@ export function parseChatDirectives(
       text = text.slice(0, match.index);
       break;
     }
+  }
+
+  if (OS_SYNC_RE.test(text)) {
+    push({ kind: 'os_sync' });
   }
 
   const create = MODULE_CREATE.exec(text);
@@ -233,7 +242,6 @@ export function parseChatDirectives(
       svl364: 'svl364',
       infrastruktura: 'infrastructure',
       agenci: 'agents',
-      maya: 'maya',
       galeria: 'gallery',
       terminale: 'terminals',
       jądro: 'kernel',
@@ -246,3 +254,65 @@ export function parseChatDirectives(
 
   return commands;
 }
+
+export function workspaceUiCommand(settingRaw: string, valueRaw: string): BielikSlashCommand | null {
+  const s = String(settingRaw || '').trim().toLowerCase();
+  const v = String(valueRaw || '').trim().toLowerCase().replace(/[\s_-]/g, '');
+  if (s === 'gui_theme' || s === 'theme' || s === 'motyw' || s === 'design' || s === 'wygląd' || s === 'wyglad') {
+    const themeAliases: Record<string, string> = {
+      apex: 'apex',
+      ciemny: 'apex',
+      midnight: 'midnight',
+      nocny: 'midnight',
+      emerald: 'emerald',
+      zielony: 'emerald',
+      violet: 'violet',
+      fioletowy: 'violet',
+      fiolet: 'violet',
+    };
+    const mapped = themeAliases[v];
+    return mapped ? { kind: 'ui_set', key: 'gui_theme', value: mapped } : null;
+  }
+  if (s === 'gui_accent' || s === 'accent' || s === 'akcent' || s === 'kolor') {
+    const accentAliases: Record<string, string> = {
+      cyan: 'cyan',
+      niebieski: 'cyan',
+      emerald: 'emerald',
+      zielony: 'emerald',
+      violet: 'violet',
+      fioletowy: 'violet',
+      fiolet: 'violet',
+      amber: 'amber',
+      bursztynowy: 'amber',
+      pomarańczowy: 'amber',
+      pomaranczowy: 'amber',
+    };
+    const mapped = accentAliases[v];
+    return mapped ? { kind: 'ui_set', key: 'gui_accent', value: mapped } : null;
+  }
+  if (s === 'active_workspace_tab' || s === 'tab' || s === 'panel' || s === 'zakładka' || s === 'zakladka') {
+    const tabAliases: Record<string, string> = {
+      czat: 'chat',
+      chat: 'chat',
+      apex: 'apex',
+      statek: 'svl364',
+      svl364: 'svl364',
+      infrastruktura: 'infrastructure',
+      infrastructure: 'infrastructure',
+      agenci: 'agents',
+      agents: 'agents',
+      galeria: 'gallery',
+      gallery: 'gallery',
+      terminale: 'terminals',
+      terminals: 'terminals',
+      jądro: 'kernel',
+      jadro: 'kernel',
+      kernel: 'kernel',
+      linux: 'linux',
+    };
+    const mapped = tabAliases[v];
+    return mapped ? { kind: 'ui_set', key: 'active_workspace_tab', value: mapped } : null;
+  }
+  return null;
+}
+
