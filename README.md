@@ -2,7 +2,7 @@
 
 **SVL Python OS** to zintegrowane środowisko operacyjne łączące **Python 3 Kernel (`SVLSystemKernel`)**, **Długotrwałą Pamięć Semantyczną 128D (`BinaryHyperspaceKernel` + SQLite WAL)**, **lokalną Ollamę (`127.0.0.1:11434`, jeśli zainstalowana)**, **Centrum Dowodzenia Statkiem Kosmicznym `SVL-364 Ebon Apex`** (z holograficzną mapą w stylu Mass Effect CIC) oraz **Moduł Infrastruktury Floty, Placówek, Botaniki Hydroponicznej i Badań z ETA**.
 
-Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `XAI_API_KEY` i `SVL_CHAT_ENGINE` nie jest `ollama`. Gdy klucza nie ma, API zwróci 401/402/403 (zły klucz albo brak kredytów) albo ustawiono `SVL_CHAT_ENGINE=ollama`, system używa **lokalnej Ollamy**, a następnie opcjonalnie Gemini. Szczegóły: [deploy/AI_ENGINES.md](deploy/AI_ENGINES.md).
+Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `XAI_API_KEY`. Gdy klucza nie ma albo API zawiedzie, system przełącza się na **darmową lokalną Ollamę**, a następnie opcjonalnie na Gemini. Szczegóły: [deploy/AI_ENGINES.md](deploy/AI_ENGINES.md).
 
 ---
 
@@ -39,14 +39,6 @@ i sam wystawia się do internetu tunelem Cloudflare (bez konta, stałego IP i do
 `data/svl_mcp_tunnel.json`, a gotowe konfiguracje klientów (Gemini CLI, Claude Code) do
 `data/svl_mcp_connector.secret`. Usługa przy starcie systemu: `sudo bash deploy/install-mcp.sh`.
 Szczegóły, tryb tylko do odczytu i stały adres: [deploy/MCP.md](deploy/MCP.md).
-
-## Zmiany z GitHuba i od AI widoczne od razu
-
-Gateway obserwuje repozytorium: po `git pull` (także automatycznym co 60 s, tylko fast-forward) i po
-edycji plików przez czat, MCP lub agentów panele odświeżają się same, GUI w trybie `npm start`
-przebudowuje się i przeładowuje karty, zmiany `backend/*.py` restartują jądro Python, a zmiany kodu
-serwera restartują gateway (pod systemd/pm2 samo, bez nadzorcy — jeden przycisk w GUI).
-Szczegóły i ustawienia: [docs/05](docs/05_GITHUB_RUSH47_SVL_CORE.md#zmiany-widoczne-od-razu-synchronizacja-na-żywo).
 
 ## Szybki Start i Testy
 

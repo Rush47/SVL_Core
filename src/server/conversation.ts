@@ -6,9 +6,8 @@
 
 import { normalizeAgentCanonicalName } from '../utils/svlLogic.ts';
 
-export type ConversationAgent = 'Bielik' | 'Maya' | 'System_SI_1';
-/** Uczestnicy swobodnej rozmowy na kanale rodzinnym. System_SI_1 ma własny kanał i nie wchodzi do tej pary. */
-export const CONVERSATION_AGENTS: ConversationAgent[] = ['Bielik', 'Maya'];
+export type ConversationAgent = 'System_SI_1' | 'SI_System_2' | 'JEDI_Omni_OS';
+export const CONVERSATION_AGENTS: ConversationAgent[] = ['System_SI_1', 'SI_System_2'];
 export const OPERATOR_LABEL = 'Mateusz (Operator)';
 
 export interface DialogueTurn {
@@ -27,8 +26,13 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 export function agentOf(turn: DialogueTurn): ConversationAgent | null {
   if (turn.role !== 'assistant') return null;
   const canonical = normalizeAgentCanonicalName(turn.sender);
-  if (canonical === 'Bielik' || canonical === 'Maya' || canonical === 'System_SI_1') return canonical;
-  return null;
+  return canonical === 'System_SI_1' || canonical === 'SI_System_2' || canonical === 'JEDI_Omni_OS'
+    ? canonical
+    : null;
+}
+
+function speakerDisplayLabel(agent: ConversationAgent): string {
+  return agent === 'JEDI_Omni_OS' ? 'JEDI Omni-OS v12' : agent;
 }
 
 /** Usuwa wklejone lub powtórzone przez model nagłówki „Weryfikacja SVL (...)” na początku wypowiedzi. */
@@ -60,11 +64,17 @@ export function toAgentPerspective(turns: DialogueTurn[], speaker: ConversationA
     const author = agentOf(turn);
     // Starsze wpisy bez nadawcy traktujemy jak dotąd — jako własne.
     const own = turn.role === 'assistant' && (author === speaker || !turn.sender);
+    const otherLabel =
+      turn.role === 'user'
+        ? OPERATOR_LABEL
+        : author
+          ? speakerDisplayLabel(author)
+          : turn.sender || 'AI';
     const chatTurn: ChatTurn = own
       ? { role: 'assistant', content }
       : {
           role: 'user',
-          content: `[${turn.role === 'user' ? OPERATOR_LABEL : author || turn.sender || 'AI'}]: ${content}`,
+          content: `[${otherLabel}]: ${content}`,
         };
     const last = out[out.length - 1];
     if (last && last.role === chatTurn.role) {
@@ -92,16 +102,24 @@ export function buildTranscript(turns: DialogueTurn[], limit = 30): string {
 
 function labelOf(turn: DialogueTurn): string {
   if (turn.role === 'user') return OPERATOR_LABEL;
-  return agentOf(turn) || turn.sender || 'AI';
+  const author = agentOf(turn);
+  if (author) return speakerDisplayLabel(author);
+  return turn.sender || 'AI';
 }
 
 /** Kogo model wskazał jako następnego mówcę (dopisanie po „[”). */
 export function parsePredictedSpeaker(continuation: string): ConversationAgent | 'operator' | null {
   const name = String(continuation || '').trim().split(/[\]:\n]/)[0].trim().toLowerCase();
   if (!name) return null;
+  if (/^(?:mateusz|operator)/.test(name)) return 'operator';
+  const normalized = normalizeAgentCanonicalName(name);
+  if (normalized === 'System_SI_1' || normalized === 'SI_System_2' || normalized === 'JEDI_Omni_OS') {
+    return normalized;
+  }
   const agent = CONVERSATION_AGENTS.find((a) => name === a.toLowerCase() || name.startsWith(`${a.toLowerCase()} `));
   if (agent) return agent;
-  if (/^(?:mateusz|operator)/.test(name)) return 'operator';
+  if (name.startsWith('jedi')) return 'JEDI_Omni_OS';
+  if (name.startsWith('si_system_2') || name.startsWith('si-system-2') || name === 'si2') return 'SI_System_2';
   return null;
 }
 
@@ -139,8 +157,14 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
 /** Usuwa prefiks z imieniem mówcy (lub [System]: / [Mateusz (Operator)]:) i ucina miejsce, w którym model zaczyna pisać za innych. */
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
   const speakerNames = [
-    'Maya Mitek',
     ...CONVERSATION_AGENTS,
+    'Jyn (System_SI_1)',
+    'Jyn',
+    'SI_System_2 (SVL-465 · ROOT)',
+    'SI_System_2',
+    'JEDI Omni-OS v12',
+    'JEDI Omni-OS v11.5',
+    'JEDI_Omni_OS',
     speaker,
     'Asystent',
     'System',
@@ -157,7 +181,21 @@ export function cleanAgentReply(text: string, speaker: ConversationAgent): strin
     .replace(/^\.{2,}\s*/, '')
     .trim();
   out = stripServerVerificationBanners(out);
-  const participants = ['Maya Mitek', ...CONVERSATION_AGENTS, 'Mateusz Mitek', 'Mateusz', 'Operator', 'Asystent', 'System']
+  const participants = [
+    ...CONVERSATION_AGENTS,
+    'Jyn (System_SI_1)',
+    'Jyn',
+    'SI_System_2 (SVL-465 · ROOT)',
+    'SI_System_2',
+    'JEDI Omni-OS v12',
+    'JEDI Omni-OS v11.5',
+    'JEDI_Omni_OS',
+    'Mateusz Mitek',
+    'Mateusz',
+    'Operator',
+    'Asystent',
+    'System',
+  ]
     .map(escapeRegExp)
     .join('|');
   const nextSpeakerLine = new RegExp(`\\n\\s*\\[?\\s*(?:${participants})(?:\\s*\\([^)\\n]*\\))?\\s*\\]?\\s*[:：]`, 'i');

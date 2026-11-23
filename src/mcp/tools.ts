@@ -8,7 +8,6 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { resolveInRoot, toRootRelative } from './pathGuard.ts';
 import { readLogTail } from '../server/svlMcpServer.ts';
-import { conversationIdForSvlChatAgent, resolveSvlMcpChatAgent, SVL_MCP_CHAT_AGENT_ENUM } from '../utils/svlLogic.ts';
 
 export interface ToolContext {
   root: string;
@@ -293,7 +292,7 @@ async function shellTool(ctx: ToolContext, a: Args): Promise<string> {
 async function svlChatTool(ctx: ToolContext, a: Args): Promise<string> {
   const message = String(a.message || '').slice(0, 8000);
   if (!message) throw new Error('Brak message.');
-  const agent = resolveSvlMcpChatAgent(a.agent);
+  const agent = String(a.agent || 'System_SI_1') === 'System_SI_1' ? 'System_SI_1' : 'System_SI_1';
   const res = await (ctx.fetchImpl || fetch)(`${ctx.svlBaseUrl}/api/chat`, {
     method: 'POST',
     headers: {
@@ -301,13 +300,7 @@ async function svlChatTool(ctx: ToolContext, a: Args): Promise<string> {
       'X-SVL-Origin': 'mcp-full',
       ...(ctx.svlOperatorToken ? { 'X-SVL-Operator-Token': ctx.svlOperatorToken } : {}),
     },
-    body: JSON.stringify({
-      message,
-      targetAgent: agent,
-      conversationId: conversationIdForSvlChatAgent(agent),
-      origin: 'mcp-full',
-      history: [],
-    }),
+    body: JSON.stringify({ message, targetAgent: agent, origin: 'mcp-full', history: [] }),
     signal: AbortSignal.timeout(240_000),
   });
   const text = await res.text();
@@ -385,9 +378,8 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'svl_chat',
-    description:
-      'Wysyła polecenie do AI systemu SVL (/api/chat: Grok → Ollama → Gemini) jako Bielik, Maya albo System_SI_1 (aliasy: system_si_1, system-si-1) i zwraca odpowiedź. System_SI_1 odpowiada własną personą infrastruktury ROOT i może wykonywać akcje <svl_action>.',
-    inputSchema: obj({ message: S('Polecenie / pytanie'), agent: { type: 'string', enum: [...SVL_MCP_CHAT_AGENT_ENUM] } }, ['message']),
+    description: 'Wysyła polecenie do AI systemu SVL (/api/chat: JEDI Omni-OS v12 VM → Grok → Ollama → Gemini) jako System_SI_1 (ROOT) i zwraca odpowiedź.',
+    inputSchema: obj({ message: S('Polecenie / pytanie'), agent: { type: 'string', enum: ['System_SI_1'] } }, ['message']),
     write: true, // AI SVL może wykonywać akcje w systemie
     handler: svlChatTool,
   },
@@ -411,36 +403,12 @@ export function visibleTools(ctx: ToolContext): ToolDef[] {
   return TOOL_DEFS.filter((t) => !(ctx.readOnly && t.write) && !(t.name === 'run_command' && !ctx.allowShell));
 }
 
-/**
- * Po zmianie plików zgłasza ją działającej aplikacji SVL (POST /api/live/repo-changed), żeby
- * GUI odświeżyło się od razu. Bez tokenu operatora nic nie wysyła — obserwator plików SVL
- * i tak wykryje zmianę. Błędy sieci są ignorowane (aplikacja może być wyłączona).
- */
-export function notifySvlRepoChange(ctx: ToolContext, toolName: string, args: Args): void {
-  if (!ctx.svlOperatorToken || !ctx.svlBaseUrl) return;
-  const paths = [args.path, args.from, args.to]
-    .filter((p): p is string => typeof p === 'string' && p.length > 0)
-    .map((p) => (path.isAbsolute(p) ? p : path.join(ctx.root, p)));
-  if (paths.length === 0) return;
-  try {
-    void (ctx.fetchImpl || fetch)(`${ctx.svlBaseUrl}/api/live/repo-changed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-SVL-Operator-Token': ctx.svlOperatorToken },
-      body: JSON.stringify({ paths, source: `mcp:${toolName}` }),
-      signal: AbortSignal.timeout(3000),
-    }).catch(() => undefined);
-  } catch {
-    // brak fetch / zły URL — obserwator plików SVL i tak wykryje zmianę
-  }
-}
-
 export async function callTool(ctx: ToolContext, name: string, args: Args = {}): Promise<ToolResult> {
   const def = TOOL_DEFS.find((t) => t.name === name);
   try {
     if (!def) throw new Error(`Nieznane narzędzie: ${name}`);
     if (def.write && ctx.readOnly) throw new ReadOnlyError(name);
     const text = await def.handler(ctx, args || {});
-    if (def.write) notifySvlRepoChange(ctx, name, args || {});
     return { content: [{ type: 'text', text }] };
   } catch (error) {
     return { content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }], isError: true };

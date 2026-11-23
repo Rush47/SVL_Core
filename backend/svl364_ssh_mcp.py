@@ -114,7 +114,7 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
     },
     {
         "name": "svl364_resources",
-        "description": "Diagnostyka zasobów, usług systemd, kontenerów, portów i procesów komputera pokładowego.",
+        "description": "Diagnostyka zasobów, usług systemd, kontenerów, portów i procesów hosta SVL-364.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -159,7 +159,7 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
     },
     {
         "name": "svl364_file_control",
-        "description": "Kontrolowany odczyt, sprawdzenie i backup katalogów dozwolonych na komputerze pokładowym.",
+        "description": "Kontrolowany odczyt, sprawdzenie i backup katalogów dozwolonych na hoście SVL-364.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -203,7 +203,7 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
     {
         "name": "svl364_emit_system_report",
         "description": (
-            "Generuje raport SVL_System na potrzeby Bielika (ROOT)."
+            "Generuje raport SVL_System na potrzeby System_SI_1 (ROOT)."
         ),
         "inputSchema": {
             "type": "object",
@@ -274,8 +274,8 @@ class SVL364SshMcpController:
             "ssh_host": os.environ.get("SVL_SSH_TARGET", "Ship").strip() or "Ship",
             "ssh_port": 22,
             "ssh_user": "from OpenSSH config",
-            "computer_account": "SVL-364 Komputer pokładowy",
-            "agent_accounts": ["Bielik", "Maya", "System_SI_1"],
+            "computer_account": "SVL-364 Ship Host",
+            "agent_accounts": ["System_SI_1"],
             "ssh_mode": "openssh-config",
             "mcp_enabled": True,
             "mcp_server_name": "svl-364-linux-control-mcp",
@@ -308,6 +308,8 @@ class SVL364SshMcpController:
             merged.update(existing["config"])
             merged["ssh_host"] = self._configured_ssh_target(merged)
             merged["ssh_mode"] = "openssh-config"
+            merged["computer_account"] = "SVL-364 Ship Host"
+            merged["agent_accounts"] = ["System_SI_1"]
             for key in ("ssh_key_path", "ssh_pub_key_path", "ssh_fingerprint", "ssh_cipher", *FICTIONAL_SHIP_KEYS):
                 merged.pop(key, None)
             merged["mcp_tools_count"] = len(MCP_TOOLS_CATALOG)
@@ -352,8 +354,8 @@ class SVL364SshMcpController:
             scfg = dict(prev_scfg)
             scfg["ssh_bridge_active"] = True
             scfg["ssh_endpoint"] = f"ssh://{cfg['ssh_host']}"
-            scfg["computer_account"] = "SVL-364 Komputer pokładowy"
-            scfg["agent_accounts"] = ["Bielik", "Maya", "System_SI_1"]
+            scfg["computer_account"] = "SVL-364 Ship Host"
+            scfg["agent_accounts"] = ["System_SI_1"]
             scfg.pop("ssh_fingerprint", None)
             scfg["mcp_bridge_active"] = True
             scfg["mcp_endpoint"] = "/api/mcp/svl364"
@@ -414,8 +416,8 @@ class SVL364SshMcpController:
                 "cliCommand": f"ssh {target}",
                 "sessionsCount": self.ssh_sessions_count,
                 "invocations_count": self.ssh_sessions_count,
-                "computerAccount": cfg.get("computer_account", "SVL-364 Komputer pokładowy"),
-                "agentAccounts": list(cfg.get("agent_accounts") or ["Bielik", "Maya", "System_SI_1"]),
+                "computerAccount": cfg.get("computer_account", "SVL-364 Ship Host"),
+                "agentAccounts": ["System_SI_1"],
             },
             "mcp": {
                 "active": True,
@@ -724,7 +726,7 @@ class SVL364SshMcpController:
             "daj", "nadaj", "połącz", "polacz", "zresetuj", "raport", "telemetria",
             "diagnostyka", "pomoc", "wykonaj", "zrób", "zrob", "aktywuj", "odblokuj",
             "zablokuj", "przełącz", "przelacz", "skieruj", "leć", "lec", "kurs",
-            "tarcze", "reaktor", "statek", "maya", "bielik", "check", "show", "report",
+            "tarcze", "reaktor", "statek", "system_si_1", "jedi", "check", "show", "report",
         }
 
         words = stripped.split()
@@ -770,7 +772,7 @@ class SVL364SshMcpController:
             synthesized = "id && free -m && uname -srm"
         elif re.search(r"\b(?:ollama|model\w*|vision)\b", low):
             synthesized = "id && (ollama --version && ollama list || echo 'Ollama: niedostępna lokalnie')"
-        elif re.search(r"\b(?:baz\w*|sqlite|modu[łl]\w*|notatk\w*|maya|bielik)\b", low):
+        elif re.search(r"\b(?:baz\w*|sqlite|modu[łl]\w*|notatk\w*|system_si_1|jedi)\b", low):
             synthesized = (
                 'id && python3 -c "import os, sqlite3; '
                 + sqlite_lookup
@@ -1348,7 +1350,7 @@ class SVL364SshMcpController:
                 or "Raport sterowania statkiem SVL-364 przez SSH i protokół MCP w Linuxie"
             )
             summary = self.kernel.generate_comprehensive_svl_system_markdown_report(directive)
-            self._record_mcp_activity(tool_name, arguments, f"Wygenerowano raport SVL_System (Bielik ROOT): {directive}", started, origin)
+            self._record_mcp_activity(tool_name, arguments, f"Wygenerowano raport SVL_System (System_SI_1 ROOT): {directive}", started, origin)
             return {
                 "ok": True,
                 "tool": "svl364_emit_system_report",

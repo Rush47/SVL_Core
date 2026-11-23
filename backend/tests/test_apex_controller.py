@@ -64,6 +64,21 @@ class ApexControllerHonestyTest(unittest.TestCase):
                 (rootfs / "debian_version").write_text("13.0\n")
                 self.assertTrue(ctl.get_status()["debootstrap_status"].startswith("ZBUDOWANY"))
 
+                # Pełny status Debian 13 (Trixie) Full Edition + sumy kontrolne SHA-256
+                deb_st = ctl.get_debian13_full_status(force_refresh=True)
+                self.assertTrue(deb_st["ok"])
+                self.assertTrue(deb_st["measured"])
+                self.assertEqual(deb_st["codename"], "trixie")
+                self.assertGreaterEqual(deb_st["package_summary"]["target_packages_total"], 50)
+                self.assertEqual(deb_st["package_summary"]["group_count"], 6)
+                self.assertGreaterEqual(deb_st["artifacts_count"], 12)
+                self.assertTrue(all(len(a["sha256"]) == 64 for a in deb_st["artifacts"]))
+
+                act_res = ctl.handle_debian13_action({"action": "verify_packages", "emitToChat": False}, origin="unit-test")
+                self.assertTrue(act_res["ok"])
+                self.assertTrue(act_res["status"]["truth_verification"]["active"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

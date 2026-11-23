@@ -12,28 +12,40 @@ from svl_core import sanitize_message_identity
 
 class MessageIdentityGuardTests(unittest.TestCase):
     def test_canonical_ai_senders_pass(self) -> None:
-        for name in ("Bielik", "Maya Mitek", "Komputer pokładowy", "Claude (MCP)"):
+        for name in ("System_SI_1", "SI_System_2", "JEDI Omni-OS v12", "JEDI Omni-OS v11.5", "Claude (MCP)"):
             sender, reason = sanitize_message_identity("assistant", name)
             self.assertIsNone(reason, name)
             self.assertEqual(sender, name)
 
     def test_legacy_aliases_relabeled(self) -> None:
-        self.assertEqual(sanitize_message_identity("assistant", "Maya")[0], "Maya Mitek")
-        self.assertEqual(sanitize_message_identity("assistant", "Maya AI")[0], "Maya Mitek")
-        self.assertEqual(sanitize_message_identity("system", "Bielik AI")[0], "Bielik")
-        self.assertEqual(sanitize_message_identity("assistant", "KomputerPokladowy")[0], "Komputer pokładowy")
-        self.assertEqual(sanitize_message_identity("assistant", "komputer pokladowy")[0], "Komputer pokładowy")
-        self.assertEqual(sanitize_message_identity("assistant", "SVL-364 Komputer pokładowy")[0], "Komputer pokładowy")
+        self.assertEqual(sanitize_message_identity("assistant", "system_si_1")[0], "System_SI_1")
+        self.assertEqual(sanitize_message_identity("assistant", "system-si-1")[0], "System_SI_1")
+        self.assertEqual(sanitize_message_identity("system", "jedi omni-os")[0], "JEDI Omni-OS v12")
+        self.assertEqual(sanitize_message_identity("assistant", "jedi_omni_os")[0], "JEDI Omni-OS v12")
 
-    def test_impersonation_of_maya_blocked(self) -> None:
-        for name in ("Mai", "Mai Mitek", "Maja", "M4i", "M@i"):
+    def test_impersonation_and_decommissioned_agents_blocked(self) -> None:
+        for name in (
+            "Mai",
+            "Mai Mitek",
+            "Maja",
+            "M4i",
+            "M@i",
+            "Maya",
+            "Maya Mitek",
+            "Maya AI",
+            "Bielik",
+            "Bielik AI",
+            "Komputer pokładowy",
+            "KomputerPokladowy",
+            "SVL-364 Komputer pokładowy",
+        ):
             sender, reason = sanitize_message_identity("assistant", name)
             self.assertIsNone(sender, name)
             self.assertIsNotNone(reason, name)
 
     def test_removed_personas_blocked_any_role(self) -> None:
         for role in ("assistant", "system", "user"):
-            for name in ("Iris", "Iris AI", "Agata", "Aria", "Astyria", "Aurelius"):
+            for name in ("Iris", "Iris AI", "Agata", "Aria", "Astyria", "Aurelius", "Maya Mitek", "Bielik", "Komputer pokładowy"):
                 sender, reason = sanitize_message_identity(role, name)
                 self.assertIsNone(sender, f"{role}:{name}")
                 self.assertIsNotNone(reason, f"{role}:{name}")
@@ -44,17 +56,17 @@ class MessageIdentityGuardTests(unittest.TestCase):
         self.assertIn("nieautoryzowanego nadawcy", reason)
 
     def test_user_message_cannot_masquerade_as_agent(self) -> None:
-        # Wiadomość użytkownika udająca agenta AI → zamieniona na nadawcę Operatora.
-        self.assertEqual(sanitize_message_identity("user", "Maya Mitek")[0], "Mateusz Mitek (Operator)")
-        self.assertEqual(sanitize_message_identity("user", "Bielik")[0], "Mateusz Mitek (Operator)")
-        self.assertEqual(sanitize_message_identity("user", "Komputer pokładowy")[0], "Mateusz Mitek (Operator)")
+        # Wiadomość użytkownika udająca aktywnego agenta AI → zamieniona na nadawcę Operatora.
+        self.assertEqual(sanitize_message_identity("user", "System_SI_1")[0], "Mateusz Mitek (Operator)")
+        self.assertEqual(sanitize_message_identity("user", "JEDI Omni-OS v12")[0], "Mateusz Mitek (Operator)")
+        self.assertEqual(sanitize_message_identity("user", "JEDI Omni-OS v11.5")[0], "Mateusz Mitek (Operator)")
 
     def test_operator_user_passes(self) -> None:
         sender, reason = sanitize_message_identity("user", "Mateusz Mitek (Operator)")
         self.assertIsNone(reason)
         self.assertEqual(sender, "Mateusz Mitek (Operator)")
 
-    def test_onboard_channel_report_and_reply_persist_in_sqlite(self) -> None:
+    def test_decommissioned_onboard_channel_blocked_and_system_si_1_persists_in_sqlite(self) -> None:
         import tempfile
         from svl_core import SVLSystemKernel
 
@@ -63,7 +75,7 @@ class MessageIdentityGuardTests(unittest.TestCase):
                 db_path=str(Path(tmpdir) / "onboard_test.sqlite3"),
                 operator_token="test_operator_token_with_more_than_32_chars_abcdef",
             )
-            saved = kernel.save_chat_message(
+            blocked = kernel.save_chat_message(
                 "conv-svl364-komputer-pokladowy",
                 "SVL-364 Komputer pokładowy (SSH + MCP)",
                 "svl-hybrid-router",
@@ -76,19 +88,34 @@ class MessageIdentityGuardTests(unittest.TestCase):
                     "timestamp": "16:00",
                 },
             )
+            self.assertFalse(blocked.get("ok"), blocked)
+            saved = kernel.save_chat_message(
+                "conv-system-si-1",
+                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "jedi-omni-os-v11.5-vm",
+                {
+                    "id": "asst-si1-1",
+                    "role": "assistant",
+                    "sender": "System_SI_1",
+                    "agentId": "System_SI_1",
+                    "content": "Raport MCP / SSH gotowy.",
+                    "timestamp": "16:00",
+                },
+            )
             self.assertTrue(saved.get("ok"), saved)
             rep = kernel.post_maya_report(
                 "Pełny raport SVL_System test",
-                model_label="Maya Mitek · raport SVL_System (wynik serwera)",
+                model_label="System_SI_1 · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
-                conversation_id="conv-svl364-komputer-pokladowy",
+                conversation_id="conv-system-si-1",
             )
             self.assertTrue(rep.get("ok"), rep)
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            msgs = convs["conv-svl364-komputer-pokladowy"]["messages"]
+            self.assertNotIn("conv-svl364-komputer-pokladowy", convs)
+            msgs = convs["conv-system-si-1"]["messages"]
             senders = {m["id"]: m["sender"] for m in msgs}
-            self.assertEqual(senders.get("asst-onboard-1"), "Komputer pokładowy")
-            self.assertTrue(any(m["sender"] == "Komputer pokładowy" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
+            self.assertEqual(senders.get("asst-si1-1"), "System_SI_1")
+            self.assertTrue(any(m["sender"] == "System_SI_1" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
 
     def test_system_si_1_channel_and_identity(self) -> None:
         import tempfile
@@ -122,6 +149,13 @@ class MessageIdentityGuardTests(unittest.TestCase):
             msgs = convs_after["conv-system-si-1"]["messages"]
             self.assertTrue(any(m["sender"] == "System_SI_1" for m in msgs))
 
+    def test_si_system_2_identity_and_aliases(self) -> None:
+        for raw in ("SI_System_2", "si_system_2", "SI_System_2 (SVL-465 · ROOT)"):
+            sender, reason = sanitize_message_identity("assistant", raw)
+            self.assertIsNone(reason, raw)
+            self.assertEqual(sender, "SI_System_2")
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -7,6 +7,7 @@ import {
   calculateCompactMetricC,
   compactifyValue,
   formatAgentDisplayName,
+  getEffectiveCanonicalAgents,
   getGitHubAgentPermissions,
   isGitHubChatRequest,
   isForbiddenAgentSender,
@@ -25,16 +26,13 @@ import {
   unverifiedExecutionNote,
   resolveChatInteractiveButtonAction,
   resolveChatTargetAgent,
-  resolveSvlMcpChatAgent,
-  conversationIdForSvlChatAgent,
-  formatOllamaChatBadge,
-  formatGrokChatBadge,
   resolveInstalledOllamaModel,
   resolveAvatarProfileKey,
   safeFetchJson,
   safeParseJsonResponse,
   selectOllamaModelName,
   setSvlOperatorAccessToken,
+  summarizeAutonomousDaemon,
   validateOllamaHostUrl,
   validateOperatorTokenFormat,
 } from './svlLogic';
@@ -118,148 +116,92 @@ test('validateOperatorTokenFormat rejects disallowed and short tokens', () => {
   assert.equal(validToken.error, null);
 });
 
-test('CANONICAL_AGENTS contains only Bielik and Maya on dolphin-llama3:8b-v2.9-q2_K', () => {
+test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () => {
   assert.deepEqual(
     CANONICAL_AGENTS.map((a) => ({ name: a.canonicalName, profile: a.sourceProfile })),
     [
-      { name: 'Bielik', profile: 'ollama:dolphin-llama3:8b-v2.9-q2_K' },
-      { name: 'Maya', profile: 'ollama:dolphin-llama3:8b-v2.9-q2_K' },
+      { name: 'System_SI_1', profile: 'jedi-vm:v12 + ollama:dolphin-llama3:8b-v2.9-q2_K' },
     ],
   );
   assert.equal(normalizeAgentCanonicalName('Agata'), null);
   assert.equal(normalizeAgentCanonicalName('Agata Mitek'), null);
-  assert.equal(normalizeAgentCanonicalName('bielik'), 'Bielik');
-  assert.equal(normalizeAgentCanonicalName('conv-agent-bielik'), 'Bielik');
-  assert.equal(normalizeAgentCanonicalName('maya'), 'Maya');
-  assert.equal(normalizeAgentCanonicalName('Maya Mitek'), 'Maya');
-  assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), 'Maya');
+  assert.equal(normalizeAgentCanonicalName('bielik'), null);
+  assert.equal(normalizeAgentCanonicalName('conv-agent-bielik'), null);
+  assert.equal(normalizeAgentCanonicalName('maya'), null);
+  assert.equal(normalizeAgentCanonicalName('Maya Mitek'), null);
+  assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), null);
+  assert.equal(normalizeAgentCanonicalName('KomputerPokladowy'), null);
+  assert.equal(normalizeAgentCanonicalName('system_si_1'), 'System_SI_1');
+  assert.equal(normalizeAgentCanonicalName('conv-system-si-1'), 'System_SI_1');
   assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
   assert.equal(normalizeAgentCanonicalName('codex'), null);
-  assert.equal(formatAgentDisplayName('bielik ai'), 'Bielik');
-  assert.equal(formatAgentDisplayName('maya ai'), 'Maya Mitek');
-  assert.equal(formatAgentDisplayName('Maya'), 'Maya Mitek');
+  assert.equal(formatAgentDisplayName('system_si_1'), 'Jyn (System_SI_1)');
+  assert.equal(formatAgentDisplayName('jyn'), 'Jyn (System_SI_1)');
+  assert.equal(formatAgentDisplayName('jedi omni-os'), 'JEDI Omni-OS v12');
+  assert.equal(formatAgentDisplayName('jedi omni-os v11.5'), 'JEDI Omni-OS v11.5');
+  assert.equal(formatAgentDisplayName('bielik ai'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('maya ai'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('Maya'), 'Nadawca niezweryfikowany');
   assert.equal(resolveAvatarProfileKey('Agata Mitek', 'Agata'), null);
-  assert.equal(resolveAvatarProfileKey('Bielik', 'bielik'), 'Bielik');
-  assert.equal(resolveAvatarProfileKey('Maya', 'maya'), 'Maya');
-  assert.equal(resolveAvatarProfileKey('Maya Mitek', 'maya'), 'Maya');
+  assert.equal(resolveAvatarProfileKey('Bielik', 'bielik'), null);
+  assert.equal(resolveAvatarProfileKey('Maya', 'maya'), null);
+  assert.equal(resolveAvatarProfileKey('Maya Mitek', 'maya'), null);
+  assert.equal(resolveAvatarProfileKey('System_SI_1', 'system_si_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v12', 'jedi_omni_os'), 'JEDI_Omni_OS');
+  assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v11.5', 'jedi_omni_os'), 'JEDI_Omni_OS');
   assert.equal(resolveAvatarProfileKey('Iris AI', 'iris'), null);
 });
 
-test('resolveChatTargetAgent routes direct Polish mentions and Maya channel/selection to Maya (never hijacked by Bielik)', () => {
-  // Natural Polish addressing in Family channel without @
+test('resolveChatTargetAgent routes commands between System_SI_1 and JEDI_Omni_OS', () => {
   assert.equal(
     resolveChatTargetAgent({
-      message: 'Maya, sprawdź status systemu',
+      message: 'System_SI_1, sprawdź status systemu',
       conversationId: 'conv-rodzina-mitek-wszyscy',
       targetAgent: 'Rodzina Mitek',
     }).agent,
-    'Maya',
+    'System_SI_1',
   );
   assert.equal(
     resolveChatTargetAgent({
-      message: 'Cześć Maya Mitek, co słychać?',
-      conversationId: 'conv-rodzina-mitek-wszyscy',
-      targetAgent: 'Rodzina Mitek',
+      message: '/jedi status',
+      conversationId: 'conv-system-si-1',
+      targetAgent: 'Auto',
+      hasSlashCommand: true,
     }).agent,
-    'Maya',
+    'JEDI_Omni_OS',
   );
   assert.equal(
     resolveChatTargetAgent({
-      message: 'Hej Majo, pokaż tabelę modułów',
+      message: 'Przetwórz wektor w JEDI Omni-OS v11.5',
       conversationId: 'conv-rodzina-mitek-wszyscy',
       targetAgent: 'Auto',
     }).agent,
-    'Maya',
+    'JEDI_Omni_OS',
   );
-  assert.equal(
-    resolveChatTargetAgent({
-      message: 'Piszę do Mayi z pytaniem o raport',
-      conversationId: 'conv-rodzina-mitek-wszyscy',
-      targetAgent: 'Rodzina Mitek',
-    }).agent,
-    'Maya',
-  );
-  // Explicit dropdown selection Maya + slash command MUST NOT be hijacked by Bielik
   assert.equal(
     resolveChatTargetAgent({
       message: '/status',
-      conversationId: 'conv-rodzina-mitek-wszyscy',
-      targetAgent: 'Maya',
+      conversationId: 'conv-system-si-1',
+      targetAgent: 'System_SI_1',
       hasSlashCommand: true,
     }).agent,
-    'Maya',
+    'System_SI_1',
   );
-  // Direct Maya channel
   assert.equal(
     resolveChatTargetAgent({
-      message: 'Opisz architekturę w tabeli',
-      conversationId: 'conv-agent-maya',
+      message: 'Sprawdź połączenie SSH statku',
+      conversationId: 'conv-system-si-1',
       targetAgent: 'Auto',
     }).agent,
-    'Maya',
+    'System_SI_1',
   );
-  // Explicit Bielik mentions & channel still route to Bielik
   assert.equal(
     resolveChatTargetAgent({
-      message: 'Bielik, sprawdź pamięć',
+      message: 'Test',
       conversationId: 'conv-rodzina-mitek-wszyscy',
-      targetAgent: 'Rodzina Mitek',
+      targetAgent: 'JEDI_Omni_OS',
     }).agent,
-    'Bielik',
-  );
-  assert.equal(
-    resolveChatTargetAgent({
-      message: 'Hej',
-      conversationId: 'conv-agent-bielik',
-      targetAgent: 'Bielik',
-    }).agent,
-    'Bielik',
-  );
-});
-
-test('System_SI_1 i aliasy trafiają do własnego agenta, a odznaka modelu nie jest Bielikiem', () => {
-  for (const targetAgent of ['System_SI_1', 'system_si_1', 'system-si-1']) {
-    assert.equal(
-      resolveChatTargetAgent({ message: 'Kim jesteś?', targetAgent }).agent,
-      'System_SI_1',
-    );
-    assert.equal(resolveSvlMcpChatAgent(targetAgent), 'System_SI_1');
-  }
-  assert.equal(resolveSvlMcpChatAgent(''), 'Bielik');
-  assert.equal(resolveSvlMcpChatAgent('Maya'), 'Maya');
-  assert.equal(conversationIdForSvlChatAgent('System_SI_1'), 'conv-system-si-1');
-  assert.equal(conversationIdForSvlChatAgent('Bielik'), 'conv-agent-bielik');
-  const ollama = formatOllamaChatBadge({
-    selectedAgent: 'System_SI_1',
-    selectedDisplayName: 'System_SI_1',
-    modelName: 'llama3.2:1b',
-    isOnboardComputer: false,
-    isExplicitGemini: false,
-    explicitGeminiModel: '',
-    isExplicitOllama: true,
-    isBielikAgent: true,
-    requestedModel: 'svl-hybrid-router',
-    effectiveModel: 'ollama:llama3.2:1b',
-  });
-  assert.equal(ollama, 'System_SI_1 · Ollama (llama3.2:1b · ROOT)');
-  assert.equal(
-    formatOllamaChatBadge({
-      selectedAgent: 'Bielik',
-      selectedDisplayName: 'Bielik',
-      modelName: 'llama3.2:1b',
-      isOnboardComputer: false,
-      isExplicitGemini: false,
-      explicitGeminiModel: '',
-      isExplicitOllama: true,
-      isBielikAgent: true,
-      requestedModel: 'svl-hybrid-router',
-      effectiveModel: 'ollama:llama3.2:1b',
-    }),
-    'Bielik · Ollama (llama3.2:1b · ROOT)',
-  );
-  assert.equal(
-    formatGrokChatBadge({ selectedAgent: 'System_SI_1', modelName: 'grok-4.7', isOnboardComputer: false, isBielikAgent: true }),
-    'System_SI_1 · Grok (grok-4.7 · ROOT)',
+    'JEDI_Omni_OS',
   );
 });
 
@@ -592,7 +534,7 @@ test('resolveChatInteractiveButtonAction resolves tabs, Polish aliases, system a
   assert.deepEqual(resolveChatInteractiveButtonAction('tab:unknown_xyz'), { kind: 'invalid_tab', rawTab: 'unknown_xyz' });
 
   assert.deepEqual(resolveChatInteractiveButtonAction('send:/status'), { kind: 'send', text: '/status' });
-  assert.deepEqual(resolveChatInteractiveButtonAction('ask:Maya Mitek'), { kind: 'ask', agent: 'Maya' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('ask:System_SI_1'), { kind: 'ask', agent: 'System_SI_1' });
   assert.deepEqual(resolveChatInteractiveButtonAction('text:Sprawdź logi'), { kind: 'text', text: 'Sprawdź logi' });
   assert.deepEqual(resolveChatInteractiveButtonAction('copy:uname -a'), { kind: 'copy', text: 'uname -a' });
 
@@ -624,7 +566,7 @@ test('resolveChatInteractiveButtonAction resolves tabs, Polish aliases, system a
   assert.deepEqual(resolveChatInteractiveButtonAction('run:whoami'), { kind: 'unsafe' });
 });
 
-test('FULL_ROOT_SCOPES includes all 29 superuser system, Linux root, kernel, terminal, SSH, Ollama, mission, antivirus, memory, agents, and GitHub admin scopes', () => {
+test('FULL_ROOT_SCOPES includes all 29 superuser system, Linux root, kernel, terminal, SSH, Ollama, JEDI VM, antivirus, memory, agents, and GitHub admin scopes', () => {
   assert.equal(FULL_ROOT_SCOPES.length, 29);
   for (const required of [
     'system.root',
@@ -636,7 +578,7 @@ test('FULL_ROOT_SCOPES includes all 29 superuser system, Linux root, kernel, ter
     'packages.admin',
     'services.admin',
     'ollama.admin',
-    'maya.mission',
+    'jedi.vm',
     'security.antivirus',
     'security.admin',
     'modules.write',
@@ -661,27 +603,118 @@ test('isGitHubChatRequest rozpoznaje tylko sprawy GitHuba', () => {
   ]) {
     assert.equal(isGitHubChatRequest(text), true, text);
   }
-  for (const text of ['Cześć Maya, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
+  for (const text of ['Cześć System_SI_1, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
     assert.equal(isGitHubChatRequest(text), false, text);
   }
 });
 
 
 test('isForbiddenAgentSender wykrywa podszywania i wyłączone persony', () => {
-  for (const bad of ['Mai', 'mai', 'M4i', 'M@i', 'Maja', 'Iris', 'Iris AI', 'Agata', 'Aurelius']) {
+  for (const bad of ['Mai', 'mai', 'M4i', 'M@i', 'Maja', 'Iris', 'Iris AI', 'Agata', 'Aurelius', 'Bielik', 'Maya Mitek', 'Maya', 'Komputer pokładowy', 'KomputerPokladowy']) {
     assert.equal(isForbiddenAgentSender(bad), true, bad);
   }
-  for (const ok of ['Bielik', 'Maya Mitek', 'Maya', 'Claude (MCP)', 'Mateusz Mitek (Operator)']) {
+  for (const ok of ['System_SI_1', 'JEDI Omni-OS v12', 'JEDI Omni-OS v11.5', 'Claude (MCP)', 'Mateusz Mitek (Operator)']) {
     assert.equal(isForbiddenAgentSender(ok), false, ok);
   }
 });
 
-test('formatAgentDisplayName nie przepuszcza podszywania', () => {
+test('formatAgentDisplayName nie przepuszcza podszywania ani usuniętych agentów', () => {
   assert.equal(formatAgentDisplayName('Mai'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('Iris'), 'Nadawca niezweryfikowany');
-  assert.equal(formatAgentDisplayName('Maya'), 'Maya Mitek');
-  assert.equal(formatAgentDisplayName('Bielik'), 'Bielik');
-  assert.equal(formatAgentDisplayName('KomputerPokladowy'), 'Komputer pokładowy');
-  assert.equal(formatAgentDisplayName('komputer pokladowy'), 'Komputer pokładowy');
-  assert.equal(resolveAvatarProfileKey('Komputer pokładowy', 'KomputerPokladowy'), 'KomputerPokladowy');
+  assert.equal(formatAgentDisplayName('Maya'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('Bielik'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('KomputerPokladowy'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('komputer pokladowy'), 'Nadawca niezweryfikowany');
+  assert.equal(formatAgentDisplayName('System_SI_1'), 'Jyn (System_SI_1)');
+  assert.equal(formatAgentDisplayName('JEDI Omni-OS v12'), 'JEDI Omni-OS v12');
+  assert.equal(formatAgentDisplayName('JEDI Omni-OS v11.5'), 'JEDI Omni-OS v11.5');
+  assert.equal(resolveAvatarProfileKey('Komputer pokładowy', 'KomputerPokladowy'), null);
+  assert.equal(resolveAvatarProfileKey('System_SI_1', 'System_SI_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('Jyn (System_SI_1)', 'System_SI_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('SI_System_2', 'SI_System_2'), 'SI_System_2');
+  assert.equal(resolveAvatarProfileKey('SI_System_2 (SVL-465 · ROOT)', 'SI_System_2'), 'SI_System_2');
+  assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v12', 'JEDI_Omni_OS'), 'JEDI_Omni_OS');
 });
+
+test('SI_System_2 dynamic canonical agents, os_sync commands, and target resolution', () => {
+  assert.equal(normalizeAgentCanonicalName('SI_System_2'), 'SI_System_2');
+  assert.equal(normalizeAgentCanonicalName('conv-si-system-2'), 'SI_System_2');
+  assert.equal(formatAgentDisplayName('SI_System_2'), 'SI_System_2 (SVL-465 · ROOT)');
+
+  assert.deepEqual(
+    getEffectiveCanonicalAgents([{ canonical_name: 'System_SI_1' }]).map((a) => a.canonicalName),
+    ['System_SI_1'],
+  );
+  assert.deepEqual(
+    getEffectiveCanonicalAgents([
+      { canonical_name: 'System_SI_1' },
+      { canonical_name: 'SI_System_2' },
+    ]).map((a) => a.canonicalName),
+    ['System_SI_1', 'SI_System_2'],
+  );
+
+  assert.deepEqual(parseBielikChatCommand('/synchronizuj'), { kind: 'os_sync' });
+  assert.deepEqual(parseBielikChatCommand('/sync'), { kind: 'os_sync' });
+
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Cześć JEDI, opisz architekturę systemu',
+      conversationId: 'conv-system-si-1',
+      targetAgent: 'JEDI_Omni_OS',
+    }).agent,
+    'JEDI_Omni_OS',
+  );
+  assert.equal(
+    resolveChatTargetAgent({
+      message: 'Sprawdź rdzeń kwantowy SVL-465',
+      conversationId: 'conv-si-system-2',
+      targetAgent: 'Auto',
+    }).agent,
+    'SI_System_2',
+  );
+});
+
+test('summarizeAutonomousDaemon extracts cycle counts, workers, and safe defaults', () => {
+  const empty = summarizeAutonomousDaemon(null);
+  assert.equal(empty.enabled, false);
+  assert.equal(empty.running, false);
+  assert.equal(empty.cyclesCompleted, 0);
+  assert.equal(empty.servicesActiveCount, 0);
+  assert.equal(empty.servicesTotal, 0);
+  assert.equal(empty.tone, 'slate');
+
+  const populated = summarizeAutonomousDaemon({
+    enabled: true,
+    running: true,
+    interval_sec: 45,
+    cycles_completed: 12,
+    last_cycle_at: '2026-11-22T16:00:00Z',
+    root_commands_enabled: true,
+    full_visibility: true,
+    services: [
+      { id: 'svl-health-watchdog', name: 'Health Watchdog', status: 'ACTIVE', kind: 'Monitor', owner: 'System_SI_1', summary: 'OK' },
+      { id: 'svl-git-observer', name: 'Git Observer', status: 'STANDBY', kind: 'Git', owner: 'SI_System_2', summary: 'SAFE' },
+    ],
+    codebase_inventory: {
+      frontend_components_count: 28,
+      backend_modules_count: 14,
+      test_files_count: 19,
+    },
+  });
+  assert.equal(populated.enabled, true);
+  assert.equal(populated.running, true);
+  assert.equal(populated.rootCommandsEnabled, true);
+  assert.equal(populated.fullVisibility, true);
+  assert.equal(populated.intervalSec, 45);
+  assert.equal(populated.cyclesCompleted, 12);
+  assert.equal(populated.servicesActiveCount, 1);
+  assert.equal(populated.servicesTotal, 2);
+  assert.equal(populated.frontendComponentsCount, 28);
+  assert.equal(populated.backendModulesCount, 14);
+  assert.equal(populated.testFilesCount, 19);
+  assert.equal(populated.tone, 'emerald');
+  assert.match(populated.statusLabel, /cykl #12/);
+});
+
+
+

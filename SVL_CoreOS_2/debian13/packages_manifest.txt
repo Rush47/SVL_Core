@@ -1,7 +1,7 @@
-# SVL CoreOS 2: Apex — Pełny Manifest Pakietów Debian 13 (Trixie) [Debootstrap Stage 1 + Stage 2]
+# SVL CoreOS 2: Apex — Pełny Manifest Pakietów Debian 13 (Trixie) [Full Edition · Debootstrap Stage 1 + Stage 2]
 # Architektura: amd64 | Jądro: Linux 6.12 LTS (PREEMPT_RT + eBPF) | Kalibracja: 364
 
-# --- 1. Rdzeń systemu i rozruch (Debootstrap Base + EFI) ---
+# --- 1. Rdzeń systemu i rozruch (Debootstrap Base + EFI + APT DEB822) ---
 systemd
 systemd-sysv
 systemd-resolved
@@ -15,6 +15,9 @@ bash
 coreutils
 util-linux
 procps
+apt
+dpkg
+debootstrap
 linux-image-amd64
 linux-headers-amd64
 firmware-linux-free
@@ -22,7 +25,7 @@ grub-efi-amd64
 grub-common
 efibootmgr
 
-# --- 2. Telemetria jądra, eBPF i diagnostyka ---
+# --- 2. Telemetria jądra, eBPF i diagnostyka sprzętowa ---
 bpftool
 libbpf1
 linux-perf
@@ -31,9 +34,11 @@ lm-sensors
 smartmontools
 nvme-cli
 
-# --- 3. Bezpieczeństwo, Zapora SVL-Apex Firewall i Podwójny Tunel VPN ---
+# --- 3. Bezpieczeństwo, Zapora SVL-Apex Firewall (nftables) i Podwójny Tunel VPN ---
 nftables
 ufw
+iproute2
+iputils-ping
 openssh-client
 openssh-server
 wireguard-tools
@@ -51,15 +56,19 @@ ovmf
 bridge-utils
 virtinst
 
-# --- 5. Środowisko Wykonawcze Python 3.12, Baza SQLite WAL i Narzędzia AI ---
+# --- 5. Środowisko Wykonawcze Python 3.12/3.13, Node.js, Baza SQLite WAL i Narzędzia AI ---
 python3
 python3-pip
 python3-venv
 python3-dev
 build-essential
+nodejs
+npm
 sqlite3
 libsqlite3-dev
 git
+gh
+rsync
 curl
 wget
 jq
@@ -67,3 +76,11 @@ zstd
 lz4
 tmux
 htop
+
+# --- 6. Narzędzia Obrazów Live ISO, SquashFS i Partycjonowania Dysków ---
+squashfs-tools
+xorriso
+dosfstools
+parted
+cryptsetup
+lvm2

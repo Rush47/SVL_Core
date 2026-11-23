@@ -21,7 +21,7 @@ class MessageProvenanceTests(unittest.TestCase):
             for msg_id, provenance in (("m1", "model_unverified"), ("m2", "web_sources"), ("m3", "made_up_value")):
                 kernel.save_chat_message(
                     "conv-test", "Test", "x",
-                    {"id": msg_id, "role": "assistant", "sender": "Bielik", "content": msg_id,
+                    {"id": msg_id, "role": "assistant", "sender": "System_SI_1", "content": msg_id,
                      "provenance": provenance, "verificationNote": "notatka"},
                 )
             messages = {m["id"]: m for c in kernel.list_conversations_with_messages() for m in c["messages"]}

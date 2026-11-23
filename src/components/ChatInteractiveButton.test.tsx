@@ -119,18 +119,6 @@ test('buildAgentSystemContext includes factual grounding and table/interactive e
   assert.match(ctx, /\[details:/);
 });
 
-test('buildAgentSystemContext gives System_SI_1 its own persona, not Bielik', () => {
-  const ctx = buildAgentSystemContext('pamięć', 'System_SI_1');
-  assert.match(ctx, /TWOJE IMIĘ TO WYŁĄCZNIE System_SI_1/);
-  assert.match(ctx, /Jesteś System_SI_1/);
-  assert.match(ctx, /Nigdy nie podpisuj się jako Bielik/);
-  assert.match(ctx, /<svl_action>/);
-  assert.doesNotMatch(ctx, /Odpowiadasz wyłącznie jako \*\*Bielik\*\*/);
-  const stored = buildAgentSystemContext('', 'System_SI_1', 'TOŻSAMOŚĆ: Jesteś System_SI_1 — rdzeń floty.');
-  assert.match(stored, /rdzeń floty/);
-  assert.match(stored, /Nigdy nie podpisuj się jako Bielik/);
-});
-
 test('enforceFactualExecutionGuard flags fabricated instant actions and allows honest negations', () => {
   const fabricated = enforceFactualExecutionGuard('Właśnie naprawiłem plik i zrestartowałem serwer!', 0);
   assert.ok(fabricated.verificationNote);

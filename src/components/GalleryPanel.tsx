@@ -5,7 +5,7 @@ import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } f
 interface Opinion { agent: string; verdict: 'like' | 'dislike'; comment: string; model: string }
 interface GalleryItem { id: string; imageDataUrl: string; uploadedAt: string; opinions: Opinion[] }
 
-const AGENT_AVATAR: Record<string, string> = { Bielik: 'BI', 'Maya Mitek': 'MM' };
+const AGENT_AVATAR: Record<string, string> = { System_SI_1: 'SI' };
 const timeOf = (iso: string) => (/^\d{4}-\d{2}-\d{2}T/.test(iso) ? new Date(iso).toLocaleString('pl-PL') : iso);
 
 export const GalleryPanel: React.FC = () => {
@@ -72,7 +72,7 @@ export const GalleryPanel: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 space-y-4 bg-[#0B0D13] text-slate-200">
+    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 bg-[#0B0D13] text-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Images className="w-5 h-5 text-violet-400" />
@@ -91,7 +91,7 @@ export const GalleryPanel: React.FC = () => {
       </div>
 
       <p className="text-[11px] text-slate-500">
-        Po wrzuceniu każdy agent AI (Bielik i Maya Mitek) ogląda zdjęcie modelem wizyjnym, daje 👍/👎 i komentuje.
+        Po wrzuceniu agent AI (System_SI_1) ogląda zdjęcie modelem wizyjnym, daje 👍/👎 i komentuje.
       </p>
       {error && <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">{error}</div>}
 
@@ -103,7 +103,7 @@ export const GalleryPanel: React.FC = () => {
         {items.map((item) => (
           <div key={item.id} className="rounded-xl border border-slate-800 bg-[#111520] overflow-hidden">
             <div className="relative">
-              <img src={item.imageDataUrl} alt="Zdjęcie Operatora" className="w-full h-56 object-cover bg-[#0B0D13]" />
+              <img src={item.imageDataUrl} alt="Zdjęcie Operatora" loading="lazy" className="w-full h-56 object-cover bg-[#0B0D13]" />
               <button
                 type="button"
                 onClick={() => void remove(item.id)}

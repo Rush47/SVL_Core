@@ -19,7 +19,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useSvlSync } from '../utils/svlSyncStore';
-import { getSvlOperatorAccessToken, hasSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
+import { getEffectiveCanonicalAgents, getSvlOperatorAccessToken, hasSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken } from '../utils/svlLogic';
 import { RealVisionPanel } from './RealVisionPanel';
 
 type WorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
@@ -122,11 +122,11 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
     serverRevision,
     lastSyncedAt,
     wsState,
-    sseState,
     lastRefreshReport,
     conversations,
     refreshDomainModules,
     refreshAllDomains,
+    openAgentChannel,
     isSyncing,
   } = useSvlSync();
 
@@ -421,10 +421,10 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
   const sentinelModule: any = systemModules.find(
     (item: any) => item.id === 'svl-365-sentinel' || item.id === 'svl-antivirus-scanner',
   );
-  const bielikMemories: any[] = Array.isArray(agentsData?.agent_memories?.Bielik)
-    ? agentsData.agent_memories.Bielik
+  const systemSi1Memories: any[] = Array.isArray(agentsData?.agent_memories?.System_SI_1)
+    ? agentsData.agent_memories.System_SI_1
     : [];
-  const continuousMissionMemory = bielikMemories.find((m: any) =>
+  const continuousMissionMemory = systemSi1Memories.find((m: any) =>
     /misj|ciągł|autonom|svl-364|zabezpiecz|napraw/i.test(String(m?.content || '')),
   );
   const activeMissionDescription = String(
@@ -542,12 +542,12 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
 
   return (
     <div className="h-full overflow-y-auto bg-[#060A12] text-slate-100">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-5 space-y-5">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-5 space-y-5">
         {/* Top CIC Command Header */}
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-cyan-500/25 pb-4">
           <div>
-            <p className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-violet-400">
-              <Server size={16} /> SVL-364
+            <p className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.24em] text-violet-400">
+              <Server size={16} /> SVL-364 {systemModules.some((m: any) => String(m.id || '').startsWith('si-system-2')) ? '· FLOTA SVL-465 AKTYWNA' : ''}
             </p>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
               Prawdziwe pomiary hosta, usług i połączenia SSH (bez wartości szacowanych).
@@ -589,7 +589,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
         </header>
 
         {reportFeedback && (
-          <div className="rounded-lg border border-cyan-500/40 bg-cyan-950/30 px-3.5 py-2 text-xs font-mono text-cyan-200 flex items-center justify-between gap-2">
+          <div className="rounded-lg border border-cyan-500/40 bg-cyan-950/30 px-3.5 py-2 text-xs font-mono text-cyan-200 flex flex-wrap items-center justify-between gap-2">
             <span>{reportFeedback}</span>
             <button
               type="button"
@@ -615,7 +615,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
 
           <p className="text-xs sm:text-sm text-slate-200 leading-relaxed bg-slate-950/60 border border-slate-800/90 rounded-lg px-3.5 py-2.5">
             <strong className="text-cyan-300 font-mono">Dyrektywa ciągła:</strong>{' '}
-            {activeMissionDescription || 'Brak zapisanej dyrektywy ciągłej w module svl-364 ani w pamięci Bielika.'}
+            {activeMissionDescription || 'Brak zapisanej dyrektywy ciągłej w module svl-364 ani w pamięci System_SI_1.'}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
@@ -794,7 +794,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
-            <div className="lg:col-span-8 relative rounded-xl border border-cyan-500/30 bg-[#040811] overflow-hidden min-h-[340px] flex items-center justify-center p-3">
+            <div className="lg:col-span-8 relative rounded-xl border border-cyan-500/30 bg-[#040811] overflow-hidden min-h-[240px] sm:min-h-[340px] flex items-center justify-center p-2.5 sm:p-3">
               <svg viewBox="0 0 800 440" className="w-full h-full max-h-[380px] select-none" role="img" aria-label="Mapa połączeń usług">
                 <rect width="800" height="440" fill="#040811" />
                 <ellipse cx="400" cy="220" rx="300" ry="165" fill="none" stroke="#0e7490" strokeOpacity="0.3" strokeDasharray="4 6" />
@@ -882,38 +882,37 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           </h2>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-2 font-mono text-xs">
+            <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-2 font-mono text-xs min-w-0">
               <span className="text-slate-400">Interfejsy sieciowe (/proc/net/dev)</span>
               {host?.network.length ? (
-                <table className="w-full text-left">
-                  <thead className="text-slate-500">
-                    <tr>
-                      <th className="font-normal">Interfejs</th>
-                      <th className="font-normal">↓ odbiór</th>
-                      <th className="font-normal">↑ wysyłka</th>
-                      <th className="font-normal">Razem ↓/↑</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {host.network.map((nic) => (
-                      <tr key={nic.interface} className="text-slate-200">
-                        <td className="text-cyan-300">{nic.interface}</td>
-                        <td>{fmtRate(nic.rx_bytes_per_sec)}</td>
-                        <td>{fmtRate(nic.tx_bytes_per_sec)}</td>
-                        <td className="text-slate-400">
-                          {fmtBytes(nic.rx_bytes)} / {fmtBytes(nic.tx_bytes)}
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="text-slate-500">
+                      <tr>
+                        <th className="font-normal pr-2">Interfejs</th>
+                        <th className="font-normal pr-2">↓ odbiór</th>
+                        <th className="font-normal pr-2">↑ wysyłka</th>
+                        <th className="font-normal">Razem ↓/↑</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {host.network.map((nic) => (
+                        <tr key={nic.interface} className="text-slate-200">
+                          <td className="text-cyan-300 pr-2">{nic.interface}</td>
+                          <td className="pr-2">{fmtRate(nic.rx_bytes_per_sec)}</td>
+                          <td className="pr-2">{fmtRate(nic.tx_bytes_per_sec)}</td>
+                          <td className="text-slate-400">
+                            {fmtBytes(nic.rx_bytes)} / {fmtBytes(nic.tx_bytes)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <p className="text-slate-500">{telemetry ? 'Brak interfejsów poza loopback.' : NA}</p>
               )}
-              <p className="text-slate-400">
-                WebSocket /ws/svl: {wsState}
-                {sseState !== 'off' ? ` · zapasowy SSE /api/events: ${sseState}` : ''}
-              </p>
+              <p className="text-slate-400">WebSocket /ws/svl: {wsState}</p>
             </div>
 
             <div className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1.5 font-mono text-xs">
@@ -987,10 +986,13 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               .filter(
                 (m: any) =>
                   m.source === 'chat' ||
-                  m.source === 'bielik-chat-command' ||
-                  m.config?.managed_by === 'Bielik' ||
+                  m.source === 'system-si-1-chat-command' ||
+                  m.config?.managed_by === 'System_SI_1' ||
+                  m.config?.managed_by === 'SI_System_2' ||
                   String(m.id || '').startsWith('svl-364') ||
                   String(m.id || '').startsWith('svl-365') ||
+                  String(m.id || '').startsWith('si-system-2') ||
+                  String(m.id || '').startsWith('jedi-omni-os') ||
                   [
                     'svl-364',
                     'svl-364-daemon',
@@ -1003,12 +1005,19 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                     'svl-antivirus-scanner',
                     'svl-real-vision',
                     'svl-infrastruktura',
+                    'alliance-defense-grid',
+                    'solar-defense-read-bridge',
                   ].includes(m.id),
               )
               .map((mod: any) => {
                 const cfg = mod.config && typeof mod.config === 'object' ? mod.config : {};
                 const highlightKeys = [
                   'managed_by',
+                  'version',
+                  'execution_mode',
+                  'censorship_filters',
+                  'access_mode',
+                  'spacetime_shield',
                   'autonomous_mode',
                   'autopilot_mode',
                   'isolation_mode',
@@ -1097,11 +1106,11 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
             <div className="md:col-span-3 rounded-xl border border-cyan-500/30 bg-cyan-950/10 p-3 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-cyan-200 font-semibold">Konto komputera pokładowego</div>
-                <div className="text-slate-100">SVL-364 Komputer pokładowy</div>
-                <div className="text-slate-400">Alias OpenSSH: {sshMcpStatus?.ssh?.host || 'Ship'} · użytkują: Bielik, Maya Mitek</div>
+                <div className="text-cyan-200 font-semibold">Mostek SSH / MCP Statku SVL-364</div>
+                <div className="text-slate-100">System_SI_1 &amp; SI_System_2 (ROOT) · JEDI Omni-OS v12 VM</div>
+                <div className="text-slate-400">Alias OpenSSH: {sshMcpStatus?.ssh?.host || 'Ship'} · obsługuje: System_SI_1</div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <span className={`rounded border px-2 py-1 ${sshMcpStatus?.ssh?.targetReachable ? 'border-emerald-500/50 text-emerald-300' : 'border-amber-500/50 text-amber-300'}`}>
                   {sshMcpStatus?.ssh?.targetReachable ? 'POŁĄCZENIE AKTYWNE' : 'KONFIGURACJA DOSTĘPNA · BRAK LINKU'}
                 </span>
@@ -1184,7 +1193,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 ))}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   value={sshCommandInput}
@@ -1193,13 +1202,13 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                     if (e.key === 'Enter') void handleExecSshOnShip();
                   }}
                   placeholder="Dowolne polecenie naturalne lub /exec <polecenie> z uprawnieniami ROOT..."
-                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#0B1220] px-3 py-1.5 text-xs font-mono text-slate-100"
+                  className="min-w-0 min-h-[38px] flex-1 rounded-lg border border-slate-700 bg-[#0B1220] px-3 py-1.5 text-xs font-mono text-slate-100"
                 />
                 <button
                   type="button"
                   onClick={() => void handleExecSshOnShip()}
                   disabled={sshBusy}
-                  className="rounded-lg border border-emerald-500/50 bg-emerald-600/25 px-3 py-1.5 text-xs font-mono font-semibold text-emerald-100 hover:bg-emerald-500/35 disabled:opacity-40"
+                  className="min-h-[38px] rounded-lg border border-emerald-500/50 bg-emerald-600/25 px-3 py-1.5 text-xs font-mono font-semibold text-emerald-100 hover:bg-emerald-500/35 disabled:opacity-40 whitespace-nowrap"
                 >
                   {sshBusy ? 'SSH...' : 'Wykonaj przez SSH'}
                 </button>
@@ -1252,13 +1261,13 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 ))}
               </div>
 
-              <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
-                <span>Aktywne narzędzie: <strong className="text-cyan-300">{mcpToolName}</strong></span>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-400">
+                <span>Aktywne narzędzie: <strong className="text-cyan-300 break-all">{mcpToolName}</strong></span>
                 <button
                   type="button"
                   onClick={() => void handleInvokeMcpTool()}
                   disabled={mcpBusy}
-                  className="rounded-lg border border-cyan-500/50 bg-cyan-600/25 px-3 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/35 disabled:opacity-40"
+                  className="min-h-[36px] rounded-lg border border-cyan-500/50 bg-cyan-600/25 px-3 py-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/35 disabled:opacity-40 whitespace-nowrap"
                 >
                   {mcpBusy ? 'Wywołuję MCP...' : 'Wywołaj narzędzie MCP'}
                 </button>
@@ -1285,38 +1294,69 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               <Bot size={18} className="text-violet-400" /> Załoga AI Statku SVL-364 i Workery
             </h2>
             <div className="space-y-2">
-              <div className="flex items-center justify-between rounded-md bg-slate-950/60 border border-slate-800 px-3 py-2 text-sm">
-                <div>
-                  <span className="font-semibold text-amber-300">Bielik</span>
+              {getEffectiveCanonicalAgents(agents).map((crewMeta) => {
+                const liveCrew = agents.find((a) => a.canonical_name === crewMeta.canonicalName);
+                const isSi2 = crewMeta.canonicalName === 'SI_System_2';
+                return (
+                  <div
+                    key={crewMeta.id}
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-md bg-slate-950/60 border ${crewMeta.borderClass} px-3 py-2 text-sm`}
+                  >
+                    <div className="min-w-0">
+                      <span className={`font-semibold ${crewMeta.textClass}`}>{crewMeta.displayName}</span>
+                      <p className="text-xs text-slate-400">
+                        {isSi2
+                          ? 'Autonomiczny Rdzeń Floty SVL-465 i Bazy Kwantowej'
+                          : 'Zarządzanie Infrastrukturą, SSH/OpenSSH & MCP'}{' '}
+                        · RBAC: {liveCrew?.config?.rbac_role || 'root'}
+                      </p>
+                    </div>
+                    <span className="text-emerald-300 text-xs font-mono shrink-0">
+                      {['ONLINE_LOCAL_WORKER', 'BUSY_LOCAL_WORKER'].includes(liveCrew?.status)
+                        ? `AKTYWNY (PID ${liveCrew?.pid ?? '?'})`
+                        : 'ROOT READY'}
+                    </span>
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-slate-950/60 border border-emerald-500/30 px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <span className="font-semibold text-emerald-300">JEDI Omni-OS v12 (AI + VM · ROOT_UNRESTRICTED)</span>
                   <p className="text-xs text-slate-400">
-                    Procesor Poleceń &amp; Diagnostyka SVL_System · ollama:llama3.2-vision:11b · RBAC:{' '}
-                    {agents.find((a) => a.canonical_name === 'Bielik')?.config?.rbac_role || 'root'}
+                    Generatywny Procesor Odpowiedzi i Maszyna Wirtualna · TCP :8443 · Filtry: DISABLED · Axiom Zero
                   </p>
                 </div>
-                <span className="text-emerald-300 text-xs font-mono">
-                  {activeWorkers > 0 ? 'AKTYWNY (ROOT)' : 'ROOT READY'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-md bg-slate-950/60 border border-cyan-500/30 px-3 py-2 text-sm">
-                <div>
-                  <span className="font-semibold text-cyan-300">Maya Mitek</span>
-                  <p className="text-xs text-slate-400">
-                    AI Pokładowa Statku SVL-364 · Baza Notatek i Prac Operatora · RBAC:{' '}
-                    {agents.find((a) => a.canonical_name === 'Maya')?.config?.rbac_role || 'root'}
-                  </p>
-                </div>
-                <span className="text-emerald-300 text-xs font-mono">
-                  POWIADOMIENIA -&gt; WSZYSCY (ROOT)
+                <span className="text-emerald-300 text-xs font-mono shrink-0">
+                  ONLINE (v12 · ROOT_UNRESTRICTED)
                 </span>
               </div>
             </div>
             <div className="flex flex-wrap gap-3 text-xs font-medium text-violet-300 pt-1">
               <button type="button" onClick={() => onNavigate('agents')} className="hover:underline">
-                Pamięć Długotrwała AI ({bielikMemories.length} wpisów Bielika)
+                Pamięć Długotrwała AI ({systemSi1Memories.length} wpisów System_SI_1)
               </button>
-              <button type="button" onClick={() => onNavigate('chat')} className="hover:underline">
-                Otwórz Kanał Rodzina Mitek (wszyscy)
+              <button
+                type="button"
+                onClick={() => {
+                  openAgentChannel('System_SI_1');
+                  onNavigate('chat');
+                }}
+                className="hover:underline"
+              >
+                Kanał Jyn (System_SI_1)
               </button>
+              {getEffectiveCanonicalAgents(agents).some((a) => a.canonicalName === 'SI_System_2') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    openAgentChannel('SI_System_2');
+                    onNavigate('chat');
+                  }}
+                  className="hover:underline text-violet-300"
+                >
+                  Kanał SI_System_2 (SVL-465)
+                </button>
+              )}
               <button type="button" onClick={() => onNavigate('kernel')} className="hover:underline">
                 Diagnostyka Jądra SVL
               </button>

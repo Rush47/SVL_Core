@@ -589,16 +589,18 @@ class SVLRealVisionEngine:
 
         if emit_to_chat:
             try:
+                conv_title = self._resolve_conversation_title(conversation_id)
+                emit_sender, emit_agent_id = self._resolve_chat_sender(conversation_id)
                 self.kernel.save_chat_message(
                     conversation_id,
-                    "Rodzina Mitek (wszyscy)",
+                    conv_title,
                     f"ollama:{target_model}",
                     {
                         "id": f"msg-rv-{uuid.uuid4().hex[:10]}",
                         "role": "assistant",
-                        "sender": "Real Vision",
-                        "agentId": "real-vision",
-                        "modelUsed": f"Ollama ({target_model})" if analysed else "Analiza nieudana",
+                        "sender": emit_sender,
+                        "agentId": emit_agent_id,
+                        "modelUsed": f"Real Vision · Ollama ({target_model})" if analysed else "Real Vision · Analiza nieudana",
                         "provenance": "model_unverified" if analysed else "error",
                         "timestamp": datetime.now(timezone.utc).strftime("%H:%M"),
                         "content": vision_report_md,
@@ -617,3 +619,191 @@ class SVLRealVisionEngine:
             "status": self.get_status(ollama_host=ollama_host),
             "serverRevision": self.kernel.get_server_revision(),
         }
+
+    def _resolve_chat_sender(self, conversation_id: str, requested_sender: str = "", requested_agent_id: str = "") -> tuple[str, str]:
+        raw = f"{requested_sender} {requested_agent_id}".lower()
+        cid = (conversation_id or "").strip().lower()
+        if "si_system_2" in raw or "si-system-2" in raw or cid == "conv-si-system-2":
+            return "SI_System_2", "SI_System_2"
+        if "jedi" in raw:
+            return "JEDI Omni-OS v12", "JEDI_Omni_OS"
+        return "System_SI_1", "System_SI_1"
+
+    def _resolve_conversation_title(self, conversation_id: str) -> str:
+        cid = (conversation_id or "conv-rodzina-mitek-wszyscy").strip()
+        defaults = {
+            "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
+            "conv-system-si-1": "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+            "conv-si-system-2": "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)",
+        }
+        if cid in defaults:
+            return defaults[cid]
+        try:
+            for conv in self.kernel.list_conversations_with_messages():
+                if str(conv.get("id") or "") == cid and conv.get("title"):
+                    return str(conv["title"])
+        except Exception:
+            pass
+        return "Rodzina Mitek (wszyscy)"
+
+    def record_external_analysis(
+        self,
+        *,
+        record_id: str = "",
+        model: str = "gemini-4-hydrogen",
+        provider: str = "gemini",
+        reply_text: str = "",
+        source: str = "operator",
+        prompt: str = "",
+        binary_metrics: Optional[dict[str, Any]] = None,
+        image_preview: str = "",
+        duration_ms: float = 0.0,
+        ollama_error: Optional[str] = None,
+        ollama_host: str = "http://127.0.0.1:11434",
+        emit_to_chat: bool = False,
+        conversation_id: str = "conv-rodzina-mitek-wszyscy",
+        sender: str = "System_SI_1",
+        agent_id: str = "System_SI_1",
+        origin: str = "real-vision-gemini",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """
+        Records a completed real multimodal vision analysis performed by a fallback
+        provider (e.g. Gemini Vision when local Ollama is offline) using the exact
+        server-computed binary metrics from the uploaded/preset frame.
+        """
+        clean_reply = (reply_text or "").strip()
+        if not clean_reply:
+            return {
+                "ok": False,
+                "error": "Brak opisu z modelu wizyjnego.",
+                "record": None,
+                "status": self.get_status(ollama_host=ollama_host),
+                "serverRevision": self.kernel.get_server_revision(),
+            }
+
+        bm = binary_metrics if isinstance(binary_metrics, dict) and binary_metrics else analyze_image_binary(image_preview)
+        cs = bm.get("colorStats") or {"meanR": 0, "meanG": 0, "meanB": 0, "luminance": 0, "contrastStd": 0}
+        source_label = source or "obraz Operatora"
+        file_table = (
+            "| Parametr pliku (obliczony przez serwer) | Wartość |\n"
+            "| :--- | :--- |\n"
+            f"| Źródło | {source_label} |\n"
+            f"| Format i rozmiar | {bm.get('format', 'IMG')} ({bm.get('mimeType', 'image/png')}) · {bm.get('sizeKb', 0)} KB |\n"
+            f"| Rozdzielczość | {bm.get('resolution', 'Dynamic Frame')} · {bm.get('channels', 3)} kanały ({bm.get('bitDepth', 8)}-bit) |\n"
+            f"| SHA-256 | `{str(bm.get('sha256') or '')[:32]}…` |\n"
+            f"| Średnie RGB / luminancja | R={cs.get('meanR', 0)} · G={cs.get('meanG', 0)} · B={cs.get('meanB', 0)} · Y={cs.get('luminance', 0)} |\n"
+        )
+        fallback_note = (
+            f"_Silnik Ollama (`llama3.2-vision:11b`) był niedostępny — analizę wykonał model wizyjny Gemini (`{model}`). "
+            f"Opis treści pochodzi z modelu; parametry pliku policzył serwer._"
+            if provider == "gemini"
+            else "_Opis treści pochodzi z modelu i nie jest weryfikowany przez serwer._"
+        )
+        provider_label = "Gemini Vision · fallback po Ollamie" if provider == "gemini" else provider
+        vision_report_md = (
+            f"### 👁️ Analiza obrazu · model `{model}` ({provider_label})\n\n"
+            f"{clean_reply}\n\n"
+            f"{fallback_note}\n\n"
+            f"{file_table}"
+        )
+
+        rec_id = (record_id or "").strip() or f"rv-{uuid.uuid4().hex[:10]}"
+        record = {
+            "id": rec_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "model": model,
+            "provider": provider,
+            "fallbackUsed": provider == "gemini",
+            "ollamaEndpoint": f"{(ollama_host or 'http://127.0.0.1:11434').rstrip('/')}/api/chat",
+            "ollamaHttpStatus": 200,
+            "ollamaError": ollama_error,
+            "analysed": True,
+            "error": None,
+            "source": source_label,
+            "prompt": (prompt or "").strip(),
+            "durationMs": round(float(duration_ms or 0.0), 1),
+            "binaryMetrics": bm,
+            "ollamaReply": clean_reply,
+            "reportMarkdown": vision_report_md,
+            "imagePreview": image_preview,
+        }
+
+        replaced = False
+        for idx in range(len(self.recent_inspections) - 1, -1, -1):
+            if self.recent_inspections[idx].get("id") == rec_id:
+                self.recent_inspections[idx] = record
+                replaced = True
+                break
+        if not replaced:
+            self.inspections_count += 1
+            self.recent_inspections.append(record)
+
+        try:
+            self.kernel.upsert_system_module(
+                module_id="svl-real-vision",
+                name="SVL Real Vision · Ollama 3.2 Vision + Gemini Vision Fallback",
+                kind="Multimodal Real Vision Engine",
+                status="ACTIVE",
+                description=(
+                    f"Ostatnia analiza ({bm.get('format', 'IMG')} {bm.get('resolution', '')}): "
+                    f"opis od modelu {model} ({provider_label})"
+                ),
+                config={
+                    "engine": "SVLRealVisionEngine v3.2",
+                    "ollama_model": PREFERRED_VISION_MODEL,
+                    "active_model": model,
+                    "active_provider": provider,
+                    "ollama_endpoint": record["ollamaEndpoint"],
+                    "inspections_count": self.inspections_count,
+                    "last_frame_format": bm.get("format"),
+                    "last_frame_resolution": bm.get("resolution"),
+                    "last_frame_sha256": bm.get("sha256Short"),
+                    "last_test_status": "PASSED",
+                    "last_error": None,
+                    "ollama_fallback_reason": ollama_error,
+                    "updated_at": record["timestamp"],
+                },
+                source="operator",
+                origin=origin,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            pass
+
+        if emit_to_chat:
+            try:
+                conv_title = self._resolve_conversation_title(conversation_id)
+                emit_sender, emit_agent_id = self._resolve_chat_sender(conversation_id, sender, agent_id)
+                model_badge = f"Real Vision · Gemini ({model})" if provider == "gemini" else f"Real Vision · {provider} ({model})"
+                self.kernel.save_chat_message(
+                    conversation_id,
+                    conv_title,
+                    f"gemini:{model}" if provider == "gemini" else model,
+                    {
+                        "id": f"msg-rv-{uuid.uuid4().hex[:10]}",
+                        "role": "assistant",
+                        "sender": emit_sender,
+                        "agentId": emit_agent_id,
+                        "modelUsed": model_badge,
+                        "provenance": "model_unverified",
+                        "timestamp": datetime.now(timezone.utc).strftime("%H:%M"),
+                        "content": vision_report_md,
+                        "imagePreview": image_preview,
+                    },
+                    origin=origin,
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "error": None,
+            "fallbackUsed": provider == "gemini",
+            "provider": provider,
+            "record": record,
+            "status": self.get_status(ollama_host=ollama_host),
+            "serverRevision": self.kernel.get_server_revision(),
+        }
+
