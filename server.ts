@@ -54,9 +54,11 @@ import {
   type TunnelStatus,
 } from './src/server/shipOllamaTunnel.ts';
 import { createSvlMcpServer, SVL_MCP_TOOL_COUNT } from './src/server/svlMcpServer.ts';
+import { startSvl364BackupOllamaServer } from './src/server/svl364BackupOllama.ts';
 import { loadMcpConfig } from './src/mcp/config.ts';
+import { ensureToken, extractToken, tokenMatches } from './src/mcp/auth.ts';
 import { detectMeshInterfaces } from './src/mcp/tunnel.ts';
-import { SVL_KNOWN_SERVICES, TOOL_DEFS as FULL_MCP_TOOL_DEFS } from './src/mcp/tools.ts';
+import { createFullMcpServer, SVL_KNOWN_SERVICES, TOOL_DEFS as FULL_MCP_TOOL_DEFS } from './src/mcp/tools.ts';
 import {
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
@@ -129,11 +131,6 @@ import {
   summarizeGeminiFailures,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
-import {
-  FREE_GEMINI_INTERACTION_MODELS,
-  runAntigravityTask,
-  type AntigravityEngineMode,
-} from './src/server/antigravityEngine.ts';
 import { hasOperatorAuthorization, isOperatorTokenRequired } from './src/server/operatorAuth.ts';
 import {
   SVL364_ROOT_CHANNEL_ID,
@@ -841,10 +838,16 @@ function mcpUrlKeyMatches(candidate: string): boolean {
 }
 
 // ======================= OLLAMA ZE STATKU SVL-364 PRZEZ SSH =======================
-// Gdy SVL_SHIP_OLLAMA=1, cały system używa Ollamy ze statku: gateway zestawia tunel SSH
-// (local port-forward) i ustawia OLLAMA_HOST na jego lokalny koniec PRZED startem backendu
-// Pythona, więc czat, rozgrzewanie modeli i misja Mayi widzą tę samą Ollamę ze statku.
-const shipTunnelCfg: ShipOllamaTunnelConfig = parseShipOllamaTunnelEnv(process.env);
+// Domyślnie aktywujemy zapasową Ollamę ze statku SVL-364 przez tunel OpenSSH (`ssh://Ship`)
+// na osobnym porcie lokalnym 11435 (zdalny port 11436 na hoście statku), dzięki czemu lokalna Ollama
+// (:11434) oraz zapasowa Ollama ze statku SVL-364 (:11435 z pełnym zestawem 13 modeli) działają równolegle.
+const shipTunnelCfg: ShipOllamaTunnelConfig = parseShipOllamaTunnelEnv({
+  ...process.env,
+  SVL_SHIP_OLLAMA: process.env.SVL_SHIP_OLLAMA ?? '1',
+  SVL_SSH_TARGET: process.env.SVL_SSH_TARGET ?? 'Ship',
+  SVL_SHIP_OLLAMA_PORT: process.env.SVL_SHIP_OLLAMA_PORT ?? '11436',
+  SVL_SHIP_OLLAMA_LOCAL_PORT: process.env.SVL_SHIP_OLLAMA_LOCAL_PORT ?? '11435',
+});
 const shipTunnel = {
   cfg: shipTunnelCfg,
   status: (shipTunnelCfg.enabled ? 'starting' : 'off') as TunnelStatus,
@@ -936,11 +939,11 @@ function spawnShipTunnel(): void {
         shipTunnel.attempts = 0;
         shipTunnel.lastError = null;
         shipTunnel.startedAt = shipTunnel.startedAt || new Date().toISOString();
-        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Ollama ze statku SVL-364 dostępna przez tunel SSH (${tunnelOllamaUrl(shipTunnel.cfg)}).` });
+        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Zapasowa Ollama ze statku SVL-364 dostępna przez tunel SSH (${tunnelOllamaUrl(shipTunnel.cfg)}).` });
       } else if (shipTunnel.status !== 'down') {
         shipTunnel.status = 'starting';
       }
-    }, 3500).unref?.();
+    }, 600).unref?.();
   });
   proc.on('exit', (code) => {
     if (shipTunnel.proc === proc) shipTunnel.proc = null;
@@ -952,14 +955,14 @@ function spawnShipTunnel(): void {
   });
 }
 
-/** Ustawia tunel SSH do Ollamy statku (wywołać PRZED startem backendu Pythona). */
+/** Ustawia tunel SSH do zapasowej Ollamy statku SVL-364 (wywołać PRZED startem backendu Pythona). */
 function initShipOllamaTunnel(): void {
+  void startSvl364BackupOllamaServer(shipTunnel.cfg.shipPort, '127.0.0.1');
   if (!shipTunnel.cfg.enabled) return;
   const url = tunnelOllamaUrl(shipTunnel.cfg);
-  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434 lub OLLAMA_HOST nie jest ustawiony;
-  // przy osobnym porcie (np. 11435) obie Ollamy (lokalna + statek SSH) działają równolegle!
-  const currentPrimary = String(process.env.OLLAMA_HOST || '').trim();
-  if (!currentPrimary || shipTunnel.cfg.localPort === 11434) {
+  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434;
+  // przy osobnym porcie (11435) główna lokalna Ollama pozostaje na :11434, a zapasowa ze statku SVL-364 na :11435!
+  if (shipTunnel.cfg.localPort === 11434) {
     process.env.OLLAMA_HOST = url;
   }
   svlFileLogger.log({
@@ -1224,8 +1227,12 @@ async function startServer() {
     }
   }));
 
-  // MCP całego systemu SVL (agenci SVL oraz zewnętrzni klienci MCP): Bearer SVL_OPERATOR_TOKEN lub X-SVL-Operator-Token.
-  app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
+  const getActiveUniversalMcpToken = (): string => {
+    const mcpCfg = loadMcpConfig(process.env, __dirname);
+    return ensureToken(mcpCfg.token, mcpCfg.tokenFile).token;
+  };
+
+  const hasMcpOrOperatorAuth = (req: express.Request, urlKey = ''): boolean => {
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' && authorization.startsWith('Bearer ')
       ? authorization.slice(7).trim()
@@ -1233,20 +1240,72 @@ async function startServer() {
     const headerToken = typeof req.headers['x-svl-operator-token'] === 'string'
       ? req.headers['x-svl-operator-token'].trim()
       : '';
-    const urlKeyOk = mcpUrlKeyMatches(String(req.params.urlKey || ''));
-    if (!hasOperatorAuthorization(bearer || headerToken) && !urlKeyOk) {
+    const bodyToken = typeof req.body?.operatorToken === 'string' ? req.body.operatorToken.trim() : '';
+    if (
+      hasOperatorAuthorization(bearer || headerToken || bodyToken) ||
+      mcpUrlKeyMatches(urlKey)
+    ) {
+      return true;
+    }
+    const mcpToken = getActiveUniversalMcpToken();
+    const candidate = extractToken(req.headers as Record<string, string | string[] | undefined>) || headerToken || urlKey || bodyToken;
+    return Boolean(mcpToken && candidate && tokenMatches(candidate, mcpToken));
+  };
+
+  // Połączony Universal MCP Hub na bramie głównej (/mcp oraz /mcp/k/:key) zsynchronizowany z :3334/mcp
+  app.all(['/mcp', '/mcp/k/:key'], asyncRoute(async (req, res) => {
+    const keyParam = typeof req.params.key === 'string' ? req.params.key : '';
+    if (!hasMcpOrOperatorAuth(req, keyParam)) {
       res.status(401).json({
         ok: false,
-        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN> lub X-SVL-Operator-Token.',
+        error: 'Nieautoryzowany dostęp MCP — podaj Authorization: Bearer <MCP_TOKEN / SVL_OPERATOR_TOKEN> lub /mcp/k/<MCP_TOKEN>.',
       });
       return;
     }
-    // Wewnętrzne wywołania MCP → brama zawsze z sekretem serwera (działa też przy SVL_REQUIRE_OPERATOR_TOKEN=1).
+    const mcpCfg = loadMcpConfig(process.env, __dirname);
+    const fullMcp = createFullMcpServer({
+      root: mcpCfg.root,
+      readOnly: mcpCfg.readOnly,
+      allowShell: mcpCfg.allowShell,
+      shellTimeoutMs: mcpCfg.shellTimeoutMs,
+      maxReadBytes: mcpCfg.maxReadBytes,
+      nodeName: mcpCfg.nodeName,
+      svlBaseUrl: `http://127.0.0.1:${PORT}`,
+      svlOperatorToken: String(process.env.SVL_OPERATOR_TOKEN || '').trim(),
+      ollamaHost: mcpCfg.ollamaHost,
+      comfyuiHost: mcpCfg.comfyuiHost,
+      logDir: svlFileLogger.logDir,
+    });
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    try {
+      await fullMcp.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } finally {
+      await transport.close();
+      await fullMcp.close();
+    }
+  }));
+
+  // MCP całego systemu SVL (agenci SVL oraz zewnętrzni klienci MCP): Bearer SVL_OPERATOR_TOKEN, MCP_TOKEN lub X-SVL-Operator-Token.
+  app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
+    const urlKey = String(req.params.urlKey || '');
+    if (!hasMcpOrOperatorAuth(req, urlKey)) {
+      res.status(401).json({
+        ok: false,
+        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN / MCP_TOKEN> lub X-SVL-Operator-Token.',
+      });
+      return;
+    }
+    // Wewnętrzne wywołania MCP → brama zawsze z sekretem serwera + połączony Universal MCP Hub (:3334/mcp).
     const token = String(process.env.SVL_OPERATOR_TOKEN || '').trim();
+    const mcpCfg = loadMcpConfig(process.env, __dirname);
+    const localHubHost = mcpCfg.host === '0.0.0.0' ? '127.0.0.1' : mcpCfg.host;
     const svlMcp = createSvlMcpServer({
       baseUrl: `http://127.0.0.1:${PORT}`,
       operatorToken: token,
       logDir: svlFileLogger.logDir,
+      universalMcpUrl: `http://${localHubHost}:${mcpCfg.port}/mcp`,
+      universalMcpToken: getActiveUniversalMcpToken(),
     });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
@@ -1399,9 +1458,9 @@ async function startServer() {
   });
 
   // Zbiorczy podgląd silników AI i dostępnych modeli (Ollama lokalna/SVL-364 SSH, Gemini, obraz).
-  app.get('/api/ai/engines', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN.' });
+  app.get(['/api/ai/engines', '/api/ollama/router', '/api/ollama/models', '/api/integrations/status'], asyncRoute(async (req, res) => {
+    if (!hasMcpOrOperatorAuth(req)) {
+      res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
@@ -1470,6 +1529,14 @@ async function startServer() {
     res.json({
       ok: true,
       checkedAt: new Date().toISOString(),
+      source: ollamaSourceLabel,
+      host: primaryHost,
+      reachable: anyReachable,
+      shipTunnel: ship,
+      endpoints: probedEndpoints,
+      models: ollamaModels,
+      loadedModels: mergedLoadedModels,
+      visionModels: mergedVisionModels,
       engines: {
         ollama: {
           // Główny silnik lokalny i/lub druga Ollama ze statku SVL-364 przez SSH/URL.
@@ -1511,118 +1578,8 @@ async function startServer() {
               : Boolean(image.reachable ?? image.ok),
           detail: image.detail || image.status || image.error || (image.model ? String(image.model) : null),
         },
-        antigravity: {
-          mode: 'free-tier-interactions',
-          requiresPaidKey: false,
-          geminiConfigured: Boolean(gemini),
-          freeModels: [...FREE_GEMINI_INTERACTION_MODELS],
-          ollamaFallbackReachable: Boolean(ollama.daemon_reachable),
-          tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
-        },
       },
     });
-  }));
-
-  let antigravityRunsCount = 0;
-
-  // ANTIGRAVITY (tryb bez płatnego klucza — darmowy Gemini Interactions API + lokalna Ollama)
-  app.get('/api/antigravity/status', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Panel Antigravity wymaga SVL_OPERATOR_TOKEN.' });
-      return;
-    }
-    const corrId: string = (req as any).correlationId || '';
-    const healthRes = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
-    const ollama = healthRes.data?.ollama || {};
-    const ollamaModels = (Array.isArray(ollama.models) ? ollama.models : [])
-      .map((m: any) => String(m?.name || m?.model || '').trim())
-      .filter(Boolean);
-    const gemini = getGeminiClient();
-
-    res.json({
-      ok: true,
-      mode: 'free-tier-interactions',
-      requiresPaidKey: false,
-      gemini: {
-        configured: Boolean(gemini),
-        models: [...FREE_GEMINI_INTERACTION_MODELS],
-        defaultModel: FREE_GEMINI_INTERACTION_MODELS[0],
-      },
-      ollama: {
-        host: String(ollama.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'),
-        reachable: Boolean(ollama.daemon_reachable),
-        defaultModel: String(ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b'),
-        models: ollamaModels,
-      },
-      tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
-      recentRunsCount: antigravityRunsCount,
-      checkedAt: new Date().toISOString(),
-    });
-  }));
-
-  app.post('/api/antigravity/run', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Uruchamianie agenta Antigravity wymaga SVL_OPERATOR_TOKEN.' });
-      return;
-    }
-    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
-    const engine: AntigravityEngineMode = body.engine === 'ollama' ? 'ollama' : 'gemini-interactions';
-    const corrId: string = (req as any).correlationId || '';
-    const healthRes = engine === 'ollama'
-      ? await callPythonBackend('GET', '/api/py/health', undefined, corrId)
-      : { data: {} };
-    const ollamaHostUrl = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
-    const ollamaDefault = String(healthRes.data?.ollama?.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
-
-    const result = await runAntigravityTask(
-      {
-        prompt: String(body.prompt || ''),
-        engine,
-        model: typeof body.model === 'string' ? body.model : undefined,
-        previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : null,
-        thinkingLevel:
-          body.thinkingLevel === 'low' || body.thinkingLevel === 'medium' || body.thinkingLevel === 'high'
-            ? body.thinkingLevel
-            : 'medium',
-        tools: body.tools && typeof body.tools === 'object'
-          ? {
-              googleSearch: Boolean(body.tools.googleSearch),
-              urlContext: Boolean(body.tools.urlContext),
-              workspaceTools: body.tools.workspaceTools !== false,
-            }
-          : { googleSearch: true, urlContext: false, workspaceTools: true },
-        history: Array.isArray(body.history) ? body.history : undefined,
-      },
-      {
-        projectRoot: __dirname,
-        getGeminiClient,
-        ollamaHost: () => ollamaHostUrl,
-        ollamaDefaultModel: () => ollamaDefault,
-        scrubOutput: scrubRuntimeLog,
-        runShell: async (command: string) => {
-          const r = await executeLinuxShellCommand(command, __dirname, 'jyn_root');
-          return {
-            ok: r.ok,
-            exitCode: r.exitCode,
-            stdout: r.stdout,
-            stderr: r.stderr,
-          };
-        },
-      },
-    );
-
-    if (result.ok) {
-      antigravityRunsCount += 1;
-    }
-    svlFileLogger.log({
-      layer: 'GATEWAY',
-      level: result.ok ? 'INFO' : 'WARN',
-      category: 'ai_chat',
-      correlationId: corrId,
-      message: `[Antigravity:${result.engine}/${result.model}] ok=${result.ok} steps=${result.steps.length} ${result.durationMs}ms${result.error ? ` err=${result.error.slice(0, 160)}` : ''}`,
-    });
-
-    res.status(result.ok ? 200 : result.statusCode || 502).json(result);
   }));
 
   // GALERIA — lista zdjęć z ocenami agentów AI.
@@ -1680,8 +1637,8 @@ async function startServer() {
   });
 
   app.get('/api/ship/ollama', (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN.' });
+    if (!hasMcpOrOperatorAuth(req)) {
+      res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
       return;
     }
     res.json({ ok: true, ...getShipTunnelStatus() });
@@ -1689,8 +1646,8 @@ async function startServer() {
 
   // Modele Ollamy na statku SVL-364 (przez tunel SSH lub SVL_SHIP_OLLAMA_URL): lista pobranych + stan pobierania + zestaw docelowy.
   app.get('/api/ship/ollama/models', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN.' });
+    if (!hasMcpOrOperatorAuth(req)) {
+      res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
       return;
     }
     const base = resolveShipOllamaBaseUrl({ env: process.env, shipTunnelCfg: shipTunnel.cfg }).replace(/\/$/, '');
@@ -1907,22 +1864,6 @@ async function startServer() {
     }
     res.json({ ok: true, commit: commit || null, source });
   });
-
-  app.get('/api/apex/status', asyncRoute(async (req, res) => {
-    const corrId: string = (req as any).correlationId || '';
-    const result = await callPythonBackend('GET', '/api/py/apex/status', undefined, corrId);
-    res.status(result.status).json(result.data);
-  }));
-
-  app.post('/api/apex/control', express.json(), asyncRoute(async (req, res) => {
-    const corrId: string = (req as any).correlationId || '';
-    const result = await callPythonBackend('POST', '/api/py/apex/control', req.body || {}, corrId);
-    if (result.status >= 200 && result.status < 300 && result.data?.ok) {
-      void pollAndRelayOutbox();
-      broadcastResyncRequired('apex_control', Number(result.data?.serverRevision || 0));
-    }
-    res.status(result.status).json(result.data);
-  }));
 
   app.get('/api/linux/debian13', asyncRoute(async (req, res) => {
     const corrId: string = (req as any).correlationId || '';
@@ -2247,7 +2188,7 @@ async function startServer() {
   }));
 
   // 0.74. Universal MCP Hub status & Zero-IP / Mesh connector endpoints
-  app.get('/api/mcp/hub/status', asyncRoute(async (_req, res) => {
+  app.get('/api/mcp/hub/status', asyncRoute(async (req, res) => {
     const mcpCfg = loadMcpConfig(process.env, __dirname);
     let tunnelState: Record<string, any> | null = null;
     try {
@@ -2264,6 +2205,12 @@ async function startServer() {
     } catch {
       standaloneReachable = false;
     }
+    const corrId: string = (req as any).correlationId || '';
+    const svl364McpRes = await callPythonBackend('GET', '/api/py/svl364/ssh-mcp/status', undefined, corrId).catch(() => ({
+      status: 503,
+      data: null,
+    }));
+    const svl364Mcp = svl364McpRes.data || {};
     const meshEndpoints = detectMeshInterfaces(mcpCfg.port);
     const gatewayMeshEndpoints = detectMeshInterfaces(PORT);
     res.json({
@@ -2285,11 +2232,42 @@ async function startServer() {
         tools: FULL_MCP_TOOL_DEFS.map((t) => ({ name: t.name, write: t.write })),
       },
       gatewayMcp: {
+        universalEndpoint: '/mcp',
+        universalToolsCount: FULL_MCP_TOOL_DEFS.length,
         svlEndpoint: '/mcp/svl',
         svlToolsCount: SVL_MCP_TOOL_COUNT,
         githubEndpoint: '/mcp/github',
         svl364Endpoint: '/api/mcp/svl364',
+        svl364ToolsCount: Array.isArray(svl364Mcp?.mcp?.tools) ? svl364Mcp.mcp.tools.length : 20,
         meshEndpoints: gatewayMeshEndpoints,
+      },
+      federation: {
+        active: standaloneReachable && Boolean(svl364Mcp?.ok),
+        sharedTokenConfigured: Boolean(getActiveUniversalMcpToken()),
+        servers: {
+          universalHub: {
+            name: 'svl-universal-mcp',
+            url: `${localMcpBase}/mcp`,
+            gatewayUrl: `http://127.0.0.1:${PORT}/mcp`,
+            reachable: standaloneReachable,
+            toolsCount: FULL_MCP_TOOL_DEFS.length,
+          },
+          systemSvl: {
+            name: 'svl-core',
+            url: `http://127.0.0.1:${PORT}/mcp/svl`,
+            connectedToUniversalHub: standaloneReachable,
+            connectedToSvl364Mcp: Boolean(svl364Mcp?.ok),
+            toolsCount: SVL_MCP_TOOL_COUNT,
+          },
+          shipSvl364: {
+            name: 'svl-364-linux-control-mcp',
+            url: `http://127.0.0.1:${PORT}/api/mcp/svl364`,
+            pythonUrl: 'http://127.0.0.1:8765/api/py/svl364/mcp',
+            connectedToUniversalHub: Boolean(svl364Mcp?.remoteMcp?.connected || standaloneReachable),
+            remoteMcpUrl: svl364Mcp?.remoteMcp?.url || `${localMcpBase}/mcp`,
+            toolsCount: Array.isArray(svl364Mcp?.mcp?.tools) ? svl364Mcp.mcp.tools.length : 20,
+          },
+        },
       },
       meshEndpoints,
       servicesCatalog: SVL_KNOWN_SERVICES,
@@ -2297,10 +2275,8 @@ async function startServer() {
   }));
 
   app.get('/api/mcp/hub/connector', asyncRoute(async (req, res) => {
-    const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
-      hasOperatorAuthorization(req.headers.authorization?.replace(/^Bearer\s+/i, ''));
-    if (!isOperator) {
-      res.status(401).json({ ok: false, error: 'Konfiguracja konektora MCP wymaga SVL_OPERATOR_TOKEN.' });
+    if (!hasMcpOrOperatorAuth(req)) {
+      res.status(401).json({ ok: false, error: 'Konfiguracja konektora MCP wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
       return;
     }
     const mcpCfg = loadMcpConfig(process.env, __dirname);
@@ -2335,10 +2311,8 @@ async function startServer() {
 
   // 0.75. SVL-364 Starship SSH Bridge & Linux Control MCP Server endpoints
   app.all(['/api/mcp/svl364', '/api/svl364/mcp'], asyncRoute(async (req, res) => {
-    const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
-      hasOperatorAuthorization(req.body?.operatorToken);
-    if (!isOperator) {
-      res.status(401).json({ ok: false, error: 'Serwer MCP SVL-364 wymaga autoryzacji SVL_OPERATOR_TOKEN.' });
+    if (!hasMcpOrOperatorAuth(req)) {
+      res.status(401).json({ ok: false, error: 'Serwer MCP SVL-364 wymaga autoryzacji SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
@@ -3647,13 +3621,12 @@ async function startServer() {
       corrId,
     ).catch(() => ({ status: 503, data: null }));
 
-    const [healthRes, agentsRes, modsRes, kernelRes, chatRes, apexRes, ghSync] = await Promise.all([
+    const [healthRes, agentsRes, modsRes, kernelRes, chatRes, ghSync] = await Promise.all([
       callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
       callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
       callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId),
-      callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
       hasToken && Boolean(req.body?.fetchGitHub)
         ? gitSyncStatus(__dirname, true).catch(() => null)
         : Promise.resolve(ghSyncActionRes?.status || null),
@@ -3685,7 +3658,6 @@ async function startServer() {
       conversationsCount: conversations.length,
       messagesCount: totalMessages,
       agentMemoriesCount: totalMemories,
-      apexActive: Boolean(apexRes.data?.active),
       autoGitSyncDisabled: githubAutoSyncSec === 0,
       syncResult: syncPyRes?.data || null,
       liveChatSync: syncPyRes?.data?.liveChatSync || healthRes?.data?.live_chat_sync || null,
@@ -5329,11 +5301,10 @@ async function startServer() {
       }
       if (toolName === 'svl_system_status') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
-        const [hRes, aRes, mRes, apexRes, sshRes] = await Promise.all([
+        const [hRes, aRes, mRes, sshRes] = await Promise.all([
           callPythonBackend('GET', '/api/py/health', undefined, corrId),
           callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
           callPythonBackend('GET', '/api/py/modules', undefined, corrId),
-          callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
           callPythonBackend('GET', '/api/py/svl364/ssh-mcp/status', undefined, corrId),
         ]);
         appliedActions.push({
@@ -5362,7 +5333,6 @@ async function startServer() {
                 memories: a.memory_entries_count,
               }))
             : [],
-          apex: apexRes.data,
           ssh: sshRes.data?.ssh,
         };
       }

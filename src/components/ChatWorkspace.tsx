@@ -59,7 +59,7 @@ export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
 
 interface ChatWorkspaceProps {
-  onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
+  onNavigateTab: (tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {
@@ -1460,7 +1460,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         </div>
 
         {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+        <div className="flex-1 min-h-0 overflow-y-auto svl-scroll-smooth p-3 space-y-1">
           <div className="px-2 py-1.5 text-xs font-medium text-slate-400">
             Kanały i konwersacje ({conversations.length})
           </div>
@@ -1555,7 +1555,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         </div>
 
         {/* Agents Live Sidebar Summary */}
-        <div className="p-4 border-t border-slate-800/80 bg-[#0D1018] space-y-2.5">
+        <div className="p-4 border-t border-slate-800/80 bg-[#0D1018] space-y-2.5 shrink-0">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-300">
               Rodzina Mitek ({effectiveAgents.length} AI)
@@ -1602,7 +1602,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       </aside>
 
       {/* Main Full-Screen ChatGPT-Work Responsive Chat Column */}
-      <div className="flex-1 flex flex-col h-full min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 h-full min-w-0">
         {/* Responsive Toolbar: stacked clean 2-row on Mobile/Tablet (<lg), compact single-row on Desktop */}
         <div className="px-2.5 sm:px-3 py-1.5 border-b border-slate-800/80 bg-[#111520]/95 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1.5 shrink-0">
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 flex-1">

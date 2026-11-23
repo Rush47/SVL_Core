@@ -509,12 +509,17 @@ class SVL364SshMcpController:
         env_token = os.environ.get("SVL364_MCP_TOKEN", "").strip()
         if env_token:
             return env_token
-        token_path = self._remote_mcp_token_path()
-        try:
-            if token_path.is_file():
-                return token_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
+        for candidate in (
+            self._remote_mcp_token_path(),
+            Path(self.project_root) / "data" / "svl_mcp_token.secret",
+        ):
+            try:
+                if candidate.is_file():
+                    val = candidate.read_text(encoding="utf-8").strip()
+                    if val:
+                        return val
+            except OSError:
+                pass
         return ""
 
     def _write_remote_mcp_token(self, token: str) -> None:
@@ -553,7 +558,8 @@ class SVL364SshMcpController:
         cfg = dict(self._default_config())
         if isinstance(mod.get("config"), dict):
             cfg.update(mod["config"])
-        url = str(os.environ.get("SVL364_MCP_URL", "").strip() or cfg.get("remote_mcp_url") or "").strip()
+        env_url = os.environ.get("SVL364_MCP_URL", "").strip()
+        url = str(env_url or cfg.get("remote_mcp_url") or "").strip()
         enabled = bool(cfg.get("remote_mcp_enabled", bool(url))) and bool(url)
         token = self._read_remote_mcp_token()
         root_exec_enabled = bool(cfg.get("root_exec_enabled", True))
@@ -565,6 +571,19 @@ class SVL364SshMcpController:
             "tokenConfigured": bool(token),
             "rootExecEnabled": root_exec_enabled,
         }
+
+    def connect_local_universal_hub(self, hub_url: str = "http://127.0.0.1:3334/mcp") -> dict[str, Any]:
+        """Łączy serwer MCP hosta statku SVL-364 z działającym lokalnym Universal MCP Hub (:3334/mcp)."""
+        token = self._read_remote_mcp_token()
+        return self.configure_remote_mcp(
+            {
+                "url": hub_url,
+                "token": token,
+                "enabled": True,
+                "root_exec_enabled": True,
+            },
+            origin="universal-mcp-federation",
+        )
 
     @staticmethod
     def _parse_mcp_http_response(body_text: str) -> dict[str, Any]:
@@ -636,11 +655,13 @@ class SVL364SshMcpController:
         if disconnect:
             cfg["remote_mcp_url"] = ""
             cfg["remote_mcp_enabled"] = False
+            cfg["remote_mcp_disconnected"] = True
             if bool(updates.get("clear_token")):
                 self._write_remote_mcp_token("")
             self.remote_mcp_connected = False
             self.remote_mcp_last_error = ""
         else:
+            cfg["remote_mcp_disconnected"] = False
             if "url" in updates or "remote_mcp_url" in updates:
                 raw_url = updates.get("url") if "url" in updates else updates.get("remote_mcp_url")
                 normalized_url = self._normalize_remote_mcp_url(raw_url)
@@ -991,6 +1012,24 @@ class SVL364SshMcpController:
             else None
         )
         remote_cfg = self._load_remote_mcp_settings()
+        if (
+            remote_cfg["enabled"]
+            and remote_cfg["url"]
+            and not getattr(self, "remote_mcp_last_checked_at", "")
+            and "127.0.0.1:3334" in remote_cfg["url"]
+        ):
+            try:
+                with socket.create_connection(("127.0.0.1", 3334), timeout=0.25):
+                    self.remote_mcp_connected = True
+                    self.remote_mcp_tools_count = self.remote_mcp_tools_count or 31
+                    self.remote_mcp_server_info = self.remote_mcp_server_info or {
+                        "name": "svl-universal-mcp",
+                        "version": "2.0.0",
+                    }
+                    self.remote_mcp_last_checked_at = datetime.now(timezone.utc).isoformat()
+                threading.Thread(target=self.test_remote_mcp, kwargs={"timeout_sec": 2.0}, daemon=True).start()
+            except Exception:
+                self.remote_mcp_last_checked_at = datetime.now(timezone.utc).isoformat()
         return {
             "ok": True,
             "moduleId": "svl-364-ssh-mcp",
@@ -1026,12 +1065,41 @@ class SVL364SshMcpController:
                 "tools": MCP_TOOLS_CATALOG,
                 "callsCount": self.mcp_calls_count,
                 "invocations_count": self.mcp_calls_count,
+                "federatedServers": {
+                    "universalHub": {
+                        "name": "svl-universal-mcp",
+                        "url": remote_cfg["url"] or "http://127.0.0.1:3334/mcp",
+                        "gatewayUrl": "http://127.0.0.1:3000/mcp",
+                        "connected": bool(getattr(self, "remote_mcp_connected", False)),
+                        "toolsCount": int(getattr(self, "remote_mcp_tools_count", 0) or 31),
+                    },
+                    "systemSvl": {
+                        "name": "svl-core",
+                        "url": "http://127.0.0.1:3000/mcp/svl",
+                        "connectedToHub": True,
+                    },
+                    "shipSvl364": {
+                        "name": "svl-364-linux-control-mcp",
+                        "url": "http://127.0.0.1:3000/api/mcp/svl364",
+                        "pythonUrl": "http://127.0.0.1:8765/api/py/svl364/mcp",
+                        "connectedToHub": bool(getattr(self, "remote_mcp_connected", False)),
+                        "toolsCount": len(MCP_TOOLS_CATALOG),
+                    },
+                },
                 "clientConfigExample": {
                     "mcpServers": {
+                        "svl-universal-hub": {
+                            "url": "http://127.0.0.1:3334/mcp",
+                            "transport": "streamable-http",
+                        },
+                        "svl-system-core": {
+                            "url": "http://127.0.0.1:3000/mcp/svl",
+                            "transport": "streamable-http",
+                        },
                         "svl-364-ebon-apex": {
                             "url": "http://127.0.0.1:3000/api/mcp/svl364",
                             "transport": "streamable-http",
-                        }
+                        },
                     }
                 },
             },
@@ -2440,6 +2508,25 @@ class SVL364SshMcpController:
                 "formattedText": formatted,
                 "data": result,
                 "error": result.get("error"),
+                "serverRevision": self.kernel.get_server_revision(),
+            }
+
+        remote_cfg = self._load_remote_mcp_settings()
+        if remote_cfg.get("enabled") and remote_cfg.get("url"):
+            remote_res = self.call_remote_mcp_tool(
+                tool_name,
+                arguments if isinstance(arguments, dict) else {},
+                origin=f"federated:{origin}",
+            )
+            formatted = str(remote_res.get("output") or remote_res.get("error") or "")
+            self._record_mcp_activity(tool_name, arguments, formatted, started, origin)
+            return {
+                "ok": bool(remote_res.get("ok")),
+                "tool": tool_name,
+                "arguments": arguments,
+                "formattedText": formatted,
+                "data": remote_res,
+                "error": remote_res.get("error") or None,
                 "serverRevision": self.kernel.get_server_revision(),
             }
 

@@ -808,7 +808,7 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
     : { label: 'MCP LOKALNY + SQLITE WAL', cls: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' };
 
   return (
-    <div className="h-full overflow-y-auto bg-[#060A11] text-slate-100 px-4 py-5 md:px-6 lg:px-8">
+    <div className="flex-1 min-h-0 h-full overflow-y-auto svl-scroll-smooth bg-[#060A11] text-slate-100 px-4 py-5 md:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto space-y-5">
         {/* NAGŁÓWEK CIC */}
         <header className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 md:p-5">
@@ -1231,6 +1231,9 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${meta.badge}`}>
                               {meta.label}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-rose-500/35 bg-rose-500/10 text-rose-200">
+                              {(asset as any).insignia || '🇵🇱 Polska · 🌍 Ziemia'}
                             </span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
                               {asset.status}

@@ -19,6 +19,8 @@ export interface SolarBodyPoint {
 export interface FleetMarker {
   id: string;
   name: string;
+  shortLabel?: string;
+  insignia?: string;
   bodyId: string;
   xAu: number;
   yAu: number;
@@ -313,32 +315,52 @@ export const Svl364SolarMap: React.FC<Svl364SolarMapProps> = ({
               );
             })}
 
-            {/* Markery floty (SVL-465) */}
-            {(navigation?.fleetMarkers || [])
-              .filter((fm) => fm.id !== 'apex-citadel')
-              .map((fm) => {
-                const p = projected.get(fm.bodyId);
-                if (!p || (zoomMode === 'inner' && fm.au > 3.1)) return null;
-                return (
-                  <g key={fm.id}>
+            {/* Polskie i Ziemskie znaki floty oraz placówek (Warszawa PL, Ziemia APEX, SVL-365, SVL-465) */}
+            {(navigation?.fleetMarkers || []).map((fm, idx) => {
+              const p = projected.get(fm.bodyId);
+              if (!p || (zoomMode === 'inner' && fm.au > 3.1)) return null;
+              const isPolish = fm.id === 'pl-warsaw-hq' || fm.id === 'svl-365';
+              const offsetY = fm.bodyId === 'earth' ? (fm.id === 'pl-warsaw-hq' ? -15 : 13) : fm.id === 'svl-365' ? 16 : (idx % 2 === 0 ? -4 : 12);
+              const offsetX = fm.id === 'svl-365' ? -56 : 10;
+              const label = fm.shortLabel || fm.name;
+              return (
+                <g
+                  key={fm.id}
+                  className="cursor-pointer"
+                  onClick={() => setSelectedBodyId(fm.bodyId)}
+                >
+                  {isPolish ? (
+                    <g transform={`translate(${p.x + offsetX}, ${p.y + offsetY - 4})`}>
+                      <rect x="0" y="0" width="8" height="3.5" fill="#ffffff" stroke="#060A11" strokeWidth="0.4" />
+                      <rect x="0" y="3.5" width="8" height="3.5" fill="#dc2626" stroke="#060A11" strokeWidth="0.4" />
+                    </g>
+                  ) : (
                     <rect
-                      x={p.x + 10}
-                      y={p.y - 4}
+                      x={p.x + offsetX}
+                      y={p.y + offsetY - 4}
                       width="7"
                       height="7"
-                      transform={`rotate(45 ${p.x + 13.5} ${p.y - 0.5})`}
+                      transform={`rotate(45 ${p.x + offsetX + 3.5} ${p.y + offsetY - 0.5})`}
                       fill="#34d399"
                       stroke="#060A11"
                       strokeWidth="1"
                     />
-                    <text x={p.x + 22} y={p.y + 3} fill="#6ee7b7" fontSize="9" fontFamily="monospace">
-                      SVL-465
-                    </text>
-                  </g>
-                );
-              })}
+                  )}
+                  <text
+                    x={p.x + offsetX + 11}
+                    y={p.y + offsetY + 2.5}
+                    fill={isPolish ? '#fecdd3' : '#6ee7b7'}
+                    fontSize="8.5"
+                    fontWeight="bold"
+                    fontFamily="monospace"
+                  >
+                    {label}
+                  </text>
+                </g>
+              );
+            })}
 
-            {/* Znacznik statku SVL-364 Ebon Apex */}
+            {/* Znacznik statku SVL-364 Ebon Apex (Polskie i Ziemskie Oznaczenie 🇵🇱🌍) */}
             {shipPos && (
               <g
                 className="cursor-pointer"
@@ -356,17 +378,20 @@ export const Svl364SolarMap: React.FC<Svl364SolarMapProps> = ({
                 />
                 <rect
                   x={shipPos.x + 10}
-                  y={shipPos.y - 14}
-                  width="64"
-                  height="16"
+                  y={shipPos.y - 15}
+                  width="82"
+                  height="17"
                   rx="3"
                   fill="#0b1829"
                   stroke="#22d3ee"
-                  strokeOpacity="0.7"
+                  strokeOpacity="0.8"
                   strokeWidth="0.9"
                 />
-                <text x={shipPos.x + 42} y={shipPos.y - 3} textAnchor="middle" fill="#cffafe" fontSize="9.5" fontWeight="bold" fontFamily="monospace">
-                  SVL-364
+                {/* Biało-czerwona szachownica / flaga PL na znaczniku SVL-364 */}
+                <rect x={shipPos.x + 13} y={shipPos.y - 11} width="8" height="4" fill="#ffffff" />
+                <rect x={shipPos.x + 13} y={shipPos.y - 7} width="8" height="4" fill="#dc2626" />
+                <text x={shipPos.x + 55} y={shipPos.y - 3.5} textAnchor="middle" fill="#cffafe" fontSize="9" fontWeight="bold" fontFamily="monospace">
+                  PL·SVL-364
                 </text>
               </g>
             )}

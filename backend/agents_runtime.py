@@ -378,7 +378,21 @@ def _agent_worker_process_loop(
     Zapisuje żywy heartbeat oraz obsługuje sygnały systemowe.
     """
     pid = os.getpid()
+    parent_pid = os.getppid()
     uid = os.getuid()
+    # Close any inherited listening/client sockets from the parent server (e.g. ports 8085 / 8443)
+    # so worker processes never hold server ports open across parent restarts.
+    try:
+        import stat as _stat
+        for _fd_name in os.listdir("/proc/self/fd"):
+            try:
+                _fd = int(_fd_name)
+                if _fd > 2 and _stat.S_ISSOCK(os.fstat(_fd).st_mode):
+                    os.close(_fd)
+            except OSError:
+                pass
+    except Exception:
+        pass
     hb_path = Path(heartbeat_file)
     lg_path = Path(log_file)
     hb_path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,6 +419,8 @@ def _agent_worker_process_loop(
     last_hb_write = 0.0
     last_hb_status: Optional[str] = None
     while running:
+        if os.getppid() != parent_pid:
+            break
         cycle += 1
         now_mono = time.monotonic()
         status_now = "BUSY" if current_task_id else "IDLE"

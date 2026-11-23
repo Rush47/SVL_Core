@@ -72,7 +72,7 @@ export const GalleryPanel: React.FC = () => {
   };
 
   return (
-    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 bg-[#0B0D13] text-slate-200">
+    <div className="flex-1 min-h-0 h-full overflow-y-auto svl-scroll-smooth p-3 sm:p-4 md:p-6 space-y-4 bg-[#0B0D13] text-slate-200">
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
         <div className="flex items-center gap-2">
           <Images className="w-5 h-5 text-violet-400" />

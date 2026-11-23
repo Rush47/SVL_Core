@@ -1254,27 +1254,6 @@ class SVLSystemKernel:
                     now_iso,
                 ),
                 (
-                    "svl-coreos-2-apex",
-                    "SVL CoreOS 2: Apex — Debian 13 (Trixie) & Ollama Uncensored (SVL-364)",
-                    "Operating System & AI Core",
-                    "ACTIVE",
-                    "System operacyjny SVL CoreOS 2: Apex na bazie Debian 13 (Trixie), zintegrowany z diagnozowanym przez OpenSSH komputerem SVL-364 oraz pokładową Ollamą.",
-                    json.dumps(
-                        {
-                            "base_distro": "Debian GNU/Linux 13 (Trixie)",
-                            "codename": "Apex",
-                            "repository_folder": "SVL_CoreOS_2",
-                            "kernel_master_daemon": "Jyn",
-                            "ollama_model": "svl364-apex-uncensored:latest",
-                        },
-                        ensure_ascii=False,
-                    ),
-                    "kernel",
-                    "init-coreos-2-apex",
-                    1,
-                    now_iso,
-                ),
-                (
                     "jyn",
                     "Jyn Infrastructure Core",
                     "Infrastructure & Fleet Autonomy Engine",
@@ -2409,20 +2388,22 @@ class SVLSystemKernel:
                 fake_history_versions,
             )
 
-            autonomy_module = conn.execute(
-                "SELECT id FROM system_modules WHERE id = 'svl-autonomy-core'"
-            ).fetchone()
-            if autonomy_module:
-                conn.execute("DELETE FROM system_modules WHERE id = 'svl-autonomy-core'")
-                self.commit_entity_event_tx(
-                    conn,
-                    entity="module",
-                    entity_id="svl-autonomy-core",
-                    event_type="module.deleted",
-                    origin="nonproduction-cleanup",
-                    deleted=True,
-                    payload={"moduleId": "svl-autonomy-core"},
-                )
+            for retired_mod_id in ("svl-autonomy-core", "svl-coreos-2-apex", "antigravity"):
+                retired_row = conn.execute(
+                    "SELECT id FROM system_modules WHERE id = ?",
+                    (retired_mod_id,),
+                ).fetchone()
+                if retired_row:
+                    conn.execute("DELETE FROM system_modules WHERE id = ?", (retired_mod_id,))
+                    self.commit_entity_event_tx(
+                        conn,
+                        entity="module",
+                        entity_id=retired_mod_id,
+                        event_type="module.deleted",
+                        origin="nonproduction-cleanup",
+                        deleted=True,
+                        payload={"moduleId": retired_mod_id},
+                    )
 
             chat_placeholders = conn.execute(
                 """

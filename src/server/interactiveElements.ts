@@ -24,7 +24,7 @@ export const CHAT_INTERACTIVE_GUIDE = [
   '   - `ask:Jyn` — kieruje kolejne zapytanie do Jyn (ROOT);',
   '   - `text:<tekst>` — wstawia gotowy szkic do pola wpisywania;',
   '   - `copy:<tekst>` — kopiuje wskazany tekst do schowka;',
-  '   - `tab:apex`, `tab:svl364`, `tab:infrastructure`, `tab:agents`, `tab:terminals`, `tab:kernel`, `tab:linux` — otwiera zakładkę;',
+  '   - `tab:svl364`, `tab:infrastructure`, `tab:agents`, `tab:terminals`, `tab:kernel`, `tab:linux` — otwiera zakładkę;',
   '   - `action:sync` (WYŁĄCZNIE globalna synchronizacja aplikacji), `action:scan` (WYŁĄCZNIE skan AV), `action:report` (WYŁĄCZNIE raport systemu SVL). Nie podpinaj `action:sync` pod niezwiązane operacje — użyj wtedy `send:<polecenie>`.',
   '3. Karty statusu, metryki KPI i znaczniki:',
   '   - `[card: Tytuł|Wartość|ok|warn|alert|info]` oraz `[progress: Etykieta|0-100]`;',

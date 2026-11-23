@@ -520,7 +520,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   };
 
   return (
-    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#0B0D13]">
+    <div className="flex-1 min-h-0 h-full overflow-y-auto svl-scroll-smooth p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#0B0D13]">
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>

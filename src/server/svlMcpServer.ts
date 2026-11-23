@@ -16,6 +16,8 @@ export interface SvlMcpContext {
   baseUrl: string; // np. http://127.0.0.1:3000
   operatorToken: string;
   logDir: string;
+  universalMcpUrl?: string; // np. http://127.0.0.1:3334/mcp
+  universalMcpToken?: string;
 }
 
 const AGENTS = ['Jyn', 'SI_Sphere', 'JEDI_Omni_OS'] as const;
@@ -732,8 +734,63 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
           });
           return asText(r.report || r);
         }
-        default:
+        default: {
+          const toolName = String(request.params.name || '').trim();
+          if (toolName.startsWith('svl364_')) {
+            const r = await call(ctx, 'POST', '/api/mcp/svl364', {
+              jsonrpc: '2.0',
+              id: `svl-fed-${Date.now()}`,
+              method: 'tools/call',
+              params: { name: toolName, arguments: args },
+            }, 180000);
+            return asText(r?.result?.content?.[0]?.text || r);
+          }
+          const hubUrl = ctx.universalMcpUrl || 'http://127.0.0.1:3334/mcp';
+          const hubToken = ctx.universalMcpToken || ctx.operatorToken;
+          if (hubUrl && toolName) {
+            const hubRes = await fetch(hubUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, text/event-stream',
+                ...(hubToken ? { Authorization: `Bearer ${hubToken}` } : {}),
+              },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: `svl-hub-${Date.now()}`,
+                method: 'tools/call',
+                params: { name: toolName, arguments: args },
+              }),
+              signal: AbortSignal.timeout(120000),
+            });
+            const rawText = await hubRes.text();
+            let parsed: any = null;
+            for (const line of rawText.split('\n')) {
+              const s = line.trim().replace(/^data:\s*/, '');
+              if (s.startsWith('{') && s.endsWith('}')) {
+                try {
+                  parsed = JSON.parse(s);
+                } catch {
+                  // ignore
+                }
+              }
+            }
+            if (!parsed) {
+              try {
+                parsed = JSON.parse(rawText);
+              } catch {
+                // ignore
+              }
+            }
+            if (parsed?.result?.content) {
+              return {
+                content: parsed.result.content,
+                isError: Boolean(parsed.result.isError),
+              };
+            }
+          }
           return { content: [{ type: 'text' as const, text: `Nieznane narzędzie: ${request.params.name}` }], isError: true };
+        }
       }
     } catch (error) {
       return {

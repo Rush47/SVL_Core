@@ -323,7 +323,7 @@ export const TerminalsWorkspace: React.FC = () => {
         : 'text-amber-400';
 
   return (
-    <div className="flex flex-col h-full bg-[#0B0D13] overflow-hidden">
+    <div className="flex flex-col flex-1 min-h-0 h-full bg-[#0B0D13] overflow-hidden">
       {/* Terminal Selector Bar */}
       <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800 bg-[#111520] flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
@@ -462,7 +462,7 @@ export const TerminalsWorkspace: React.FC = () => {
       )}
 
       {/* Terminal Output Viewport */}
-      <div ref={viewportRef} className="flex-1 overflow-y-auto p-3 sm:p-4 font-mono text-xs space-y-2 bg-[#07090E] svl-scroll-smooth">
+      <div ref={viewportRef} className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 font-mono text-xs space-y-2 bg-[#07090E] svl-scroll-smooth">
         {mergedTabLogs.map((line) => {
           let textStyle = 'text-slate-200';
           if (line.kind === 'input') textStyle = 'text-violet-300 font-semibold';

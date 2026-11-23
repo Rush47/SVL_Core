@@ -607,7 +607,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
   const mcpOnline = Boolean(remoteMcp?.connected || overview?.mcpBridge?.probe?.ok || sshShip?.online);
 
   return (
-    <div className="h-full overflow-y-auto bg-[#060A11] text-slate-100">
+    <div className="flex-1 min-h-0 h-full overflow-y-auto svl-scroll-smooth bg-[#060A11] text-slate-100">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-4">
         {/* Top Command Header */}
         <header className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3">
@@ -906,7 +906,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   </button>
                 </div>
 
-                <div className="divide-y divide-slate-800/70 flex-1 overflow-y-auto max-h-[420px]">
+                <div className="divide-y divide-slate-800/70 flex-1 lg:overflow-y-auto lg:max-h-[420px]">
                   {(overview?.services || []).map((svc) => (
                     <div key={svc.id} className="px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-slate-900/40">
                       <div className="min-w-0">
@@ -986,7 +986,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   </div>
                 </div>
 
-                <div className="divide-y divide-slate-800/70 flex-1 overflow-y-auto max-h-[420px]">
+                <div className="divide-y divide-slate-800/70 flex-1 lg:overflow-y-auto lg:max-h-[420px]">
                   {filteredFeed.length === 0 ? (
                     <div className="p-6 text-center text-xs text-slate-500">
                       Brak wpisów w tej kategorii. Użyj „Odśwież MCP” lub zakładki „Alarmy, Transmisje &amp; Incydenty”, aby dodać raport.
@@ -1163,7 +1163,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   ))}
                 </div>
               </div>
-              <div className="divide-y divide-slate-800/70 max-h-[620px] overflow-y-auto">
+              <div className="divide-y divide-slate-800/70 lg:max-h-[620px] lg:overflow-y-auto">
                 {filteredFeed.map((item) => {
                   const cat = CATEGORY_META[item.category] || CATEGORY_META.incident;
                   return (

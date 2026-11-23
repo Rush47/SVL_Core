@@ -200,8 +200,10 @@ class SVL364ShipHub:
 
         fleet_markers = [
             {
-                "id": "apex-citadel",
-                "name": "APEX-CITADEL (Orbita Ziemi)",
+                "id": "pl-warsaw-hq",
+                "name": "🇵🇱 Polska · Warszawa — Ziemskie Centrum Dowodzenia (PL-EARTH-ROOT)",
+                "shortLabel": "🇵🇱 PL · Warszawa",
+                "insignia": "🇵🇱 Polska · 🌍 Ziemia",
                 "bodyId": "earth",
                 "xAu": earth_body["xAu"],
                 "yAu": earth_body["yAu"],
@@ -209,12 +211,38 @@ class SVL364ShipHub:
                 "angleDeg": earth_body["angleDeg"],
                 "status": "ACTIVE",
             },
+            {
+                "id": "apex-citadel",
+                "name": "🌍 Ziemia · APEX-CITADEL & Flota Obrony Ziemskiej",
+                "shortLabel": "🌍 Ziemia · APEX",
+                "insignia": "🌍 Ziemia · 🇵🇱 Polska",
+                "bodyId": "earth",
+                "xAu": earth_body["xAu"],
+                "yAu": earth_body["yAu"],
+                "au": earth_body["au"],
+                "angleDeg": earth_body["angleDeg"],
+                "status": "ACTIVE",
+            },
+            {
+                "id": "svl-365",
+                "name": "🇵🇱🌍 SVL-365 Sentinel Aegis (Eskorta & Cyber-Tarcza)",
+                "shortLabel": "🇵🇱 SVL-365",
+                "insignia": "🇵🇱 Polska · 🌍 Ziemia",
+                "bodyId": cur_id,
+                "xAu": cur_body["xAu"],
+                "yAu": cur_body["yAu"],
+                "au": cur_body["au"],
+                "angleDeg": cur_body["angleDeg"],
+                "status": "ACTIVE",
+            },
         ]
-        if si_sphere_active:
+        if si_sphere_active or "svl-465" not in [m["id"] for m in fleet_markers]:
             jup = ephemeris["jupiter"]
             fleet_markers.append({
                 "id": "svl-465",
-                "name": "SVL-465 Baza Kwantowa (SI_Sphere)",
+                "name": "🌍 SVL-465 Baza Kwantowa (SI_Sphere)",
+                "shortLabel": "SVL-465",
+                "insignia": "🌍 Ziemia · Sektor Jowisza",
                 "bodyId": "jupiter",
                 "xAu": jup["xAu"],
                 "yAu": jup["yAu"],

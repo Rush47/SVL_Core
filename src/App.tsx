@@ -13,18 +13,14 @@ import { LinuxDeployDashboard } from './components/LinuxDeployDashboard';
 import { GalleryPanel } from './components/GalleryPanel';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
-import { ApexCommandDock } from './components/ApexCommandDock';
-import { AntigravityWorkspace } from './components/AntigravityWorkspace';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { getEffectiveCanonicalAgents, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
-type ActiveWorkspaceTab = 'chat' | 'antigravity' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
 
 const WORKSPACE_TABS: Array<{ id: ActiveWorkspaceTab; label: string; shortLabel?: string; accent?: string }> = [
   { id: 'chat', label: 'Czat' },
-  { id: 'antigravity', label: 'Antigravity', accent: 'cyan' },
-  { id: 'apex', label: '⚡ Apex OS', accent: 'cyan' },
   { id: 'svl364', label: 'SVL-364' },
   { id: 'infrastructure', label: 'Infrastruktura', shortLabel: 'Infra', accent: 'emerald' },
   { id: 'agents', label: 'Agenci' },
@@ -110,7 +106,7 @@ function SVLWorkspaceShell() {
 
   useEffect(() => {
     if (
-      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'antigravity' || syncedWorkspaceTab === 'apex' || syncedWorkspaceTab === 'svl364' ||
+      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'svl364' ||
       syncedWorkspaceTab === 'infrastructure' || syncedWorkspaceTab === 'agents' ||
       syncedWorkspaceTab === 'gallery' || syncedWorkspaceTab === 'terminals' || syncedWorkspaceTab === 'kernel' ||
       syncedWorkspaceTab === 'linux'
@@ -123,8 +119,6 @@ function SVLWorkspaceShell() {
     setGuiLoggerContext({ tab: activeTab });
     if (activeTab === 'chat') {
       void refreshDomainModules(['chat', 'agents', 'health', 'workspace']);
-    } else if (activeTab === 'apex') {
-      void refreshDomainModules(['health', 'modules', 'kernel', 'agents']);
     } else if (activeTab === 'svl364') {
       void refreshDomainModules(['modules', 'kernel', 'agents', 'health', 'chat', 'terminals']);
     } else if (activeTab === 'infrastructure') {
@@ -224,9 +218,9 @@ function SVLWorkspaceShell() {
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-500/15 text-xs shadow-[0_0_12px_rgba(0,240,255,0.25)]">
             ⚡
           </span>
-          <span>SVL CoreOS 2</span>
+          <span>SVL Core</span>
           <span className="hidden sm:inline-flex items-center rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
-            Apex
+            ROOT
           </span>
         </a>
 
@@ -255,7 +249,7 @@ function SVLWorkspaceShell() {
                   type="button"
                   onClick={() => selectWorkspaceTab(tab.id)}
                   className={`min-h-[36px] lg:min-h-0 py-1 px-2 rounded-t-md transition-all whitespace-nowrap shrink-0 border-b-2 ${
-                    tab.id === 'apex' || tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
+                    tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
                   }${isActive ? activeBorder : idleClass}`}
                 >
                   {displayLabel}
@@ -444,11 +438,9 @@ function SVLWorkspaceShell() {
       </header>
 
       {/* Main Workspace Viewport */}
-      <main className="svl-telemetry-grid flex-1 min-h-0 w-full overflow-hidden">
-        <div key={activeTab} className="svl-view-enter h-full w-full">
+      <main className="svl-telemetry-grid flex-1 min-h-0 w-full flex flex-col overflow-hidden">
+        <div key={activeTab} className="svl-view-enter flex-1 min-h-0 h-full w-full flex flex-col overflow-hidden">
           {activeTab === 'chat' && <ChatWorkspace onNavigateTab={setActiveTab} />}
-          {activeTab === 'antigravity' && <AntigravityWorkspace />}
-          {activeTab === 'apex' && <ApexCommandDock onNavigateTab={setActiveTab} />}
           {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={setActiveTab} />}
           {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={setActiveTab} />}
           {activeTab === 'agents' && (

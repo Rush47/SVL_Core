@@ -68,19 +68,19 @@ test('formatted chat content renders safe interactive actions grouped in an acti
 test('markdown table parser handles tables without outer pipes and preserves [btn:] inside cells', () => {
   assert.equal(isMarkdownTableSeparator('--- | --- | ---'), true);
   assert.deepEqual(
-    parseMarkdownTableRow('Moduł | Status | [btn: Otwórz Apex|tab:apex]'),
-    ['Moduł', 'Status', '[btn: Otwórz Apex|tab:apex]'],
+    parseMarkdownTableRow('Moduł | Status | [btn: Otwórz SVL-364|tab:svl364]'),
+    ['Moduł', 'Status', '[btn: Otwórz SVL-364|tab:svl364]'],
   );
 
   const md = [
     'Moduł | Status | Akcja',
     '--- | --- | ---',
-    'Apex OS | AKTYWNY | [btn: Otwórz Apex|tab:apex]',
+    'SVL-364 | AKTYWNY | [btn: Otwórz SVL-364|tab:svl364]',
     'Ollama | GOTOWA | [btn: Synchronizuj|action:sync]',
   ].join('\n');
   const html = renderToStaticMarkup(React.createElement(React.Fragment, null, renderFormattedContent(md, () => {})));
   assert.match(html, /<table/);
-  assert.match(html, /Otwórz Apex/);
+  assert.match(html, /Otwórz SVL-364/);
   assert.match(html, /Synchronizuj/);
   assert.match(html, /CSV/);
 });

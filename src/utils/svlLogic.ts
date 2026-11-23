@@ -329,15 +329,11 @@ export function isUnsafeChatInteractiveAction(action: string): boolean {
   return /^\/exec(?:\s|$)/i.test(dispatchedText);
 }
 
-export type WorkspaceTabKey = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+export type WorkspaceTabKey = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
 
 const WORKSPACE_TAB_ALIASES: Record<string, WorkspaceTabKey> = {
   chat: 'chat',
   czat: 'chat',
-  apex: 'apex',
-  'apex-os': 'apex',
-  apexos: 'apex',
-  coreos: 'apex',
   svl364: 'svl364',
   'svl-364': 'svl364',
   ship: 'svl364',

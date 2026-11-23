@@ -4,16 +4,21 @@
 @import "@vector-im/compound-design-tokens/assets/web/css/cpd-theme-dark-base.css";
 @import "@vector-im/compound-design-tokens/assets/web/css/cpd-theme-dark-semantic.css";
 @import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
 @import "@fontsource/inconsolata/400.css";
+@import "@fontsource/inconsolata/500.css";
+@import "@fontsource/inconsolata/600.css";
+@import "@fontsource/inconsolata/700.css";
 @import "@vector-im/compound-web/dist/style.css";
 @import "katex/dist/katex.min.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
-    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --font-sans: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, sans-serif;
+    --font-mono: 'Inconsolata', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     --apex-bg-void: #050810;
     --apex-bg-surface: #090F1E;
     --apex-bg-elevated: #0E172A;
@@ -158,7 +163,7 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
@@ -174,14 +179,20 @@
   scrollbar-width: none;
 }
 
-.svl-scroll-smooth {
+.svl-scroll-smooth,
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-auto {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+svg {
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .svl-msg-row {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 136px;
+  min-width: 0;
 }
 
 .pb-safe {

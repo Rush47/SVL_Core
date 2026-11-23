@@ -485,6 +485,31 @@ class SshTerminalTests(unittest.TestCase):
             self.assertTrue(any("CUDA OOM" in f["message"] for f in overview["feed"]))
             self.assertTrue(any("svl-comfyui.service" in f["message"] for f in overview["feed"]))
 
+    def test_federated_mcp_hub_auto_link_and_tool_forwarding(self) -> None:
+        controller = build_controller()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            controller.project_root = Path(tmpdir)
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            (data_dir / "svl_mcp_token.secret").write_text("shared-universal-mcp-token-xyz\n", encoding="utf-8")
+
+            linked = controller.connect_local_universal_hub()
+            self.assertTrue(linked["ok"])
+            settings = controller._load_remote_mcp_settings()
+            self.assertTrue(settings["enabled"])
+            self.assertEqual(settings["url"], "http://127.0.0.1:3334/mcp")
+            self.assertEqual(settings["token"], "shared-universal-mcp-token-xyz")
+
+            with patch.object(
+                controller,
+                "call_remote_mcp_tool",
+                return_value={"ok": True, "output": "universal-hub-tool-result"},
+            ) as remote_call:
+                res = controller.call_mcp_tool("mcp_info", {}, origin="federation-test")
+                self.assertTrue(res["ok"])
+                self.assertEqual(res["formattedText"], "universal-hub-tool-result")
+                remote_call.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
