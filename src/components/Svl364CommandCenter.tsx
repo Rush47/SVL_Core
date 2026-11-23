@@ -179,6 +179,28 @@ interface ShipOverviewPayload {
     transmissions: number;
     openIncidents: number;
   };
+  bilateralIntegration?: {
+    orderId: string;
+    sku: string;
+    vendor: string;
+    tier: string;
+    mode: string;
+    status: string;
+    pairedEscort: string;
+    shipSide: {
+      host: string;
+      mcpDaemon: string;
+      sshEndpoint: string;
+      rootEscalation: string;
+      botany: string;
+    };
+    systemSide: {
+      gatewayEndpoint: string;
+      rootChannel: string;
+      aiCores: string[];
+      persistence: string;
+    };
+  };
   serverRevision: number;
 }
 
@@ -1211,6 +1233,47 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   Kopiuj JSON konektora MCP
                 </button>
               </div>
+
+              {overview?.bilateralIntegration && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-slate-800/80 text-xs">
+                  <div className="rounded-lg border border-slate-800 bg-[#070B12] p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-cyan-300">
+                        Strona Statku · SVL-364 Ebon Apex
+                      </span>
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                        {overview.bilateralIntegration.tier}
+                      </span>
+                    </div>
+                    <div className="text-slate-200 font-medium">{overview.bilateralIntegration.shipSide.host}</div>
+                    <div className="font-mono text-[11px] text-slate-400">
+                      MCP: <span className="text-cyan-300">{overview.bilateralIntegration.shipSide.mcpDaemon}</span> · SSH:{' '}
+                      <span className="text-emerald-300">{overview.bilateralIntegration.shipSide.sshEndpoint}</span>
+                    </div>
+                    <div className="font-mono text-[10px] text-slate-500">
+                      ROOT: {overview.bilateralIntegration.shipSide.rootEscalation} · {overview.bilateralIntegration.shipSide.botany}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-[#070B12] p-3 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-amber-300">
+                        Strona Systemu · SVL Core &amp; Klaster SVL-365
+                      </span>
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                        {overview.bilateralIntegration.mode}
+                      </span>
+                    </div>
+                    <div className="text-slate-200 font-medium">{overview.bilateralIntegration.vendor}</div>
+                    <div className="font-mono text-[11px] text-slate-400">
+                      Brama: <span className="text-cyan-300">{overview.bilateralIntegration.systemSide.gatewayEndpoint}</span> · Kanał:{' '}
+                      <span className="text-amber-300">{overview.bilateralIntegration.systemSide.rootChannel}</span>
+                    </div>
+                    <div className="font-mono text-[10px] text-slate-500">
+                      Eskorta: {overview.bilateralIntegration.pairedEscort} · {overview.bilateralIntegration.systemSide.persistence}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

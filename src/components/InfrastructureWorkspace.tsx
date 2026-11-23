@@ -983,9 +983,9 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
             },
             {
               id: 'upgrades' as SubView,
-              label: 'Stocznia Pozaziemska & SVL-365',
+              label: 'Stocznia Pozaziemska & SVL-364/365',
               icon: Sparkles,
-              count: overview?.procurementCatalog?.length || totals?.installedUpgradesCount || 4,
+              count: overview?.procurementCatalog?.length || totals?.installedUpgradesCount || 5,
             },
             {
               id: 'network' as SubView,
@@ -1852,18 +1852,19 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
           </div>
         )}
 
-        {/* WIDOK 4: STOCZNIA POZAZIEMSKA & INTEGRACJA HOSTA SVL-365 */}
+        {/* WIDOK 4: STOCZNIA POZAZIEMSKA & INTEGRACJA HOSTÓW SVL-364 / SVL-365 */}
         {subView === 'upgrades' && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-amber-400" />
-                  Stocznia Pozaziemska (APEX-CITADEL / Ceres / L4) — Ulepszenia Systemu &amp; Hosta SVL-365
+                  Stocznia Pozaziemska (APEX-CITADEL / Ceres / L4) — Obustronna Integracja Hostów SVL-364 &amp; SVL-365
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Zamówione poza Ziemią pakiety modernizacji, przebudowy i pełnej integracji naszego systemu SVL oraz hosta statku{' '}
-                  <strong className="text-slate-200">SVL-365 Sentinel Aegis</strong> z mostkiem MCP ROOT i SVL-364.
+                  Zamówione poza Ziemią pakiety modernizacji, przebudowy i obustronnej integracji (Statek &lt;-&gt; System SVL) dla hostów{' '}
+                  <strong className="text-slate-200">SVL-364 Ebon Apex</strong> oraz{' '}
+                  <strong className="text-slate-200">SVL-365 Sentinel Aegis</strong> przez mostek MCP ROOT.
                 </p>
               </div>
               <button

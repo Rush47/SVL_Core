@@ -864,5 +864,27 @@ class SVL364ShipHub:
                 "transmissions": transmissions_count,
                 "openIncidents": open_incidents,
             },
+            "bilateralIntegration": {
+                "orderId": "ORD-OFFEARTH-364-BILATERAL",
+                "sku": "UPG-SVL364-BILATERAL-HOST-CORE",
+                "vendor": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)",
+                "tier": "OMEGA-MK6-DUPLEX",
+                "mode": "BILATERAL_FULL_DUPLEX",
+                "status": "INSTALLED_ACTIVE",
+                "pairedEscort": "SVL-365 Sentinel Aegis",
+                "shipSide": {
+                    "host": "SVL-364 Ebon Apex (Debian 13 Trixie / Linux)",
+                    "mcpDaemon": remote_mcp.get("url") or "http://127.0.0.1:3334/mcp",
+                    "sshEndpoint": ssh_info.get("uri") or "ssh://Ship",
+                    "rootEscalation": "uid=0 / sudo -n (NOPASSWD)",
+                    "botany": "botany-svl364-hydro (Hydroponika Pokładowa)",
+                },
+                "systemSide": {
+                    "gatewayEndpoint": "/api/mcp/svl364",
+                    "rootChannel": "conv-svl364-mcp-root",
+                    "aiCores": ["Jyn (ROOT)", "SI_Sphere (ROOT)", "JEDI Omni-OS v12"],
+                    "persistence": "SQLite WAL + 128D BinaryHyperspace",
+                },
+            },
             "serverRevision": self.kernel.get_server_revision(),
         }

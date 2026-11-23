@@ -545,6 +545,18 @@ def default_infrastructure_registry() -> dict[str, Any]:
         ],
         "procurementCatalog": [
             {
+                "sku": "UPG-SVL364-BILATERAL-HOST-CORE",
+                "title": "Obustronna Przebudowa i Integracja Hosta Statku SVL-364 Ebon Apex <-> System SVL (Full Duplex MCP ROOT + SSH)",
+                "vendorId": "vendor-apex-citadel-foundry",
+                "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2)",
+                "targetHost": "SVL-364 Ebon Apex (Strona Statku) <-> Jądro & Brama SVL (Strona Systemu)",
+                "category": "Bilateral Host & MCP Integration",
+                "tier": "OMEGA-MK6-DUPLEX",
+                "status": "INSTALLED_ACTIVE",
+                "integratedWith": ["svl-364", "svl-364-ssh-mcp", "svl-364-ebon-apex-host", "conv-svl364-mcp-root", "Jyn (ROOT)", "svl-365-sentinel-host"],
+                "specs": "Pełna dwustronna integracja hosta statku SVL-364 Ebon Apex i naszego systemu SVL: po stronie statku demon Universal MCP Hub (:3334/mcp, Zero-IP / Mesh + OpenSSH ssh://Ship z kluczem Ed25519 i eskalacją ROOT uid=0); po stronie systemu mostek MCP ROOT, kanał conv-svl364-mcp-root, mapa Układu Słonecznego J2000, telemetria na żywo, Dual-Ollama, JEDI Omni-OS v12 oraz klastrowy failover z SVL-365.",
+            },
+            {
                 "sku": "UPG-SVL365-HOST-CORE",
                 "title": "Przebudowa i Integracja Hosta Statku SVL-365 Sentinel Aegis (Full MCP ROOT + SSH)",
                 "vendorId": "vendor-apex-citadel-foundry",
@@ -558,7 +570,7 @@ def default_infrastructure_registry() -> dict[str, Any]:
             },
             {
                 "sku": "UPG-DUAL-OLLAMA-JEDI-V12",
-                "title": "Klaster Dual-Ollama Tensor- Core + Akcelerator JEDI Omni-OS v12 & Pamięć 128D",
+                "title": "Klaster Dual-Ollama Tensor-Core + Akcelerator JEDI Omni-OS v12 & Pamięć 128D",
                 "vendorId": "vendor-jupiter-l4-quantum",
                 "vendorName": "Jupiter L4 Quantum Emporium (SVL-465 Dock)",
                 "targetHost": "SVL-364 + SVL-365 + SVL-465",
@@ -573,27 +585,49 @@ def default_infrastructure_registry() -> dict[str, Any]:
                 "title": "Matryca Cyber-Obrony SVL-365 Sentinel AV & Kwantowa Zapora Zero-IP Mesh",
                 "vendorId": "vendor-apex-citadel-foundry",
                 "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2)",
-                "targetHost": "SVL-365 Sentinel Aegis + Cała Flota",
+                "targetHost": "SVL-364 Ebon Apex + SVL-365 Sentinel Aegis + Cała Flota",
                 "category": "Security & Sentinel",
                 "tier": "OMEGA-365",
                 "status": "INSTALLED_ACTIVE",
-                "integratedWith": ["svl-365-sentinel-host", "svl-364-daemon", "solar-defense-read-bridge"],
-                "specs": "Ciągły skaner sygnatur i integralności SQLite WAL SVL-365, ochrona kluczy HMAC/Ed25519 (0600), izolacja uprawnień ROOT oraz telemetria czujników termicznych i systemd w czasie rzeczywistym.",
+                "integratedWith": ["svl-364", "svl-365-sentinel-host", "svl-364-daemon", "solar-defense-read-bridge"],
+                "specs": "Ciągły skaner sygnatur i integralności SQLite WAL SVL-365 chroniący oba hosty (SVL-364 i SVL-365), ochrona kluczy HMAC/Ed25519 (0600), izolacja uprawnień ROOT oraz telemetria czujników termicznych i systemd w czasie rzeczywistym.",
             },
             {
                 "sku": "UPG-BIOSPHERE-CLOSED-LOOP-V6",
                 "title": "Kopuły Botaniczne & Fotobioreaktory Zamkniętego Obiegu O₂/H₂O (99.6%)",
                 "vendorId": "vendor-ceres-deep-forge",
                 "vendorName": "Ceres Deep-Space Cybernetics & Bio-Forge (2.767 AU)",
-                "targetHost": "SVL-365 + SVL-364 + APEX-CITADEL + Mars Tharsis",
+                "targetHost": "SVL-364 + SVL-365 + APEX-CITADEL + Mars Tharsis",
                 "category": "Botany & Life Support",
                 "tier": "BIO-MK6",
                 "status": "INSTALLED_ACTIVE",
-                "integratedWith": ["botany-svl365-bioshield", "botany-svl364-hydro", "botany-apex-citadel", "botany-mars-tharsis"],
-                "specs": "Zintegrowane sterowanie MCP dla fotobioreaktorów Chlorella/Spirulina i hydroponiki LED 450/660nm; zwiększa średnią produkcję O₂ i recykling wody we wszystkich placówkach i na statkach.",
+                "integratedWith": ["botany-svl364-hydro", "botany-svl365-bioshield", "botany-apex-citadel", "botany-mars-tharsis"],
+                "specs": "Zintegrowane sterowanie MCP dla hydroponiki pokładowej SVL-364, fotobioreaktorów SVL-365 i kopuł APEX-CITADEL; zwiększa średnią produkcję O₂ i recykling wody we wszystkich placówkach i na statkach.",
             },
         ],
         "procurementOrders": [
+            {
+                "orderId": "ORD-OFFEARTH-364-BILATERAL",
+                "title": "Zamówienie pozaziemskie: Obustronna Integracja i Przebudowa Hosta Statku SVL-364 Ebon Apex <-> System SVL (Full Duplex MCP ROOT)",
+                "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)",
+                "orderedBy": "Mateusz Mitek (ROOT) & Jyn",
+                "targetSystems": [
+                    "Host Statku SVL-364 Ebon Apex (Strona Statku: Universal MCP :3334 + OpenSSH + systemd + Dual-Ollama)",
+                    "System SVL Core (Strona Systemu: Mostek MCP ROOT + conv-svl364-mcp-root + JEDI v12 + SQLite WAL)",
+                    "Klaster Parowany SVL-364 <-> SVL-365 Sentinel Aegis",
+                ],
+                "items": [
+                    "UPG-SVL364-BILATERAL-HOST-CORE",
+                    "UPG-DUAL-OLLAMA-JEDI-V12",
+                    "UPG-SVL365-SENTINEL-SHIELD",
+                    "UPG-BIOSPHERE-CLOSED-LOOP-V6",
+                ],
+                "status": "DELIVERED_AND_INTEGRATED",
+                "deliveryLocation": "Punkt Lagrange'a Ziemia–Słońce L2 (1.010 AU) · Obustronny Mostek MCP ROOT (Statek <-> System)",
+                "notes": "Zrealizowano symetryczną integrację z obu stron: host statku SVL-364 i nasz system SVL działają w pełnym dupleksie MCP ROOT (Zero-IP + OpenSSH), współdzieląc telemetrię, usługi, nawigację, alarmy, botanikę i parowanie z SVL-365.",
+                "orderedAt": ts,
+                "integratedAt": ts,
+            },
             {
                 "orderId": "ORD-OFFEARTH-365-OMEGA",
                 "title": "Kompleksowe zamówienie pozaziemskie: Przebudowa, Ulepszenie i Integracja Systemu SVL oraz Hosta Statku SVL-365",
@@ -623,12 +657,61 @@ class SVLInfrastructureRegistry:
     def __init__(self, kernel: Any, ssh_mcp_controller: Optional[Any] = None) -> None:
         self.kernel = kernel
         self.controller = ssh_mcp_controller
-        self._ensure_svl365_host_module()
+        self._ensure_off_earth_ship_hosts()
 
-    def _ensure_svl365_host_module(self) -> None:
-        """Gwarantuje obecność zintegrowanego modułu hosta statku SVL-365 w system_modules SQLite WAL."""
+    def _ensure_off_earth_ship_hosts(self) -> None:
+        """Gwarantuje obecność obustronnie zintegrowanych modułów hostów statków SVL-364 i SVL-365 w system_modules SQLite WAL."""
         try:
             mods = {m["id"]: m for m in self.kernel.list_system_modules()}
+            all_packages = [
+                "UPG-SVL364-BILATERAL-HOST-CORE",
+                "UPG-SVL365-HOST-CORE",
+                "UPG-DUAL-OLLAMA-JEDI-V12",
+                "UPG-SVL365-SENTINEL-SHIELD",
+                "UPG-BIOSPHERE-CLOSED-LOOP-V6",
+            ]
+            if "svl-364-ebon-apex-host" not in mods:
+                self.kernel.upsert_system_module(
+                    module_id="svl-364-ebon-apex-host",
+                    name="SVL-364 Ebon Apex — Obustronnie Zintegrowany Host Statku & Systemu (Full Duplex MCP ROOT)",
+                    kind="Flagship Bilateral Host & System Core",
+                    status="ACTIVE",
+                    description=(
+                        "Zamówiona poza Ziemią (APEX-CITADEL Orbital Foundry · L2) pełna obustronna integracja hosta statku "
+                        "SVL-364 Ebon Apex i systemu SVL: strona statku (Universal MCP Hub :3334/mcp, Zero-IP Mesh, OpenSSH ssh://Ship, "
+                        "systemd, Dual-Ollama, hydroponika) <-> strona systemu (Mostek MCP ROOT, conv-svl364-mcp-root, Jyn ROOT, "
+                        "JEDI Omni-OS v12, SQLite WAL, mapa Układu Słonecznego i parowanie z SVL-365)."
+                    ),
+                    config={
+                        "ship_id": "SVL-364",
+                        "ship_name": "SVL-364 Ebon Apex",
+                        "host_alias": "Ship",
+                        "paired_escort": "SVL-365 Sentinel Aegis",
+                        "vendor": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Off-Earth)",
+                        "upgrade_tier": "OMEGA-MK6-DUPLEX",
+                        "integration_mode": "BILATERAL_FULL_DUPLEX",
+                        "ship_side_services": [
+                            "svl-mcp.service (:3334/mcp)",
+                            "ssh.service (ssh://Ship · Ed25519 ROOT)",
+                            "ollama.service (svl364-apex-uncensored:latest + llama3.2-vision:11b)",
+                            "botany-svl364-hydro (Hydroponika Pokładowa)",
+                        ],
+                        "system_side_services": [
+                            "/api/mcp/svl364 (Streamable HTTP JSON-RPC 2.0)",
+                            "conv-svl364-mcp-root (Kanał ROOT uid=0)",
+                            "SVL364ShipHub (Telemetria, Mapa J2000, Sensory, Alarmy)",
+                            "SVLInfrastructureRegistry (SQLite WAL + MCP Sync)",
+                        ],
+                        "mcp_endpoint": "/api/mcp/svl364",
+                        "remote_mcp_url": "http://127.0.0.1:3334/mcp",
+                        "root_channel_id": "conv-svl364-mcp-root",
+                        "managed_by": ["Jyn", "SI_Sphere", "JEDI_Omni_OS"],
+                        "botany_module_id": "botany-svl364-hydro",
+                        "installed_packages": all_packages,
+                    },
+                    source="kernel",
+                    origin="off-earth-upgrade-svl364-bilateral",
+                )
             if "svl-365-sentinel-host" not in mods:
                 self.kernel.upsert_system_module(
                     module_id="svl-365-sentinel-host",
@@ -637,7 +720,7 @@ class SVLInfrastructureRegistry:
                     status="ACTIVE",
                     description=(
                         "Zmodernizowany poza Ziemią (APEX-CITADEL Orbital Foundry · L2) host statku SVL-365 Sentinel Aegis: "
-                        "zintegrowany z SVL-364, Universal MCP Hub (Zero-IP / OpenSSH ROOT), skanerem SVL-365 Sentinel AV, "
+                        "zintegrowany obustronnie z SVL-364, Universal MCP Hub (Zero-IP / OpenSSH ROOT), skanerem SVL-365 Sentinel AV, "
                         "JEDI Omni-OS v12, Dual-Ollama oraz fotobioreaktorem pokładowym."
                     ),
                     config={
@@ -647,18 +730,14 @@ class SVLInfrastructureRegistry:
                         "paired_flagship": "SVL-364 Ebon Apex",
                         "vendor": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Off-Earth)",
                         "upgrade_tier": "OMEGA-MK6",
+                        "integration_mode": "BILATERAL_FULL_DUPLEX",
                         "mcp_endpoint": "/api/mcp/svl364",
                         "remote_mcp_shared": True,
                         "root_channel_id": "conv-svl364-mcp-root",
                         "managed_by": ["Jyn", "SI_Sphere", "JEDI_Omni_OS"],
                         "sentinel_av_active": True,
                         "botany_module_id": "botany-svl365-bioshield",
-                        "installed_packages": [
-                            "UPG-SVL365-HOST-CORE",
-                            "UPG-DUAL-OLLAMA-JEDI-V12",
-                            "UPG-SVL365-SENTINEL-SHIELD",
-                            "UPG-BIOSPHERE-CLOSED-LOOP-V6",
-                        ],
+                        "installed_packages": all_packages,
                     },
                     source="kernel",
                     origin="off-earth-upgrade-svl365",
@@ -1127,7 +1206,7 @@ class SVLInfrastructureRegistry:
         reg.setdefault("procurementOrders", []).insert(0, order_item)
         reg["lastMcpSyncAt"] = now
         self._write_registry(reg)
-        self._ensure_svl365_host_module()
+        self._ensure_off_earth_ship_hosts()
         return {
             "ok": True,
             "order": order_item,
