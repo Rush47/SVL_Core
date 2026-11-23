@@ -28,6 +28,14 @@ interface EnginesState {
     grok: { configured: boolean; model: string; timeoutMs: number; paid: boolean };
     gemini: { configured: boolean; models: string[]; modelCount: number; forcedModel: string | null };
     image: { engine: string; available: boolean | null; detail: string | null };
+    antigravity?: {
+      mode: string;
+      requiresPaidKey: boolean;
+      geminiConfigured: boolean;
+      freeModels: string[];
+      ollamaFallbackReachable: boolean;
+      tools: string[];
+    };
   };
 }
 
@@ -265,6 +273,21 @@ export const AiEnginesCard: React.FC = () => {
               Zasoby hosta: RAM {e.ollama.ramAvailableMb ? `${Math.round(e.ollama.ramAvailableMb)} MB` : '—'} · dysk {e.ollama.diskFreeGb ? `${e.ollama.diskFreeGb.toFixed(1)} GB` : '—'}
             </div>
           </div>
+          {/* Antigravity (tryb bez płatnego klucza) */}
+          {e.antigravity && (
+            <div className="rounded-lg border border-cyan-800/60 bg-[#0d1017] p-3 space-y-2 lg:col-span-2 xl:col-span-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-200">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> Antigravity · Tryb bez płatnego klucza (Interactions API + Ollama)
+                <span className="ml-auto">
+                  <Dot ok={Boolean(e.antigravity.geminiConfigured || e.antigravity.ollamaFallbackReachable)} />
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 flex flex-wrap gap-x-4 gap-y-1">
+                <span>Darmowe modele: <strong className="font-mono text-slate-200">{e.antigravity.freeModels.join(', ')}</strong></span>
+                <span>Narzędzia: <strong className="font-mono text-slate-200">{e.antigravity.tools.join(', ')}</strong></span>
+              </div>
+            </div>
+          )}
         </div>
       )}
       {state && <p className="text-[10px] text-slate-600">Odświeżono: {new Date(state.checkedAt).toLocaleTimeString('pl-PL')}</p>}

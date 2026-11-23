@@ -110,6 +110,7 @@ export const TerminalsWorkspace: React.FC = () => {
     wsAttempt,
     wsLastError,
     serverRevision,
+    healthData,
     terminalLogsByTab,
     clearTerminalTab,
     refreshTerminals,
@@ -386,7 +387,9 @@ export const TerminalsWorkspace: React.FC = () => {
         </div>
       </div>
 
-      {activeTab === 'ssh' && (
+      {activeTab === 'ssh' && (() => {
+        const latestChatSsh = sshBridgeStatus?.latestChatSsh || healthData?.live_chat_sync?.latest_ssh_profile || null;
+        return (
         <div className="px-3 sm:px-4 py-2 bg-[#090D15] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
           <div className="flex flex-wrap items-center gap-2 text-slate-300">
             <span className={sshBridgeStatus?.sshInstalled ? 'text-emerald-400' : 'text-amber-300'}>
@@ -398,6 +401,21 @@ export const TerminalsWorkspace: React.FC = () => {
             <span className={sshBridgeStatus?.targetReachable ? 'text-emerald-300' : 'text-amber-300'}>
               Cel: {sshBridgeStatus?.uri || 'ssh://Ship'} ({sshBridgeStatus?.targetReachable ? 'osiągalny' : 'nieosiągalny'})
             </span>
+            {latestChatSsh?.target && (
+              <>
+                <span aria-hidden="true" className="text-slate-600">·</span>
+                <span className="text-cyan-300">
+                  SSH z czatu: {latestChatSsh.command || `ssh ${latestChatSsh.target}`} (:{latestChatSsh.port || 22})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSshTargetInput(String(latestChatSsh.target))}
+                  className="px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/35 border border-cyan-500/40 text-cyan-200 whitespace-nowrap"
+                >
+                  Użyj {latestChatSsh.target}
+                </button>
+              </>
+            )}
             {(!sshBridgeStatus?.sshInstalled || !sshBridgeStatus?.targetReachable) && (
               <button
                 type="button"
@@ -434,7 +452,8 @@ export const TerminalsWorkspace: React.FC = () => {
             </span>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {terminalActionError && (
         <div className="px-4 py-2 bg-rose-950/40 border-b border-rose-500/40 text-xs font-mono text-rose-300">

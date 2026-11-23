@@ -77,6 +77,7 @@ export const LinuxDeployDashboard: React.FC = () => {
   const [coreOs2Files, setCoreOs2Files] = useState<string[]>(DEFAULT_COREOS2_FILES);
   const [fileContent, setFileContent] = useState<string>('Ładowanie pliku...');
   const [copied, setCopied] = useState(false);
+  const [copiedSshCmd, setCopiedSshCmd] = useState<string | null>(null);
 
   const [debian13Data, setDebian13Data] = useState<any>(null);
   const [selectedPkgGroup, setSelectedPkgGroup] = useState<string>('base_system');
@@ -303,6 +304,17 @@ export const LinuxDeployDashboard: React.FC = () => {
     ? liveChatSync.tasks_completed
     : [];
   const liveTasks: string[] = rawTasks.map((t: any) => (typeof t === 'string' ? t : String(t?.task || ''))).filter(Boolean);
+  const liveSshProfiles: any[] = Array.isArray(liveChatSync.ssh_profiles) ? liveChatSync.ssh_profiles : [];
+
+  const handleCopySshCommand = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedSshCmd(cmd);
+      setTimeout(() => setCopiedSshCmd((prev) => (prev === cmd ? null : prev)), 1800);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#0B0D13]">
@@ -522,18 +534,27 @@ export const LinuxDeployDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* 🔐 OpenSSH & Adres IP Podłączonego Klienta w Debianie 13 */}
+      {/* 🔐 OpenSSH, Nowy Profil SSH z Czatu & Adres IP Podłączonego Klienta */}
       {(() => {
         const sshTel = debian13Data?.openssh_client_telemetry || {};
+        const sshInstalled = Boolean(sshTel.ssh_installed);
+        const sshdInstalled = Boolean(sshTel.sshd_installed);
+        const activeChatSsh = sshTel.active_chat_ssh || liveChatSync.latest_ssh_profile || null;
+        const chatSshProfiles: any[] = Array.isArray(sshTel.chat_ssh_profiles)
+          ? sshTel.chat_ssh_profiles
+          : liveSshProfiles;
+        const tcpReachable = Boolean(activeChatSsh?.tcp_reachable);
+        const hasProbeResult = activeChatSsh && typeof activeChatSsh.tcp_reachable === 'boolean';
+
         return (
-          <div className="p-4 sm:p-5 rounded-xl bg-emerald-950/20 border border-emerald-500/40 space-y-3">
+          <div className="p-4 sm:p-5 rounded-xl bg-emerald-950/15 border border-emerald-500/40 space-y-3">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
               <div>
                 <h2 className="text-sm font-semibold text-emerald-200">
-                  🔐 OpenSSH & Adres IP Podłączonego Klienta (Debian 13 Trixie)
+                  🔐 OpenSSH, Profile SSH z Czatu & Adres IP Klienta (Pomiar Live)
                 </h2>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  Telemetria sesji OpenSSH w Debianie 13: status serwera/klienta OpenSSH oraz adres IP aktywnego klienta podłączonego do systemu.
+                  Rzeczywisty odczyt binarek OpenSSH na hoście oraz profile SSH zsynchronizowane z czatu z aktywną sondą TCP (Zero-Estimation Lock).
                 </p>
               </div>
               <span className="text-[11px] font-mono px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 self-start lg:self-auto">
@@ -542,13 +563,13 @@ export const LinuxDeployDashboard: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
-              <div className="p-2.5 rounded-lg bg-[#0B0D13]/90 border border-emerald-500/30">
-                <div className="text-[10px] text-slate-400 uppercase">Status OpenSSH</div>
-                <div className="text-emerald-300 font-bold mt-0.5">
-                  {sshTel.ssh_service_status || 'active (OpenSSH Server/Client v9.x)'}
+              <div className={`p-2.5 rounded-lg bg-[#0B0D13]/90 border ${sshInstalled || sshdInstalled ? 'border-emerald-500/35' : 'border-amber-500/40'}`}>
+                <div className="text-[10px] text-slate-400 uppercase">Lokalny OpenSSH na hoście</div>
+                <div className={`font-bold mt-0.5 ${sshInstalled || sshdInstalled ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {sshTel.ssh_service_status || (sshInstalled ? 'Klient ssh dostępny' : 'Brak pomiaru OpenSSH')}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5">
-                  Binarka: {sshTel.ssh_binary_path || '/usr/bin/ssh'} · Port: {sshTel.port || 22}
+                  ssh: {sshTel.ssh_binary_path || 'brak'} · sshd: {sshTel.sshd_binary_path || 'brak'} · :22 {sshTel.local_port_22_listening ? 'LISTENING' : 'zamknięty'}
                 </div>
               </div>
 
@@ -563,15 +584,107 @@ export const LinuxDeployDashboard: React.FC = () => {
               </div>
 
               <div className="p-2.5 rounded-lg bg-[#0B0D13]/90 border border-violet-500/30">
-                <div className="text-[10px] text-slate-400 uppercase">Protokół Bezpieczeństwa</div>
+                <div className="text-[10px] text-slate-400 uppercase">Profile SSH zsynchronizowane z czatu</div>
                 <div className="text-violet-300 font-bold mt-0.5">
-                  TLS 1.3 / SSH-2.0 Ed25519
+                  {chatSshProfiles.length > 0
+                    ? `${chatSshProfiles.length} ${
+                        chatSshProfiles.length === 1
+                          ? 'aktywny profil'
+                          : chatSshProfiles.length >= 2 && chatSshProfiles.length <= 4
+                            ? 'aktywne profile'
+                            : 'aktywnych profili'
+                      } (${activeChatSsh?.target || ''})`
+                    : 'Brak zadeklarowanych profili SSH na czacie'}
                 </div>
                 <div className="text-[10px] text-slate-400 mt-0.5">
-                  Szyfrowanie End-to-End & Jądro JEDI v12
+                  Hasła zawsze maskowane ([UKRYTE]) — zapis w SQLite WAL
                 </div>
               </div>
             </div>
+
+            {activeChatSsh && (
+              <div className={`p-3.5 rounded-lg bg-[#0B0D13]/95 border space-y-2.5 ${tcpReachable ? 'border-emerald-500/50' : 'border-amber-500/45'}`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-cyan-300">
+                      Nowy profil SSH zsynchronizowany z czatu ({activeChatSsh.conversation_id || 'chat_sync'})
+                    </div>
+                    <div className="text-sm font-mono font-bold text-slate-100 mt-0.5">
+                      {activeChatSsh.command || `ssh ${activeChatSsh.user || 'root'}@${activeChatSsh.host}`}
+                      <span className="text-slate-400 font-normal ml-2 text-xs">
+                        (port {activeChatSsh.port || 22} · {activeChatSsh.uri || `ssh://${activeChatSsh.target}:${activeChatSsh.port || 22}`})
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`text-[11px] font-mono px-2 py-0.5 rounded border ${
+                        tcpReachable
+                          ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                          : 'bg-amber-950/60 border-amber-500/40 text-amber-300'
+                      }`}
+                    >
+                      {tcpReachable
+                        ? `TCP OSIĄGALNY · ${activeChatSsh.tcp_rtt_ms ?? '?'} ms`
+                        : hasProbeResult
+                          ? 'ZADEKLAROWANY NA CZACIE · TCP NIEOSIĄGALNY'
+                          : 'ZSYNCHRONIZOWANY Z CZATU (OCZEKUJE NA SONDĘ TCP)'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopySshCommand(activeChatSsh.command || `ssh ${activeChatSsh.user || 'root'}@${activeChatSsh.host}`)}
+                      className="min-h-[30px] px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] font-mono text-slate-200 flex items-center gap-1.5"
+                    >
+                      {copiedSshCmd === (activeChatSsh.command || `ssh ${activeChatSsh.user || 'root'}@${activeChatSsh.host}`) ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          Skopiowano
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          Kopiuj komendę
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px] font-mono">
+                  <div className="p-2 rounded bg-[#111520] border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">HOST / IP</span>
+                    <span className="text-cyan-300 font-semibold">{activeChatSsh.host}</span>
+                  </div>
+                  <div className="p-2 rounded bg-[#111520] border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">UŻYTKOWNIK & PORT</span>
+                    <span className="text-emerald-300 font-semibold">{activeChatSsh.user || 'root'} · :{activeChatSsh.port || 22}</span>
+                  </div>
+                  <div className="p-2 rounded bg-[#111520] border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">UWIERZYTELNIANIE</span>
+                    <span className="text-violet-300 font-semibold">{activeChatSsh.auth_method || 'Hasło (ukryte)'}</span>
+                  </div>
+                  <div className="p-2 rounded bg-[#111520] border border-slate-800">
+                    <span className="text-slate-400 block text-[10px]">WERYFIKACJA SIECIOWA LIVE</span>
+                    <span className={tcpReachable ? 'text-emerald-300' : 'text-amber-300'}>
+                      {tcpReachable
+                        ? `Połączenie TCP OK (${activeChatSsh.tcp_rtt_ms ?? '?'} ms)`
+                        : (activeChatSsh.probe_error || 'Brak odpowiedzi TCP na porcie 22')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] font-mono text-slate-400 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Źródło: <code className="text-slate-300">{activeChatSsh.source_message_id || 'chat_sync'}</code> · Moduł WAL: <code className="text-cyan-300">svl-chat-ssh-endpoint</code>
+                  </span>
+                  {!sshInstalled && (
+                    <span className="text-amber-300">
+                      Uwaga: lokalny kontener backendu nie ma zainstalowanego pakietu OpenSSH — użyj zewnętrznego terminala lub zainstaluj openssh-client/server.
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -581,10 +694,10 @@ export const LinuxDeployDashboard: React.FC = () => {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-cyan-200">
-              🔄 Silnik Natychmiastowej Synchronizacji Zmian z Czatu ({liveChatSync.engine || 'SVL_Live_Chat_To_OS_Compiler_v2'})
+              🔄 Silnik Natychmiastowej Synchronizacji Zmian z Czatu ({liveChatSync.engine || liveChatSync.compiler_id || 'SVL_Live_Chat_To_OS_Compiler_v2'})
             </h2>
             <p className="text-xs text-slate-300 mt-0.5">
-              Każda zmiana wprowadzona przez czat (karty telemetrii <code className="text-cyan-300">[card:]</code>, operacje <code className="text-emerald-300">[progress: 100%]</code>, zadania <code className="text-violet-300">[x]</code>, tabele stanu oraz dyrektywy operatora) jest automatycznie kompilowana w czasie rzeczywistym do bazy SQLite WAL i widoczna we wszystkich modułach.
+              Każda zmiana wprowadzona przez czat (karty telemetrii <code className="text-cyan-300">[card:]</code>, operacje <code className="text-emerald-300">[progress: 100%]</code>, zadania <code className="text-violet-300">[x]</code>, tabele stanu, profile SSH oraz dyrektywy operatora) jest automatycznie kompilowana w czasie rzeczywistym do bazy SQLite WAL i widoczna we wszystkich modułach.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
@@ -596,6 +709,9 @@ export const LinuxDeployDashboard: React.FC = () => {
             </span>
             <span className="px-2 py-1 rounded bg-[#0B0D13] border border-violet-500/40 text-violet-300">
               Zadania [x]: {liveChatSync.tasks_completed_total ?? liveTasks.length}
+            </span>
+            <span className="px-2 py-1 rounded bg-[#0B0D13] border border-amber-500/40 text-amber-300">
+              Profile SSH z czatu: {liveSshProfiles.length}
             </span>
           </div>
         </div>

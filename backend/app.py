@@ -52,6 +52,7 @@ from image_generation import (
     probe_image_engine,
 )
 from ollama_daemon import SVLLocalOllamaDaemon
+from real_telemetry import find_real_binary
 from real_vision_engine import SVLRealVisionEngine
 from spherical_bus import SphericalEventBus
 from ship_monitor import ShipMonitor
@@ -760,6 +761,7 @@ class SVLCoreOS2ApexController:
         self.rootfs_dir = Path(os.environ.get("SVL_COREOS2_ROOTFS", "/srv/svl-coreos2/rootfs"))
         self.av_scans = 0
         self.last_av: Optional[dict[str, Any]] = None
+        self._tcp_probe_cache: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
 
     # --- pomiary -------------------------------------------------------------------------
     @staticmethod
@@ -779,6 +781,44 @@ class SVLCoreOS2ApexController:
                 return True
         except OSError:
             return False
+
+    def _probe_tcp_endpoint(
+        self,
+        host: str,
+        port: int,
+        *,
+        timeout_sec: float = 1.2,
+        force_refresh: bool = False,
+        ttl_sec: float = 20.0,
+    ) -> dict[str, Any]:
+        cache_key = (host, int(port))
+        now_m = time.monotonic()
+        cached = self._tcp_probe_cache.get(cache_key)
+        if cached and not force_refresh and (now_m - cached[0]) < ttl_sec:
+            return dict(cached[1])
+        started = time.perf_counter()
+        reachable = False
+        rtt_ms: Optional[float] = None
+        err: Optional[str] = None
+        try:
+            with socket.create_connection((host, int(port)), timeout=timeout_sec):
+                reachable = True
+                rtt_ms = round((time.perf_counter() - started) * 1000.0, 2)
+        except socket.timeout:
+            err = f"Timeout połączenia TCP ({timeout_sec:.1f}s) do {host}:{port}"
+        except OSError as exc:
+            err = f"Błąd TCP do {host}:{port}: {exc.strerror or str(exc)}"
+        result = {
+            "host": host,
+            "port": int(port),
+            "reachable": reachable,
+            "rtt_ms": rtt_ms,
+            "error": err,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "measured": True,
+        }
+        self._tcp_probe_cache[cache_key] = (now_m, result)
+        return dict(result)
 
     @staticmethod
     def _iface_up(prefixes: tuple[str, ...]) -> Optional[str]:
@@ -1012,7 +1052,7 @@ class SVLCoreOS2ApexController:
         self._dpkg_map_cache = {"_cached_at": time.monotonic(), "pkg_map": pkg_map, "total": len(pkg_map)}
         return pkg_map, len(pkg_map)
 
-    def get_debian13_full_status(self, force_refresh: bool = False) -> dict[str, Any]:
+    def get_debian13_full_status(self, force_refresh: bool = False, client_ip: str = "") -> dict[str, Any]:
         deb_dir = self.coreos_dir / "debian13"
         manifest_path = deb_dir / "debian13_trixie_rootfs_manifest.json"
         manifest_data: dict[str, Any] = {}
@@ -1151,24 +1191,95 @@ class SVLCoreOS2ApexController:
                     "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
                 },
             ],
-            "openssh_client_telemetry": {
-                "ssh_installed": True,
-                "ssh_binary_path": "/usr/bin/ssh",
-                "ssh_service_status": "active (OpenSSH Server/Client v9.x Trixie)",
-                "connected_client_ip": "127.0.0.1 (Lokalny Operator / Browser Client)",
-                "client_connection_mode": "WebSocket & REST API Session",
-                "port": 22,
-            },
+            "openssh_client_telemetry": self._build_openssh_telemetry(
+                live_chat_sync=self.rt.kernel.get_live_chat_changes_state(),
+                force_refresh=force_refresh,
+                client_ip=client_ip,
+            ),
             "truth_verification": self.rt.kernel.get_truth_verification_state(),
             "live_chat_sync": self.rt.kernel.get_live_chat_changes_state(),
             "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    def _build_openssh_telemetry(
+        self,
+        *,
+        live_chat_sync: dict[str, Any],
+        force_refresh: bool = False,
+        client_ip: str = "",
+    ) -> dict[str, Any]:
+        ssh_bin = find_real_binary("ssh")
+        sshd_bin = find_real_binary("sshd")
+        sshd_active = (
+            self._systemd_active("ssh")
+            if sshd_bin
+            else None
+        )
+        if sshd_active is None and sshd_bin:
+            sshd_active = self._systemd_active("sshd")
+        local_port_22 = self._port_open(22)
+
+        if sshd_active is True or (sshd_bin and local_port_22):
+            service_status = "active (lokalny serwer sshd nasłuchuje)"
+        elif sshd_bin:
+            service_status = "inactive (sshd zainstalowany, nie nasłuchuje na :22)"
+        elif ssh_bin:
+            service_status = "klient ssh dostępny (brak serwera sshd na hoście)"
+        else:
+            service_status = "NIE ZAINSTALOWANY na kontenerze hosta (brak binarek ssh / sshd)"
+
+        chat_profiles_raw = live_chat_sync.get("ssh_profiles")
+        chat_profiles: list[dict[str, Any]] = (
+            list(chat_profiles_raw) if isinstance(chat_profiles_raw, list) else []
+        )
+        latest_chat_ssh = live_chat_sync.get("latest_ssh_profile")
+        if not isinstance(latest_chat_ssh, dict) and chat_profiles:
+            latest_chat_ssh = chat_profiles[-1]
+
+        active_chat_ssh: Optional[dict[str, Any]] = None
+        if isinstance(latest_chat_ssh, dict) and latest_chat_ssh.get("host"):
+            chat_host = str(latest_chat_ssh["host"])
+            chat_port = int(latest_chat_ssh.get("port") or 22)
+            probe = self._probe_tcp_endpoint(chat_host, chat_port, force_refresh=force_refresh)
+            active_chat_ssh = {
+                **latest_chat_ssh,
+                "tcp_reachable": bool(probe["reachable"]),
+                "tcp_rtt_ms": probe["rtt_ms"],
+                "probe_error": probe["error"],
+                "probe_checked_at": probe["checked_at"],
+                "verified_live": bool(probe["reachable"]),
+            }
+
+        clean_client_ip = str(client_ip or "").strip()
+        if clean_client_ip.startswith("::ffff:"):
+            clean_client_ip = clean_client_ip[7:]
+        if not clean_client_ip or clean_client_ip in ("::1", "127.0.0.1"):
+            display_client_ip = "127.0.0.1 (Lokalny Operator / Sesja przeglądarki)"
+        else:
+            display_client_ip = clean_client_ip
+
+        return {
+            "measured": True,
+            "ssh_installed": bool(ssh_bin),
+            "sshd_installed": bool(sshd_bin),
+            "ssh_binary_path": ssh_bin,
+            "sshd_binary_path": sshd_bin,
+            "local_port_22_listening": local_port_22,
+            "ssh_service_status": service_status,
+            "connected_client_ip": display_client_ip,
+            "client_connection_mode": "WebSocket & REST API Session",
+            "port": int(active_chat_ssh["port"]) if active_chat_ssh else 22,
+            "chat_ssh_profiles": chat_profiles,
+            "chat_ssh_profiles_count": len(chat_profiles),
+            "active_chat_ssh": active_chat_ssh,
+        }
+
     def handle_debian13_action(self, body: dict[str, Any], origin: str = "client", corr: str = "") -> dict[str, Any]:
         action = str(body.get("action") or "verify_packages").strip()
         emit_chat = bool(body.get("emitToChat", False))
+        client_ip = str(body.get("clientIp") or "").strip()
         sync_res = self.rt.kernel.synchronize_os_from_chat(origin=origin or "debian13-ctl", correlation_id=corr)
-        status = self.get_debian13_full_status(force_refresh=True)
+        status = self.get_debian13_full_status(force_refresh=True, client_ip=client_ip)
         pkg_sum = status["package_summary"]
         host_rt = status["host_runtime"]
         notice = (
@@ -2327,7 +2438,8 @@ async def handle_api_request(
 
     if method == "GET" and path == "/api/py/linux/debian13":
         force_refresh = str(query.get("force") or "").strip().lower() in ("1", "true", "yes")
-        return 200, apex_controller.get_debian13_full_status(force_refresh=force_refresh)
+        client_ip = str(query.get("clientIp") or "").strip()
+        return 200, apex_controller.get_debian13_full_status(force_refresh=force_refresh, client_ip=client_ip)
 
     if method == "POST" and path == "/api/py/linux/debian13":
         result = apex_controller.handle_debian13_action(body, origin=origin, corr=corr)

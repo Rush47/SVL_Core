@@ -396,6 +396,18 @@ class SVL364SshMcpController:
             if telemetry is not None
             else {"reachable": False, "error": "OpenSSH nie jest skonfigurowany" if not ssh_bin else None}
         )
+        live_chat_getter = getattr(self.kernel, "get_live_chat_changes_state", None)
+        live_chat_state = live_chat_getter() if callable(live_chat_getter) else {}
+        chat_ssh_profiles = (
+            list(live_chat_state.get("ssh_profiles") or [])
+            if isinstance(live_chat_state, dict)
+            else []
+        )
+        latest_chat_ssh = (
+            live_chat_state.get("latest_ssh_profile")
+            if isinstance(live_chat_state, dict)
+            else None
+        )
         return {
             "ok": True,
             "moduleId": "svl-364-ssh-mcp",
@@ -418,6 +430,8 @@ class SVL364SshMcpController:
                 "invocations_count": self.ssh_sessions_count,
                 "computerAccount": cfg.get("computer_account", "SVL-364 Ship Host"),
                 "agentAccounts": ["System_SI_1"],
+                "chatSshProfiles": chat_ssh_profiles,
+                "latestChatSsh": latest_chat_ssh,
             },
             "mcp": {
                 "active": True,

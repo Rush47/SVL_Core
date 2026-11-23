@@ -36,6 +36,8 @@ from svl_core import (
     SVLSystemKernel,
     TopologicalInfinityEngine,
     VisualScope,
+    extract_ssh_profiles_from_messages,
+    redact_sensitive_chat_text,
     resolve_sqlite_path,
 )
 
@@ -1265,6 +1267,132 @@ class TestSVLKernelSuite(unittest.TestCase):
             reconciled_msg = next(m for m in msgs if m["id"] == "asst-1795407013563-dd801b83")
             self.assertNotIn("Status misji: NIEZWERYFIKOWANY", reconciled_msg["content"])
             self.assertIn("1.84 sekundy", reconciled_msg["content"])
+
+    def test_chat_ssh_endpoint_sync_extracts_profile_and_redacts_secrets(self) -> None:
+        fake_secret = "FakeSecretTestPass!999"
+        redacted = redact_sensitive_chat_text(
+            f"user:root haslo:{fake_secret} oraz `root` / `{fake_secret}` i uwierzytelniania root (`{fake_secret}`)"
+        )
+        self.assertNotIn(fake_secret, redacted)
+        self.assertIn("[UKRYTE]", redacted)
+
+        extracted = extract_ssh_profiles_from_messages([
+            {
+                "id": "asst-netplan-0",
+                "conversation_id": "conv-si-system-2",
+                "role": "assistant",
+                "content": (
+                    "Konfiguracja sieci (usługi: API, SSH)\n"
+                    "addresses: [34.120.94.18/24]\n"
+                    "gateway4: 34.120.0.1\n"
+                    "nameservers: [8.8.8.8]"
+                ),
+                "created_at": "2026-11-23T08:03:44+00:00",
+            },
+            {
+                "id": "asst-ssh-1",
+                "conversation_id": "conv-si-system-2",
+                "role": "assistant",
+                "content": (
+                    "[card: Konfiguracja SSH · SVL-364 / IP 34.120.94.18|Wdrożono uwierzytelnianie root|ok]\n"
+                    "Uruchomiono SSH na 34.120.94.18 port 22: `ssh root@34.120.94.18` (podaj hasło: "
+                    f"{fake_secret})"
+                ),
+                "created_at": "2026-11-23T08:05:30+00:00",
+            },
+            {
+                "id": "asst-ssh-2",
+                "conversation_id": "conv-si-system-2",
+                "role": "assistant",
+                "content": "Alternatywny tunel: `ssh -p 2222 admin@198.51.100.77`",
+                "created_at": "2026-11-23T08:06:00+00:00",
+            },
+            {
+                "id": "asst-ssh-3",
+                "conversation_id": "conv-si-system-2",
+                "role": "assistant",
+                "content": "Weryfikacja live SSH: `ssh root@34.120.94.18` gotowe.",
+                "created_at": "2026-11-23T08:13:41+00:00",
+            },
+        ])
+        self.assertEqual(len(extracted), 2)
+        self.assertNotIn("34.120.0.1", [p["host"] for p in extracted])
+        self.assertNotIn("8.8.8.8", [p["host"] for p in extracted])
+        # Najbardziej aktualny profil (08:13:41) musi być ostatni na liście
+        self.assertEqual(extracted[-1]["host"], "34.120.94.18")
+        self.assertEqual(extracted[-1]["port"], 22)
+        self.assertEqual(extracted[-1]["user"], "root")
+        self.assertEqual(extracted[-1]["command"], "ssh root@34.120.94.18")
+        self.assertEqual(extracted[0]["host"], "198.51.100.77")
+        self.assertEqual(extracted[0]["port"], 2222)
+        self.assertEqual(extracted[0]["user"], "admin")
+        self.assertNotIn(fake_secret, json.dumps(extracted, ensure_ascii=False))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "test_chat_ssh_sync.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            kernel.save_chat_message(
+                "conv-si-system-2",
+                "SI_System_2",
+                "svl-hybrid-router",
+                {
+                    "id": "user-ssh-req-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (ROOT)",
+                    "content": f"Skonfiguruj ssh na 34.120.94.18 user:root haslo:{fake_secret}",
+                    "timestamp": "08:05",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-si-system-2",
+                "SI_System_2",
+                "svl-hybrid-router",
+                {
+                    "id": "asst-ssh-resp-1",
+                    "role": "assistant",
+                    "sender": "SI_System_2",
+                    "content": (
+                        "[card: Konfiguracja SSH · SVL-364 / IP 34.120.94.18|Wdrożono uwierzytelnianie root|ok]\n"
+                        "| Parametr | Wartość | Status |\n"
+                        "|---|---|---|\n"
+                        "| **Adres docelowy** | `34.120.94.18` | `Aktywny` |\n"
+                        f"| **Hasło dostępu** | `{fake_secret}` | `Zaszyfrowane` |\n"
+                        "[progress: Konfiguracja SSH dla root na 34.120.94.18|100]\n"
+                        "`ssh root@34.120.94.18`"
+                    ),
+                    "timestamp": "08:05",
+                },
+            )
+
+            summary = kernel.synchronize_os_from_chat(origin="unit-test-chat-ssh-sync")
+            self.assertTrue(summary["ok"])
+
+            live_state = kernel.get_live_chat_changes_state()
+            self.assertEqual(len(live_state["ssh_profiles"]), 1)
+            self.assertEqual(live_state["latest_ssh_profile"]["host"], "34.120.94.18")
+            self.assertEqual(live_state["latest_ssh_profile"]["port"], 22)
+            self.assertEqual(live_state["latest_ssh_profile"]["user"], "root")
+            self.assertEqual(live_state["latest_ssh_profile"]["command"], "ssh root@34.120.94.18")
+
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("svl-chat-ssh-endpoint", mods)
+            ssh_mod = mods["svl-chat-ssh-endpoint"]
+            self.assertEqual(ssh_mod["status"], "ACTIVE")
+            self.assertEqual(ssh_mod["config"]["host"], "34.120.94.18")
+            self.assertEqual(ssh_mod["config"]["command"], "ssh root@34.120.94.18")
+            self.assertTrue(ssh_mod["config"]["password_redacted"])
+
+            history = kernel.get_update_history()
+            self.assertTrue(any(h.get("typ") == "CHAT_SSH_SYNC" for h in history))
+
+            # KRYTYCZNE: hasło nigdy nie może wyciec do sync_meta, system_modules ani update_history
+            serialized_live = json.dumps(live_state, ensure_ascii=False)
+            serialized_mods = json.dumps(mods, ensure_ascii=False)
+            serialized_hist = json.dumps(history, ensure_ascii=False)
+            self.assertNotIn(fake_secret, serialized_live)
+            self.assertNotIn(fake_secret, serialized_mods)
+            self.assertNotIn(fake_secret, serialized_hist)
 
 
 if __name__ == "__main__":

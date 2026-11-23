@@ -100,6 +100,213 @@ def _fold_confusable(name: str) -> str:
     t = t.translate(table)
     return re.sub(r"\s+", " ", t).strip()
 
+
+_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # haslo:XXX / hasło: `XXX` / password=XXX
+    (
+        re.compile(r"(?i)\b(has[lł]o(?:\s+dost[eę]pu)?|password|passwd|pass|secret|api[_-]?key|token)\s*[:=]\s*`?([^\s\n|`)\],;]+)`?"),
+        r"\1: [UKRYTE]",
+    ),
+    # Inline credential pair: `root` / `SECRET` or root / `SECRET`
+    (
+        re.compile(r"(?i)(`?\b(?:root|admin|ubuntu|debian|user|operator|jyn_root)\b`?\s*/\s*)`([^`\n]{4,})`"),
+        r"\1`[UKRYTE]`",
+    ),
+    # uwierzytelniania root (`SECRET`)
+    (
+        re.compile(r"(?i)(uwierzytelniani[ae]\s+[A-Za-z0-9._-]+\s*\(\s*)`([^`\n]{4,})`(\s*\))"),
+        r"\1`[UKRYTE]`\3",
+    ),
+    # (podaj hasło: XXX) or (hasło: `XXX`)
+    (
+        re.compile(r"(?i)(podaj\s+has[lł]o\s*[:=]\s*)`?([^\s\n|`)\]]+)`?"),
+        r"\1[UKRYTE]",
+    ),
+]
+
+_SENSITIVE_PARAM_KEYS = (
+    "hasło",
+    "haslo",
+    "password",
+    "passwd",
+    "secret",
+    "private key",
+    "klucz prywatny",
+    "api key",
+    "token",
+)
+
+
+def redact_sensitive_chat_text(text: str) -> str:
+    """Maskuje hasła i sekrety z tekstu czatu przed zapisem do sync_meta/system_modules/UI."""
+    cleaned = str(text or "")
+    for pat, repl in _SENSITIVE_PATTERNS:
+        cleaned = pat.sub(repl, cleaned)
+    return cleaned
+
+
+def _is_valid_ipv4(ip: str) -> bool:
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    for p in parts:
+        if not p.isdigit():
+            return False
+        v = int(p)
+        if v < 0 or v > 255:
+            return False
+    return ip != "0.0.0.0"
+
+
+def extract_ssh_profiles_from_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """
+    Czysty ekstraktor profili SSH zadeklarowanych w wiadomościach czatu.
+    Nigdy nie zapisuje ani nie zwraca haseł w tekście jawnym.
+    """
+    ssh_cmd_pat = re.compile(
+        r"\bssh\s+(?:(?:-p\s*(\d{1,5})\s+))?([A-Za-z0-9._-]{1,64})@(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?\b",
+        re.IGNORECASE,
+    )
+    ipv4_port_pat = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?\b")
+    user_pat = re.compile(
+        r"(?i)\b(?:user|u[zż]ytkownik|login)\s*[:=|]\s*`?([A-Za-z0-9._-]{1,64})`?"
+    )
+    port_pat = re.compile(r"(?i)\bport\s*[:=|]\s*`?(\d{1,5})`?")
+    card_ssh_pat = re.compile(r"\[card:\s*([^|\]]*ssh[^|\]]*)\|([^|\]]+)(?:\|([^\]]+))?\]", re.IGNORECASE)
+
+    profiles_by_key: dict[tuple[str, int, str], dict[str, Any]] = {}
+    order: list[tuple[str, int, str]] = []
+
+    def _record_profile(
+        *,
+        host: str,
+        port: int,
+        user: str,
+        auth_method: str,
+        label: str,
+        msg_id: str,
+        conv_id: str,
+        created_at: str,
+        role: str,
+    ) -> None:
+        if not _is_valid_ipv4(host):
+            return
+        safe_port = port if 1 <= port <= 65535 else 22
+        safe_user = user.strip() or "root"
+        key = (host, safe_port, safe_user)
+        cmd = f"ssh {safe_user}@{host}" if safe_port == 22 else f"ssh -p {safe_port} {safe_user}@{host}"
+        entry = {
+            "id": f"chat-ssh-{host.replace('.', '-')}-{safe_port}-{safe_user}",
+            "host": host,
+            "port": safe_port,
+            "user": safe_user,
+            "target": f"{safe_user}@{host}",
+            "uri": f"ssh://{safe_user}@{host}:{safe_port}",
+            "command": cmd,
+            "auth_method": auth_method,
+            "label": redact_sensitive_chat_text(label)[:140] or f"SSH {safe_user}@{host}:{safe_port}",
+            "source_message_id": msg_id,
+            "conversation_id": conv_id,
+            "declared_at": created_at,
+            "declared_by_role": role,
+            "source": "chat_sync",
+            "password_redacted": True,
+        }
+        if key in profiles_by_key:
+            order.remove(key)
+        order.append(key)
+        profiles_by_key[key] = entry
+
+    gateway_line_pat = re.compile(
+        r"(?i)\b(gateway4?|via|nameserver|dns|netmask|broadcast|subnet|route|bram[ka]|maska)\b"
+    )
+    ssh_config_context_pat = re.compile(
+        r"(?i)(skonfiguruj\s+ssh|konfiguracj[ae]\s+ssh|openssh|sshd|permitrootlogin|port\s*[:=]?\s*22|tunel\s+ssh|nas[lł]uch\s+na)"
+    )
+
+    for row in messages:
+        if isinstance(row, dict):
+            m_id = str(row.get("id") or "")
+            m_conv = str(row.get("conversation_id") or "")
+            m_role = str(row.get("role") or "")
+            m_content = str(row.get("content") or "")
+            m_created = str(row.get("created_at") or "")
+        else:
+            m_id = str(row["id"] or "")
+            m_conv = str(row["conversation_id"] or "")
+            m_role = str(row["role"] or "")
+            m_content = str(row["content"] or "")
+            m_created = str(row["created_at"] or "")
+
+        low = m_content.lower()
+        if "ssh" not in low and "openssh" not in low and "sshd" not in low:
+            continue
+
+        uses_password = bool(
+            re.search(r"(?i)(has[lł]|password|passwordauthentication)", m_content)
+        )
+        auth_method = (
+            "Hasło (ukryte — nie zapisywane w tekście jawnym)"
+            if uses_password
+            else "OpenSSH key / agent"
+        )
+        card_match = card_ssh_pat.search(m_content)
+        default_label = card_match.group(1).strip() if card_match else ""
+
+        matched_explicit = False
+        for m in ssh_cmd_pat.finditer(m_content):
+            p_raw = m.group(1) or m.group(4)
+            port_val = int(p_raw) if p_raw and p_raw.isdigit() else 22
+            user_val = m.group(2)
+            host_val = m.group(3)
+            if not _is_valid_ipv4(host_val):
+                continue
+            matched_explicit = True
+            _record_profile(
+                host=host_val,
+                port=port_val,
+                user=user_val,
+                auth_method=auth_method,
+                label=default_label or f"Konfiguracja SSH · {user_val}@{host_val}",
+                msg_id=m_id,
+                conv_id=m_conv,
+                created_at=m_created,
+                role=m_role,
+            )
+
+        if not matched_explicit and ssh_config_context_pat.search(m_content):
+            u_match = user_pat.search(m_content)
+            p_match = port_pat.search(m_content)
+            inferred_user = u_match.group(1) if u_match else ("root" if re.search(r"\broot\b", low) else "root")
+            inferred_port = int(p_match.group(1)) if p_match and p_match.group(1).isdigit() else 22
+            for line in m_content.splitlines():
+                if gateway_line_pat.search(line):
+                    continue
+                for ip_m in ipv4_port_pat.finditer(line):
+                    host_val = ip_m.group(1)
+                    if (
+                        not _is_valid_ipv4(host_val)
+                        or host_val.startswith("127.")
+                        or host_val in ("8.8.8.8", "8.8.4.4", "1.1.1.1")
+                        or host_val.endswith(".0")
+                        or host_val.endswith(".255")
+                    ):
+                        continue
+                    port_val = int(ip_m.group(2)) if ip_m.group(2) and ip_m.group(2).isdigit() else inferred_port
+                    _record_profile(
+                        host=host_val,
+                        port=port_val,
+                        user=inferred_user,
+                        auth_method=auth_method,
+                        label=default_label or f"Konfiguracja SSH · {inferred_user}@{host_val}",
+                        msg_id=m_id,
+                        conv_id=m_conv,
+                        created_at=m_created,
+                        role=m_role,
+                    )
+
+    return [profiles_by_key[k] for k in order]
+
 def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str], Optional[str]]:
     """
     Zwraca (nadawca_kanoniczny, powod_blokady).
@@ -3947,6 +4154,8 @@ class SVLSystemKernel:
             "progress_operations": [],
             "table_parameters": [],
             "recent_chat_mutations": [],
+            "ssh_profiles": [],
+            "latest_ssh_profile": None,
             "debian13_jedi_v12_native": {
                 "active": False,
                 "engine_id": "svl-debian13-jedi-v12-native",
@@ -4006,7 +4215,8 @@ class SVLSystemKernel:
                 "'alliance-defense-grid', 'solar-defense-read-bridge', "
                 "'svl-364-daemon', 'svl-364-jedi-v12-vm', 'si-system-2-alliance-ops', 'svl-continuous-evolution', "
                 "'svl-ultima-core', 'svl-truth-verification-protocol', 'svl-debian13-trixie-full', "
-                "'svl-debian13-jedi-v12-native', 'svl-debian13-ai-root-accounts', 'svl-live-chat-sync-engine') LIMIT 1"
+                "'svl-debian13-jedi-v12-native', 'svl-debian13-ai-root-accounts', 'svl-live-chat-sync-engine', "
+                "'svl-chat-ssh-endpoint') LIMIT 1"
             ).fetchone()
             if mod_hit:
                 return True
@@ -4034,6 +4244,8 @@ class SVLSystemKernel:
                     "OR lower(content) LIKE '%32 mln%' "
                     "OR lower(content) LIKE '%debian%' "
                     "OR lower(content) LIKE '%jyn_root%' "
+                    "OR lower(content) LIKE '%ssh %' "
+                    "OR lower(content) LIKE '%openssh%' "
                     "OR lower(content) LIKE '%[card:%' "
                     "OR lower(content) LIKE '%[progress:%' "
                     "OR (lower(content) LIKE '%github%' AND (lower(content) LIKE '%synchroniz%' OR lower(content) LIKE '%sync%'))) LIMIT 1"
@@ -5872,13 +6084,13 @@ class SVLSystemKernel:
                         compiled_directives_list.append({
                             "id": m_id,
                             "conversation_id": m_conv,
-                            "directive": m_content.strip()[:260],
+                            "directive": redact_sensitive_chat_text(m_content.strip())[:260],
                             "created_at": m_created,
                         })
 
                     for c_match in card_pattern.finditer(m_content):
-                        lbl = c_match.group(1).strip()
-                        val = c_match.group(2).strip()
+                        lbl = redact_sensitive_chat_text(c_match.group(1).strip())
+                        val = redact_sensitive_chat_text(c_match.group(2).strip())
                         st = (c_match.group(3) or "ok").strip()
                         if lbl:
                             compiled_cards_map[lbl.lower()] = {
@@ -5890,7 +6102,7 @@ class SVLSystemKernel:
                             }
 
                     for p_match in progress_pattern.finditer(m_content):
-                        p_title = p_match.group(1).strip()
+                        p_title = redact_sensitive_chat_text(p_match.group(1).strip())
                         try:
                             p_pct = int(float(p_match.group(2)))
                         except Exception:
@@ -5904,7 +6116,7 @@ class SVLSystemKernel:
                             }
 
                     for t_match in task_done_pattern.finditer(m_content):
-                        t_text = re.sub(r"\*\*([^*]+)\*\*", r"\1", t_match.group(1).strip())
+                        t_text = redact_sensitive_chat_text(re.sub(r"\*\*([^*]+)\*\*", r"\1", t_match.group(1).strip()))
                         t_key = t_text.lower()[:120]
                         if t_text and t_key not in seen_task_titles:
                             seen_task_titles.add(t_key)
@@ -5925,10 +6137,18 @@ class SVLSystemKernel:
                             or col1.lower() in ("parametr", "konto", "moduł", "modul", "usługa", "usluga", "warstwa")
                         ):
                             continue
-                        compiled_table_params_map[col1.lower()] = {
-                            "parameter": col1,
-                            "state": col2,
-                            "value": col3,
+                        col1_clean = re.sub(r"\*\*([^*]+)\*\*", r"\1", col1).strip()
+                        col1_low = col1_clean.lower()
+                        if any(sk in col1_low for sk in _SENSITIVE_PARAM_KEYS):
+                            safe_col2 = "[UKRYTE]"
+                            safe_col3 = "[UKRYTE — nie zapisywane w tekście jawnym]"
+                        else:
+                            safe_col2 = redact_sensitive_chat_text(col2)
+                            safe_col3 = redact_sensitive_chat_text(col3)
+                        compiled_table_params_map[col1_low] = {
+                            "parameter": col1_clean,
+                            "state": safe_col2,
+                            "value": safe_col3,
                             "message_id": m_id,
                             "updated_at": m_created,
                         }
@@ -5938,6 +6158,8 @@ class SVLSystemKernel:
                 compiled_tasks = compiled_tasks_list[-20:]
                 compiled_table_params = list(compiled_table_params_map.values())[-20:]
                 compiled_directives = compiled_directives_list[-12:]
+                compiled_ssh_profiles = extract_ssh_profiles_from_messages(recent_chat_chronological)[-10:]
+                latest_ssh_profile = compiled_ssh_profiles[-1] if compiled_ssh_profiles else None
 
                 desired_live_chat_state: dict[str, Any] = {
                     "active": True,
@@ -5955,6 +6177,8 @@ class SVLSystemKernel:
                     "completed_tasks": compiled_tasks,
                     "state_parameters": compiled_table_params,
                     "recent_user_directives": compiled_directives,
+                    "ssh_profiles": compiled_ssh_profiles,
+                    "latest_ssh_profile": latest_ssh_profile,
                     "updated_at": str(existing_live_chat_state.get("updated_at") or now_iso),
                 }
 
@@ -5980,6 +6204,8 @@ class SVLSystemKernel:
                             "operationsCount": len(compiled_progress),
                             "tasksCount": len(compiled_tasks),
                             "parametersCount": len(compiled_table_params),
+                            "sshProfilesCount": len(compiled_ssh_profiles),
+                            "latestSshTarget": latest_ssh_profile["target"] if latest_ssh_profile else None,
                         },
                         checksum_source=comparable_desired_live,
                     )
@@ -5987,6 +6213,64 @@ class SVLSystemKernel:
                     changed = True
 
                 persisted_live_chat_state = desired_live_chat_state
+
+                if latest_ssh_profile:
+                    prev_ssh_mod = mods_by_id.get("svl-chat-ssh-endpoint")
+                    prev_ssh_cfg = dict(prev_ssh_mod["config"]) if prev_ssh_mod else {}
+                    desired_chat_ssh_cfg = {
+                        "host": latest_ssh_profile["host"],
+                        "port": latest_ssh_profile["port"],
+                        "user": latest_ssh_profile["user"],
+                        "target": latest_ssh_profile["target"],
+                        "uri": latest_ssh_profile["uri"],
+                        "command": latest_ssh_profile["command"],
+                        "auth_method": latest_ssh_profile["auth_method"],
+                        "label": latest_ssh_profile["label"],
+                        "source_message_id": latest_ssh_profile["source_message_id"],
+                        "conversation_id": latest_ssh_profile["conversation_id"],
+                        "declared_at": latest_ssh_profile["declared_at"],
+                        "profiles_count": len(compiled_ssh_profiles),
+                        "profiles": compiled_ssh_profiles,
+                        "synchronized_from_chat": True,
+                        "password_redacted": True,
+                    }
+                    _upsert_sync_module(
+                        "svl-chat-ssh-endpoint",
+                        f"Profil SSH z Czatu ({latest_ssh_profile['target']}:{latest_ssh_profile['port']})",
+                        "Chat-Synchronized SSH Endpoint",
+                        (
+                            f"Endpoint SSH zadeklarowany na czacie i zsynchronizowany globalnie do SQLite WAL: "
+                            f"{latest_ssh_profile['command']} (port {latest_ssh_profile['port']}, "
+                            f"uwierzytelnianie: {latest_ssh_profile['auth_method']}). "
+                            "Hasła nigdy nie są przechowywane ani eksponowane w tekście jawnym."
+                        ),
+                        desired_chat_ssh_cfg,
+                        "chat_sync",
+                        f"svl-chat-ssh-endpoint:synchronized:{latest_ssh_profile['host']}:{latest_ssh_profile['port']}",
+                    )
+                    if (
+                        prev_ssh_cfg.get("host") != latest_ssh_profile["host"]
+                        or prev_ssh_cfg.get("port") != latest_ssh_profile["port"]
+                        or prev_ssh_cfg.get("user") != latest_ssh_profile["user"]
+                    ):
+                        now_disp_ssh = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                        conn.execute(
+                            "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'CHAT_SSH_SYNC', ?, ?, 0, 'chat-live-compiler')",
+                            (
+                                f"chat-ssh@{latest_ssh_profile['host']}:{latest_ssh_profile['port']}",
+                                (
+                                    f"Zsynchronizowano nowy profil SSH z czatu ({latest_ssh_profile['conversation_id']}): "
+                                    f"{latest_ssh_profile['command']} (port {latest_ssh_profile['port']}, "
+                                    f"auth: {latest_ssh_profile['auth_method']})."
+                                ),
+                                now_disp_ssh,
+                            ),
+                        )
+                        actions.append(f"update_history:chat_ssh_sync_{latest_ssh_profile['host']}")
+                        changed = True
+                    processed_artifacts.append(
+                        f"Profil SSH z czatu: {latest_ssh_profile['command']} (port {latest_ssh_profile['port']}, hasło ukryte)"
+                    )
 
                 live_sync_mod = mods_by_id.get("svl-live-chat-sync-engine")
                 live_sync_cfg = dict(live_sync_mod["config"]) if live_sync_mod else {}
@@ -6001,6 +6285,9 @@ class SVLSystemKernel:
                     "completed_operations_count": len(compiled_progress),
                     "completed_tasks_count": len(compiled_tasks),
                     "state_parameters_count": len(compiled_table_params),
+                    "ssh_profiles_count": len(compiled_ssh_profiles),
+                    "latest_ssh_target": latest_ssh_profile["target"] if latest_ssh_profile else None,
+                    "latest_ssh_command": latest_ssh_profile["command"] if latest_ssh_profile else None,
                     "latest_cards": [f"{c['label']}={c['value']}" for c in compiled_cards[-6:]],
                     "latest_operations": [f"{p['title']} ({p['percent']}%)" for p in compiled_progress[-5:]],
                     "synchronized_from_chat": True,
@@ -6009,7 +6296,7 @@ class SVLSystemKernel:
                     "svl-live-chat-sync-engine",
                     "Silnik Natychmiastowej Synchronizacji Zmian z Czatu (SVL Live Chat-to-OS Compiler v2)",
                     "Real-Time Chat State Compiler",
-                    "Automatyczny kompilator stanu czatu do jądra SVL CoreOS 2 (SQLite WAL): natychmiast po każdej wiadomości czatu oraz podczas globalnej synchronizacji ekstrahuje karty stanu [card:], paski postępu [progress:], zadania [x], tabele parametrów oraz dyrektywy operatora i utrwala je w system_modules, sync_meta, update_history i agent_memory.",
+                    "Automatyczny kompilator stanu czatu do jądra SVL CoreOS 2 (SQLite WAL): natychmiast po każdej wiadomości czatu oraz podczas globalnej synchronizacji ekstrahuje karty stanu [card:], paski postępu [progress:], zadania [x], tabele parametrów, profile SSH oraz dyrektywy operatora i utrwala je w system_modules, sync_meta, update_history i agent_memory (z maskowaniem haseł).",
                     desired_live_sync_cfg,
                     "chat_sync",
                     "svl-live-chat-sync-engine:synchronized",
@@ -6023,12 +6310,17 @@ class SVLSystemKernel:
                     latest_cards_summary = ", ".join(
                         [f"{c['label']}: {c['value']}" for c in compiled_cards[-4:]]
                     ) or "karty stanu aktywne"
+                    ssh_suffix = (
+                        f" · SSH=[{latest_ssh_profile['command']}:{latest_ssh_profile['port']}]"
+                        if latest_ssh_profile
+                        else ""
+                    )
                     conn.execute(
                         "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'CHAT_LIVE_SYNC', ?, ?, 0, 'chat-live-compiler')",
                         (
                             f"chat-live-sync@{latest_msg_id_in_db[-8:]}",
                             f"Zsynchronizowano na żywo zmiany wprowadzone przez czat (msg={latest_msg_id_in_db}): "
-                            f"Operacje=[{latest_ops_summary}] · Stan=[{latest_cards_summary}].",
+                            f"Operacje=[{latest_ops_summary}] · Stan=[{latest_cards_summary}]{ssh_suffix}.",
                             now_disp,
                         ),
                     )

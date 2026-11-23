@@ -13,14 +13,16 @@ import { GalleryPanel } from './components/GalleryPanel';
 import { Svl364CommandCenter } from './components/Svl364CommandCenter';
 import { InfrastructureWorkspace } from './components/InfrastructureWorkspace';
 import { ApexCommandDock } from './components/ApexCommandDock';
+import { AntigravityWorkspace } from './components/AntigravityWorkspace';
 import { SvlSyncProvider, useSvlSync } from './utils/svlSyncStore';
 import { getEffectiveCanonicalAgents, getSvlOperatorAccessToken, safeFetchJson, setSvlOperatorAccessToken, setSvlOperatorTokenRequired } from './utils/svlLogic';
 import { setGuiLoggerContext, trackGuiEvent } from './utils/guiLogger';
 
-type ActiveWorkspaceTab = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'antigravity' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
 
 const WORKSPACE_TABS: Array<{ id: ActiveWorkspaceTab; label: string; shortLabel?: string; accent?: string }> = [
   { id: 'chat', label: 'Czat' },
+  { id: 'antigravity', label: 'Antigravity', accent: 'cyan' },
   { id: 'apex', label: '⚡ Apex OS', accent: 'cyan' },
   { id: 'svl364', label: 'SVL-364' },
   { id: 'infrastructure', label: 'Infrastruktura', shortLabel: 'Infra', accent: 'emerald' },
@@ -93,7 +95,7 @@ function SVLWorkspaceShell() {
 
   useEffect(() => {
     if (
-      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'apex' || syncedWorkspaceTab === 'svl364' ||
+      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'antigravity' || syncedWorkspaceTab === 'apex' || syncedWorkspaceTab === 'svl364' ||
       syncedWorkspaceTab === 'infrastructure' || syncedWorkspaceTab === 'agents' ||
       syncedWorkspaceTab === 'gallery' || syncedWorkspaceTab === 'terminals' || syncedWorkspaceTab === 'kernel' ||
       syncedWorkspaceTab === 'linux'
@@ -395,6 +397,7 @@ function SVLWorkspaceShell() {
       {/* Main Workspace Viewport */}
       <main className="flex-1 min-h-0 w-full overflow-hidden">
         {activeTab === 'chat' && <ChatWorkspace onNavigateTab={setActiveTab} />}
+        {activeTab === 'antigravity' && <AntigravityWorkspace />}
         {activeTab === 'apex' && <ApexCommandDock onNavigateTab={setActiveTab} />}
         {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={setActiveTab} />}
         {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={setActiveTab} />}
