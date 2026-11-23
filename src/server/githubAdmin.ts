@@ -305,12 +305,25 @@ function isForbiddenSyncPath(relPath: string): boolean {
   return FORBIDDEN_FILE_RE.test(norm);
 }
 
+const BINARY_ASSET_EXT_RE = /\.(?:jpe?g|png|webp|gif|ico|woff2?|ttf|otf)$/i;
+const MAX_TEXT_SYNC_BYTES = 512 * 1024;
+const MAX_BINARY_ASSET_SYNC_BYTES = 3 * 1024 * 1024;
+
+export function isAllowedBinaryAssetPath(relPath: string): boolean {
+  const norm = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!norm || norm.includes('..')) return false;
+  if (norm.startsWith('public/assets/aistudio/')) return false;
+  if (!(norm.startsWith('src/assets/') || norm.startsWith('public/assets/'))) return false;
+  return BINARY_ASSET_EXT_RE.test(norm);
+}
+
 interface LocalTrackedFile {
   path: string;
   sha: string;
   mode: '100644' | '100755';
   size: number;
   buf: Buffer;
+  isBinary: boolean;
 }
 
 function collectTrackedWorkspaceFiles(projectDir: string): {
@@ -359,16 +372,29 @@ function collectTrackedWorkspaceFiles(projectDir: string): {
     } catch {
       return;
     }
-    // Pomijamy pliki > 512 KB, aby synchronizacja REST była natychmiastowa
-    if (stat.size > 512 * 1024) return;
+    const isBinaryAsset = isAllowedBinaryAssetPath(relPath);
+    const maxBytes = isBinaryAsset ? MAX_BINARY_ASSET_SYNC_BYTES : MAX_TEXT_SYNC_BYTES;
+    if (stat.size > maxBytes) return;
     let buf: Buffer;
     try {
       buf = fsSync.readFileSync(absPath);
     } catch {
       return;
     }
-    // Pomijamy pliki binarne z bajtem zerowym (poza drobnymi plikami tekstowymi)
-    if (buf.includes(0)) return;
+    const hasNullByte = buf.includes(0);
+    // Pomijamy pliki binarne z bajtem zerowym, chyba że są dozwolonymi zasobami statycznymi (np. avatary JPG/PNG)
+    if (hasNullByte && !isBinaryAsset) return;
+    if (hasNullByte || isBinaryAsset) {
+      files.set(relPath, {
+        path: relPath,
+        sha: computeGitBlobSha(buf),
+        mode: '100644',
+        size: buf.length,
+        buf,
+        isBinary: true,
+      });
+      return;
+    }
     const text = buf.toString('utf8');
     const isUnitTestFile = /(\.test\.tsx?|(?:^|\/)test_[^/]+\.py)$/i.test(relPath);
     if ((realToken && text.includes(realToken)) || (!isUnitTestFile && containsLikelySecret(text))) {
@@ -385,6 +411,7 @@ function collectTrackedWorkspaceFiles(projectDir: string): {
       mode,
       size: buf.length,
       buf,
+      isBinary: false,
     });
   };
 
@@ -559,7 +586,8 @@ export async function restGitSyncStatus(
   const hasBaseline = Object.keys(ledger.lastSyncedTreeShas).length > 0;
   for (const [remPath, remBlob] of snap.blobs.entries()) {
     if (isForbiddenSyncPath(remPath)) continue;
-    if (remBlob.size > 512 * 1024) continue;
+    const remMaxBytes = isAllowedBinaryAssetPath(remPath) ? MAX_BINARY_ASSET_SYNC_BYTES : MAX_TEXT_SYNC_BYTES;
+    if (remBlob.size > remMaxBytes) continue;
     const local = localFiles.get(remPath);
     const baseSha = ledger.lastSyncedTreeShas[remPath];
     if (!local) {
@@ -669,9 +697,10 @@ export async function restGitSync(
       }
       const rawB64 = String((blobRes.data as any).content).replace(/\s+/g, '');
       const buf = Buffer.from(rawB64, 'base64');
-      if (buf.includes(0)) continue;
-      const remoteText = buf.toString('utf8');
-      if (containsLikelySecret(remoteText)) continue;
+      const isBinaryAsset = isAllowedBinaryAssetPath(relPath);
+      if (buf.includes(0) && !isBinaryAsset) continue;
+      const remoteText = isBinaryAsset ? '' : buf.toString('utf8');
+      if (!isBinaryAsset && containsLikelySecret(remoteText)) continue;
 
       const absTarget = path.join(projectDir, relPath);
       fsSync.mkdirSync(path.dirname(absTarget), { recursive: true });
@@ -751,8 +780,8 @@ export async function restGitSync(
       const batch = changedLocal.slice(i, i + batchSize);
       const batchResults = await Promise.all(
         batch.map(async (item) => {
-          // Dla małych plików tekstowych (< 16 KB) możemy przekazać content bezpośrednio lub utworzyć blob
-          if (item.size <= 12 * 1024 && changedLocal.length <= 15) {
+          // Dla małych plików tekstowych (< 12 KB) możemy przekazać content bezpośrednio; pliki binarne zawsze idą jako base64 blob
+          if (!item.isBinary && item.size <= 12 * 1024 && changedLocal.length <= 15) {
             return {
               ok: true as const,
               entry: {
