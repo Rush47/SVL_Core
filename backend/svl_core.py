@@ -5773,6 +5773,8 @@ class SVLSystemKernel:
                     "artifact_path": "SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root",
                     "ssh_ed25519_mesh_keys_injected": True,
                     "pam_tty_locks_disabled": True,
+                    "ai_chat_linux_account": "jyn_root",
+                    "ai_chat_execution_mode": "native_linux_account_uid0",
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
