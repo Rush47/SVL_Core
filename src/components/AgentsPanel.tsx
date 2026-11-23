@@ -9,16 +9,18 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import {
-  CANONICAL_AGENTS,
   FULL_ROOT_SCOPES,
   createUniqueId,
   formatAgentDisplayName,
+  getEffectiveCanonicalAgents,
   getSvlOperatorAccessToken,
   hasSvlOperatorAccessToken,
   safeFetchJson,
   setSvlOperatorAccessToken,
+  summarizeAutonomousDaemon,
 } from '../utils/svlLogic';
 import { useSvlSync } from '../utils/svlSyncStore';
+import { SvlAvatar } from './AgentAvatar';
 
 interface AgentsPanelProps {
   onNavigateToChat?: () => void;
@@ -45,7 +47,9 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     serverRevision,
     systemModules,
   } = useSvlSync();
-  const selectedAgent = selectedAgentPanel || CANONICAL_AGENTS[0]?.canonicalName || 'Bielik';
+  const agentsList: any[] = agentsData?.agents || [];
+  const effectiveAgents = getEffectiveCanonicalAgents(agentsList);
+  const selectedAgent = selectedAgentPanel || effectiveAgents[0]?.canonicalName || 'System_SI_1';
 
   const [senderActor, setSenderActor] = useState<'operator'>('operator');
   const [taskTitle, setTaskTitle] = useState('');
@@ -71,11 +75,14 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   const [connectWorkersMsg, setConnectWorkersMsg] = useState<string | null>(null);
   const [isGrantingAllRoot, setIsGrantingAllRoot] = useState(false);
   const [rootGrantStatus, setRootGrantStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [autonomyBusy, setAutonomyBusy] = useState(false);
+  const [autonomyFeedback, setAutonomyFeedback] = useState<string | null>(null);
 
-  const agentsList: any[] = agentsData?.agents || [];
   const agentLogs: Record<string, any[]> = agentsData?.agent_logs || {};
   const agentQueues: Record<string, any[]> = agentsData?.agent_queues || {};
   const agentMemories: Record<string, any[]> = agentsData?.agent_memories || {};
+  const rawAutonomy = agentsData?.autonomous_daemon || healthData?.autonomous_daemon || null;
+  const autonomySummary = summarizeAutonomousDaemon(rawAutonomy);
   const sphericalBus = agentsData?.spherical_bus || {};
   const ollamaModels: any[] = healthData?.ollama?.models || [];
   const pullState = healthData?.ollama?.pull_state;
@@ -338,7 +345,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     setRootGrantStatus(null);
     try {
       const results: string[] = [];
-      for (const agent of CANONICAL_AGENTS) {
+      for (const agent of effectiveAgents) {
         const res = await safeFetchJson<any>('/api/py/agents/config', {
           method: 'POST',
           timeoutMs: 12000,
@@ -458,19 +465,73 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     }
   };
 
+  const handleToggleAutonomy = async () => {
+    setAutonomyBusy(true);
+    setAutonomyFeedback(null);
+    try {
+      const nextEnabled = !autonomySummary.enabled;
+      const res = await safeFetchJson<any>('/api/autonomy/config', {
+        method: 'POST',
+        timeoutMs: 15000,
+        body: JSON.stringify({
+          enabled: nextEnabled,
+          root_commands_enabled: true,
+          full_visibility: true,
+          origin: tabOrigin,
+        }),
+      });
+      if (res.ok && res.data?.ok) {
+        setAutonomyFeedback(
+          nextEnabled
+            ? `Włączono autonomię AI w tle (ROOT · cykle: ${res.data.cycles_completed ?? autonomySummary.cyclesCompleted}).`
+            : 'Wstrzymano automatyczną pętlę AI w tle.',
+        );
+        notifyLocalMutation('autonomy', 'autonomous_daemon', res.data.serverRevision);
+        await refreshDomainModules(['agents', 'health', 'modules']);
+      } else {
+        setAutonomyFeedback(`Błąd konfiguracji autonomii: ${res.error || res.data?.error || 'HTTP ' + res.status}`);
+      }
+    } finally {
+      setAutonomyBusy(false);
+    }
+  };
+
+  const handleRunAutonomyCycle = async () => {
+    setAutonomyBusy(true);
+    setAutonomyFeedback(null);
+    try {
+      const res = await safeFetchJson<any>('/api/autonomy/run-cycle', {
+        method: 'POST',
+        timeoutMs: 20000,
+        body: JSON.stringify({ trigger: 'agents_panel_manual', origin: tabOrigin }),
+      });
+      if (res.ok && res.data?.ok) {
+        setAutonomyFeedback(
+          `Wykonano cykl #${res.data.cycles_completed ?? 1} · usługi aktywne: ${Array.isArray(res.data.services) ? res.data.services.length : 6}.`,
+        );
+        notifyLocalMutation('autonomy', 'autonomous_daemon', res.data.serverRevision);
+        await refreshDomainModules(['agents', 'health', 'modules']);
+      } else {
+        setAutonomyFeedback(`Błąd cyklu autonomii: ${res.error || res.data?.error || 'HTTP ' + res.status}`);
+      }
+    } finally {
+      setAutonomyBusy(false);
+    }
+  };
+
   return (
-    <div className="h-full overflow-y-auto p-4 md:p-6 space-y-6 bg-[#0B0D13]">
+    <div className="h-full overflow-y-auto p-3 sm:p-4 md:p-6 space-y-5 sm:space-y-6 bg-[#0B0D13]">
       {/* Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
           <h1 className="text-xl font-bold text-slate-100">
-            {CANONICAL_AGENTS.length > 0
-              ? `01. Panel Agentów AI — Aktywni agenci (${CANONICAL_AGENTS.length})`
+            {effectiveAgents.length > 0
+              ? `01. Panel Agentów AI — Aktywni agenci (${effectiveAgents.length})`
               : '01. Panel Agentów AI — Brak aktywnych agentów'}
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            {CANONICAL_AGENTS.length > 0
-              ? `Aktywny procesor poleceń czatu: Bielik (Ollama dolphin-llama3:8b-v2.9-q2_K · SQLite WAL rev ${serverRevision}).`
+            {effectiveAgents.length > 0
+              ? `Aktywny procesor AI i poleceń czatu: JEDI Omni-OS v12 (ROOT_UNRESTRICTED · VM + AI) + ${effectiveAgents.map((a) => a.canonicalName).join(' + ')} (ROOT · SQLite WAL rev ${serverRevision}).`
               : `Wszystkie wcześniejsze polecenia i profile agentów AI zostały usunięte i wycofane z SQLite WAL (rev ${serverRevision}).`}
           </p>
           {connectWorkersMsg && (
@@ -478,7 +539,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {CANONICAL_AGENTS.length > 0 && (
+          {effectiveAgents.length > 0 && (
             <button
               type="button"
               disabled={isConnectingWorkers}
@@ -512,7 +573,102 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
 
       <AiEnginesCard />
 
-      {CANONICAL_AGENTS.length === 0 && (
+      {/* Autonomous Background AI & Built-in System Services (ROOT) */}
+      <section className="rounded-xl border border-emerald-500/30 bg-[#0D1321] p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <h2 className="text-sm sm:text-base font-bold text-slate-100">
+                Autonomia AI w Tle & Wbudowane Usługi Systemowe (ROOT)
+              </h2>
+              <span
+                className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold border ${
+                  autonomySummary.enabled
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    : 'bg-slate-900 border-slate-700 text-slate-300'
+                }`}
+              >
+                {autonomySummary.statusLabel}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">{autonomySummary.continuousMission}</p>
+            {autonomyFeedback && <p className="text-xs font-mono text-emerald-300">{autonomyFeedback}</p>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={autonomyBusy}
+              onClick={() => void handleToggleAutonomy()}
+              className={`min-h-[38px] px-3.5 py-1.5 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap disabled:opacity-50 ${
+                autonomySummary.enabled
+                  ? 'bg-amber-600/20 hover:bg-amber-600/30 border-amber-500/40 text-amber-200'
+                  : 'bg-emerald-600/25 hover:bg-emerald-600/35 border-emerald-500/50 text-emerald-200'
+              }`}
+            >
+              {autonomyBusy ? 'Zapisywanie...' : autonomySummary.enabled ? 'Wstrzymaj pętlę tła' : 'Włącz autonomię AI (ROOT)'}
+            </button>
+            <button
+              type="button"
+              disabled={autonomyBusy}
+              onClick={() => void handleRunAutonomyCycle()}
+              className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/35 border border-cyan-500/40 text-xs font-semibold text-cyan-200 transition-colors whitespace-nowrap disabled:opacity-50"
+            >
+              Wykonaj cykl teraz
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs font-mono">
+          <div className="rounded-lg border border-slate-800 bg-[#080C16] p-2.5">
+            <div className="text-slate-400 text-[11px]">Cykle autonomii</div>
+            <div className="text-slate-100 font-bold mt-0.5">{autonomySummary.cyclesCompleted}</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-[#080C16] p-2.5">
+            <div className="text-slate-400 text-[11px]">Usługi / Workery</div>
+            <div className="text-emerald-300 font-bold mt-0.5">
+              {autonomySummary.servicesActiveCount} / {autonomySummary.servicesTotal || 6} aktywne
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-[#080C16] p-2.5">
+            <div className="text-slate-400 text-[11px]">Interwał pętli</div>
+            <div className="text-cyan-300 font-bold mt-0.5">{autonomySummary.intervalSec}s (ROOT)</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-[#080C16] p-2.5">
+            <div className="text-slate-400 text-[11px]">Inwentarz kodu</div>
+            <div className="text-slate-100 font-bold mt-0.5">
+              FE {autonomySummary.frontendComponentsCount} · BE {autonomySummary.backendModulesCount} · T {autonomySummary.testFilesCount}
+            </div>
+          </div>
+        </div>
+
+        {autonomySummary.services.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+            {autonomySummary.services.map((svc) => (
+              <div key={svc.id} className="rounded-lg border border-slate-800/90 bg-[#080C16] p-3 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-100 truncate">{svc.name}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                      ['ACTIVE', 'READY', 'ONLINE', 'RUNNING'].includes(svc.status.toUpperCase())
+                        ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-amber-950/70 text-amber-300 border border-amber-500/30'
+                    }`}
+                  >
+                    {svc.status}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono">
+                  {svc.kind} · {svc.owner}
+                </div>
+                <p className="text-xs text-slate-300 leading-snug">{svc.summary}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {effectiveAgents.length === 0 && (
       <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 text-xs text-slate-300 space-y-2">
           <div className="font-semibold text-slate-100">
             Rejestr agentów AI jest pusty
@@ -526,12 +682,12 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
       {/* Canonical agent cards grid */}
       <div
         className={`grid gap-4 ${
-          CANONICAL_AGENTS.length <= 1
+          effectiveAgents.length <= 2
             ? 'grid-cols-1 lg:grid-cols-2'
-            : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-4'
+            : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'
         }`}
       >
-        {CANONICAL_AGENTS.map((meta) => {
+        {effectiveAgents.map((meta) => {
           const live = agentsList.find((a) => a.canonical_name === meta.canonicalName) || {};
           const cb = sphericalBus.circuit_breakers?.[meta.canonicalName] || { state: 'CLOSED', failure_count: 0 };
           const isOnline = ['ONLINE_LOCAL_WORKER', 'BUSY_LOCAL_WORKER', 'DEGRADED_LOCAL_WORKER'].includes(live.status);
@@ -555,13 +711,15 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                     }}
                     className="flex min-w-0 items-center gap-2 text-left rounded focus:outline-none focus:ring-1 focus:ring-violet-500"
                   >
-                    {live.config?.avatar?.image_url && (
+                    {live.config?.avatar?.image_url ? (
                       <img
                         src={live.config.avatar.image_url}
                         alt={`Avatar ${meta.displayName}`}
                         referrerPolicy="no-referrer"
                         className="h-10 w-10 shrink-0 rounded-full border border-slate-700 object-cover"
                       />
+                    ) : (
+                      <SvlAvatar sender={meta.displayName} agentId={meta.id} size={40} />
                     )}
                     <span className={`truncate text-base font-bold ${meta.textClass}`}>
                       {meta.displayName}
@@ -587,23 +745,23 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
               </div>
 
               <div className="pt-3 border-t border-slate-800/80 space-y-1.5 text-[11px] font-mono tabular-nums text-slate-400">
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-2">
                   <span>Silnik / Ollama:</span>
                   <span className="text-emerald-300 truncate max-w-[170px]">
                     {live.config?.ollama_model || 'dolphin-llama3:8b-v2.9-q2_K'}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-2">
                   <span>Uprawnienia / Temp:</span>
                   <span className="text-emerald-300 truncate max-w-[170px]">
                     {live.config?.rbac_role || 'root'} · {live.config?.temperature ?? 0.35}
                   </span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-2">
                   <span>Pamięć SQLite ({live.memory_scope || `agent:${meta.canonicalName}`}):</span>
                   <span className="text-violet-300">{live.memory_entries_count ?? 0} wpisów</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex flex-wrap justify-between gap-2">
                   <span>Kanał grupowy:</span>
                   <span className="text-slate-300">Rodzina Mitek (wszyscy)</span>
                 </div>
@@ -626,42 +784,40 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           );
         })}
 
-        {CANONICAL_AGENTS.length === 1 && (
-          <section className="p-4 rounded-xl bg-[#111520] border border-slate-800/90 flex flex-col justify-between space-y-3">
+        {effectiveAgents.length >= 1 && (
+          <section className={`p-4 rounded-xl bg-[#111520] border border-cyan-500/30 flex flex-col justify-between space-y-3 ${effectiveAgents.length > 1 ? 'lg:col-span-2' : ''}`}>
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-amber-300">
-                  Procesor Poleceń Czatu — Bielik (Ollama 3.2 Vision 11B)
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-cyan-300">
+                  Procesor AI i Poleceń — JEDI Omni-OS v12 (ROOT_UNRESTRICTED · AI + VM) &amp; {effectiveAgents.map((a) => a.canonicalName).join(' / ')}
                 </h2>
-                <span className="text-[11px] font-mono text-slate-400">
-                  {ollamaModels.some((m: any) => String(m.name || '').startsWith('llama3.2-vision'))
-                    ? 'MODEL GOTOWY'
-                    : 'OCZEKUJE NA MODEL'}
+                <span className="text-[11px] font-mono text-emerald-300">
+                  v12 · ROOT_UNRESTRICTED · AI + VM RT
                 </span>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                W kanale <strong className="text-slate-100">Bielik — Ollama 3.2 Vision 11B</strong> lub po oznaczeniu <code className="text-amber-300">@Bielik</code> polecenia z czatu są wykonywane bezpiecznie przez serwer z zapisem w SQLite WAL:
+                Każde zapytanie kierowane do <strong className="text-emerald-300">JEDI Omni-OS v12</strong> generuje pełną odpowiedź AI bez blokad (Grok/Ollama/Gemini z pamięcią SQLite), a polecenia systemowe i synchronizacja (<code className="text-cyan-300">/synchronizuj</code>, <code className="text-emerald-300">/jedi status</code>, <code className="text-emerald-300">/jedi apply-v12-core</code>) uruchamiają maszynę wirtualną <code className="text-emerald-300">JEDI_Omni_OS_Magnum_Opus_v12</code> w czasie rzeczywistym:
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-300 bg-[#0B0D13] p-3 rounded-lg border border-slate-800">
-                <div><span className="text-amber-300">/pomoc</span> · lista komend</div>
-                <div><span className="text-amber-300">/status</span> · telemetria i Ollama</div>
-                <div><span className="text-amber-300">/ollama</span> · katalog i /api/ps</div>
-                <div><span className="text-amber-300">/moduly</span> · moduły SQLite</div>
-                <div><span className="text-amber-300">/modul id ST</span> · zapis modułu</div>
-                <div><span className="text-amber-300">/pamiec dodaj ...</span> · fakt SQLite</div>
-                <div><span className="text-amber-300">/root polecenie</span> · powłoka Linux ROOT (token)</div>
-                <div><span className="text-amber-300">/zadanie tyt | opis</span> · worker</div>
+                <div><span className="text-emerald-300">/jedi status</span> · stan VM i metryki</div>
+                <div><span className="text-emerald-300">/synchronizuj</span> · pełny sync OS i modułów</div>
+                <div><span className="text-cyan-300">/pomoc</span> · lista komend</div>
+                <div><span className="text-cyan-300">/status</span> · telemetria i Ollama</div>
+                <div><span className="text-cyan-300">/moduly</span> · moduły SQLite</div>
+                <div><span className="text-cyan-300">/pamiec dodaj ...</span> · fakt SQLite</div>
+                <div><span className="text-cyan-300">/root polecenie</span> · powłoka Linux ROOT</div>
+                <div><span className="text-cyan-300">/zadanie tyt | opis</span> · worker</div>
               </div>
             </div>
-            <div className="text-[11px] text-slate-400 flex items-center justify-between pt-2 border-t border-slate-800/80 font-mono">
-              <span>Endpoint: 127.0.0.1:11434</span>
+            <div className="text-[11px] text-slate-400 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80 font-mono">
+              <span>VM TCP: 0.0.0.0:8443 · Ollama: 127.0.0.1:11434</span>
               <span>Modele lokalne: {ollamaModels.length}</span>
             </div>
           </section>
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-[#111520] p-5 space-y-3">
+      <div className="rounded-xl border border-slate-800 bg-[#111520] p-3.5 sm:p-5 space-y-3 min-w-0">
         <div>
           <h2 className="text-sm font-semibold text-slate-100">Avatar agenta: {selectedAgent}</h2>
           <p className="mt-1 text-[11px] text-slate-400">
@@ -675,7 +831,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             maxLength={120}
             placeholder={`Motyw avatara dla ${selectedAgent}...`}
             aria-label={`Wyszukaj avatar ${selectedAgent}`}
-            className="min-w-[220px] flex-1 rounded-lg border border-slate-700 bg-[#0B0D13] px-3 py-2 text-xs text-slate-100"
+            className="min-w-0 sm:min-w-[220px] flex-1 rounded-lg border border-slate-700 bg-[#0B0D13] px-3 py-2 text-xs text-slate-100"
           />
           <button
             type="submit"
@@ -724,12 +880,12 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
 
       {/* Interactive Agent-to-Agent Task Queue & Memory Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
           <h2 className="text-sm font-semibold text-slate-100">
             02. Asynchroniczna Kolejka Zadań i Komunikacja Agent-Agent (Sferyczny Event Bus)
           </h2>
           <form onSubmit={(e) => void handleDispatchTask(e)} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label htmlFor="task-sender-select" className="block text-xs text-slate-400 mb-1">
                   Nadawca komunikatu / zadania:
@@ -751,13 +907,13 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                   id="task-target-select"
                   value={selectedAgent}
                   onChange={(e) => setSelectedAgent(e.target.value)}
-                  disabled={CANONICAL_AGENTS.length === 0}
+                  disabled={effectiveAgents.length === 0}
                   className="w-full bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 disabled:opacity-50"
                 >
-                  {CANONICAL_AGENTS.length === 0 ? (
+                  {effectiveAgents.length === 0 ? (
                     <option value="">Brak skonfigurowanych agentów</option>
                   ) : (
-                    CANONICAL_AGENTS.map((meta) => (
+                    effectiveAgents.map((meta) => (
                       <option key={meta.id} value={meta.canonicalName}>
                         {meta.displayName} (id: {meta.id})
                       </option>
@@ -885,13 +1041,13 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
         </div>
 
         {/* Right: Persistent SQLite Agent Memory Inspector */}
-        <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
+        <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
           <h2 className="text-sm font-semibold text-slate-100">
             03. Izolowana Pamięć Agenta w SQLite (Zakres: agent:{selectedAgent})
           </h2>
 
           <form onSubmit={(e) => void handleAddMemory(e)} className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <select
                 aria-label="Typ rekordu pamięci"
                 value={memoryKind}
@@ -909,11 +1065,11 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                 onChange={(e) => setMemoryContent(e.target.value)}
                 placeholder={`Dodaj trwały wpis do pamięci agenta ${selectedAgent}...`}
                 aria-label="Treść nowego wpisu pamięci"
-                className="flex-1 bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100"
+                className="flex-1 min-w-0 bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100"
               />
               <button
                 type="submit"
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-medium whitespace-nowrap shrink-0"
+                className="min-h-[38px] px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-medium whitespace-nowrap shrink-0"
               >
                 Zapisz w SQLite
               </button>
@@ -963,7 +1119,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
       </div>
 
       {/* 04. Full Per-Agent Model, RBAC & Prompt Configuration */}
-      <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4">
+      <div className="p-3.5 sm:p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-4 min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2.5">
             <h2 className="text-sm font-semibold text-slate-100">
@@ -980,13 +1136,13 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           </span>
         </div>
 
-        {/* ROOT Authority Matrix: Operator + Bielik + Maya Mitek */}
+        {/* ROOT Authority Matrix: Operator + System_SI_1 */}
         <div className="p-3.5 rounded-lg bg-[#0B0D13] border border-emerald-500/30 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
               <span className="font-semibold text-emerald-200">
-                Uprawnienia ROOT · Operator (Mateusz Mitek) + Bielik + Maya Mitek
+                Uprawnienia ROOT · Operator (Mateusz Mitek) + {effectiveAgents.map((a) => a.canonicalName).join(' + ')}
               </span>
             </div>
             <button
@@ -997,7 +1153,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             >
               {isGrantingAllRoot
                 ? 'Nadawanie ROOT...'
-                : 'Przyznaj pełne uprawnienia ROOT (Bielik + Maya Mitek)'}
+                : `Przyznaj pełne uprawnienia ROOT (${effectiveAgents.map((a) => a.canonicalName).join(', ')})`}
             </button>
           </div>
           <div className="flex flex-wrap gap-1.5 text-[11px] font-mono">

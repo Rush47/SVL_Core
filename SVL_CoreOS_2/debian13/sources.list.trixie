@@ -1,0 +1,24 @@
+# ==============================================================================
+# SVL CoreOS 2: Apex — Oficjalne Repozytoria APT Debian GNU/Linux 13 (Trixie)
+# Format DEB822 (/etc/apt/sources.list.d/debian.sources) + klasyczny sources.list
+# Komponenty: main contrib non-free non-free-firmware
+# ==============================================================================
+
+# --- [1] Format DEB822 (domyślny w Debian 13 Trixie: /etc/apt/sources.list.d/debian.sources) ---
+Types: deb deb-src
+URIs: https://deb.debian.org/debian
+Suites: trixie trixie-updates trixie-backports
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb deb-src
+URIs: https://security.debian.org/debian-security
+Suites: trixie-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+# --- [2] Klasyczny zapis (/etc/apt/sources.list — kompatybilność wsteczna) ---
+# deb https://deb.debian.org/debian trixie main contrib non-free non-free-firmware
+# deb https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware
+# deb https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware
+# deb https://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware

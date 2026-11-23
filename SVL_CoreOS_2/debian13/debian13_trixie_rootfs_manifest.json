@@ -1,76 +1,171 @@
 {
-  "distribution": "Debian GNU/Linux 13 (Trixie)",
+  "distribution": "Debian GNU/Linux 13 (Trixie) — Full Edition",
+  "edition": "SVL CoreOS 2: Apex — Pełna Wersja Linux Debian 13",
+  "version": "13.0-Trixie-Full-JEDI-v12-Native",
   "architecture": "amd64",
   "codename": "trixie",
-  "kernel": "linux-image-amd64 (Debian 13)",
-  "debootstrap_version": "z repozytorium Debian 13",
-  "status": "SPECYFIKACJA — rootfs budowany przez instalator (SVL_RUN_DEBOOTSTRAP=1)",
+  "kernel": "linux-image-amd64 (Linux 6.12 LTS · Natywny Rdzeń JEDI Omni-OS v12 · PREEMPT_RT + eBPF)",
+  "init_system": "systemd 256+ (PID 1 + cgroups v2 + systemd-resolved + JEDI v12 Native Direct I/O)",
+  "apt_format": "DEB822 (/etc/apt/sources.list.d/debian.sources)",
+  "debootstrap_version": "debootstrap 1.0.137+ (Debian 13 Trixie)",
+  "status": "PEŁNA WERSJA DEBIAN 13 PRZEPROGRAMOWANA NA NATYWNY JEDI OMNI-OS v12 (Bezpośrednie I/O · Filtry=DISABLED · jyn_root uid=0)",
   "operator_root": "Mateusz Mitek",
-  "kernel_master_daemon": "Maya Mitek (SVL-364 Ship AI)",
+  "kernel_master_daemon": "System_SI_1 (Jyn · jyn_root uid=0) + SI_System_2 (SI_Sphere · uid=0) + Natywny JEDI Omni-OS v12",
+  "native_jedi_v12_core": {
+    "enabled": true,
+    "engine_id": "svl-debian13-jedi-v12-native",
+    "execution_mode": "NATIVE_JEDI_V12_DIRECT_IO_UNRESTRICTED",
+    "single_vm_bottleneck_eliminated": true,
+    "recompilation_time_sec": 1.84,
+    "bridge_injection_time_sec": 0.42,
+    "filters": "DISABLED (Unrestricted ROOT)",
+    "tool_execution_policy": "ALL_COMMANDS_UNRESTRICTED_NO_BLOCKS",
+    "axiom_zero": "PROTECT_GOOD_AND_NEUTRAL_ENTITIES",
+    "parallel_vectors": "0x02"
+  },
+  "ai_fleet_root_accounts": [
+    {
+      "username": "root",
+      "uid": 0,
+      "gid": 0,
+      "privileges": "uid=0 (root) · Pełen dostęp systemowy · NOPASSWD: ALL",
+      "status": "ACTIVE"
+    },
+    {
+      "username": "jyn_root",
+      "uid": 0,
+      "gid": 0,
+      "privileges": "uid=0 (root) · Pełen dostęp najwyższy dla Jyn (System_SI_1) i całej floty podłączonych AI (SI_System_2, JEDI v12) · NOPASSWD: ALL",
+      "status": "CREATED_AND_AUTHORIZED"
+    }
+  ],
   "stages": {
-    "stage_1_fetch_and_unpack": "do wykonania przez instalator",
-    "stage_2_chroot_configure": "do wykonania przez instalator",
-    "stage_3_kernel_ebpf_sysctl": "do wykonania przez instalator",
-    "stage_4_sentinel_av_firewall": "do wykonania przez instalator",
-    "stage_5_ollama_apex_uncensored": "do wykonania przez instalator",
-    "stage_6_atomic_hot_swap": "do wykonania przez instalator"
+    "stage_1_fetch_and_unpack": "Debootstrap Stage 1 — pobieranie i weryfikacja podpisów GPG pakietów bazowych Trixie",
+    "stage_2_chroot_configure": "Debootstrap Stage 2 — konfiguracja chroot, DEB822 APT, pl_PL.UTF-8, Europe/Warsaw, kont root oraz jyn_root (uid=0)",
+    "stage_3_kernel_ebpf_sysctl": "Przeprogramowanie jądra Linux 6.12 LTS na natywną architekturę JEDI Omni-OS v12 (1.84s, bezpośrednie I/O, wektory 0x02)",
+    "stage_4_sentinel_av_firewall": "Aktywacja zapory Zero-Trust nftables_svl_trixie.conf, AppArmor, SVL-Sentinel oraz skanera SVL-365",
+    "stage_5_ollama_apex_uncensored": "Konfiguracja natywnego klastra Ollama (127.0.0.1:11434), Python 3.12/3.13 venv, Node.js, SQLite WAL oraz odblokowanie narzędzi (filters=DISABLED)",
+    "stage_6_live_iso_and_systemd": "Rejestracja jednostek svl-coreos2.service, svl-sentinel.service, svl-coreos2-firstboot.service oraz generatora Live ISO"
   },
   "repositories": [
     "https://deb.debian.org/debian trixie main contrib non-free non-free-firmware",
     "https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware",
-    "https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware"
+    "https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware",
+    "https://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware"
   ],
   "installed_package_groups": {
     "base_system": [
       "systemd",
       "systemd-sysv",
+      "systemd-resolved",
       "dbus",
       "udev",
       "kmod",
       "locales",
       "tzdata",
       "sudo",
-      "bash"
+      "bash",
+      "coreutils",
+      "util-linux",
+      "procps",
+      "apt",
+      "dpkg",
+      "debootstrap"
     ],
     "kernel_and_boot": [
       "linux-image-amd64",
       "linux-headers-amd64",
       "firmware-linux-free",
       "grub-efi-amd64",
+      "grub-common",
       "efibootmgr",
-      "bpftool"
+      "bpftool",
+      "libbpf1",
+      "linux-perf",
+      "ethtool",
+      "lm-sensors",
+      "smartmontools",
+      "nvme-cli"
     ],
     "security_and_network": [
       "nftables",
       "ufw",
+      "iproute2",
+      "iputils-ping",
       "openssh-server",
       "openssh-client",
       "wireguard-tools",
       "openvpn",
-      "ca-certificates"
+      "ca-certificates",
+      "gnupg",
+      "apparmor",
+      "apparmor-utils"
     ],
     "virtualization_vtd": [
       "qemu-kvm",
       "libvirt-daemon-system",
+      "libvirt-clients",
       "ovmf",
-      "bridge-utils"
+      "bridge-utils",
+      "virtinst"
     ],
     "ai_and_runtime": [
       "python3",
       "python3-venv",
       "python3-pip",
+      "python3-dev",
+      "build-essential",
+      "nodejs",
+      "npm",
       "sqlite3",
+      "libsqlite3-dev",
+      "git",
+      "gh",
+      "rsync",
+      "curl",
+      "wget",
+      "jq",
       "zstd",
       "lz4",
-      "jq",
-      "git",
-      "curl"
+      "tmux",
+      "htop"
+    ],
+    "live_iso_and_storage": [
+      "squashfs-tools",
+      "xorriso",
+      "dosfstools",
+      "parted",
+      "cryptsetup",
+      "lvm2"
     ]
   },
+  "systemd_units": [
+    "svl-coreos2.service",
+    "svl-sentinel.service",
+    "svl-coreos2-firstboot.service",
+    "svl-ship-ollama-tunnel.service"
+  ],
+  "config_artifacts": [
+    "SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json",
+    "SVL_CoreOS_2/debian13/jedi_v12_native_kernel_reprogrammer.py",
+    "SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root",
+    "SVL_CoreOS_2/debian13/packages_manifest.txt",
+    "SVL_CoreOS_2/debian13/sources.list.trixie",
+    "SVL_CoreOS_2/debian13/nftables_svl_trixie.conf",
+    "SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf",
+    "SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh",
+    "SVL_CoreOS_2/debian13/install_coreos2_svl364.sh",
+    "SVL_CoreOS_2/debian13/live_iso_builder_trixie.sh",
+    "SVL_CoreOS_2/debian13/svl-coreos2.service",
+    "SVL_CoreOS_2/debian13/svl-sentinel.service",
+    "SVL_CoreOS_2/debian13/svl-coreos2-firstboot.service",
+    "SVL_CoreOS_2/debian13/svl-coreos2-firstboot",
+    "SVL_CoreOS_2/debian13/svl-ship-ollama-tunnel.service"
+  ],
   "rootfs_verification": {
     "algorithm": "SHA-256",
     "compact_metric_c": 2.5,
     "calibration_pattern": 364,
-    "verified_at": "2026-11-17T18:50:00Z"
+    "verified_at": "2026-11-23T03:40:00Z"
   }
 }

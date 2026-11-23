@@ -33,10 +33,11 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
   const { refreshDomainModules, notifyLocalMutation } = useSvlSync();
 
   const [visionStatus, setVisionStatus] = useState<any>(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState<boolean>(true);
   const [selectedSourceTab, setSelectedSourceTab] = useState<'preset' | 'upload' | 'camera' | 'screen'>('preset');
   const [selectedPresetId, setSelectedPresetId] = useState<string>('operator_vault_portrait');
   const [promptInput, setPromptInput] = useState<string>(
-    'Przeanalizuj dokładnie obraz przez Ollama 3.2 Vision (llama3.2-vision:11b): określ obiekty, parametry optyczne, kolorystykę RGB oraz kontekst operacyjny SVL-364.',
+    'Opisz dokładnie po polsku, co widać na obrazie: obiekty, osobę lub scenę, kolorystykę, oświetlenie i kluczowe detale.',
   );
   const [customImage, setCustomImage] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
   const [emitToChat, setEmitToChat] = useState<boolean>(mode === 'modal');
@@ -68,12 +69,17 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
   }, [stopMediaStream]);
 
   const loadVisionStatus = useCallback(async () => {
-    const res = await safeFetchJson<any>('/api/vision/status', { timeoutMs: 10000 });
-    if (res.ok && res.data?.ok) {
-      setVisionStatus(res.data);
-      if (Array.isArray(res.data.recentInspections) && res.data.recentInspections.length > 0) {
-        setLastRecord((prev: any) => prev || res.data.recentInspections[0]);
+    setIsLoadingStatus(true);
+    try {
+      const res = await safeFetchJson<any>('/api/vision/status', { timeoutMs: 10000 });
+      if (res.ok && res.data?.ok) {
+        setVisionStatus(res.data);
+        if (Array.isArray(res.data.recentInspections) && res.data.recentInspections.length > 0) {
+          setLastRecord((prev: any) => prev || res.data.recentInspections[0]);
+        }
       }
+    } finally {
+      setIsLoadingStatus(false);
     }
   }, []);
 
@@ -177,7 +183,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
 
       const res = await safeFetchJson<any>(isQuickTest ? '/api/vision/test' : '/api/vision/analyze', {
         method: 'POST',
-        timeoutMs: 25000,
+        timeoutMs: 60000,
         body: JSON.stringify({
           imageBase64: useCustom ? customImage?.base64 : '',
           imageMimeType: useCustom ? customImage?.mimeType : 'image/png',
@@ -197,13 +203,17 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
         const rec = res.data.record;
         setLastRecord(rec);
         if (res.data.status) {
-          setVisionStatus(res.data.status);
+          setVisionStatus((prev: any) => ({ ...(prev || {}), ...res.data.status }));
         }
         notifyLocalMutation('module', 'svl-real-vision', res.data.serverRevision);
         await refreshDomainModules(['modules', 'health', ...(emitToChat ? ['chat' as const] : [])]);
+        const engineNote =
+          rec.provider === 'gemini' || res.data.fallbackUsed
+            ? `Gemini Vision (${rec.model} · fallback po Ollamie)`
+            : `Ollama (${rec.model})`;
         setStatusFeedback({
           ok: true,
-          text: `Model ${rec.model} opisał obraz ${rec.binaryMetrics?.format} ${rec.binaryMetrics?.resolution} (${rec.durationMs} ms). Opis pochodzi z modelu i nie jest weryfikowany.`,
+          text: `${engineNote} opisał obraz ${rec.binaryMetrics?.format} ${rec.binaryMetrics?.resolution} (${rec.durationMs} ms).${emitToChat ? ' Raport zapisano w aktywnym czacie.' : ''}`,
         });
       } else {
         // Przy błędzie modelu pokazujemy uczciwy raport (tylko parametry pliku, bez opisu treści).
@@ -225,7 +235,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
     <div
       data-testid="real-vision-panel"
       className={`rounded-2xl border border-violet-500/40 bg-gradient-to-br from-[#0D1322] via-[#0B0F1B] to-[#090D16] text-slate-100 shadow-2xl ${
-        mode === 'modal' ? 'p-5 max-w-4xl w-full max-h-[90vh] overflow-y-auto' : 'p-5'
+        mode === 'modal' ? 'p-3.5 sm:p-5 max-w-4xl w-full max-h-[92dvh] overflow-y-auto' : 'p-3.5 sm:p-5'
       }`}
     >
       {/* Header */}
@@ -292,32 +302,52 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
       )}
 
       {/* Configuration Summary Pills */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 mt-4">
-        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 mt-4">
+        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5 min-w-0">
           <div className="text-[10px] font-mono uppercase text-slate-400">Model Vision</div>
-          <div className="text-xs font-mono font-bold text-violet-300 mt-0.5">
+          <div className="text-xs font-mono font-bold text-violet-300 mt-0.5 truncate">
             {visionStatus?.configuredModel || 'llama3.2-vision:11b'}
           </div>
           <div className="text-[10px] text-slate-500 mt-0.5">Aliasy: llama3.2-vision:latest</div>
         </div>
-        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5">
-          <div className="text-[10px] font-mono uppercase text-slate-400">Endpoint Ollama</div>
+        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5 min-w-0">
+          <div className="text-[10px] font-mono uppercase text-slate-400">Silnik Vision</div>
           <div className="text-xs font-mono font-bold text-cyan-300 mt-0.5 truncate">
-            {visionStatus?.ollamaEndpoint || 'http://127.0.0.1:11434/api/chat'}
+            {visionStatus?.ollamaOnline
+              ? visionStatus?.ollamaEndpoint || 'http://127.0.0.1:11434/api/chat'
+              : visionStatus?.geminiVisionAvailable
+                ? 'Gemini Vision (auto-fallback)'
+                : visionStatus?.ollamaEndpoint || 'http://127.0.0.1:11434/api/chat'}
           </div>
-          <div className="text-[10px] text-emerald-400 mt-0.5">Status: ONLINE (HTTP 200)</div>
+          <div
+            className={`text-[10px] mt-0.5 ${
+              visionStatus?.ollamaOnline
+                ? 'text-emerald-400'
+                : visionStatus?.geminiVisionAvailable
+                  ? 'text-emerald-300'
+                  : 'text-amber-400'
+            }`}
+          >
+            {visionStatus?.ollamaOnline
+              ? 'Ollama: ONLINE (HTTP 200)'
+              : visionStatus?.geminiVisionAvailable
+                ? 'Ollama OFFLINE · Gemini Vision ONLINE'
+                : isLoadingStatus
+                  ? 'Sprawdzanie silnika...'
+                  : 'Ollama OFFLINE'}
+          </div>
         </div>
-        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5">
+        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5 min-w-0">
           <div className="text-[10px] font-mono uppercase text-slate-400">Dekoder Binarny</div>
           <div className="text-xs font-mono font-bold text-emerald-300 mt-0.5">
             PNG · JPEG · WebP · SHA256
           </div>
           <div className="text-[10px] text-slate-500 mt-0.5">Zero symulacji (Real Pixels)</div>
         </div>
-        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5">
+        <div className="rounded-xl bg-[#090D16] border border-slate-800/90 p-2.5 min-w-0">
           <div className="text-[10px] font-mono uppercase text-slate-400">Wykonane Inspekcje</div>
-          <div className="text-xs font-mono font-bold text-amber-300 mt-0.5">
-            {visionStatus?.inspectionsCount ?? 1} ramek
+          <div className="text-xs font-mono font-bold text-amber-300 mt-0.5 tabular-nums">
+            {visionStatus?.inspectionsCount ?? 0} ramek
           </div>
           <div className="text-[10px] text-slate-500 mt-0.5">Moduł: svl-real-vision</div>
         </div>
@@ -454,7 +484,7 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
               {streamError && (
                 <p className="text-[11px] text-amber-300">{streamError}</p>
               )}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={handleCaptureVideoFrame}
@@ -557,7 +587,9 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
                       {lastRecord.model || 'llama3.2-vision:11b'}
                     </span>
                     <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] font-mono text-emerald-300">
-                      HTTP {lastRecord.ollamaHttpStatus || 200} · {lastRecord.durationMs} ms
+                      {lastRecord.provider === 'gemini' || lastRecord.fallbackUsed
+                        ? `Gemini Vision · ${lastRecord.durationMs} ms`
+                        : `HTTP ${lastRecord.ollamaHttpStatus || 200} · ${lastRecord.durationMs} ms`}
                     </span>
                     <span className="px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-500/35 text-[10px] font-mono text-cyan-200">
                       {bm?.format} · {bm?.resolution} · {bm?.sizeKb} KB
@@ -586,10 +618,18 @@ export const RealVisionPanel: React.FC<RealVisionPanelProps> = ({
                 {lastRecord.ollamaReply || lastRecord.reportMarkdown}
               </div>
             </>
-          ) : (
+          ) : isLoadingStatus ? (
             <div className="flex flex-col items-center justify-center h-48 text-center text-xs text-slate-400 space-y-2">
               <RefreshCw className="w-6 h-6 text-violet-400 animate-spin" />
-              <span>Ładowanie telemetrii Real Vision (llama3.2-vision:11b)...</span>
+              <span>Ładowanie telemetrii Real Vision...</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-48 text-center text-xs text-slate-400 space-y-2 px-4">
+              <Eye className="w-7 h-7 text-violet-400/80" />
+              <span className="text-slate-200 font-medium">Real Vision gotowy do analizy obrazu</span>
+              <span>
+                Kliknij <strong>„🧪 Przetestuj Real Vision (3.2)”</strong>, wybierz plik z zasobów lub wgraj własny obraz.
+              </span>
             </div>
           )}
         </div>

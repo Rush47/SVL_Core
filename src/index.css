@@ -24,6 +24,13 @@
     --apex-text-muted: #94A3B8;
   }
 
+  html,
+  body {
+    overscroll-behavior: none;
+    overflow-x: hidden;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: var(--apex-bg-void);
@@ -35,6 +42,14 @@
     word-spacing: 0.02em;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  select,
+  input,
+  textarea,
+  [role="button"] {
+    touch-action: manipulation;
   }
 
   .svl-workspace {
@@ -115,6 +130,37 @@
   background: rgba(9, 15, 30, 0.92);
   border: 1px solid rgba(0, 240, 255, 0.25);
   box-shadow: 0 12px 32px -12px rgba(0, 240, 255, 0.14);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.svl-scroll-smooth {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+.svl-msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 136px;
+}
+
+.pb-safe {
+  padding-bottom: max(0.625rem, env(safe-area-inset-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Custom Apex-Dark scrollbars */
