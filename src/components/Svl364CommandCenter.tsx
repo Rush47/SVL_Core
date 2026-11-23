@@ -437,7 +437,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
 
   const ollamaModels: Array<{ name: string }> = Array.isArray(healthData?.ollama?.models) ? healthData.ollama.models : [];
   const configuredModel = String(
-    commandModule?.config?.configured_ollama_model || healthData?.ollama?.preferred_14b_vision_model || 'dolphin-llama3:8b-v2.9-q2_K',
+    commandModule?.config?.configured_ollama_model || healthData?.ollama?.preferred_14b_vision_model || 'svl364-apex-uncensored:latest',
   );
 
   // Wszystkie wartości poniżej pochodzą z /api/py/svl364/telemetry (pomiar na hoście backendu).
@@ -547,7 +547,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
         <header className="flex flex-wrap items-start justify-between gap-3 border-b border-cyan-500/25 pb-4">
           <div>
             <p className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.24em] text-violet-400">
-              <Server size={16} /> SVL-364 {systemModules.some((m: any) => String(m.id || '').startsWith('si-system-2')) ? '· FLOTA SVL-465 AKTYWNA' : ''}
+              <Server size={16} /> SVL-364 {systemModules.some((m: any) => String(m.id || '').startsWith('si-sphere')) ? '· FLOTA SVL-465 AKTYWNA' : ''}
             </p>
             <p className="text-xs sm:text-sm text-slate-400 mt-1">
               Prawdziwe pomiary hosta, usług i połączenia SSH (bez wartości szacowanych).
@@ -988,10 +988,10 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   m.source === 'chat' ||
                   m.source === 'system-si-1-chat-command' ||
                   m.config?.managed_by === 'System_SI_1' ||
-                  m.config?.managed_by === 'SI_System_2' ||
+                  m.config?.managed_by === 'SI_Sphere' ||
                   String(m.id || '').startsWith('svl-364') ||
                   String(m.id || '').startsWith('svl-365') ||
-                  String(m.id || '').startsWith('si-system-2') ||
+                  String(m.id || '').startsWith('si-sphere') ||
                   String(m.id || '').startsWith('jedi-omni-os') ||
                   [
                     'svl-364',
@@ -1107,7 +1107,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             <div className="md:col-span-3 rounded-xl border border-cyan-500/30 bg-cyan-950/10 p-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-cyan-200 font-semibold">Mostek SSH / MCP Statku SVL-364</div>
-                <div className="text-slate-100">System_SI_1 &amp; SI_System_2 (ROOT) · JEDI Omni-OS v12 VM</div>
+                <div className="text-slate-100">System_SI_1 &amp; SI_Sphere (ROOT) · JEDI Omni-OS v12 VM</div>
                 <div className="text-slate-400">Alias OpenSSH: {sshMcpStatus?.ssh?.host || 'Ship'} · obsługuje: System_SI_1</div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -1296,7 +1296,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             <div className="space-y-2">
               {getEffectiveCanonicalAgents(agents).map((crewMeta) => {
                 const liveCrew = agents.find((a) => a.canonical_name === crewMeta.canonicalName);
-                const isSi2 = crewMeta.canonicalName === 'SI_System_2';
+                const isSi2 = crewMeta.canonicalName === 'SI_Sphere';
                 return (
                   <div
                     key={crewMeta.id}
@@ -1343,18 +1343,18 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 }}
                 className="hover:underline"
               >
-                Kanał Jyn (System_SI_1)
+                Kanał Jyn Mitek (System_SI_1)
               </button>
-              {getEffectiveCanonicalAgents(agents).some((a) => a.canonicalName === 'SI_System_2') && (
+              {getEffectiveCanonicalAgents(agents).some((a) => a.canonicalName === 'SI_Sphere') && (
                 <button
                   type="button"
                   onClick={() => {
-                    openAgentChannel('SI_System_2');
+                    openAgentChannel('SI_Sphere');
                     onNavigate('chat');
                   }}
                   className="hover:underline text-violet-300"
                 >
-                  Kanał SI_System_2 (SVL-465)
+                  Kanał SI_Sphere (SVL-465)
                 </button>
               )}
               <button type="button" onClick={() => onNavigate('kernel')} className="hover:underline">

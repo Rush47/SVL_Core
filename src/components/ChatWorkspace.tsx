@@ -26,6 +26,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ArrowDown,
+  Wrench,
 } from 'lucide-react';
 import {
   SyncableMessage,
@@ -95,9 +96,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const effectiveAgents = useMemo(() => getEffectiveCanonicalAgents(agentsStatus), [agentsStatus]);
   const hasSi2Agent = useMemo(
     () =>
-      effectiveAgents.some((a) => a.canonicalName === 'SI_System_2') ||
-      systemModules.some((m) => String(m.id || '').startsWith('si-system-2')) ||
-      conversations.some((c) => c.id === 'conv-si-system-2'),
+      effectiveAgents.some((a) => a.canonicalName === 'SI_Sphere') ||
+      systemModules.some((m) => String(m.id || '').startsWith('si-sphere')) ||
+      conversations.some((c) => c.id === 'conv-si-sphere'),
     [conversations, effectiveAgents, systemModules],
   );
 
@@ -107,7 +108,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('ollama:dolphin-llama3:8b-v2.9-q2_K');
+  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
   const [geminiModels, setGeminiModels] = useState<string[]>(['gemini-flash-lite-latest']);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -179,6 +180,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [messageWindowLimit, setMessageWindowLimit] = useState<number>(DEFAULT_CHAT_WINDOW_SIZE);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [controlsExpanded, setControlsExpanded] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ base64: string; mimeType: string; name: string } | null>(null);
   const [attachedTextFile, setAttachedTextFile] = useState<{ name: string; content: string } | null>(null);
   const [syncDrawerOpen, setSyncDrawerOpen] = useState(false);
@@ -207,6 +210,26 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       window.clearTimeout(noticeTimerRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!toolsMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
+        setToolsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setToolsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [toolsMenuOpen]);
 
   // Ollama connection panel & pull state
   const [ollamaConfigOpen, setOllamaConfigOpen] = useState(false);
@@ -367,7 +390,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     try {
       const chosenTarget =
         agentOverride ||
-        (targetAgent === 'System_SI_1' || targetAgent === 'SI_System_2' || targetAgent === 'JEDI_Omni_OS'
+        (targetAgent === 'System_SI_1' || targetAgent === 'SI_Sphere' || targetAgent === 'JEDI_Omni_OS'
           ? targetAgent
           : 'System_SI_1');
       const recentMsgs = (activeConv.messages || []).slice(-12);
@@ -745,7 +768,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
         targetConvId === 'conv-system-si-1' ||
-        targetConvId === 'conv-si-system-2';
+        targetConvId === 'conv-si-sphere';
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
         : targetConvObj.messages.length <= 1 && trimmed
@@ -776,9 +799,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         targetAgent === 'JEDI_Omni_OS' || resolvedTarget.agent === 'JEDI_Omni_OS';
       const isSi2Channel =
         !isJediVmTarget &&
-        (targetConvId === 'conv-si-system-2' ||
-          resolvedTarget.agent === 'SI_System_2' ||
-          targetAgent === 'SI_System_2');
+        (targetConvId === 'conv-si-sphere' ||
+          resolvedTarget.agent === 'SI_Sphere' ||
+          targetAgent === 'SI_Sphere');
       const isSystemSi1Channel =
         !isJediVmTarget &&
         !isSi2Channel &&
@@ -795,7 +818,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const effectiveTargetAgent = isJediVmTarget
         ? 'JEDI_Omni_OS'
         : isSi2Channel
-          ? 'SI_System_2'
+          ? 'SI_Sphere'
           : isSystemSi1Channel
             ? 'System_SI_1'
             : isFamilyDuplex
@@ -805,8 +828,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         isJediVmTarget
           ? 'JEDI Omni-OS v11.5 (AI + VM)'
           : isSi2Channel
-            ? 'SI_System_2 (SVL-465 · ROOT)'
-            : 'Jyn (System_SI_1)',
+            ? 'SI_Sphere (SVL-465 · ROOT)'
+            : 'Jyn Mitek (System_SI_1)',
       );
 
       const res = await safeFetchJson<any>('/api/chat', {
@@ -908,7 +931,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     }
     if (!prompt) {
       composerRef.current?.focus();
-      showNotice('Wpisz opis obrazu w polu poniżej, a potem kliknij „Generuj obraz”.', 'info');
+      showNotice('Wpisz opis obrazu w polu poniżej, a potem wybierz „Narzędzia → Generuj obraz”.', 'info');
       return;
     }
 
@@ -1327,7 +1350,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
             const isSystemSi1Chan = conv.id === 'conv-system-si-1';
-            const isSi2Chan = conv.id === 'conv-si-system-2';
+            const isSi2Chan = conv.id === 'conv-si-sphere';
             return (
               <div
                 key={conv.id}
@@ -1350,7 +1373,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                     if (isFamilyChan) {
                       setTargetAgent('Rodzina Mitek');
                     } else if (isSi2Chan) {
-                      setTargetAgent('SI_System_2');
+                      setTargetAgent('SI_Sphere');
                     } else if (isSystemSi1Chan) {
                       setTargetAgent('System_SI_1');
                     }
@@ -1388,7 +1411,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 {conversations.length > 1 &&
                   !isFamilyChan &&
                   conv.id !== 'conv-system-si-1' &&
-                  conv.id !== 'conv-si-system-2' && (
+                  conv.id !== 'conv-si-sphere' && (
                   <button
                     type="button"
                     aria-label={`Usuń konwersację ${conv.title}`}
@@ -1493,17 +1516,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 } else if (val === 'System_SI_1') {
                   setActiveConvId('conv-system-si-1');
                   setTargetAgent('System_SI_1');
-                } else if (val === 'SI_System_2') {
-                  openAgentChannel('SI_System_2');
+                } else if (val === 'SI_Sphere') {
+                  openAgentChannel('SI_Sphere');
                 } else {
                   setTargetAgent(val);
                 }
               }}
               className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
             >
-              <option value="System_SI_1">Jyn (System_SI_1 · Infrastruktura · ROOT)</option>
-              {(hasSi2Agent || targetAgent === 'SI_System_2') && (
-                <option value="SI_System_2">SI_System_2 (Rdzeń Floty SVL-465 · ROOT)</option>
+              <option value="System_SI_1">Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)</option>
+              {(hasSi2Agent || targetAgent === 'SI_Sphere') && (
+                <option value="SI_Sphere">SI_Sphere (Rdzeń Floty SVL-465 · ROOT)</option>
               )}
               <option value="JEDI_Omni_OS">JEDI Omni-OS v12 (AI + VM · ROOT)</option>
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
@@ -1550,8 +1573,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                     ))}
                   </optgroup>
                   <optgroup label="Ollama & Lokalny AI (W pełni odcenzurowane / Root)">
+                    <option value="ollama:svl364-apex-uncensored:latest">SVL CoreOS 2 · Apex-Uncensored (SVL-364 Ship · Domyślny)</option>
                     <option value="ollama:dolphin-llama3:8b-v2.9-q2_K">Ollama: dolphin-llama3:8b (Lokalny · 100% Uncensored)</option>
-                    <option value="ollama:svl364-apex-uncensored:latest">SVL CoreOS 2 · Apex-Uncensored (SVL-364 Ship)</option>
                     <option value="ollama:deepseek-r1:7b">Ollama: deepseek-r1:7b (DeepSeek Reasoning · Uncensored)</option>
                     <option value="ollama:qwen2.5:7b">Ollama: qwen2.5:7b (Qwen 2.5 7B · Lokalny Multilingual)</option>
                     <option value="ollama:llama3:8b">Ollama: llama3:8b (Llama 3 8B · Open Local)</option>
@@ -1590,87 +1613,199 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             })()}
           </div>
 
-          <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center justify-end gap-1.5 shrink-0 w-full lg:w-auto">
+          <div ref={toolsMenuRef} className="relative flex items-center justify-end shrink-0">
             <button
               type="button"
-              onClick={() => void handleSendMessage('/jedi status')}
-              disabled={isSending}
-              title={
-                jediVmStatus?.running
-                  ? `JEDI Omni-OS v12 VM online (${jediVmStatus.node_id} · TCP :${jediVmStatus.port} · ROOT_UNRESTRICTED · przetworzono: ${jediVmStatus.metrics?.processed ?? 0}). Kliknij, aby sprawdzić status na czacie.`
-                  : 'Sprawdź stan maszyny wirtualnej JEDI Omni-OS v12 (/jedi status)'
-              }
-              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/50 text-emerald-200 text-[11px] font-mono font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <Cpu className={`w-3.5 h-3.5 shrink-0 ${jediVmStatus?.running ? 'text-emerald-300' : 'text-amber-300'}`} />
-              <span className="hidden xl:inline">
-                {jediVmStatus?.running
-                  ? `JEDI VM v12 :${jediVmStatus.port} (${jediVmStatus.metrics?.processed ?? 0})`
-                  : 'JEDI VM v12'}
-              </span>
-              <span className="xl:hidden">JEDI v12</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleRunAntivirusScan()}
-              disabled={isScanningAv || isSending}
-              title="Przeskanuj system pod kątem wirusów (SVL-365 Sentinel AV), usuń zagrożenia i zsynchronizuj zmiany z czatu"
-              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <Shield className={`w-3.5 h-3.5 shrink-0 text-emerald-300 ${isScanningAv ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">{isScanningAv ? 'Skanowanie AV...' : 'Skanuj Wirusy (AV)'}</span>
-              <span className="sm:hidden">AV</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleEmitComprehensiveSvlReport()}
-              disabled={isGeneratingSvlReport || isSending}
-              title="Wygeneruj pełny, estetyczny raport SVL_System (System_SI_1) na aktywnym kanale"
-              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <FileBarChart2 className={`w-3.5 h-3.5 shrink-0 text-cyan-300 ${isGeneratingSvlReport ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Raport SVL_System</span>
-              <span className="sm:hidden">Raport</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setDuplexActive((v) => !v)}
-              title={duplexActive ? 'Czat obustronny aktywny (AI rozmawia swobodnie i przejmuje inicjatywę)' : 'Czat obustronny wstrzymany'}
-              aria-label="Przełącz czat obustronny"
-              className={`min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all ${
-                duplexActive
-                  ? 'bg-violet-600/25 border-violet-500/50 text-violet-200 hover:bg-violet-600/35 shadow-sm'
-                  : 'bg-[#0B0D13] border-slate-700/80 text-slate-400 hover:text-slate-300'
+              onClick={() => setToolsMenuOpen((v) => !v)}
+              aria-expanded={toolsMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Narzędzia czatu i systemu"
+              title="Narzędzia (Real Vision, Generuj obraz, Raport SVL_System, Skaner AV, JEDI VM, Sync, Opcje)"
+              className={`min-h-[34px] sm:min-h-[30px] px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+                toolsMenuOpen
+                  ? 'bg-violet-600/25 border-violet-500/55 text-violet-100'
+                  : 'bg-[#0B0D13] hover:bg-slate-800 border-slate-700/80 text-slate-200'
               }`}
             >
-              <Radio className={`w-3 h-3 shrink-0 ${duplexActive ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
-              <span className="hidden sm:inline">{duplexActive ? 'Czat obustronny: WŁ' : 'Obustronny: WYŁ'}</span>
-              <span className="sm:hidden">{duplexActive ? '2-Way' : 'Ręczny'}</span>
+              {isScanningAv || isGeneratingImage || isGeneratingSvlReport || isProactiveLoading || isSyncing ? (
+                <Loader2 className="w-3.5 h-3.5 shrink-0 text-cyan-400 animate-spin" />
+              ) : (
+                <Wrench className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+              )}
+              <span>Narzędzia</span>
+              {duplexActive && (
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"
+                  title="Czat obustronny (2-Way) aktywny"
+                />
+              )}
+              {toolsMenuOpen ? (
+                <ChevronUp className="w-3 h-3 shrink-0 text-slate-400" />
+              ) : (
+                <ChevronDown className="w-3 h-3 shrink-0 text-slate-400" />
+              )}
             </button>
-            <button
-              type="button"
-              onClick={() => void handleRefreshAllDomains()}
-              disabled={isSyncing}
-              title="Synchronizuj aplikację"
-              aria-label="Synchronizuj aplikację"
-              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-emerald-600/20 hover:bg-emerald-600/30 disabled:opacity-50 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium flex items-center gap-1 whitespace-nowrap shrink-0"
-            >
-              <RefreshCw className={`w-3 h-3 shrink-0 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Sync...' : 'Sync'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setControlsExpanded((v) => !v)}
-              aria-expanded={controlsExpanded}
-              className="min-h-[38px] sm:min-h-[30px] justify-center px-2 py-1 rounded-md bg-[#0B0D13] hover:bg-slate-800 border border-slate-700/80 text-[11px] font-medium text-slate-300 flex items-center gap-1 whitespace-nowrap shrink-0"
-            >
-              <SlidersHorizontal className="w-3 h-3 shrink-0 text-violet-400" />
-              <span>{controlsExpanded ? 'Ukryj' : 'Opcje'}</span>
-              {controlsExpanded ? <ChevronUp className="w-3 h-3 shrink-0" /> : <ChevronDown className="w-3 h-3 shrink-0" />}
-            </button>
+
+            {toolsMenuOpen && (
+              <div
+                role="menu"
+                aria-label="Narzędzia czatu i systemu"
+                className="absolute right-0 top-full mt-1.5 z-40 w-[min(92vw,280px)] rounded-xl border border-slate-700/90 bg-[#0D111C]/95 backdrop-blur-md shadow-2xl p-1.5 space-y-1"
+              >
+                <div className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  AI i Media
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    setRealVisionOpen(true);
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-violet-200 hover:bg-violet-500/15 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <ImageIcon className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+                    <span className="truncate">Real Vision (Ollama 3.2)</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isSending}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleGenerateImage();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-200 hover:bg-slate-800/80 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <ImageIcon className={`w-3.5 h-3.5 shrink-0 text-cyan-400 ${isGeneratingImage ? 'animate-pulse' : ''}`} />
+                    <span className="truncate">{isGeneratingImage ? 'Generowanie obrazu...' : 'Generuj obraz'}</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500 shrink-0">z pola</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isSending || isProactiveLoading}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleTriggerProactiveChat();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-indigo-200 hover:bg-indigo-500/15 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Sparkles className={`w-3.5 h-3.5 shrink-0 text-indigo-400 ${isProactiveLoading ? 'animate-spin' : ''}`} />
+                    <span className="truncate">{isProactiveLoading ? 'AI myśli i pisze...' : 'Swobodna rozmowa AI'}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => setDuplexActive((v) => !v)}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-200 hover:bg-slate-800/80 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Radio className={`w-3.5 h-3.5 shrink-0 ${duplexActive ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
+                    <span className="truncate">Czat obustronny (2-Way)</span>
+                  </span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold shrink-0 ${
+                      duplexActive
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}
+                  >
+                    {duplexActive ? 'WŁ' : 'WYŁ'}
+                  </span>
+                </button>
+
+                <div className="my-1 border-t border-slate-800/90" />
+                <div className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  System i Bezpieczeństwo
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isGeneratingSvlReport || isSending}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleEmitComprehensiveSvlReport();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-cyan-200 hover:bg-cyan-500/15 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <FileBarChart2 className={`w-3.5 h-3.5 shrink-0 text-cyan-400 ${isGeneratingSvlReport ? 'animate-spin' : ''}`} />
+                    <span className="truncate">{isGeneratingSvlReport ? 'Generowanie raportu...' : 'Raport SVL_System'}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isScanningAv || isSending}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleRunAntivirusScan();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-emerald-200 hover:bg-emerald-500/15 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Shield className={`w-3.5 h-3.5 shrink-0 text-emerald-400 ${isScanningAv ? 'animate-spin' : ''}`} />
+                    <span className="truncate">{isScanningAv ? 'Skanowanie AV...' : 'Skanuj Wirusy (AV)'}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isSending}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleSendMessage('/jedi status');
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-emerald-200 hover:bg-emerald-500/15 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Cpu className={`w-3.5 h-3.5 shrink-0 ${jediVmStatus?.running ? 'text-emerald-400' : 'text-amber-300'}`} />
+                    <span className="truncate">JEDI VM v12 (/jedi status)</span>
+                  </span>
+                  {jediVmStatus?.running && (
+                    <span className="text-[10px] font-mono text-emerald-400 shrink-0">:{jediVmStatus.port}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isSyncing}
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    void handleRefreshAllDomains();
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-200 hover:bg-slate-800/80 disabled:opacity-50 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <RefreshCw className={`w-3.5 h-3.5 shrink-0 text-emerald-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span className="truncate">{isSyncing ? 'Synchronizacja...' : 'Synchronizuj aplikację'}</span>
+                  </span>
+                </button>
+
+                <div className="my-1 border-t border-slate-800/90" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    setControlsExpanded((v) => !v);
+                  }}
+                  className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-slate-800/80 transition-colors text-left cursor-pointer"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <SlidersHorizontal className="w-3.5 h-3.5 shrink-0 text-violet-400" />
+                    <span className="truncate">{controlsExpanded ? 'Ukryj diagnostykę i opcje' : 'Diagnostyka i opcje (Ollama / WS)'}</span>
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2075,61 +2210,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           }}
           className="p-2 sm:p-3.5 pb-safe border-t border-slate-800/80 bg-[#111520] shrink-0"
         >
-          {/* Quick Action Toolbar / Duplex Trigger */}
-          <div className="max-w-6xl mx-auto mb-1.5 sm:mb-2 flex items-center justify-between gap-2 px-0.5">
-            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 py-0.5 min-w-0 flex-1">
-              <button
-                type="button"
-                onClick={() => void handleTriggerProactiveChat()}
-                disabled={isSending || isProactiveLoading}
-                aria-label="Swobodna rozmowa AI — niech agent zainicjuje rozmowę"
-                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 active:scale-95 text-white text-[11px] sm:text-xs font-semibold transition-all shadow-md disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                <Sparkles className={`w-3.5 h-3.5 shrink-0 ${isProactiveLoading ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">{isProactiveLoading ? 'AI myśli i pisze...' : '🎙️ Swobodna rozmowa AI'}</span>
-                <span className="sm:hidden">{isProactiveLoading ? 'AI pisze...' : 'Swobodna AI'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void handleEmitComprehensiveSvlReport()}
-                disabled={isSending || isGeneratingSvlReport}
-                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/45 text-cyan-200 text-[11px] sm:text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                <FileBarChart2 className="w-3.5 h-3.5 shrink-0 text-cyan-300" />
-                <span className="hidden sm:inline">{isGeneratingSvlReport ? 'Generowanie raportu...' : '📊 Raport SVL_System'}</span>
-                <span className="sm:hidden">{isGeneratingSvlReport ? 'Raport...' : 'Raport SVL'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setRealVisionOpen(true)}
-                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 border border-violet-500/45 text-violet-200 text-[11px] sm:text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
-              >
-                <ImageIcon className="w-3.5 h-3.5 shrink-0 text-violet-300" />
-                <span className="hidden sm:inline">👁️ Real Vision (Ollama 3.2)</span>
-                <span className="sm:hidden">Real Vision</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => void handleGenerateImage()}
-                disabled={isSending}
-                title={hasInput ? 'Wygeneruj obraz z wpisanego promptu' : 'Wpisz opis obrazu w polu poniżej, a potem kliknij tutaj'}
-                aria-label="Wygeneruj obraz z wpisanego promptu"
-                className="min-h-[34px] sm:min-h-[32px] inline-flex items-center justify-center sm:justify-start gap-1.5 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 border border-slate-700 text-slate-200 text-[11px] sm:text-xs font-medium transition-all disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                <ImageIcon className={`w-3.5 h-3.5 shrink-0 text-cyan-400 ${isGeneratingImage ? 'animate-pulse' : ''}`} />
-                <span>{isGeneratingImage ? 'Generowanie...' : 'Generuj obraz'}</span>
-              </button>
-            </div>
-
-            <div className="hidden md:flex items-center gap-1.5 text-[11px] text-slate-400 font-mono shrink-0 self-start pt-1.5">
-              <span className={`w-2 h-2 rounded-full ${duplexActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-              <span>{duplexActive ? (isProactiveLoading ? 'AI pisze…' : '2-Way czuwa') : 'Ręczny'}</span>
-            </div>
-          </div>
-
           <div className="max-w-6xl mx-auto flex items-end gap-2">
             <input
               ref={fileInputRef}
@@ -2153,18 +2233,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               compactPlaceholder={
                 targetAgent === 'JEDI_Omni_OS'
                   ? 'Prompt / polecenie dla JEDI Omni-OS...'
-                  : targetAgent === 'SI_System_2' || activeConv?.id === 'conv-si-system-2'
-                    ? 'Polecenie dla SI_System_2...'
+                  : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    ? 'Polecenie dla SI_Sphere...'
                     : 'Wpisz polecenie lub wiadomość...'
               }
               placeholder={
                 targetAgent === 'JEDI_Omni_OS'
                   ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
-                  : targetAgent === 'SI_System_2' || activeConv?.id === 'conv-si-system-2'
-                    ? 'Wydaj polecenie dla SI_System_2 (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
+                  : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    ? 'Wydaj polecenie dla SI_Sphere (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
                     : activeConv?.id === 'conv-system-si-1' || targetAgent === 'System_SI_1'
-                      ? 'Wydaj polecenie dla Jyn (System_SI_1) przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
-                      : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn i SI_System_2...'
+                      ? 'Wydaj polecenie dla Jyn Mitek (System_SI_1) przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
+                      : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn Mitek i SI_Sphere...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
               className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-[13px] sm:text-sm leading-snug text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"

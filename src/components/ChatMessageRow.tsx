@@ -1,5 +1,5 @@
-import React from 'react';
-import { BellRing, CheckCircle2 } from 'lucide-react';
+import React, { useState } from 'react';
+import { BellRing, Check, CheckCircle2, ChevronDown, Copy, RefreshCw } from 'lucide-react';
 import { CANONICAL_AGENTS, DYNAMIC_AGENT_TEMPLATES, SyncableMessage, formatAgentDisplayName } from '../utils/svlLogic';
 import { SvlAvatar } from './AgentAvatar';
 import { renderFormattedContent } from './ChatContentRenderer';
@@ -57,6 +57,8 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
   onInteractiveAction,
   onNavigateTab,
 }) {
+  const [actionsExpanded, setActionsExpanded] = useState(true);
+  const [copiedMsg, setCopiedMsg] = useState(false);
   const isUser = msg.role === 'user';
   const isNotification = msg.role === 'system';
   const formattedSender = isUser ? msg.sender : formatAgentDisplayName(msg.sender);
@@ -82,7 +84,7 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
               ? agentMeta.textClass
               : formattedSender === 'JEDI Omni-OS v12' || formattedSender === 'JEDI Omni-OS v11.5' || msg.agentId === 'JEDI_Omni_OS'
                 ? 'text-emerald-300'
-                : formattedSender === 'SI_System_2' || msg.agentId === 'SI_System_2'
+                : formattedSender === 'SI_Sphere' || msg.agentId === 'SI_Sphere'
                   ? 'text-violet-300'
                   : formattedSender === 'System_SI_1' || msg.agentId === 'System_SI_1'
                     ? 'text-cyan-300'
@@ -116,14 +118,14 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
       </div>
 
       <div
-        className={`w-full min-w-0 rounded-xl p-3 sm:p-4 border shadow-md overflow-hidden ${
+        className={`w-full min-w-0 rounded-2xl p-3.5 sm:p-4 border backdrop-blur-md shadow-md overflow-hidden transition-colors ${
           isUser
-            ? 'bg-violet-950/30 border-violet-500/35 text-slate-100 max-w-full sm:max-w-2xl'
+            ? 'bg-gradient-to-br from-violet-950/45 to-[#131026]/90 border-violet-500/40 text-slate-100 max-w-full sm:max-w-2xl shadow-violet-950/20'
             : isNotification
               ? isFamilyChannel
-                ? 'max-w-full sm:max-w-4xl bg-gradient-to-br from-amber-950/45 via-[#171520] to-[#111520] border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/10'
-                : 'max-w-full sm:max-w-4xl bg-amber-950/20 border-amber-500/40 text-amber-100'
-              : 'max-w-full sm:max-w-4xl bg-[#111520] border-slate-800/90 text-slate-200'
+                ? 'max-w-full sm:max-w-4xl bg-gradient-to-br from-amber-950/45 via-[#171520]/95 to-[#111520]/95 border-amber-400/40 text-amber-50 shadow-lg shadow-amber-950/15'
+                : 'max-w-full sm:max-w-4xl bg-amber-950/25 border-amber-500/40 text-amber-100'
+              : 'max-w-full sm:max-w-4xl bg-gradient-to-br from-[#111829]/95 to-[#0B101D]/95 border-slate-700/75 text-slate-200 shadow-black/30'
         }`}
       >
         {isNotification && (
@@ -132,8 +134,8 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
               <BellRing className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {msg.sender === 'JEDI Omni-OS v12' || msg.sender === 'JEDI Omni-OS v11.5' || msg.agentId === 'JEDI_Omni_OS'
                 ? `Jądro ${msg.sender === 'JEDI Omni-OS v11.5' ? 'JEDI Omni-OS v11.5' : 'JEDI Omni-OS v12'} (ROOT · VM · AI)`
-                : msg.sender === 'SI_System_2' || msg.agentId === 'SI_System_2'
-                  ? 'Raport węzła SI_System_2 (Rdzeń Floty SVL-465 · ROOT)'
+                : msg.sender === 'SI_Sphere' || msg.agentId === 'SI_Sphere'
+                  ? 'Raport węzła SI_Sphere (Rdzeń Floty SVL-465 · ROOT)'
                   : msg.sender === 'System_SI_1' || msg.agentId === 'System_SI_1'
                     ? 'Raport węzła System_SI_1 (Infrastruktura · ROOT)'
                     : isFamilyChannel
@@ -197,41 +199,87 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
         )}
 
         {Array.isArray(msg.appliedActions) && msg.appliedActions.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-slate-800 space-y-2">
+          <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActionsExpanded((v) => !v)}
+                className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1.5 transition-colors"
+              >
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                Zapisane zmiany w SQLite (czat -{'>'} system):
-              </span>
+                <span>Wykonane kroki i akcje ({msg.appliedActions.length})</span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 transition-transform ${actionsExpanded ? 'rotate-180' : ''}`}
+                  aria-hidden="true"
+                />
+              </button>
               <button
                 type="button"
                 onClick={() => onNavigateTab('kernel')}
-                className="min-h-[32px] px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-violet-300 text-[11px] font-medium whitespace-nowrap"
+                className="min-h-[30px] px-2.5 py-1 rounded-md bg-slate-800/90 hover:bg-slate-700 text-violet-300 text-[11px] font-medium whitespace-nowrap transition-colors"
               >
                 Otwórz Jądro SVL {'&'} Sfera
               </button>
             </div>
-            <div className="space-y-1 font-mono text-[11px]">
-              {msg.appliedActions.map((act, actIdx) => (
-                <div
-                  key={`${act.entity}-${act.entityId}-${actIdx}`}
-                  className={`flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded border ${
-                    act.ok
-                      ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
-                      : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
-                  }`}
-                >
-                  <span className="font-semibold text-violet-300 break-all">
-                    {act.entity}:{act.entityId}
-                  </span>
-                  <span className="flex-1 min-w-[120px] text-slate-300 truncate">{act.summary}</span>
-                  <span className="tabular-nums text-slate-400 shrink-0">
-                    {act.revision ? `rev ${act.revision} · ` : ''}
-                    {act.ok ? 'OK' : 'ERR'}
-                  </span>
-                </div>
-              ))}
-            </div>
+            {actionsExpanded && (
+              <div className="space-y-1 font-mono text-[11px]">
+                {msg.appliedActions.map((act, actIdx) => (
+                  <div
+                    key={`${act.entity}-${act.entityId}-${actIdx}`}
+                    className={`flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border ${
+                      act.ok
+                        ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                        : 'bg-rose-950/20 border-rose-500/30 text-rose-200'
+                    }`}
+                  >
+                    <span className="font-semibold text-violet-300 break-all">
+                      {act.entity}:{act.entityId}
+                    </span>
+                    <span className="flex-1 min-w-[120px] text-slate-300 truncate">{act.summary}</span>
+                    <span className="tabular-nums text-slate-400 shrink-0">
+                      {act.revision ? `rev ${act.revision} · ` : ''}
+                      {act.ok ? 'OK' : 'ERR'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {msg.role === 'assistant' && !isNotification && (
+          <div className="mt-3 pt-2 border-t border-slate-800/60 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  void navigator.clipboard.writeText(msg.content || '');
+                } catch {
+                  // ignore
+                }
+                setCopiedMsg(true);
+                setTimeout(() => setCopiedMsg(false), 1800);
+              }}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-slate-700 hover:text-slate-200 px-2 py-1 transition-colors"
+            >
+              {copiedMsg ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedMsg ? 'Skopiowano' : 'Kopiuj'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void onInteractiveAction('action:sync', 'Synchronizacja globalna')}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-cyan-500/40 hover:text-cyan-200 px-2 py-1 transition-colors"
+            >
+              <RefreshCw className="w-3 h-3" aria-hidden="true" />
+              <span>Synchronizuj</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void onInteractiveAction('send:/status', 'Status systemu')}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-violet-500/40 hover:text-violet-200 px-2 py-1 transition-colors"
+            >
+              <span>Status systemu</span>
+            </button>
           </div>
         )}
       </div>

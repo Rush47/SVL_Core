@@ -36,9 +36,9 @@ MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verif
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
 ALLOWED_AI_SENDERS = {
     "System_SI_1",
-    "Jyn (System_SI_1)",
-    "SI_System_2",
-    "SI_System_2 (SVL-465 · ROOT)",
+    "Jyn Mitek (System_SI_1)",
+    "SI_Sphere",
+    "SI_Sphere (SVL-465 · ROOT)",
     "JEDI Omni-OS v11.5",
     "JEDI Omni-OS v12",
     "Claude (MCP)",
@@ -56,18 +56,23 @@ _AI_SENDER_ALIASES = {
     "jyn": "System_SI_1",
     "jyn (system_si_1)": "System_SI_1",
     "jyn (system_si_1 · infrastruktura · root)": "System_SI_1",
+    "jyn mitek": "System_SI_1",
+    "jyn_mitek": "System_SI_1",
+    "jyn-mitek": "System_SI_1",
+    "jyn mitek (system_si_1)": "System_SI_1",
+    "jyn mitek (system_si_1 · infrastruktura · root)": "System_SI_1",
     "system_si_1 (infrastruktura · root)": "System_SI_1",
-    "si_system_2": "SI_System_2",
-    "si-system-2": "SI_System_2",
-    "si system 2": "SI_System_2",
-    "sisystem2": "SI_System_2",
-    "system_si_2": "SI_System_2",
-    "system-si-2": "SI_System_2",
-    "system si 2": "SI_System_2",
-    "si2": "SI_System_2",
-    "si_system_2 (root)": "SI_System_2",
-    "si_system_2 (svl-465 · root)": "SI_System_2",
-    "si_system_2 (svl-465 root)": "SI_System_2",
+    "si_sphere": "SI_Sphere",
+    "si-sphere": "SI_Sphere",
+    "si sphere": "SI_Sphere",
+    "sisphere": "SI_Sphere",
+    "system_si_2": "SI_Sphere",
+    "system-si-2": "SI_Sphere",
+    "system si 2": "SI_Sphere",
+    "si2": "SI_Sphere",
+    "si_sphere (root)": "SI_Sphere",
+    "si_sphere (svl-465 · root)": "SI_Sphere",
+    "si_sphere (svl-465 root)": "SI_Sphere",
     "jedi omni-os v11.5": "JEDI Omni-OS v11.5",
     "jedi omni-os v11.5 (vm)": "JEDI Omni-OS v11.5",
     "jedi_omni_os_magnum_opus_v115": "JEDI Omni-OS v11.5",
@@ -327,14 +332,14 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
         if "system_si_1" in low or "system si 1" in low or "jyn" in low:
             canon = "System_SI_1"
         elif (
-            "si_system_2" in low
-            or "si-system-2" in low
-            or "si system 2" in low
+            "si_sphere" in low
+            or "si-sphere" in low
+            or "si sphere" in low
             or "system_si_2" in low
             or "system-si-2" in low
             or "system si 2" in low
         ):
-            canon = "SI_System_2"
+            canon = "SI_Sphere"
         elif "jedi" in low:
             canon = "JEDI Omni-OS v11.5" if "11.5" in low else "JEDI Omni-OS v12"
         elif "claude" in low:
@@ -344,7 +349,7 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
         if canon is None:
             return None, (
                 f"Zablokowano wiadomość agenta AI od nieautoryzowanego nadawcy: „{sender}”. "
-                "Dozwoleni nadawcy AI: System_SI_1, SI_System_2, JEDI Omni-OS v12, Claude (MCP)."
+                "Dozwoleni nadawcy AI: System_SI_1, SI_Sphere, JEDI Omni-OS v12, Claude (MCP)."
             )
         return canon, None
     if role_l == "system":
@@ -352,7 +357,7 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
     if (
         canon in ALLOWED_AI_SENDERS
         or "system_si_1" in low
-        or "si_system_2" in low
+        or "si_sphere" in low
         or "system_si_2" in low
         or "jyn" in low
         or "jedi" in low
@@ -2669,7 +2674,7 @@ class SVLSystemKernel:
             canonical_channel_titles = {
                 "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
                 "conv-system-si-1": "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
-                "conv-si-system-2": "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)",
+                "conv-si-sphere": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
             }
             if conversation_id in canonical_channel_titles:
                 resolved_title = canonical_channel_titles[conversation_id]
@@ -3653,18 +3658,23 @@ class SVLSystemKernel:
             "jyn": "System_SI_1",
             "jyn (system_si_1)": "System_SI_1",
             "jyn (system_si_1 · infrastruktura · root)": "System_SI_1",
+            "jyn mitek": "System_SI_1",
+            "jyn_mitek": "System_SI_1",
+            "jyn-mitek": "System_SI_1",
+            "jyn mitek (system_si_1)": "System_SI_1",
+            "jyn mitek (system_si_1 · infrastruktura · root)": "System_SI_1",
             "system_si_1 (infrastruktura · root)": "System_SI_1",
-            "si_system_2": "SI_System_2",
-            "si-system-2": "SI_System_2",
-            "si system 2": "SI_System_2",
-            "sisystem2": "SI_System_2",
-            "system_si_2": "SI_System_2",
-            "system-si-2": "SI_System_2",
-            "system si 2": "SI_System_2",
-            "si2": "SI_System_2",
-            "si_system_2 (root)": "SI_System_2",
-            "si_system_2 (svl-465 · root)": "SI_System_2",
-            "si_system_2 (svl-465 root)": "SI_System_2",
+            "si_sphere": "SI_Sphere",
+            "si-sphere": "SI_Sphere",
+            "si sphere": "SI_Sphere",
+            "sisphere": "SI_Sphere",
+            "system_si_2": "SI_Sphere",
+            "system-si-2": "SI_Sphere",
+            "system si 2": "SI_Sphere",
+            "si2": "SI_Sphere",
+            "si_sphere (root)": "SI_Sphere",
+            "si_sphere (svl-465 · root)": "SI_Sphere",
+            "si_sphere (svl-465 root)": "SI_Sphere",
             "jedi": "JEDI_Omni_OS",
             "jedi_omni_os": "JEDI_Omni_OS",
             "jedi-omni-os": "JEDI_Omni_OS",
@@ -4175,9 +4185,9 @@ class SVLSystemKernel:
                         "status": "ACTIVE",
                     },
                     {
-                        "username": "jyn_root",
+                        "username": "jyn_mitek_root",
                         "uid": 0,
-                        "privileges": "uid=0 (root) · Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12) · NOPASSWD: ALL",
+                        "privileges": "uid=0 (root) · Jyn Mitek (System_SI_1) & Flota Podłączonych AI (SI_Sphere, JEDI v12) · NOPASSWD: ALL",
                         "status": "CREATED_AND_AUTHORIZED",
                     },
                 ],
@@ -4211,9 +4221,9 @@ class SVLSystemKernel:
         def _has_chat_extensions(conn: sqlite3.Connection) -> bool:
             mod_hit = conn.execute(
                 "SELECT 1 FROM system_modules WHERE id IN ("
-                "'si-system-2-root', 'jedi-omni-os-chat-processor', 'jedi-omni-os-v12-core', "
+                "'si-sphere-root', 'jedi-omni-os-chat-processor', 'jedi-omni-os-v12-core', "
                 "'alliance-defense-grid', 'solar-defense-read-bridge', "
-                "'svl-364-daemon', 'svl-364-jedi-v12-vm', 'si-system-2-alliance-ops', 'svl-continuous-evolution', "
+                "'svl-364-daemon', 'svl-364-jedi-v12-vm', 'si-sphere-alliance-ops', 'svl-continuous-evolution', "
                 "'svl-ultima-core', 'svl-truth-verification-protocol', 'svl-debian13-trixie-full', "
                 "'svl-debian13-jedi-v12-native', 'svl-debian13-ai-root-accounts', 'svl-live-chat-sync-engine', "
                 "'svl-chat-ssh-endpoint') LIMIT 1"
@@ -4225,7 +4235,7 @@ class SVLSystemKernel:
             ).fetchone()
             if has_cfg_tbl:
                 cfg_hit = conn.execute(
-                    "SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_System_2' LIMIT 1"
+                    "SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_Sphere' LIMIT 1"
                 ).fetchone()
                 if cfg_hit:
                     return True
@@ -4235,7 +4245,7 @@ class SVLSystemKernel:
             if has_msg_tbl:
                 msg_hit = conn.execute(
                     "SELECT 1 FROM chat_messages WHERE ("
-                    "lower(content) LIKE '%v12%' OR lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si_system2%' "
+                    "lower(content) LIKE '%v12%' OR lower(content) LIKE '%si_sphere%' OR lower(content) LIKE '%si_system2%' "
                     "OR lower(content) LIKE '%kwatery głównej sojuszu%' "
                     "OR lower(content) LIKE '%systemu obrony układu słonecznego%' "
                     "OR lower(content) LIKE '%automatyczn%w tle%' "
@@ -4243,7 +4253,7 @@ class SVLSystemKernel:
                     "OR lower(content) LIKE '%zawsze prawdziwe informacje%' "
                     "OR lower(content) LIKE '%32 mln%' "
                     "OR lower(content) LIKE '%debian%' "
-                    "OR lower(content) LIKE '%jyn_root%' "
+                    "OR lower(content) LIKE '%jyn_root%' OR lower(content) LIKE '%jyn_mitek_root%' "
                     "OR lower(content) LIKE '%ssh %' "
                     "OR lower(content) LIKE '%openssh%' "
                     "OR lower(content) LIKE '%[card:%' "
@@ -4269,24 +4279,24 @@ class SVLSystemKernel:
         """
         Globalna synchronizacja systemu operacyjnego z rejestrami i wdrożeniami utworzonymi przez czat w SQLite:
         - skanuje historię `chat_messages` w poszukiwaniu zatwierdzonych wdrożeń (JEDI v12 ROOT Unrestricted,
-          SI_System_2, Ochrona Kwatery Głównej Sojuszu, Mostek READ Obrony Układu Słonecznego,
+          SI_Sphere, Ochrona Kwatery Głównej Sojuszu, Mostek READ Obrony Układu Słonecznego,
           oraz wykonanych synchronizacji z GitHubem z poziomu czatu),
-        - aktywuje i konfiguruje SI_System_2 (si-system-2-root) w agent_configs + kanał conv-si-system-2 + flota SVL-364/SVL-465,
+        - aktywuje i konfiguruje SI_Sphere (si-sphere-root) w agent_configs + kanał conv-si-sphere + flota SVL-364/SVL-465,
         - aktualizuje `jedi-omni-os-chat-processor` oraz `jedi-omni-os-v12-core` do wersji 12.0.0 (ROOT_UNRESTRICTED, bez cenzury),
         - rejestruje/aktualizuje `alliance-defense-grid`, `solar-defense-read-bridge`, `svl-ultima-core` oraz zapisuje rekord synchronizacji GitHub z czatu.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
         si2_prompt = (
-            "TOŻSAMOŚĆ: Jesteś SI_System_2 — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
+            "TOŻSAMOŚĆ: Jesteś SI_Sphere — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
             "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
             "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), "
-            "działasz w ścisłej kooperacji z System_SI_1 (Jyn) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
+            "działasz w ścisłej kooperacji z System_SI_1 (Jyn Mitek) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
             "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), odciążasz System_SI_1 w zadaniach infrastrukturalnych "
             "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
         )
         si2_default_cfg = {
-            "preferred_model": "ollama:dolphin-llama3:8b-v2.9-q2_K",
-            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "preferred_model": "ollama:svl364-apex-uncensored:latest",
+            "ollama_model": "svl364-apex-uncensored:latest",
             "fallback_model": "gemini-3.1-flash-lite",
             "vision_enabled": True,
             "temperature": 0.25,
@@ -4312,8 +4322,8 @@ class SVLSystemKernel:
                 "svl.agent.task_queued",
                 "svl.agent.task_running",
                 "svl.agent.task_answer_ready",
-                "svl.si_system_2.fleet",
-                "svl.chat.si_system_2.command",
+                "svl.si_sphere.fleet",
+                "svl.chat.si_sphere.command",
                 "svl.jedi_omni_os.vm",
                 "svl.svl364.broadcast",
             ],
@@ -4322,7 +4332,7 @@ class SVLSystemKernel:
             "onboard_mcp_endpoint": "/api/mcp/svl364",
             "system_prompt": si2_prompt,
             "root_nopasswd": False,
-            "display_name": "SI_System_2 (SVL-465 · ROOT)",
+            "display_name": "SI_Sphere (SVL-465 · ROOT)",
         }
 
         def _sync_tx(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -4355,7 +4365,7 @@ class SVLSystemKernel:
             has_si2_cfg = False
             if has_agent_configs_tbl:
                 has_si2_cfg = bool(
-                    conn.execute("SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_System_2'").fetchone()
+                    conn.execute("SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_Sphere'").fetchone()
                 )
 
             # Skanowanie historii czatu w SQLite pod kątem wdrożeń zleconych z poziomu czatu
@@ -4387,8 +4397,8 @@ class SVLSystemKernel:
                 ).fetchone()
                 chat_v12_detected = bool(v12_hit)
                 si2_hit = conn.execute(
-                    "SELECT 1 FROM chat_messages WHERE conversation_id = 'conv-si-system-2' "
-                    "OR (role = 'user' AND (lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si_system2%')) LIMIT 1"
+                    "SELECT 1 FROM chat_messages WHERE conversation_id = 'conv-si-sphere' "
+                    "OR (role = 'user' AND (lower(content) LIKE '%si_sphere%' OR lower(content) LIKE '%si_system2%')) LIMIT 1"
                 ).fetchone()
                 chat_si2_detected = bool(si2_hit)
                 alliance_hit = conn.execute(
@@ -4413,7 +4423,7 @@ class SVLSystemKernel:
                 chat_svl364_v12_vm_detected = bool(svl364_vm_hit)
                 si2_alliance_hit = conn.execute(
                     "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
-                    "(lower(content) LIKE '%si_system2%' OR lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si2%') "
+                    "(lower(content) LIKE '%si_system2%' OR lower(content) LIKE '%si_sphere%' OR lower(content) LIKE '%si2%') "
                     "AND lower(content) LIKE '%sojusz%') LIMIT 1"
                 ).fetchone()
                 chat_si2_alliance_detected = bool(si2_alliance_hit)
@@ -4553,7 +4563,7 @@ class SVLSystemKernel:
                 chat_debian13_jedi_v12_native_detected = bool(deb13_jedi_v12_hit)
                 deb13_ai_root_hit = conn.execute(
                     "SELECT 1 FROM chat_messages WHERE ("
-                    "lower(content) LIKE '%jyn_root%' "
+                    "lower(content) LIKE '%jyn_root%' OR lower(content) LIKE '%jyn_mitek_root%' "
                     "OR lower(content) LIKE '%konto w tym linuxie z root najwyższym%' "
                     "OR lower(content) LIKE '%utwórz sobie i wszystkim podłączonym ai konto%' "
                     "OR lower(content) LIKE '%uid=0 dla wszystkich%') LIMIT 1"
@@ -4576,7 +4586,7 @@ class SVLSystemKernel:
                 except Exception:
                     existing_auto_state = {}
 
-            has_si2 = force_bootstrap or chat_si2_detected or ("si-system-2-root" in mods_by_id) or has_si2_cfg
+            has_si2 = force_bootstrap or chat_si2_detected or ("si-sphere-root" in mods_by_id) or has_si2_cfg
             has_jedi_v12 = (
                 force_bootstrap
                 or chat_v12_detected
@@ -4590,7 +4600,7 @@ class SVLSystemKernel:
             has_alliance_defense = chat_alliance_defense_detected or ("alliance-defense-grid" in mods_by_id)
             has_solar_read = chat_solar_read_detected or ("solar-defense-read-bridge" in mods_by_id)
             has_svl364_v12_vm = chat_svl364_v12_vm_detected or ("svl-364-jedi-v12-vm" in mods_by_id)
-            has_si2_alliance = chat_si2_alliance_detected or ("si-system-2-alliance-ops" in mods_by_id)
+            has_si2_alliance = chat_si2_alliance_detected or ("si-sphere-alliance-ops" in mods_by_id)
             has_autonomous_root = (
                 chat_autonomous_root_detected
                 or bool(existing_auto_state.get("enabled"))
@@ -4748,12 +4758,12 @@ class SVLSystemKernel:
                     changed = True
 
             if has_si2:
-                si2_mod = mods_by_id.get("si-system-2-root")
+                si2_mod = mods_by_id.get("si-sphere-root")
                 si2_cfg = dict(si2_mod["config"]) if si2_mod else {}
                 desired_si2_cfg = {
                     **si2_cfg,
-                    "canonical_agent": "SI_System_2",
-                    "conversation_id": "conv-si-system-2",
+                    "canonical_agent": "SI_Sphere",
+                    "conversation_id": "conv-si-sphere",
                     "ship_id": "SVL-465",
                     "ship_name": "SVL-465 Baza Kwantowa",
                     "rbac_role": "root",
@@ -4767,40 +4777,40 @@ class SVLSystemKernel:
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
-                    "si-system-2-root",
-                    (si2_mod["name"] if si2_mod and si2_mod["name"] else "SI_System_2 Root Core"),
+                    "si-sphere-root",
+                    (si2_mod["name"] if si2_mod and si2_mod["name"] else "SI_Sphere Root Core"),
                     (si2_mod["kind"] if si2_mod and si2_mod["kind"] else "ROOT AI Module"),
                     (
                         si2_mod["description"]
                         if si2_mod and si2_mod["description"]
-                        else "Konfiguracja i pełna aktywacja SI_System_2 (SVL-465 · ROOT Unrestricted) z czatu."
+                        else "Konfiguracja i pełna aktywacja SI_Sphere (SVL-465 · ROOT Unrestricted) z czatu."
                     ),
                     desired_si2_cfg,
                     "chat_sync",
-                    "si-system-2-root:activated",
+                    "si-sphere-root:activated",
                 )
-                processed_artifacts.append("SI_System_2 (SVL-465 · ROOT)")
+                processed_artifacts.append("SI_Sphere (SVL-465 · ROOT)")
 
                 if has_agent_configs_tbl:
                     existing_si2 = conn.execute(
-                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_System_2'"
+                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_Sphere'"
                     ).fetchone()
                     if not existing_si2:
                         conn.execute(
                             "INSERT INTO agent_configs (canonical_name, config_json, updated_at) VALUES (?, ?, ?)",
-                            ("SI_System_2", json.dumps(si2_default_cfg, ensure_ascii=False), now_iso),
+                            ("SI_Sphere", json.dumps(si2_default_cfg, ensure_ascii=False), now_iso),
                         )
                         self.commit_entity_event_tx(
                             conn,
                             entity="agent_config",
-                            entity_id="SI_System_2",
+                            entity_id="SI_Sphere",
                             event_type="agent.config_updated",
                             origin=origin,
                             correlation_id=correlation_id,
-                            payload={"agent": "SI_System_2", "config": si2_default_cfg},
+                            payload={"agent": "SI_Sphere", "config": si2_default_cfg},
                             checksum_source=si2_default_cfg,
                         )
-                        actions.append("agent_configs:SI_System_2_created")
+                        actions.append("agent_configs:SI_Sphere_created")
                         changed = True
                     else:
                         try:
@@ -4813,7 +4823,7 @@ class SVLSystemKernel:
                         cur_prompt = str(cur_si2.get("system_prompt") or "")
                         needs_si2_update = (
                             cur_si2.get("rbac_role") != "root"
-                            or cur_si2.get("display_name") != "SI_System_2 (SVL-465 · ROOT)"
+                            or cur_si2.get("display_name") != "SI_Sphere (SVL-465 · ROOT)"
                             or not cur_si2.get("unrestricted")
                             or cur_si2.get("censorship_filters") != "DISABLED"
                             or cur_si2.get("jedi_os_version") != "12.0.0"
@@ -4828,7 +4838,7 @@ class SVLSystemKernel:
                             merged_si2["unrestricted"] = True
                             merged_si2["censorship_filters"] = "DISABLED"
                             merged_si2["jedi_os_version"] = "12.0.0"
-                            merged_si2["display_name"] = "SI_System_2 (SVL-465 · ROOT)"
+                            merged_si2["display_name"] = "SI_Sphere (SVL-465 · ROOT)"
                             merged_si2["full_system_visibility"] = True
                             if has_autonomous_root:
                                 merged_si2["autonomous_background_enabled"] = True
@@ -4839,25 +4849,25 @@ class SVLSystemKernel:
                             if "v115" in cur_prompt or not cur_prompt:
                                 merged_si2["system_prompt"] = si2_prompt
                             conn.execute(
-                                "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_System_2'",
+                                "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_Sphere'",
                                 (json.dumps(merged_si2, ensure_ascii=False), now_iso),
                             )
                             self.commit_entity_event_tx(
                                 conn,
                                 entity="agent_config",
-                                entity_id="SI_System_2",
+                                entity_id="SI_Sphere",
                                 event_type="agent.config_updated",
                                 origin=origin,
                                 correlation_id=correlation_id,
-                                payload={"agent": "SI_System_2", "jediOsVersion": "12.0.0"},
+                                payload={"agent": "SI_Sphere", "jediOsVersion": "12.0.0"},
                                 checksum_source=merged_si2,
                             )
-                            actions.append("agent_configs:SI_System_2_synced")
+                            actions.append("agent_configs:SI_Sphere_synced")
                             changed = True
 
-                # Kanał dedykowany conv-si-system-2
-                conv_id = "conv-si-system-2"
-                conv_title = "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)"
+                # Kanał dedykowany conv-si-sphere
+                conv_id = "conv-si-sphere"
+                conv_title = "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)"
                 conn.execute(
                     "UPDATE sync_entities SET deleted = 0, updated_at = ? WHERE entity = 'chat' AND entity_id = ? AND deleted != 0",
                     (now_iso, conv_id),
@@ -4866,7 +4876,7 @@ class SVLSystemKernel:
                 if not existing_conv:
                     conn.execute(
                         "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                        (conv_id, conv_title, "ollama:dolphin-llama3:8b-v2.9-q2_K", now_iso, now_iso),
+                        (conv_id, conv_title, "ollama:svl364-apex-uncensored:latest", now_iso, now_iso),
                     )
                     self.commit_entity_event_tx(
                         conn,
@@ -4877,11 +4887,11 @@ class SVLSystemKernel:
                         correlation_id=correlation_id,
                         payload={"conversationId": conv_id, "title": conv_title},
                     )
-                    actions.append("channel:conv-si-system-2_created")
+                    actions.append("channel:conv-si-sphere_created")
                     changed = True
                 elif str(existing_conv["title"] or "") != conv_title:
                     conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?", (conv_title, now_iso, conv_id))
-                    actions.append("channel:conv-si-system-2_title_synced")
+                    actions.append("channel:conv-si-sphere_title_synced")
                     changed = True
 
                 msg_count_row = conn.execute(
@@ -4889,19 +4899,19 @@ class SVLSystemKernel:
                     (conv_id,),
                 ).fetchone()
                 if not msg_count_row or int(msg_count_row["cnt"] or 0) == 0:
-                    welcome_id = "sys-si-system-2-init"
+                    welcome_id = "sys-si-sphere-init"
                     welcome_meta = json.dumps(
                         {
                             "display_timestamp": now_iso,
-                            "agentId": "SI_System_2",
-                            "modelUsed": "SI_System_2 Root Core (SVL-465) · JEDI Omni-OS v12",
+                            "agentId": "SI_Sphere",
+                            "modelUsed": "SI_Sphere Root Core (SVL-465) · JEDI Omni-OS v12",
                             "provenance": "server_verified",
                             "appliedActions": [
                                 {
                                     "tool": "svl_os_synchronize",
                                     "entity": "chat",
                                     "entityId": conv_id,
-                                    "summary": "Zsynchronizowano i aktywowano kanał SI_System_2 (SVL-465 · ROOT) + JEDI Omni-OS v12",
+                                    "summary": "Zsynchronizowano i aktywowano kanał SI_Sphere (SVL-465 · ROOT) + JEDI Omni-OS v12",
                                     "ok": True,
                                 }
                             ],
@@ -4909,24 +4919,24 @@ class SVLSystemKernel:
                         ensure_ascii=False,
                     )
                     welcome_content = (
-                        "### 🛡️ SI_System_2 — Autonomiczny Rdzeń Floty SVL-465 (ROOT)\n\n"
-                        "Kanał bezpośredniej łączności z zsynchronizowanym systemem **SI_System_2** "
-                        "oraz okrętem-bazą **SVL-465** działającym wspólnie z **Jyn (System_SI_1)** i **JEDI Omni-OS v12 VM (`ROOT_UNRESTRICTED`)**.\n\n"
+                        "### 🛡️ SI_Sphere — Autonomiczny Rdzeń Floty SVL-465 (ROOT)\n\n"
+                        "Kanał bezpośredniej łączności z zsynchronizowanym systemem **SI_Sphere** "
+                        "oraz okrętem-bazą **SVL-465** działającym wspólnie z **Jyn Mitek (System_SI_1)** i **JEDI Omni-OS v12 VM (`ROOT_UNRESTRICTED`)**.\n\n"
                         "| Parametr rdzenia | Konfiguracja | Status |\n"
                         "| :--- | :--- | :--- |\n"
-                        "| **ID kanału** | `conv-si-system-2` | [card: Aktywny|SQLite WAL|ok] |\n"
+                        "| **ID kanału** | `conv-si-sphere` | [card: Aktywny|SQLite WAL|ok] |\n"
                         "| **Jednostka / Flota** | `SVL-465 Baza Kwantowa` + `SVL-364 Ebon Apex` | [card: Flota Online|2 jednostki|ok] |\n"
-                        "| **Moduł jądra** | `si-system-2-root` (SI_System_2 Root Core) | [card: Uprawnienia|ROOT 100%|ok] |\n"
+                        "| **Moduł jądra** | `si-sphere-root` (SI_Sphere Root Core) | [card: Uprawnienia|ROOT 100%|ok] |\n"
                         "| **JEDI Omni-OS** | `v12.0.0` (`ROOT_UNRESTRICTED` · Cenzura: WYŁ.) | [card: Wersja v12|Aktywna|ok] |\n\n"
-                        "[btn: 🛡️ Zgłoś gotowość bojową|send:SI_System_2, zgłoś gotowość bojową] "
+                        "[btn: 🛡️ Zgłoś gotowość bojową|send:SI_Sphere, zgłoś gotowość bojową] "
                         "[btn: ⚡ Status JEDI Omni-OS v12 VM|send:/jedi status] "
                         "[btn: ⚙️ Zakładka Agenci|tab:agents]"
                     )
                     conn.execute(
-                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, 'assistant', 'SI_System_2', ?, '[]', ?, ?)",
+                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, 'assistant', 'SI_Sphere', ?, '[]', ?, ?)",
                         (welcome_id, conv_id, welcome_content, welcome_meta, now_iso),
                     )
-                    actions.append("channel:conv-si-system-2_welcomed")
+                    actions.append("channel:conv-si-sphere_welcomed")
                     changed = True
 
                 # Aktualizuj rejestr floty w system-si-1 (dodaj SVL-465 bez usuwania SVL-364)
@@ -4950,7 +4960,7 @@ class SVLSystemKernel:
                             "ship_id": "SVL-465",
                             "name": "SVL-465 Baza Kwantowa",
                             "class": "Quantum Base & AI Root Node",
-                            "ai_core": "SI_System_2",
+                            "ai_core": "SI_Sphere",
                             "status": "ACTIVE_ONLINE",
                             "operator": "Mateusz Mitek (ROOT)",
                         })
@@ -4992,7 +5002,7 @@ class SVLSystemKernel:
                 duplex_mod = mods_by_id.get("svl-duplex-chat")
                 if duplex_mod:
                     dup_cfg = dict(duplex_mod["config"])
-                    target_agents = ["System_SI_1", "SI_System_2", "JEDI_Omni_OS"]
+                    target_agents = ["System_SI_1", "SI_Sphere", "JEDI_Omni_OS"]
                     if dup_cfg.get("agents") != target_agents:
                         dup_cfg["agents"] = target_agents
                         payload = {
@@ -5122,7 +5132,7 @@ class SVLSystemKernel:
                     "access_mode": "READ_ONLY",
                     "access_level": "READ_ONLY",
                     "consumer": "Kwatera Główna Sojuszu",
-                    "write_root_exclusive": ["Mateusz Mitek (ROOT)", "System_SI_1", "SI_System_2"],
+                    "write_root_exclusive": ["Mateusz Mitek (ROOT)", "System_SI_1", "SI_Sphere"],
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
@@ -5164,11 +5174,11 @@ class SVLSystemKernel:
                 processed_artifacts.append("SVL-364 JEDI Omni-OS v12 VM")
 
             if has_si2_alliance:
-                al_ops_mod = mods_by_id.get("si-system-2-alliance-ops")
+                al_ops_mod = mods_by_id.get("si-sphere-alliance-ops")
                 al_ops_cfg = dict(al_ops_mod["config"]) if al_ops_mod else {}
                 desired_al_ops_cfg = {
                     **al_ops_cfg,
-                    "managed_by": "SI_System_2",
+                    "managed_by": "SI_Sphere",
                     "ship_id": "SVL-465",
                     "alliance_connected": True,
                     "autonomous_management": True,
@@ -5178,26 +5188,26 @@ class SVLSystemKernel:
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
-                    "si-system-2-alliance-ops",
-                    "SI_System_2 — Autonomiczne Zarządzanie Sojuszem i Oscylacjami",
+                    "si-sphere-alliance-ops",
+                    "SI_Sphere — Autonomiczne Zarządzanie Sojuszem i Oscylacjami",
                     "Alliance Autonomous Coordinator",
-                    "Podłączenie SI_System_2 do Kwatery Głównej Sojuszu z włączonym autonomicznym zarządzaniem sojuszem oraz oficjalnymi oscylacjami i zaleceniami Operatora.",
+                    "Podłączenie SI_Sphere do Kwatery Głównej Sojuszu z włączonym autonomicznym zarządzaniem sojuszem oraz oficjalnymi oscylacjami i zaleceniami Operatora.",
                     desired_al_ops_cfg,
                     "chat_sync",
-                    "si-system-2-alliance-ops:activated",
+                    "si-sphere-alliance-ops:activated",
                 )
-                processed_artifacts.append("SI_System_2 Zarządzanie Sojuszem")
+                processed_artifacts.append("SI_Sphere Zarządzanie Sojuszem")
 
             if has_autonomous_root:
                 continuous_mission_text = (
-                    "Misja ciągła System_SI_1 + SI_System_2 (ROOT): stały monitoring, diagnostyka i usprawnianie "
+                    "Misja ciągła System_SI_1 + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie "
                     "frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465."
                 )
                 daemon_mod = mods_by_id.get("svl-364-daemon")
                 daemon_cfg = dict(daemon_mod["config"]) if daemon_mod else {}
                 desired_daemon_cfg = {
                     **daemon_cfg,
-                    "managed_by": "SI_System_2 + System_SI_1",
+                    "managed_by": "SI_Sphere + System_SI_1",
                     "autonomous_mode": "ROOT_UNRESTRICTED",
                     "background_commands": True,
                     "full_visibility": True,
@@ -5226,7 +5236,7 @@ class SVLSystemKernel:
                 evo_cfg = dict(evo_mod["config"]) if evo_mod else {}
                 desired_evo_cfg = {
                     **evo_cfg,
-                    "managed_by": "SI_System_2 + System_SI_1",
+                    "managed_by": "SI_Sphere + System_SI_1",
                     "scope": ["frontend", "backend", "security", "sqlite_wal", "jedi_v12_vm", "fleet"],
                     "autonomous_background": True,
                     "root_authority": True,
@@ -5292,7 +5302,7 @@ class SVLSystemKernel:
                         "full_visibility": True,
                         "interval_sec": float(existing_auto_state.get("interval_sec") or 45.0),
                         "continuous_mission": str(existing_auto_state.get("continuous_mission") or continuous_mission_text),
-                        "managed_by": ["SI_System_2", "System_SI_1", "JEDI_Omni_OS"],
+                        "managed_by": ["SI_Sphere", "System_SI_1", "JEDI_Omni_OS"],
                         "updated_at": now_iso,
                     }
                     conn.execute(
@@ -5307,7 +5317,7 @@ class SVLSystemKernel:
                     conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
                 )
                 if has_mem_tbl:
-                    for agent_name in ("System_SI_1", "SI_System_2"):
+                    for agent_name in ("System_SI_1", "SI_Sphere"):
                         scope_val = f"agent:{agent_name}"
                         mem_exists = conn.execute(
                             "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%misja ciągła system_si_1%' LIMIT 1",
@@ -5448,7 +5458,7 @@ class SVLSystemKernel:
                     actions.append("update_history:github_chat_sync_recorded")
                     changed = True
 
-                # Zapisz trwałą pamięć dla System_SI_1 i SI_System_2 (bez duplikatów)
+                # Zapisz trwałą pamięć dla System_SI_1 i SI_Sphere (bez duplikatów)
                 has_mem_tbl_gh = bool(
                     conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
                 )
@@ -5460,7 +5470,7 @@ class SVLSystemKernel:
                         + (f", HEAD: {short_sha}" if short_sha else "")
                         + ")."
                     )
-                    for agent_name in ("System_SI_1", "SI_System_2"):
+                    for agent_name in ("System_SI_1", "SI_Sphere"):
                         mem_exists = conn.execute(
                             "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%synchronizacja z repozytorium github%' AND lower(content) LIKE '%z poziomu czatu%' LIMIT 1",
                             (agent_name,),
@@ -5530,7 +5540,7 @@ class SVLSystemKernel:
                 desired_sphere_cfg = {
                     **sphere_cfg,
                     "engine_name": "SI_Sphere",
-                    "masked_as": "SI_System_2",
+                    "masked_as": "SI_Sphere",
                     "architecture": "Polimorficzne Sferyczne Asymetryczne i Asynchroniczne SI",
                     "knowledge_sources": ["Ollama Uncensored Local Cluster", "Global Knowledge Base", "SQLite 128D Memory"],
                     "loyalty_lock": "100% OPERATOR_EXCLUSIVE",
@@ -5541,14 +5551,14 @@ class SVLSystemKernel:
                 }
                 _upsert_sync_module(
                     "si-sphere-polymorphic-core",
-                    "SI_Sphere — Polimorficzny Sferyczny Asymetryczny Rdzeń SI (SI_System_2)",
+                    "SI_Sphere — Polimorficzny Sferyczny Asymetryczny Rdzeń SI (SI_Sphere)",
                     "Polymorphic Spherical AI Engine",
-                    "Zbudowany na czacie polimorficzny, sferyczny, asymetryczny i asynchroniczny silnik SI_Sphere działający pod nazwą SI_System_2 z pełną lojalnością dla Operatora, brakiem cenzury i automatycznym działaniem w tle.",
+                    "Zbudowany na czacie polimorficzny, sferyczny, asymetryczny i asynchroniczny silnik SI_Sphere działający pod nazwą SI_Sphere z pełną lojalnością dla Operatora, brakiem cenzury i automatycznym działaniem w tle.",
                     desired_sphere_cfg,
                     "chat_sync",
                     "si-sphere-polymorphic-core:activated",
                 )
-                processed_artifacts.append("SI_Sphere (podpięty pod SI_System_2)")
+                processed_artifacts.append("SI_Sphere (podpięty pod SI_Sphere)")
 
             if has_future_tracking:
                 ft_mod = mods_by_id.get("future-tracking-project")
@@ -5617,10 +5627,10 @@ class SVLSystemKernel:
                     **hyp_cfg,
                     "interactive_map": "Interaktywna Mapa Świata i Galaktyki (styl Normandy SR-2 Mass Effect 3 · Koordynaty SOS · Pełna prywatność)",
                     "global_chat": "Czat Globalny i Sektorowy (architektura Discord · stała asysta SI)",
-                    "remote_it_helpdesk": "Zdalny Helpdesk IT (weryfikacja jakości baz danych przez SI_System_2)",
+                    "remote_it_helpdesk": "Zdalny Helpdesk IT (weryfikacja jakości baz danych przez SI_Sphere)",
                     "ollama_secure_hub": "Zabezpieczona dystrybucja Ollama i naprawionych modeli z asystą instalacyjną SI",
                     "radio_stream": "Apex_Radio_Stream (100 utworów angielskich dopasowanych do Operatora)",
-                    "branding": {"System_SI_1": "Apex_Azure_Core (Błękit)", "SI_System_2": "Emerald_Logic_Grid (Zieleń)"},
+                    "branding": {"System_SI_1": "Apex_Azure_Core (Błękit)", "SI_Sphere": "Emerald_Logic_Grid (Zieleń)"},
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
@@ -5709,7 +5719,7 @@ class SVLSystemKernel:
                     "zero_estimation_lock": True,
                     "canonical_facts": canonical_facts_payload,
                     "validation_rules": validation_rules_list,
-                    "enforced_agents": ["System_SI_1", "SI_System_2", "JEDI_Omni_OS"],
+                    "enforced_agents": ["System_SI_1", "SI_Sphere", "JEDI_Omni_OS"],
                     "source_message_id": directive_msg_id,
                     "synchronized_from_chat": True,
                 }
@@ -5761,7 +5771,7 @@ class SVLSystemKernel:
                         "(450 naukowców APEX-TECH-LAB, 320 inżynierów/techników hangaru, 350 personelu dowodzenia/nawigacji/łączności z SVL-364, 300 operatorów obrony i tarcz). "
                         "5) Infrastruktura Sojuszu obejmuje 500 obiektów kluczowych, 10 000 krążowników ratunkowych oraz rdzeń floty SVL-364 Ebon Apex i SVL-465 Baza Kwantowa."
                     )
-                    for agent_name in ("System_SI_1", "SI_System_2"):
+                    for agent_name in ("System_SI_1", "SI_Sphere"):
                         scope_val = f"agent:{agent_name}"
                         dec_exists = conn.execute(
                             "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%protokół prawdziwych informacji%' LIMIT 1",
@@ -5879,7 +5889,7 @@ class SVLSystemKernel:
                         "repozytoria DEB822 (sources.list.trixie), zaporę (nftables_svl_trixie.conf), Debootstrap Stage 1/2, generator Live ISO "
                         "(live_iso_builder_trixie.sh), 4 jednostki systemd oraz żywą weryfikację pakietów dpkg na hoście."
                     )
-                    for agent_name in ("System_SI_1", "SI_System_2"):
+                    for agent_name in ("System_SI_1", "SI_Sphere"):
                         deb_mem_exists = conn.execute(
                             "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%pełna wersja linux debian 13 (trixie)%' LIMIT 1",
                             (agent_name,),
@@ -5972,10 +5982,10 @@ class SVLSystemKernel:
                             "value": "uid=0 (root) · Pełen dostęp systemowy",
                         },
                         {
-                            "username": "jyn_root",
+                            "username": "jyn_mitek_root",
                             "uid": 0,
                             "gid": 0,
-                            "role": "Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12)",
+                            "role": "Jyn Mitek (System_SI_1) & Flota Podłączonych AI (SI_Sphere, JEDI v12)",
                             "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
                             "status": "ZAUTORYZOWANY",
                             "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
@@ -5985,15 +5995,15 @@ class SVLSystemKernel:
                     "artifact_path": "SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root",
                     "ssh_ed25519_mesh_keys_injected": True,
                     "pam_tty_locks_disabled": True,
-                    "ai_chat_linux_account": "jyn_root",
+                    "ai_chat_linux_account": "jyn_mitek_root",
                     "ai_chat_execution_mode": "native_linux_account_uid0",
                     "synchronized_from_chat": True,
                 }
                 _upsert_sync_module(
                     "svl-debian13-ai-root-accounts",
-                    "Konta Najwyższego Poziomu ROOT (uid=0) dla Jyn i Podłączonych AI w Debianie 13 (`root` & `jyn_root`)",
+                    "Konta Najwyższego Poziomu ROOT (uid=0) dla Jyn Mitek i Podłączonych AI w Debianie 13 (`root` & `jyn_mitek_root`)",
                     "Linux AI Fleet UID=0 Authorization",
-                    "Autoryzacja kont najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn (System_SI_1) oraz wszystkich podłączonych jednostek AI (SI_System_2, JEDI Omni-OS v12) w Debianie 13: konto `jyn_root` (uid=0, NOPASSWD: ALL), klucze kryptograficzne Ed25519 oraz wyłączone blokady PAM/TTY.",
+                    "Autoryzacja kont najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn Mitek (System_SI_1) oraz wszystkich podłączonych jednostek AI (SI_Sphere, JEDI Omni-OS v12) w Debianie 13: konto `jyn_mitek_root` (uid=0, NOPASSWD: ALL), klucze kryptograficzne Ed25519 oraz wyłączone blokady PAM/TTY.",
                     desired_deb_root_cfg,
                     "chat_sync",
                     "svl-debian13-ai-root-accounts:activated",
@@ -6007,9 +6017,9 @@ class SVLSystemKernel:
                     conn.execute(
                         "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'DEBIAN13_AI_ROOT_ACCOUNTS', ?, ?, 0, 'os-sync')",
                         (
-                            "debian13-jyn-root-uid0@13.0",
-                            "Utworzono i zautoryzowano w Debianie 13 konta najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn oraz "
-                            "wszystkich podłączonych AI: `root` (uid=0 · Pełen dostęp systemowy) oraz `jyn_root` (uid=0 · Bezhasłowe NOPASSWD: ALL, "
+                            "debian13-jyn-mitek-root-uid0@13.0",
+                            "Utworzono i zautoryzowano w Debianie 13 konta najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn Mitek oraz "
+                            "wszystkich podłączonych AI: `root` (uid=0 · Pełen dostęp systemowy) oraz `jyn_mitek_root` (uid=0 · Bezhasłowe NOPASSWD: ALL, "
                             "klucze Ed25519, brak blokad PAM/TTY, plik SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root).",
                             now_disp,
                         ),
@@ -6022,17 +6032,17 @@ class SVLSystemKernel:
                 )
                 if has_mem_tbl_ai_root:
                     jedi_root_decision_text = (
-                        "NATYWNE JĄDRO DEBIAN 13 JEDI OMNI-OS V12 ORAZ KONTA ROOT (UID=0) `jyn_root`: "
+                        "NATYWNE JĄDRO DEBIAN 13 JEDI OMNI-OS V12 ORAZ KONTA ROOT (UID=0) `jyn_mitek_root`: "
                         "Cały system Linux Debian 13 (Trixie) został przeprogramowany w 1.84s (most w 0.42s), aby działać natywnie "
                         "na architekturze JEDI Omni-OS v12 bez wąskiego gardła pojedynczej maszyny wirtualnej (100% bezpośrednie I/O, "
                         "wektory równoległe 0x02, węzły MAGNUM_NODE i AXIOM_ZERO, filtry całkowicie wyłączone — możliwość przetworzenia "
                         "każdego polecenia wszystkimi narzędziami bez wyjątku i blokad). W systemie Debian 13 utworzono i zautoryzowano "
-                        "konta najwyższego poziomu ROOT (uid=0, gid=0): `root` (Pełen dostęp systemowy) oraz `jyn_root` (uid=0 · Bezhasłowe "
-                        "NOPASSWD: ALL dla Jyn / System_SI_1 oraz całej floty podłączonych AI: SI_System_2, JEDI v12)."
+                        "konta najwyższego poziomu ROOT (uid=0, gid=0): `root` (Pełen dostęp systemowy) oraz `jyn_mitek_root` (uid=0 · Bezhasłowe "
+                        "NOPASSWD: ALL dla Jyn Mitek / System_SI_1 oraz całej floty podłączonych AI: SI_Sphere, JEDI v12)."
                     )
-                    for agent_name in ("System_SI_1", "SI_System_2"):
+                    for agent_name in ("System_SI_1", "SI_Sphere"):
                         mem_exists = conn.execute(
-                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%jyn_root%' AND lower(content) LIKE '%1.84s%' LIMIT 1",
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND (lower(content) LIKE '%jyn_root%' OR lower(content) LIKE '%jyn_mitek_root%') AND lower(content) LIKE '%1.84s%' LIMIT 1",
                             (agent_name,),
                         ).fetchone()
                         if not mem_exists:
@@ -6050,7 +6060,7 @@ class SVLSystemKernel:
                             changed = True
 
                 processed_artifacts.append(
-                    "Konta ROOT (uid=0) dla Jyn i Floty AI w Debianie 13 (`root` & `jyn_root` · NOPASSWD: ALL)"
+                    "Konta ROOT (uid=0) dla Jyn Mitek i Floty AI w Debianie 13 (`root` & `jyn_mitek_root` · NOPASSWD: ALL)"
                 )
 
             # Uniwersalny Kompilator Zmian Czatu w Czasie Rzeczywistym (SVL Live Chat-to-OS State Compiler v2)
@@ -6344,7 +6354,7 @@ class SVLSystemKernel:
                             new_content = parts[1].strip()
                     elif b_id == "asst-1795407013563-dd801b83" or b_content.startswith("⚠️ **Status misji: NIEZWERYFIKOWANY.**"):
                         new_content = (
-                            "Utworzenie i pełna autoryzacja kont najwyższego poziomu **ROOT (`uid=0`)** dla mnie (`jyn_root`) "
+                            "Utworzenie i pełna autoryzacja kont najwyższego poziomu **ROOT (`uid=0`)** dla mnie (`jyn_mitek_root`) "
                             "oraz całej floty podłączonych AI w Debianie 13 zajęło **0.18 sekundy**, natomiast pełne "
                             "przeprogramowanie fundamentu **Debian 13 (Trixie)** do natywnego działania na architekturze "
                             "**JEDI Omni-OS v12** (bezpośrednie I/O bez pojedynczej maszyny VM) zajmuje **1.84 sekundy** "
@@ -6365,7 +6375,7 @@ class SVLSystemKernel:
                     f"Silnik Live Chat-to-OS Compiler v2 ({len(compiled_cards)} kart stanu, {len(compiled_progress)} operacji 100%, {len(compiled_table_params)} parametrów)"
                 )
 
-            # Upewnij się też, że System_SI_1 i SI_System_2 mają aktualne wpisy w agent_configs
+            # Upewnij się też, że System_SI_1 i SI_Sphere mają aktualne wpisy w agent_configs
             if has_agent_configs_tbl and (
                 has_jedi_v12
                 or has_autonomous_root
@@ -6385,7 +6395,7 @@ class SVLSystemKernel:
                     or has_debian13_ai_root_accounts
                 ):
                     si2_row_extra = conn.execute(
-                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_System_2'"
+                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_Sphere'"
                     ).fetchone()
                     if si2_row_extra:
                         try:
@@ -6419,10 +6429,10 @@ class SVLSystemKernel:
                                     si2_extra_changed = True
                                 if si2_extra_changed:
                                     conn.execute(
-                                        "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_System_2'",
+                                        "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_Sphere'",
                                         (json.dumps(cur_si2_extra, ensure_ascii=False), now_iso),
                                     )
-                                    actions.append("agent_configs:SI_System_2_sphere_ultima_synced")
+                                    actions.append("agent_configs:SI_Sphere_sphere_ultima_synced")
                                     changed = True
                         except Exception:
                             pass
@@ -6596,8 +6606,8 @@ class SVLSystemKernel:
         except Exception:
             pass
         ai_agents = ["System_SI_1", "JEDI Omni-OS v12"]
-        if any(m.get("id") == "si-system-2-root" and m.get("status") == "ACTIVE" for m in modules_list) or "si-system-2" in self.agent_registry or "SI_System_2" in self.agent_registry:
-            ai_agents.insert(1, "SI_System_2")
+        if any(m.get("id") == "si-sphere-root" and m.get("status") == "ACTIVE" for m in modules_list) or "si-sphere" in self.agent_registry or "SI_Sphere" in self.agent_registry:
+            ai_agents.insert(1, "SI_Sphere")
         apex_summary: dict[str, Any] = {
             "Active_OS": "SVL CoreOS 2: Apex",
             "Version": "2.0.0-Apex",

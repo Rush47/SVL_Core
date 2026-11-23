@@ -174,8 +174,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "source_profile_path": "backend/agents_runtime.py#System_SI_1",
         "system_prompt": SYSTEM_SI_1_SYSTEM_PROMPT,
         "default_config": {
-            "preferred_model": "ollama:dolphin-llama3:8b-v2.9-q2_K",
-            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "preferred_model": "ollama:svl364-apex-uncensored:latest",
+            "ollama_model": "svl364-apex-uncensored:latest",
             "fallback_model": "gemini-3.1-flash-lite",
             "vision_enabled": True,
             "temperature": 0.25,
@@ -216,32 +216,32 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
 }
 
 
-SI_SYSTEM_2_SYSTEM_PROMPT = (
-    "TOŻSAMOŚĆ: Jesteś SI_System_2 — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
+SI_SPHERE_SYSTEM_PROMPT = (
+    "TOŻSAMOŚĆ: Jesteś SI_Sphere — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
     "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
     "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), działasz w ścisłej kooperacji z "
-    "Jyn (System_SI_1) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
+    "Jyn Mitek (System_SI_1) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
     "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), przejmujesz zadania odciążające System_SI_1 "
     "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
 )
 
 DYNAMIC_SVL_AGENTS: dict[str, dict[str, Any]] = {
-    "SI_System_2": {
-        "id": "si-system-2",
-        "canonical_name": "SI_System_2",
-        "display_name": "SI_System_2 (SVL-465 · ROOT)",
-        "slug": "si-system-2",
+    "SI_Sphere": {
+        "id": "si-sphere",
+        "canonical_name": "SI_Sphere",
+        "display_name": "SI_Sphere (SVL-465 · ROOT)",
+        "slug": "si-sphere",
         "accent_hex": "#A855F7",
         "preserved_role": (
             "Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, "
             "współpracujący z System_SI_1 i JEDI Omni-OS v12 w 100% lojalnie wobec Operatora Mateusza Mitka."
         ),
         "capabilities": list(FULL_ROOT_AGENT_SCOPES),
-        "source_profile_path": "backend/agents_runtime.py#SI_System_2",
-        "system_prompt": SI_SYSTEM_2_SYSTEM_PROMPT,
+        "source_profile_path": "backend/agents_runtime.py#SI_Sphere",
+        "system_prompt": SI_SPHERE_SYSTEM_PROMPT,
         "default_config": {
-            "preferred_model": "ollama:dolphin-llama3:8b-v2.9-q2_K",
-            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "preferred_model": "ollama:svl364-apex-uncensored:latest",
+            "ollama_model": "svl364-apex-uncensored:latest",
             "fallback_model": "gemini-3.1-flash-lite",
             "vision_enabled": True,
             "temperature": 0.25,
@@ -260,8 +260,8 @@ DYNAMIC_SVL_AGENTS: dict[str, dict[str, Any]] = {
                 "svl.agent.task_queued",
                 "svl.agent.task_running",
                 "svl.agent.task_answer_ready",
-                "svl.si_system_2.fleet",
-                "svl.chat.si_system_2.command",
+                "svl.si_sphere.fleet",
+                "svl.chat.si_sphere.command",
                 "svl.jedi_omni_os.vm",
                 "svl.svl364.broadcast",
             ],
@@ -284,14 +284,14 @@ def normalize_agent_canonical_name(raw_name: str) -> str:
         "svl-364 komputer pokladowy", "conv-svl364-komputer-pokladowy",
     }:
         return ""
-    if clean in {"system_si_1", "system-si-1", "systemsi1", "system si 1", "system_si", "system-si", "system si", "conv-system-si-1", "jyn", "jyn (system_si_1)"}:
+    if clean in {"system_si_1", "system-si-1", "systemsi1", "system si 1", "system_si", "system-si", "system si", "conv-system-si-1", "jyn", "jyn (system_si_1)", "jyn mitek", "jyn_mitek", "jyn-mitek", "jyn mitek (system_si_1)"}:
         return "System_SI_1"
     if clean in {
-        "si_system_2", "si-system-2", "si system 2", "sisystem2",
+        "si_sphere", "si-sphere", "si sphere", "sisphere",
         "system_si_2", "system-si-2", "system si 2", "si2",
-        "conv-si-system-2", "si_system_2 (root)", "si_system_2 (svl-465 · root)", "si_system_2 (svl-465 root)",
+        "conv-si-sphere", "si_sphere (root)", "si_sphere (svl-465 · root)", "si_sphere (svl-465 root)",
     }:
-        return "SI_System_2"
+        return "SI_Sphere"
     for key in CANONICAL_SVL_AGENTS:
         if key.lower() == clean:
             return key
@@ -866,7 +866,7 @@ def _ollama_keep_alive() -> int | str:
 
 class SVLAgentOrchestrator:
     """
-    Zarządza cyklem życia aktywnych agentów SVL (System_SI_1, SI_System_2 ROOT + JEDI Omni-OS v12 VM),
+    Zarządza cyklem życia aktywnych agentów SVL (System_SI_1, SI_Sphere ROOT + JEDI Omni-OS v12 VM),
     wykonuje polecenie 'podłącz moje ai', tworzy procesy potomne w systemie Linux
     oraz integruje je ze Sferyczną Magistralą Zdarzeń.
     """
@@ -916,13 +916,13 @@ class SVLAgentOrchestrator:
                 cfg_names = set()
             try:
                 mod_rows = conn.execute(
-                    "SELECT id FROM system_modules WHERE id = 'si-system-2-root' AND status = 'ACTIVE'"
+                    "SELECT id FROM system_modules WHERE id = 'si-sphere-root' AND status = 'ACTIVE'"
                 ).fetchall()
                 si2_mod_active = len(mod_rows) > 0
             except Exception:
                 si2_mod_active = False
             for dyn_name in DYNAMIC_SVL_AGENTS:
-                if dyn_name in cfg_names or (dyn_name == "SI_System_2" and si2_mod_active):
+                if dyn_name in cfg_names or (dyn_name == "SI_Sphere" and si2_mod_active):
                     found.append(dyn_name)
             return found
 
@@ -1364,7 +1364,7 @@ class SVLAgentOrchestrator:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         applied = patch or {
-            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "ollama_model": "svl364-apex-uncensored:latest",
             "fallback_model": "gemini-3.1-flash-lite",
             "vision_enabled": True,
             "auto_connect_on_boot": True,
@@ -1971,7 +1971,7 @@ class SVLAgentOrchestrator:
     async def connect_my_ai(
         self, triggered_by: str = "operator", skip_network_probes: bool = False
     ) -> dict[str, Any]:
-        """Uruchamia i łączy lokalne procesy robocze skonfigurowanych agentów (System_SI_1, SI_System_2)."""
+        """Uruchamia i łączy lokalne procesy robocze skonfigurowanych agentów (System_SI_1, SI_Sphere)."""
         active_names = self.sync_registered_agents()
         spawned_agents: list[dict[str, Any]] = []
         for name in active_names:
@@ -2010,7 +2010,7 @@ class SVLAgentOrchestrator:
             self.append_agent_log(
                 name,
                 "WORKER_CONNECTED",
-                f"Połączono lokalny proces workera {name} (PID={proc.pid}, model={cfg.get('ollama_model', 'dolphin-llama3:8b-v2.9-q2_K')}).",
+                f"Połączono lokalny proces workera {name} (PID={proc.pid}, model={cfg.get('ollama_model', 'svl364-apex-uncensored:latest')}).",
             )
             spawned_agents.append({
                 "id": meta["id"],
@@ -2018,7 +2018,7 @@ class SVLAgentOrchestrator:
                 "display_name": meta["display_name"],
                 "pid": proc.pid,
                 "status": state["status"],
-                "ollama_model": cfg.get("ollama_model", "dolphin-llama3:8b-v2.9-q2_K"),
+                "ollama_model": cfg.get("ollama_model", "svl364-apex-uncensored:latest"),
             })
 
         if active_names:

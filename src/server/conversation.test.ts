@@ -99,17 +99,17 @@ test('web search trigger ignores casual Polish words teraz, dzisiaj, wiadomość
   assert.equal(isWebSearchRequest('Wyszukaj w internecie najnowsze wiadomości ze świata'), true);
 });
 
-test('toAgentPerspective handles SI_System_2 and JEDI Omni-OS v12 labels cleanly', () => {
+test('toAgentPerspective handles SI_Sphere and JEDI Omni-OS v12 labels cleanly', () => {
   const turns: DialogueTurn[] = [
     op('Synchronizuj flotę'),
-    { role: 'assistant', sender: 'SI_System_2', content: 'Rdzeń SVL-465 aktywowany.' },
+    { role: 'assistant', sender: 'SI_Sphere', content: 'Rdzeń SVL-465 aktywowany.' },
     jedi('JEDI Omni-OS v12 potwierdza gotowość generatywną.'),
   ];
-  assert.deepEqual(toAgentPerspective(turns, 'SI_System_2'), [
+  assert.deepEqual(toAgentPerspective(turns, 'SI_Sphere'), [
     { role: 'user', content: '[Mateusz (Operator)]: Synchronizuj flotę' },
     { role: 'assistant', content: 'Rdzeń SVL-465 aktywowany.' },
     { role: 'user', content: '[JEDI Omni-OS v12]: JEDI Omni-OS v12 potwierdza gotowość generatywną.' },
   ]);
-  assert.equal(parsePredictedSpeaker('SI_System_2: gotowe'), 'SI_System_2');
+  assert.equal(parsePredictedSpeaker('SI_Sphere: gotowe'), 'SI_Sphere');
 });
 

@@ -1,6 +1,6 @@
-# SVL Python OS v5.6 — Centrum Dowodzenia Statkiem SVL-364 Ebon Apex & Infrastruktura Floty
+# SVL Python OS v5.6 (CoreOS 2: Apex) — Centrum Dowodzenia SVL-364 & Infrastruktura Floty
 
-**SVL Python OS** to zintegrowane środowisko operacyjne łączące **Python 3 Kernel (`SVLSystemKernel`)**, **Długotrwałą Pamięć Semantyczną 128D (`BinaryHyperspaceKernel` + SQLite WAL)**, **lokalną Ollamę (`127.0.0.1:11434`, jeśli zainstalowana)**, **Centrum Dowodzenia Statkiem Kosmicznym `SVL-364 Ebon Apex`** (z holograficzną mapą w stylu Mass Effect CIC) oraz **Moduł Infrastruktury Floty, Placówek, Botaniki Hydroponicznej i Badań z ETA**.
+**SVL Python OS** to zintegrowane środowisko operacyjne łączące **Python 3 Kernel (`SVLSystemKernel`)**, **autonomicznego demona tła (`AutonomousAIDaemon`)**, **Długotrwałą Pamięć Semantyczną 128D (`BinaryHyperspaceKernel` + SQLite WAL)**, **lokalną lub statkową Ollamę (`127.0.0.1:11434`)**, **odokowany profil jądra Debian 13 Trixie (Bare-Metal Standalone)**, **Centrum Dowodzenia Statkiem `SVL-364 Ebon Apex`** oraz **GUI Apex-Glass** z dwukierunkową synchronizacją w czasie rzeczywistym (`/ws/svl` + SSE `/api/events` + `LiveRepoSync`).
 
 Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `XAI_API_KEY`. Gdy klucza nie ma albo API zawiedzie, system przełącza się na **darmową lokalną Ollamę**, a następnie opcjonalnie na Gemini. Szczegóły: [deploy/AI_ENGINES.md](deploy/AI_ENGINES.md).
 
@@ -9,7 +9,7 @@ Czat używa **Grok (API xAI)** jako głównego silnika, gdy w `.env` ustawiono `
 ## Spis Dokumentacji Systemowej (`/docs`)
 
 1. **[01. Architektura SVL_System i Baza SQLite WAL](docs/01_ARCHITEKTURA_SVL_SYSTEM.md)**
-   - Dwustronna synchronizacja w czasie rzeczywistym (`/ws/svl`), niskie opóźnienia i cache metadanych.
+   - Dwustronna synchronizacja w czasie rzeczywistym (`/ws/svl` + SSE `/api/events`), `LiveRepoSync`, tryb autonomiczny w tle i cache metadanych.
    - Matematyczne jądro topologiczne `TopologicalInfinityEngine` oraz `WithoutNlpHarmonicEngine`.
 2. **[02. Obsada AI (Bielik & Maya) oraz Pamięć Długotrwała 128D](docs/02_OBSADA_AI_I_PAMIEC_DLUGOTRWALA.md)**
    - Kanoniczna obsada: **Mateusz Mitek (Operator)**, **Bielik** (procesor poleceń, ROOT) oraz **Maya** (AI statku SVL-364, powiadomienia na kanale „wszyscy”).

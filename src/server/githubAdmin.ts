@@ -31,7 +31,18 @@ export function setGitHubLogger(fn: GitHubLogger): void {
 }
 
 export function getGitHubToken(): string {
-  return String(process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim();
+  const direct = String(process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '').trim();
+  if (direct) return direct;
+  const tokenFile = String(process.env.GITHUB_TOKEN_FILE || '').trim();
+  if (tokenFile) {
+    try {
+      const fromFile = fsSync.readFileSync(tokenFile, 'utf8').trim();
+      if (fromFile) return fromFile;
+    } catch {
+      // ignore missing/unreadable token file
+    }
+  }
+  return '';
 }
 
 export function tokenKind(token: string): 'classic' | 'fine_grained' | 'other' | 'none' {
@@ -1115,14 +1126,49 @@ export async function gitSync(
   ) => {
     logger(ok ? 'INFO' : 'WARN', `GitHub ${action}: ${summary}`);
     const currentStatus = await gitSyncStatus(projectDir, false);
+    const resolvedSha = extra.commitSha || currentStatus.headFull || currentStatus.head || '';
+    const pushedFiles = extra.pushedFiles || [];
+    const pulledFiles = extra.pulledFiles || [];
+    if (ok && (action === 'pull' || action === 'push' || action === 'sync') && currentStatus.isRepo) {
+      const ledger = readRestSyncLedger(projectDir, branch);
+      const nowIso = new Date().toISOString();
+      ledger.branch = branch;
+      if (resolvedSha) {
+        ledger.lastSyncedHeadSha = resolvedSha;
+        ledger.lastCommitSha = resolvedSha;
+      }
+      ledger.lastPushedFiles = pushedFiles;
+      ledger.lastPulledFiles = pulledFiles;
+      ledger.lastSyncAt = nowIso;
+      if (pushedFiles.length > 0 || pulledFiles.length > 0) {
+        ledger.history.push({
+          id: `sync-${Date.now().toString(36)}`,
+          action,
+          commitSha: resolvedSha,
+          shortSha: resolvedSha.slice(0, 7),
+          previousHead: (extra.previousHead || '').slice(0, 7),
+          pushedFiles,
+          pulledFiles,
+          message: String(message || 'SVL: synchronizacja obustronna').slice(0, 160),
+          timestamp: nowIso,
+        });
+        ledger.history = ledger.history.slice(-15);
+      }
+      writeRestSyncLedger(projectDir, ledger);
+      currentStatus.lastPushedFiles = ledger.lastPushedFiles;
+      currentStatus.lastPulledFiles = ledger.lastPulledFiles;
+      currentStatus.lastCommitSha = resolvedSha || ledger.lastCommitSha || null;
+      currentStatus.lastSyncAt = ledger.lastSyncAt;
+      currentStatus.syncHistory = ledger.history;
+    }
     return {
       ok,
       action,
       summary,
       status: currentStatus,
-      pushedFiles: extra.pushedFiles || [],
-      pulledFiles: extra.pulledFiles || [],
-      commitSha: extra.commitSha || currentStatus.headFull || currentStatus.head,
+      pushedFiles,
+      pulledFiles,
+      commitSha: resolvedSha,
       previousHead: extra.previousHead,
     };
   };

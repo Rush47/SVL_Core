@@ -7,7 +7,7 @@ System obsługuje **wyłącznie** repozytorium `Rush47/SVL_Core`. Inne repozytor
 
 1. GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)**.
 2. Zakresy: `repo`, `workflow`; dla pełnej administracji także `admin:repo_hook` i `delete_repo`.
-3. Wpisz token w pliku **`.env`** na serwerze (wzór w `.env.example`) i uruchom aplikację ponownie:
+3. Wpisz token w pliku **`.env`** na serwerze (`GITHUB_TOKEN` lub `GH_TOKEN`, wzór w `.env.example`) albo wskaż ścieżkę w `GITHUB_TOKEN_FILE`, a następnie uruchom aplikację ponownie:
 
 ```bash
 GITHUB_TOKEN="ghp_…"
@@ -15,7 +15,7 @@ SVL_GITHUB_SYNC_BRANCH="main"
 SVL_GITHUB_AUTOSYNC_SEC="0"   # np. 300 = synchronizacja obustronna co 5 minut
 ```
 
-Token zostaje na serwerze: nie trafia do przeglądarki, argumentów procesów, `.git/config` ani logów.
+Token zostaje na serwerze: nie trafia do przeglądarki, argumentów procesów, `.git/config` ani logów. Każda udana synchronizacja (`local_git` oraz `github_rest_api`) zapisuje historię plików i powiadamia szynę `LiveRepoSync`, dzięki czemu zmiany są od razu widoczne w GUI.
 
 ## Synchronizacja obustronna (katalog projektu ↔ GitHub)
 

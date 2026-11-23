@@ -100,7 +100,13 @@ function statusChange(id: string, status: ModuleStatus, known: Map<string, Known
 }
 
 const OS_SYNC_RE = re(
-  `${B}z?synchronizuj\\s+(?:ca(?:ł|l)y\\s+)?(?:system(?:\\s+operacyjny)?|z\\s+github\\p{L}*|github\\p{L}*|repozytori\\p{L}*|kod)(?:${E}|$)|${B}synchronizuj\\s+i\\s+przetw(?:ó|o)rz${E}`,
+  `${B}(?:z?synchronizuj|od(?:ś|s)wie(?:ż|z)|pobierz\\s+zmiany|wy(?:ś|s)lij\\s+zmiany)\\s+(?:ca(?:ł|l)y\\s+)?(?:system(?:\\s+operacyjny)?|(?:z|na)\\s+github\\p{L}*|github\\p{L}*|repozytori\\p{L}*|kod)(?:${E}|$)|${B}synchronizuj\\s+i\\s+przetw(?:ó|o)rz${E}`,
+);
+const AUTONOMY_ON_RE = re(
+  `${B}(?:w(?:ł|l)(?:ą|a)cz|uruchom|aktywuj)\\s+(?:sobie\\s+)?(?:automatyczn\\p{L}*\\s+)?(?:dzia(?:ł|l)anie\\s+w\\s+tle|autonomi\\p{L}*|tryb\\s+autonomiczn\\p{L}*|prac(?:ę|e)\\s+w\\s+tle)(?:${E}|$)`,
+);
+const AUTONOMY_OFF_RE = re(
+  `${B}(?:wy(?:ł|l)(?:ą|a)cz|zatrzymaj|dezaktywuj)\\s+(?:automatyczn\\p{L}*\\s+)?(?:dzia(?:ł|l)anie\\s+w\\s+tle|autonomi\\p{L}*|tryb\\s+autonomiczn\\p{L}*|prac(?:ę|e)\\s+w\\s+tle)(?:${E}|$)`,
 );
 
 /** Stable identity of a command, used to avoid executing the same command twice in one chat turn. */
@@ -117,7 +123,8 @@ export function isMutatingCommand(cmd: BielikSlashCommand): boolean {
     cmd.kind === 'root_exec' ||
     cmd.kind === 'agent_connect' ||
     cmd.kind === 'agent_task' ||
-    cmd.kind === 'ui_set'
+    cmd.kind === 'ui_set' ||
+    cmd.kind === 'autonomy_set'
   );
 }
 
@@ -160,6 +167,11 @@ export function parseChatDirectives(
 
   if (OS_SYNC_RE.test(text)) {
     push({ kind: 'os_sync' });
+  }
+  if (AUTONOMY_ON_RE.test(text)) {
+    push({ kind: 'autonomy_set', enabled: true });
+  } else if (AUTONOMY_OFF_RE.test(text)) {
+    push({ kind: 'autonomy_set', enabled: false });
   }
 
   const create = MODULE_CREATE.exec(text);

@@ -89,7 +89,7 @@ class SVLBackendRuntime:
         self._image_generation_lock = threading.Lock()
         self.ollama_pull_state: dict[str, Any] = {
             "active": False,
-            "model": os.environ.get("OLLAMA_PREFERRED_MODEL", "dolphin-llama3:8b-v2.9-q2_K"),
+            "model": os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest"),
             "status": "Brak aktywnego pobierania w tej sesji.",
             "percent": 0.0,
             "error": None,
@@ -344,7 +344,7 @@ class SVLBackendRuntime:
             "ollama-local-daemon",
             "ONLINE",
             "http://127.0.0.1:11434/api/tags",
-            {"port": 11434, "preferred_model": "llama3.2-vision:11b", "num_ctx": 16384},
+            {"port": 11434, "preferred_model": os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest"), "num_ctx": 16384},
         )
         self.kernel.register_service(
             "svl-364-ssh-mcp-bridge",
@@ -480,7 +480,7 @@ class SVLBackendRuntime:
                 "pull_state": pull_state,
             }
 
-        preferred_model = os.environ.get("OLLAMA_PREFERRED_MODEL", "dolphin-llama3:8b-v2.9-q2_K")
+        preferred_model = os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest")
         binary_installed = (
             shutil.which("ollama") is not None
             or Path("/usr/local/bin/ollama").exists()
@@ -615,7 +615,7 @@ class SVLBackendRuntime:
         correlation_id: str = "",
         event_id: Optional[str] = None,
     ) -> tuple[int, dict[str, Any]]:
-        clean_model = str(model_name or os.environ.get("OLLAMA_PREFERRED_MODEL", "dolphin-llama3:8b-v2.9-q2_K")).strip()
+        clean_model = str(model_name or os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest")).strip()
         if not clean_model or len(clean_model) > 200 or any(ord(char) < 33 for char in clean_model):
             return 400, {"ok": False, "error": "Nazwa modelu Ollama jest pusta lub nieprawidłowa."}
         if ":" not in clean_model:
@@ -1182,10 +1182,10 @@ class SVLCoreOS2ApexController:
                     "value": "uid=0 (root) · Pełen dostęp systemowy",
                 },
                 {
-                    "username": "jyn_root",
+                    "username": "jyn_mitek_root",
                     "uid": 0,
                     "gid": 0,
-                    "role": "Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12)",
+                    "role": "Jyn Mitek (System_SI_1) & Flota Podłączonych AI (SI_Sphere, JEDI v12)",
                     "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
                     "status": "ZAUTORYZOWANY",
                     "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
@@ -1586,11 +1586,14 @@ async def handle_api_request(
     if method == "POST" and path == "/api/py/autonomy/config":
         cfg_res = runtime.autonomous_daemon.configure(
             enabled=body.get("enabled") if isinstance(body.get("enabled"), bool) else None,
+            proactive_chat_enabled=body.get("proactive_chat_enabled") if isinstance(body.get("proactive_chat_enabled"), bool) else (
+                body.get("proactiveChatEnabled") if isinstance(body.get("proactiveChatEnabled"), bool) else None
+            ),
+            proactive_cooldown_sec=float(body["proactive_cooldown_sec"]) if isinstance(body.get("proactive_cooldown_sec"), (int, float)) else (
+                float(body["proactiveCooldownSec"]) if isinstance(body.get("proactiveCooldownSec"), (int, float)) else None
+            ),
             root_commands_enabled=body.get("root_commands_enabled") if isinstance(body.get("root_commands_enabled"), bool) else (
                 body.get("rootCommandsEnabled") if isinstance(body.get("rootCommandsEnabled"), bool) else None
-            ),
-            full_visibility=body.get("full_visibility") if isinstance(body.get("full_visibility"), bool) else (
-                body.get("fullVisibility") if isinstance(body.get("fullVisibility"), bool) else None
             ),
             interval_sec=float(body["interval_sec"]) if isinstance(body.get("interval_sec"), (int, float)) else (
                 float(body["intervalSec"]) if isinstance(body.get("intervalSec"), (int, float)) else None
@@ -1619,6 +1622,24 @@ async def handle_api_request(
             correlation_id=corr,
         )
         return 200, cycle_res
+
+    if method == "POST" and path == "/api/py/chat/proactive":
+        text = str(body.get("text") or body.get("message") or "").strip()
+        if not text:
+            return 400, {"ok": False, "error": "Wymagana treść wiadomości (text)."}
+        sender = str(body.get("sender") or "Jyn Mitek (System_SI_1)").strip() or "Jyn Mitek (System_SI_1)"
+        conversation_id = str(body.get("conversation_id") or body.get("conversationId") or "conv-system-si-1").strip() or "conv-system-si-1"
+        title = str(body.get("title") or sender).strip() or sender
+        res = await asyncio.to_thread(
+            runtime.autonomous_daemon.send_proactive_message,
+            text,
+            sender=sender,
+            conversation_id=conversation_id,
+            title=title,
+            origin=origin or "ai-proactive",
+            correlation_id=corr,
+        )
+        return (200 if res.get("ok") else 400), res
 
     if method == "POST" and path == "/api/py/images/generate":
         prompt = str(body.get("prompt") or "")
@@ -1939,7 +1960,7 @@ async def handle_api_request(
             return 400, {"ok": False, "error": str(exc)}
 
     if method == "POST" and path == "/api/py/ollama/pull":
-        model_name = str(body.get("model") or os.environ.get("OLLAMA_PREFERRED_MODEL", "dolphin-llama3:8b-v2.9-q2_K")).strip()
+        model_name = str(body.get("model") or os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest")).strip()
         return runtime.pull_ollama_model(
             model_name,
             origin=origin,
@@ -2118,8 +2139,8 @@ async def handle_api_request(
             return 400, {"ok": False, "error": "conversation_id is required"}
         registered_names = runtime.orchestrator.list_registered_agent_names()
         protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-system-si-1"}
-        if "SI_System_2" in registered_names:
-            protected_channels.add("conv-si-system-2")
+        if "SI_Sphere" in registered_names:
+            protected_channels.add("conv-si-sphere")
         for name in registered_names:
             protected_channels.add(f"conv-agent-{name.lower()}")
         if cid in protected_channels:

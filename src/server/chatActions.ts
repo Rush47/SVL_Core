@@ -51,7 +51,12 @@ const SYSTEM_COMMAND_WORDS = [
   'motyw\\p{L}*', 'kolor\\p{L}*', 'akcent\\p{L}*', 'wygl[ąa]d\\p{L}*', 'design\\p{L}*', 'gui', 'ui',
   'interfejs\\p{L}*', 'panel\\p{L}*', 'zak[łl]adk\\p{L}*', 'ekran\\p{L}*', 'tryb\\p{L}*', 'w[łl][ąa]cz\\p{L}*',
   'wy[łl][ąa]cz\\p{L}*', 'prze[łl][ąa]cz\\p{L}*', 'aktywuj', 'dezaktywuj', 'poka[żz]\\p{L}*', 'zapisz',
-  'wyślij', 'wyslij', 'zleć', 'zlec',
+  'wyślij', 'wyslij', 'zleć', 'zlec', 'github\\p{L}*', 'repozytori\\p{L}*', 'commit\\p{L}*', 'branch\\p{L}*',
+  'autonom\\p{L}*', 'tle', 'tło', 'tlo',
+  'zbuduj', 'przetw[óo]rz', 'odblokuj', 'zablokuj', 'zrestartuj', 'restart\\p{L}*', 'wyczy[śs][ćc]',
+  'przeanalizuj', 'analiz\\p{L}*', 'zr[óo]b', 'zobacz', 'wylistuj', 'edytuj', 'napisz',
+  'kernel\\p{L}*', 'debian\\p{L}*', 'systemd', 'sysctl', 'grub', 'firewall\\p{L}*', 'nftables',
+  'git', 'test\\p{L}*', 'build\\p{L}*', 'kod\\p{L}*', 'deploy\\p{L}*', 'serwer\\p{L}*', 'sqlite', 'tunel\\p{L}*',
 ];
 const SYSTEM_COMMAND_RE = new RegExp(`${B}(?:${SYSTEM_COMMAND_WORDS.join('|')})${E}`, 'iu');
 

@@ -2,7 +2,7 @@
 """
 SVL PYTHON OS — AUTONOMOUS BACKGROUND AI ENGINE & SYSTEM SERVICES WORKER
 -------------------------------------------------------------------------
-Silnik autonomicznego działania w tle z uprawnieniami ROOT (nadzorowany przez System_SI_1 i SI_System_2):
+Silnik autonomicznego działania w tle z uprawnieniami ROOT (nadzorowany przez System_SI_1 i SI_Sphere):
 1. Uruchamia wbudowane usługi systemowe i workery w tle (SQLite WAL Guardian, Host Watchdog,
    JEDI Omni-OS v12 VM Supervisor, Ollama Worker Orchestrator, Alliance & Fleet Coordinator,
    Continuous Frontend/Backend Evolution Auditor).
@@ -32,7 +32,7 @@ except ImportError:
 STATE_KEY = "autonomous_ai_state_v1"
 
 DEFAULT_CONTINUOUS_MISSION = (
-    "Misja ciągła System_SI_1 + SI_System_2 (ROOT): stały monitoring, diagnostyka i usprawnianie "
+    "Misja ciągła System_SI_1 + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie "
     "frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465."
 )
 
@@ -156,7 +156,7 @@ def evaluate_system_services(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {
             "id": "svc-ollama-worker-orchestrator",
-            "name": "Workerzy AI (System_SI_1 + SI_System_2 · Ollama)",
+            "name": "Workerzy AI (System_SI_1 + SI_Sphere · Ollama)",
             "kind": "ai_worker_pool",
             "status": "ACTIVE" if (online_workers and ollama_online) else ("DEGRADED" if online_workers else "STANDBY"),
             "detail": (
@@ -171,8 +171,8 @@ def evaluate_system_services(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             "status": (
                 "ACTIVE"
                 if (
-                    "si-system-2-root" in active_mod_ids
-                    and ("alliance-defense-grid" in active_mod_ids or "si-system-2-alliance-ops" in active_mod_ids)
+                    "si-sphere-root" in active_mod_ids
+                    and ("alliance-defense-grid" in active_mod_ids or "si-sphere-alliance-ops" in active_mod_ids)
                 )
                 else "CONFIGURED"
             ),
@@ -266,7 +266,7 @@ def derive_improvement_findings(
 
 class AutonomousAIDaemon:
     """
-    Zarządza autonomicznym wątkiem tła dla System_SI_1 + SI_System_2 z uprawnieniami ROOT.
+    Zarządza autonomicznym wątkiem tła dla System_SI_1 + SI_Sphere z uprawnieniami ROOT.
     """
 
     def __init__(
@@ -292,12 +292,17 @@ class AutonomousAIDaemon:
 
     def _default_state(self) -> dict[str, Any]:
         return {
-            "enabled": False,
+            "enabled": os.environ.get("SVL_AUTONOMOUS_ENABLED", "1").strip() != "0",
+            "proactive_chat_enabled": os.environ.get("SVL_PROACTIVE_CHAT_ENABLED", "1").strip() != "0",
+            "proactive_cooldown_sec": 300.0,
+            "last_proactive_at": None,
+            "last_proactive_signature": None,
             "root_commands_enabled": True,
             "full_visibility": True,
             "interval_sec": self.default_interval_sec,
+            "ai_integration_level": "MAX_ROOT_AUTONOMOUS",
             "continuous_mission": DEFAULT_CONTINUOUS_MISSION,
-            "managed_by": ["SI_System_2", "System_SI_1", "JEDI_Omni_OS"],
+            "managed_by": ["Jyn Mitek (System_SI_1)", "SI_Sphere", "JEDI_Omni_OS"],
             "cycles_completed": 0,
             "last_cycle_at": None,
             "last_cycle_duration_ms": None,
@@ -356,6 +361,8 @@ class AutonomousAIDaemon:
         self,
         *,
         enabled: Optional[bool] = None,
+        proactive_chat_enabled: Optional[bool] = None,
+        proactive_cooldown_sec: Optional[float] = None,
         root_commands_enabled: Optional[bool] = None,
         interval_sec: Optional[float] = None,
         continuous_mission: Optional[str] = None,
@@ -366,6 +373,13 @@ class AutonomousAIDaemon:
             state = self._load_state()
             if enabled is not None:
                 state["enabled"] = bool(enabled)
+            if proactive_chat_enabled is not None:
+                state["proactive_chat_enabled"] = bool(proactive_chat_enabled)
+            if proactive_cooldown_sec is not None:
+                try:
+                    state["proactive_cooldown_sec"] = max(10.0, min(3600.0, float(proactive_cooldown_sec)))
+                except (TypeError, ValueError):
+                    pass
             if root_commands_enabled is not None:
                 state["root_commands_enabled"] = bool(root_commands_enabled)
             if interval_sec is not None:
@@ -387,6 +401,7 @@ class AutonomousAIDaemon:
                 correlation_id=correlation_id,
                 payload={
                     "enabled": state["enabled"],
+                    "proactiveChatEnabled": state["proactive_chat_enabled"],
                     "rootCommandsEnabled": state["root_commands_enabled"],
                     "intervalSec": state["interval_sec"],
                 },
@@ -541,6 +556,15 @@ class AutonomousAIDaemon:
             sync_ev = res.get("event")
             srv_rev = res.get("serverRevision", srv_rev)
 
+        if trigger == "scheduled" or origin == "proactive-test":
+            self._maybe_emit_proactive_chat(
+                cycles_count=cycles_count,
+                services=services,
+                findings=findings,
+                srv_rev=srv_rev,
+                now_iso=now_iso,
+            )
+
         append_python_log(
             "autonomous_daemon",
             f"Cykl autonomiczny #{cycles_count} ({trigger}): {active_svc_count}/{len(services)} usług ACTIVE ({duration_ms} ms)",
@@ -554,6 +578,98 @@ class AutonomousAIDaemon:
             "event": sync_ev,
             "serverRevision": srv_rev,
         }
+
+    def send_proactive_message(
+        self,
+        text: str,
+        *,
+        sender: str = "Jyn Mitek (System_SI_1)",
+        conversation_id: str = "conv-system-si-1",
+        title: str = "Jyn Mitek (System_SI_1)",
+        model: str = "ollama:svl364-apex-uncensored:latest",
+        origin: str = "autonomous-daemon",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        clean_text = str(text or "").strip()
+        if not clean_text:
+            return {"ok": False, "error": "Pusta treść wiadomości proaktywnej."}
+        now_dt = datetime.now(timezone.utc)
+        msg_id = f"proactive-{int(now_dt.timestamp() * 1000)}"
+        res = self.kernel.save_chat_message(
+            conversation_id=conversation_id,
+            title=title,
+            model=model,
+            msg={
+                "id": msg_id,
+                "role": "assistant",
+                "sender": sender,
+                "text": clean_text,
+                "timestamp": now_dt.strftime("%H:%M"),
+                "provenance": "server_result",
+                "verificationNote": "Wiadomość proaktywna wygenerowana automatycznie przez autonomicznego demona SVL.",
+            },
+            origin=origin,
+            correlation_id=correlation_id,
+        )
+        if res.get("ok"):
+            with self._lock:
+                state = self._load_state()
+                state["last_proactive_at"] = now_dt.isoformat()
+                self._save_state(state)
+            append_python_log(
+                "autonomous_daemon",
+                f"Proaktywna wiadomość AI ({sender} -> {conversation_id}): {clean_text[:120]}",
+                origin=origin,
+                correlation_id=correlation_id,
+            )
+        return res
+
+    def _maybe_emit_proactive_chat(
+        self,
+        *,
+        cycles_count: int,
+        services: list[dict[str, Any]],
+        findings: list[dict[str, Any]],
+        srv_rev: int,
+        now_iso: str,
+    ) -> None:
+        with self._lock:
+            state = self._load_state()
+            if not state.get("proactive_chat_enabled", True):
+                return
+            cooldown = float(state.get("proactive_cooldown_sec") or 300.0)
+            last_at = state.get("last_proactive_at")
+            last_sig = str(state.get("last_proactive_signature") or "")
+
+        has_alert = any(f.get("severity") == "ALERT" for f in findings)
+        sig = "|".join(f"{f.get('id')}:{f.get('severity')}" for f in findings[:4])
+        elapsed_ok = True
+        if last_at:
+            try:
+                prev_dt = datetime.fromisoformat(str(last_at).replace("Z", "+00:00"))
+                elapsed_ok = (datetime.now(timezone.utc) - prev_dt).total_seconds() >= cooldown
+            except Exception:
+                elapsed_ok = True
+
+        should_post = (cycles_count == 1 and not last_at) or (has_alert and sig != last_sig) or (elapsed_ok and sig != last_sig)
+        if not should_post:
+            return
+
+        active_svc = sum(1 for s in services if s.get("status") == "ACTIVE")
+        top_finding = findings[0]["message"] if findings else "Wszystkie podsystemy działają stabilnie."
+        tone = "err" if has_alert else ("warn" if any(f.get("severity") == "WARN" for f in findings) else "ok")
+        msg_text = (
+            f"[alert: {tone}|Meldunek autonomiczny · Cykl #{cycles_count}|{top_finding}]\n"
+            f"[kpi: Usługi ACTIVE|{active_svc}/{len(services)}|rev {srv_rev}|{'ok' if active_svc == len(services) else 'warn'}]\n"
+            f"[chips: Szybkie akcje|Status systemu=send:/status;Synchronizuj=action:sync;Jądro SVL=tab:kernel]"
+        )
+        res = self.send_proactive_message(msg_text, origin="autonomous-daemon")
+        if res.get("ok"):
+            with self._lock:
+                st = self._load_state()
+                st["last_proactive_signature"] = sig
+                st["last_proactive_at"] = now_iso
+                self._save_state(st)
 
     def _run_loop(self) -> None:
         # Krótkie opóźnienie startowe po boot, potem cykl wg skonfigurowanego interwału

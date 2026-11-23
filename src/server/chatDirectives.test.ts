@@ -120,7 +120,15 @@ test('mutation classification and dedup keys', () => {
   assert.deepEqual(parseChatDirectives('Synchronizuj repozytorium GitHub'), [
     { kind: 'os_sync' },
   ]);
+  assert.deepEqual(parseChatDirectives('Pobierz zmiany z GitHuba'), [
+    { kind: 'os_sync' },
+  ]);
+  assert.deepEqual(parseChatDirectives('Włącz sobie działanie w tle'), [
+    { kind: 'autonomy_set', enabled: true },
+  ]);
+  assert.deepEqual(parseChatDirectives('Wyłącz tryb autonomiczny'), [
+    { kind: 'autonomy_set', enabled: false },
+  ]);
   assert.equal(isMutatingCommand({ kind: 'os_sync' }), true);
+  assert.equal(isMutatingCommand({ kind: 'autonomy_set', enabled: true }), true);
 });
-
-
