@@ -15,7 +15,7 @@ test('formatMemoryPromptContext prioritizes structured memories and filters erro
       { kind: 'fact', content: '⚠️ Błąd połączenia' },
       { kind: 'decision', content: 'Używamy SQLite WAL jako źródła prawdy' },
     ],
-    'Bielik',
+    'System_SI_1',
     10,
   );
   assert.match(ctx, /\[DECYZJA\] Używamy SQLite WAL/);
@@ -34,64 +34,50 @@ test('selectNextFreeSpeaker initiates on empty channels and respects manual trig
   assert.deepEqual(
     selectNextFreeSpeaker({
       predicted: null,
-      participants: ['Bielik', 'Maya'],
+      participants: ['System_SI_1'],
       isAutonomous: true,
       consecutiveAi: 0,
       hasTurns: false,
-      explicitTarget: 'Maya',
+      explicitTarget: 'System_SI_1',
     }),
-    { speaker: 'Maya' },
+    { speaker: 'System_SI_1' },
   );
 
   // Empty channel with Auto target picks first participant
   assert.deepEqual(
     selectNextFreeSpeaker({
       predicted: null,
-      participants: ['Bielik', 'Maya'],
+      participants: ['System_SI_1'],
       isAutonomous: false,
       consecutiveAi: 0,
       hasTurns: false,
       explicitTarget: null,
     }),
-    { speaker: 'Bielik' },
+    { speaker: 'System_SI_1' },
   );
 
   // Manual click never stalls with waiting_for_operator in single-agent chat
   assert.deepEqual(
     selectNextFreeSpeaker({
       predicted: 'operator',
-      participants: ['Maya'],
+      participants: ['System_SI_1'],
       lastTurnRole: 'assistant',
-      lastAiSpeaker: 'Maya',
+      lastAiSpeaker: 'System_SI_1',
       isAutonomous: false,
       consecutiveAi: 1,
       hasTurns: true,
-      explicitTarget: 'Maya',
+      explicitTarget: 'System_SI_1',
     }),
-    { speaker: 'Maya' },
+    { speaker: 'System_SI_1' },
   );
 
-  // Autonomous duplex alternates up to 2 AI turns before pausing for operator
+  // Autonomous mode waits for operator after consecutive AI turns
   assert.deepEqual(
     selectNextFreeSpeaker({
       predicted: 'operator',
-      participants: ['Bielik', 'Maya'],
+      participants: ['System_SI_1'],
       lastTurnRole: 'assistant',
-      lastAiSpeaker: 'Bielik',
-      isAutonomous: true,
-      consecutiveAi: 1,
-      hasTurns: true,
-      explicitTarget: null,
-    }),
-    { speaker: 'Maya' },
-  );
-
-  assert.deepEqual(
-    selectNextFreeSpeaker({
-      predicted: 'operator',
-      participants: ['Bielik', 'Maya'],
-      lastTurnRole: 'assistant',
-      lastAiSpeaker: 'Maya',
+      lastAiSpeaker: 'System_SI_1',
       isAutonomous: true,
       consecutiveAi: 2,
       hasTurns: true,
@@ -102,11 +88,11 @@ test('selectNextFreeSpeaker initiates on empty channels and respects manual trig
 });
 
 test('buildProactiveStarterPrompt generates Polish initiation prompt with optional memory hint', () => {
-  const withoutMem = buildProactiveStarterPrompt('Maya', 'Mateusz', '');
-  assert.match(withoutMem, /Maya/);
+  const withoutMem = buildProactiveStarterPrompt('System_SI_1', 'Mateusz', '');
+  assert.match(withoutMem, /System_SI_1/);
   assert.match(withoutMem, /Mateusz/);
   assert.doesNotMatch(withoutMem, /trwałej pamięci/);
 
-  const withMem = buildProactiveStarterPrompt('Bielik', 'Mateusz', 'fakty');
+  const withMem = buildProactiveStarterPrompt('System_SI_1', 'Mateusz', 'fakty');
   assert.match(withMem, /trwałej pamięci/);
 });

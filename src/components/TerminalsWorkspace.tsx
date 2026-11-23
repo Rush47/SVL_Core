@@ -324,8 +324,8 @@ export const TerminalsWorkspace: React.FC = () => {
   return (
     <div className="flex flex-col h-full bg-[#0B0D13] overflow-hidden">
       {/* Terminal Selector Bar */}
-      <div className="px-4 py-3 border-b border-slate-800 bg-[#111520] flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+      <div className="px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800 bg-[#111520] flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full pb-1 sm:pb-0">
           {TERMINAL_TABS.map((tab) => {
             const isActive = tab.id === activeTab;
             return (
@@ -369,16 +369,16 @@ export const TerminalsWorkspace: React.FC = () => {
       </div>
 
       {/* Active Terminal Subtitle & Quick Presets */}
-      <div className="px-4 py-2 bg-[#0D1018] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+      <div className="px-3 sm:px-4 py-2 bg-[#0D1018] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-slate-400">{currentTabMeta.subtitle}</span>
-        <div className="flex items-center gap-1.5 overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-1.5 max-w-full">
           {currentTabMeta.quickCommands.map((qCmd) => (
             <button
               key={qCmd}
               type="button"
               onClick={() => void executeTerminalCommand(qCmd)}
               disabled={isExecuting}
-              className="px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] font-mono whitespace-nowrap shrink-0 transition-colors"
+              className="min-h-[30px] px-2.5 py-1 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] font-mono max-w-full truncate transition-colors"
             >
               {qCmd.length > 44 ? `${qCmd.slice(0, 44)}...` : qCmd}
             </button>
@@ -387,7 +387,7 @@ export const TerminalsWorkspace: React.FC = () => {
       </div>
 
       {activeTab === 'ssh' && (
-        <div className="px-4 py-2 bg-[#090D15] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+        <div className="px-3 sm:px-4 py-2 bg-[#090D15] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
           <div className="flex flex-wrap items-center gap-2 text-slate-300">
             <span className={sshBridgeStatus?.sshInstalled ? 'text-emerald-400' : 'text-amber-300'}>
               {sshBridgeStatus?.sshInstalled
@@ -411,19 +411,19 @@ export const TerminalsWorkspace: React.FC = () => {
               </button>
             )}
           </div>
-          <form onSubmit={(e) => void handleSaveSshTarget(e)} className="flex items-center gap-1.5">
+          <form onSubmit={(e) => void handleSaveSshTarget(e)} className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
             <input
               type="text"
               value={sshTargetInput}
               onChange={(e) => setSshTargetInput(e.target.value)}
               placeholder="user@host lub alias z ~/.ssh/config"
               aria-label="Docelowy host SSH"
-              className="w-48 max-w-full rounded border border-slate-700 bg-[#0B0D13] px-2 py-0.5 text-[11px] text-slate-100"
+              className="flex-1 min-w-[160px] sm:w-48 rounded border border-slate-700 bg-[#0B0D13] px-2 py-1 text-[11px] text-slate-100"
             />
             <button
               type="submit"
               disabled={isSavingSshConfig || !sshTargetInput.trim()}
-              className="px-2 py-0.5 rounded bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white whitespace-nowrap"
+              className="min-h-[30px] px-2.5 py-1 rounded bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white whitespace-nowrap"
             >
               {isSavingSshConfig ? 'Zapis...' : 'Ustaw cel SSH'}
             </button>
@@ -443,7 +443,7 @@ export const TerminalsWorkspace: React.FC = () => {
       )}
 
       {/* Terminal Output Viewport */}
-      <div ref={viewportRef} className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2 bg-[#07090E]">
+      <div ref={viewportRef} className="flex-1 overflow-y-auto p-3 sm:p-4 font-mono text-xs space-y-2 bg-[#07090E] svl-scroll-smooth">
         {mergedTabLogs.map((line) => {
           let textStyle = 'text-slate-200';
           if (line.kind === 'input') textStyle = 'text-violet-300 font-semibold';
@@ -483,7 +483,7 @@ export const TerminalsWorkspace: React.FC = () => {
           e.preventDefault();
           void executeTerminalCommand(commandInput);
         }}
-        className="p-2.5 sm:p-3 bg-[#111520] border-t border-slate-800 flex items-center gap-2"
+        className="p-2.5 sm:p-3 pb-safe bg-[#111520] border-t border-slate-800 flex items-center gap-2"
       >
         <span className="hidden sm:inline text-xs font-mono text-violet-400 shrink-0 select-none">
           {currentTabMeta.defaultPrompt}

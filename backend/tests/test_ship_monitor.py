@@ -52,7 +52,7 @@ class ShipMonitorEvaluationTest(unittest.TestCase):
 
 
 class ShipMonitorPersistenceTest(unittest.TestCase):
-    def test_notifications_come_from_maya_and_survive_restart_without_duplicates(self) -> None:
+    def test_notifications_come_from_system_si_1_and_survive_restart_without_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = str(Path(tmpdir) / "ship.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
@@ -68,7 +68,7 @@ class ShipMonitorPersistenceTest(unittest.TestCase):
             family = next(c for c in restarted.list_conversations_with_messages() if c["id"] == "conv-rodzina-mitek-wszyscy")
             notes = [m for m in family["messages"] if m["id"].startswith("notif-ship-")]
             self.assertEqual(len(notes), 1)
-            self.assertEqual(notes[0]["sender"], "Maya Mitek")
+            self.assertEqual(notes[0]["sender"], "System_SI_1")
             self.assertIn("No route to host", notes[0]["content"])
             self.assertFalse(monitor.start())  # interval 0 = wyłączony
 

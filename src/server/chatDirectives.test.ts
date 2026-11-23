@@ -111,4 +111,16 @@ test('mutation classification and dedup keys', () => {
     commandKey({ kind: 'agent_connect' }),
     commandKey({ kind: 'agent_connect' }),
   );
+  assert.deepEqual(parseChatDirectives('Synchronizuj system operacyjny i przetwórz wszystko'), [
+    { kind: 'os_sync' },
+  ]);
+  assert.deepEqual(parseChatDirectives('Synchronizuj z githubem i przetwórz zmiany'), [
+    { kind: 'os_sync' },
+  ]);
+  assert.deepEqual(parseChatDirectives('Synchronizuj repozytorium GitHub'), [
+    { kind: 'os_sync' },
+  ]);
+  assert.equal(isMutatingCommand({ kind: 'os_sync' }), true);
 });
+
+

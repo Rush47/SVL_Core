@@ -27,22 +27,67 @@ interface GitHubStatus {
   sync: {
     ok: boolean;
     isRepo: boolean;
+    syncEngine?: 'local_git' | 'github_rest_api';
     head?: string;
+    headFull?: string;
     remoteHead?: string | null;
+    remoteHeadFull?: string | null;
     localBranch?: string;
     ahead?: number;
     behind?: number;
     dirtyFiles?: string[];
+    dirtyFilesCount?: number;
+    remotePendingFiles?: string[];
+    remotePendingCount?: number;
+    lastPushedFiles?: string[];
+    lastPulledFiles?: string[];
+    lastCommitSha?: string | null;
+    lastSyncAt?: string | null;
+    syncHistory?: Array<{
+      id: string;
+      action: string;
+      commitSha: string;
+      shortSha: string;
+      previousHead?: string;
+      pushedFiles: string[];
+      pulledFiles: string[];
+      message: string;
+      timestamp: string;
+    }>;
     error?: string;
+    summary?: string;
   };
+  remoteCommit?: {
+    ok: boolean;
+    commitSha: string;
+    shortSha: string;
+    commitMessage: string;
+    commitAuthor: string;
+    commitDate: string;
+  } | null;
+  chatSync?: {
+    recorded: boolean;
+    synchronized_from_chat: boolean;
+    repository: string;
+    branch: string;
+    source: string;
+    last_sync_at?: string;
+    last_chat_sync_at?: string;
+    chat_sync_count?: number;
+    total_sync_count?: number;
+    last_commit_sha?: string;
+    last_commit_message?: string;
+    last_chat_message_id?: string;
+    last_summary?: string;
+  } | null;
   error?: string;
 }
 
 const ACTION_LABELS: Record<SyncAction, string> = {
   status: 'Sprawdzanie stanu',
-  pull: 'Pobieranie z GitHuba',
-  push: 'Wysyłanie na GitHub',
-  sync: 'Synchronizacja obustronna',
+  pull: 'Pobieranie zmian z GitHuba',
+  push: 'Wysyłanie lokalnych zmian na GitHub',
+  sync: 'Synchronizacja obustronna z GitHubem',
   init: 'Łączenie katalogu z repozytorium',
 };
 
@@ -65,12 +110,18 @@ const INITIAL_COREOS2_FILES: Array<{ name: string; path: string; size: number }>
   { name: 'remote_desktop_server.py', path: 'SVL_CoreOS_2/gui/remote_desktop_server.py', size: 1451 },
   { name: 'realtime_telemetry_hub.py', path: 'SVL_CoreOS_2/infrastructure/realtime_telemetry_hub.py', size: 2022 },
   { name: 'apex_ui_manifest.json', path: 'SVL_CoreOS_2/system/assets/apex_ui_manifest.json', size: 1054 },
-  { name: 'install_coreos2_svl364.sh', path: 'SVL_CoreOS_2/debian13/install_coreos2_svl364.sh', size: 3520 },
-  { name: 'debootstrap_trixie_stage1_stage2.sh', path: 'SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh', size: 1680 },
-  { name: 'debian13_trixie_rootfs_manifest.json', path: 'SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json', size: 1840 },
+  { name: 'jedi_v12_native_kernel_reprogrammer.py', path: 'SVL_CoreOS_2/debian13/jedi_v12_native_kernel_reprogrammer.py', size: 3890 },
+  { name: 'sudoers_99_jyn_ai_fleet_root', path: 'SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root', size: 1420 },
+  { name: 'install_coreos2_svl364.sh', path: 'SVL_CoreOS_2/debian13/install_coreos2_svl364.sh', size: 7955 },
+  { name: 'debootstrap_trixie_stage1_stage2.sh', path: 'SVL_CoreOS_2/debian13/debootstrap_trixie_stage1_stage2.sh', size: 1986 },
+  { name: 'debian13_trixie_rootfs_manifest.json', path: 'SVL_CoreOS_2/debian13/debian13_trixie_rootfs_manifest.json', size: 5120 },
+  { name: 'sources.list.trixie', path: 'SVL_CoreOS_2/debian13/sources.list.trixie', size: 960 },
+  { name: 'nftables_svl_trixie.conf', path: 'SVL_CoreOS_2/debian13/nftables_svl_trixie.conf', size: 1380 },
+  { name: 'live_iso_builder_trixie.sh', path: 'SVL_CoreOS_2/debian13/live_iso_builder_trixie.sh', size: 2840 },
+  { name: 'svl-coreos2.service', path: 'SVL_CoreOS_2/debian13/svl-coreos2.service', size: 510 },
   { name: 'svl-sentinel.service', path: 'SVL_CoreOS_2/debian13/svl-sentinel.service', size: 524 },
   { name: 'svl-coreos2-sysctl.conf', path: 'SVL_CoreOS_2/debian13/svl-coreos2-sysctl.conf', size: 292 },
-  { name: 'packages_manifest.txt', path: 'SVL_CoreOS_2/debian13/packages_manifest.txt', size: 980 },
+  { name: 'packages_manifest.txt', path: 'SVL_CoreOS_2/debian13/packages_manifest.txt', size: 1290 },
 ];
 
 const INITIAL_COREOS2_DIRS: Array<{ name: string; path: string }> = [
@@ -88,7 +139,14 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
   const { serverRevision } = useSvlSync();
   const [status, setStatus] = useState<GitHubStatus | null>(null);
   const [busy, setBusy] = useState<SyncAction | null>(null);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<{
+    ok: boolean;
+    text: string;
+    pushedFiles?: string[];
+    pulledFiles?: string[];
+    commitSha?: string;
+    previousHead?: string;
+  } | null>(null);
   const [coreOsFiles, setCoreOsFiles] = useState<Array<{ name: string; path: string; size: number }>>(INITIAL_COREOS2_FILES);
   const [coreOsDirs, setCoreOsDirs] = useState<Array<{ name: string; path: string }>>(INITIAL_COREOS2_DIRS);
 
@@ -125,19 +183,39 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
   const run = async (action: SyncAction) => {
     setBusy(action);
     setResult(null);
-    const res = await safeFetchJson<{ ok: boolean; summary?: string; error?: string }>('/api/github/sync', {
+    const res = await safeFetchJson<{
+      ok: boolean;
+      summary?: string;
+      error?: string;
+      pushedFiles?: string[];
+      pulledFiles?: string[];
+      commitSha?: string;
+      previousHead?: string;
+    }>('/api/github/sync', {
       method: 'POST',
       timeoutMs: 180000,
       body: JSON.stringify({ action }),
     });
-    setResult({ ok: Boolean(res.data?.ok), text: res.data?.summary || res.data?.error || res.error || `HTTP ${res.status}` });
+    setResult({
+      ok: Boolean(res.data?.ok),
+      text: res.data?.summary || res.data?.error || res.error || `HTTP ${res.status}`,
+      pushedFiles: Array.isArray(res.data?.pushedFiles) ? res.data.pushedFiles : [],
+      pulledFiles: Array.isArray(res.data?.pulledFiles) ? res.data.pulledFiles : [],
+      commitSha: res.data?.commitSha,
+      previousHead: res.data?.previousHead,
+    });
     setBusy(null);
-    await load(false);
+    await load(true);
   };
 
   const token = status?.token;
   const sync = status?.sync;
-  const dirty = sync?.dirtyFiles?.length || 0;
+  const dirtyFiles = sync?.dirtyFiles || [];
+  const remotePendingFiles = sync?.remotePendingFiles || [];
+  const dirty = sync?.dirtyFilesCount ?? dirtyFiles.length;
+  const lastPushed = (result?.pushedFiles && result.pushedFiles.length > 0) ? result.pushedFiles : (sync?.lastPushedFiles || []);
+  const lastPulled = (result?.pulledFiles && result.pulledFiles.length > 0) ? result.pulledFiles : (sync?.lastPulledFiles || []);
+  const activeCommitSha = result?.commitSha || sync?.lastCommitSha || sync?.remoteHeadFull || status?.remoteCommit?.commitSha || sync?.remoteHead || '';
 
   return (
     <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
@@ -178,17 +256,47 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
           </div>
         )}
         <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
-          <span className="text-slate-400 inline-flex items-center gap-1"><GitBranch className="w-3 h-3" aria-hidden="true" /> Gałąź:</span>
-          <span className="text-cyan-300">
-            {status?.branch || 'main'}
-            {sync?.isRepo ? ` · lokalnie ${sync.head || '?'} / GitHub ${sync.remoteHead || '—'}` : ''}
+          <span className="text-slate-400">Silnik synchronizacji:</span>
+          <span className="text-violet-300">
+            {sync?.syncEngine === 'local_git'
+              ? 'Lokalne repozytorium Git (.git)'
+              : 'GitHub Git Data REST API (Drzewo SHA-1 · Obustronny)'}
           </span>
         </div>
-        {sync?.isRepo && (
+        <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
+          <span className="text-slate-400 inline-flex items-center gap-1"><GitBranch className="w-3 h-3" aria-hidden="true" /> Gałąź & HEAD:</span>
+          <span className="text-cyan-300">
+            {status?.branch || 'main'}
+            {sync?.head || sync?.remoteHead
+              ? ` · lokalnie ${sync?.head || sync?.remoteHead || '?'} / GitHub ${sync?.remoteHead || '—'}`
+              : ''}
+            {activeCommitSha ? (
+              <>
+                {' · '}
+                <a
+                  href={`https://github.com/${status?.repository || 'Rush47/SVL_Core'}/commit/${activeCommitSha}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-300 hover:underline"
+                >
+                  commit {activeCommitSha.slice(0, 7)} ↗
+                </a>
+              </>
+            ) : null}
+          </span>
+        </div>
+        <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
+          <span className="text-slate-400">Stan zmian obustronnych:</span>
+          <span className={(dirty > 0 || remotePendingFiles.length > 0) ? 'text-amber-300' : 'text-emerald-400'}>
+            do wysłania ↑ {dirty} plików · do pobrania ↓ {remotePendingFiles.length} plików
+          </span>
+        </div>
+        {status?.chatSync?.synchronized_from_chat && (
           <div className="flex justify-between gap-2 py-1 border-b border-slate-800/70">
-            <span className="text-slate-400">Różnice:</span>
-            <span className={(sync.ahead || sync.behind || dirty) ? 'text-amber-300' : 'text-emerald-400'}>
-              do wysłania {sync.ahead ?? 0} · do pobrania {sync.behind ?? 0} · niezapisanych {dirty}
+            <span className="text-slate-400">Synchronizacja z czatu:</span>
+            <span className="text-emerald-400 text-right">
+              ZAPISANO W SQLite · {status.chatSync.chat_sync_count ?? 1}×
+              {status.chatSync.last_commit_sha ? ` · ${status.chatSync.last_commit_sha.slice(0, 7)}` : ''}
             </span>
           </div>
         )}
@@ -199,6 +307,129 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
           </span>
         </div>
       </div>
+
+      {/* Rejestr Zmian Synchronizacji Obustronnej (natychmiastowa widoczność zmian na repozytorium i lokalnie) */}
+      <div className="p-3 rounded-lg bg-[#0B0D13] border border-cyan-500/30 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-cyan-300">
+            🔄 Rejestr Zmian Synchronizacji Obustronnej ({status?.repository || 'Rush47/SVL_Core'}@{status?.branch || 'main'})
+          </span>
+          <span className="text-[11px] font-mono text-emerald-400">
+            {dirty === 0 && remotePendingFiles.length === 0
+              ? '✓ 100% ZSYNCHRONIZOWANO OBUSTRONNIE'
+              : `⚡ OCZEKUJĄCE ZMIANY: ↑${dirty} / ↓${remotePendingFiles.length}`}
+          </span>
+        </div>
+
+        {(lastPushed.length > 0 || lastPulled.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono">
+            <div className="p-2 rounded bg-emerald-950/20 border border-emerald-500/30 space-y-1">
+              <div className="text-emerald-300 font-semibold flex items-center justify-between">
+                <span>↑ Ostatnio wysłane na GitHub ({lastPushed.length})</span>
+                {activeCommitSha && <span className="text-emerald-400">{activeCommitSha.slice(0, 7)}</span>}
+              </div>
+              {lastPushed.length > 0 ? (
+                <div className="max-h-24 overflow-y-auto space-y-0.5 text-emerald-100/90">
+                  {lastPushed.map((fp) => (
+                    <div key={fp} className="truncate">• {fp}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-slate-400">Brak nowych plików w ostatnim pushu</div>
+              )}
+            </div>
+            <div className="p-2 rounded bg-cyan-950/20 border border-cyan-500/30 space-y-1">
+              <div className="text-cyan-300 font-semibold">
+                ↓ Ostatnio pobrane z GitHuba ({lastPulled.length})
+              </div>
+              {lastPulled.length > 0 ? (
+                <div className="max-h-24 overflow-y-auto space-y-0.5 text-cyan-100/90">
+                  {lastPulled.map((fp) => (
+                    <div key={fp} className="truncate">• {fp}</div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-slate-400">Lokalne drzewo zawiera wszystkie pliki z GitHuba</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(dirtyFiles.length > 0 || remotePendingFiles.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono">
+            {dirtyFiles.length > 0 && (
+              <div className="p-2 rounded bg-amber-950/20 border border-amber-500/30 space-y-1">
+                <div className="text-amber-300 font-semibold">
+                  Lokalne zmiany do wysłania na GitHub ({dirtyFiles.length}):
+                </div>
+                <div className="max-h-24 overflow-y-auto space-y-0.5 text-amber-100/90">
+                  {dirtyFiles.map((fp) => (
+                    <div key={fp} className="truncate">↑ {fp}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {remotePendingFiles.length > 0 && (
+              <div className="p-2 rounded bg-violet-950/20 border border-violet-500/30 space-y-1">
+                <div className="text-violet-300 font-semibold">
+                  Zmiany na GitHubie do pobrania lokalnie ({remotePendingFiles.length}):
+                </div>
+                <div className="max-h-24 overflow-y-auto space-y-0.5 text-violet-100/90">
+                  {remotePendingFiles.map((fp) => (
+                    <div key={fp} className="truncate">↓ {fp}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {sync?.syncHistory && sync.syncHistory.length > 0 && (
+          <div className="space-y-1 pt-1 border-t border-slate-800/80">
+            <div className="text-[11px] font-semibold text-slate-300">
+              Historia operacji synchronizacji obustronnej ({sync.syncHistory.length}):
+            </div>
+            <div className="max-h-28 overflow-y-auto space-y-1 font-mono text-[11px]">
+              {[...sync.syncHistory].reverse().slice(0, 5).map((item) => (
+                <div key={item.id} className="flex flex-wrap items-center justify-between gap-2 px-2 py-1 rounded bg-slate-900/70 text-slate-200">
+                  <span className="truncate">
+                    <span className="text-emerald-400 font-semibold">[{item.action.toUpperCase()}]</span>{' '}
+                    {item.previousHead ? `${item.previousHead} → ` : ''}
+                    <a
+                      href={`https://github.com/${status?.repository || 'Rush47/SVL_Core'}/commit/${item.commitSha}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-cyan-300 hover:underline"
+                    >
+                      {item.shortSha}
+                    </a>{' '}
+                    · ↑{item.pushedFiles?.length || 0} / ↓{item.pulledFiles?.length || 0} plików
+                  </span>
+                  <span className="text-slate-400 text-[10px]">
+                    {item.timestamp ? new Date(item.timestamp).toLocaleTimeString('pl-PL') : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {status?.chatSync?.synchronized_from_chat && (
+        <div className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-xs text-emerald-100 space-y-1">
+          <div className="flex items-center justify-between gap-2 font-mono text-[11px] text-emerald-300">
+            <span>Zapisana synchronizacja GitHub z poziomu czatu</span>
+            <span>
+              {status.chatSync.last_chat_sync_at
+                ? new Date(status.chatSync.last_chat_sync_at).toLocaleString('pl-PL')
+                : ''}
+            </span>
+          </div>
+          {status.chatSync.last_summary && (
+            <p className="text-[11px] text-emerald-100/90 leading-relaxed">{status.chatSync.last_summary}</p>
+          )}
+        </div>
+      )}
 
       {coreOsFiles.length > 0 && (
         <div className="p-2.5 rounded-lg bg-[#0B0D13] border border-slate-800/90 space-y-1.5">
@@ -246,7 +477,31 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
       )}
 
       <div className="flex flex-wrap gap-2">
-        {sync && !sync.isRepo ? (
+        <button
+          type="button"
+          disabled={Boolean(busy) || !token?.valid}
+          onClick={() => void run('sync')}
+          className="px-3 py-1.5 rounded-md bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Synchronizuj obustronnie
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(busy) || !token?.valid}
+          onClick={() => void run('pull')}
+          className="px-3 py-1.5 rounded-md border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <ArrowDownToLine className="w-3.5 h-3.5" aria-hidden="true" /> Pobierz
+        </button>
+        <button
+          type="button"
+          disabled={Boolean(busy) || !token?.valid}
+          onClick={() => void run('push')}
+          className="px-3 py-1.5 rounded-md border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <ArrowUpFromLine className="w-3.5 h-3.5" aria-hidden="true" /> Wyślij
+        </button>
+        {sync && !sync.isRepo && (
           <button
             type="button"
             disabled={Boolean(busy) || !token?.valid}
@@ -255,33 +510,6 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
           >
             <Link2 className="w-3.5 h-3.5" aria-hidden="true" /> Połącz katalog z repozytorium
           </button>
-        ) : (
-          <>
-            <button
-              type="button"
-              disabled={Boolean(busy) || !token?.valid}
-              onClick={() => void run('sync')}
-              className="px-3 py-1.5 rounded-md bg-emerald-600/80 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Synchronizuj obustronnie
-            </button>
-            <button
-              type="button"
-              disabled={Boolean(busy) || !token?.valid}
-              onClick={() => void run('pull')}
-              className="px-3 py-1.5 rounded-md border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <ArrowDownToLine className="w-3.5 h-3.5" aria-hidden="true" /> Pobierz
-            </button>
-            <button
-              type="button"
-              disabled={Boolean(busy) || !token?.valid}
-              onClick={() => void run('push')}
-              className="px-3 py-1.5 rounded-md border border-slate-700 hover:bg-slate-800 text-slate-200 text-xs inline-flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <ArrowUpFromLine className="w-3.5 h-3.5" aria-hidden="true" /> Wyślij
-            </button>
-          </>
         )}
       </div>
 
@@ -295,7 +523,7 @@ export const GitHubPanel: React.FC<{ onSelectRepoFile?: (filePath: string) => vo
         </div>
       )}
       <p className="text-[11px] text-slate-500">
-        Bielik i Maya Mitek synchronizują folder <code>SVL_CoreOS_2/</code> oraz całe repozytorium <code>Rush47/SVL_Core</code> z czatu i terminala.
+        System_SI_1 oraz silnik Git Data REST API synchronizują obustronnie folder <code>SVL_CoreOS_2/</code> (w tym pełny Debian 13 + natywne jądro JEDI v12 + <code>jyn_root</code>) oraz całe repozytorium <code>Rush47/SVL_Core</code>.
       </p>
     </div>
   );

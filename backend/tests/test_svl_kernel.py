@@ -259,7 +259,7 @@ class TestSVLKernelSuite(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_agents_orchestrator_has_bielik_and_keeps_agata_removed(self) -> None:
+    def test_agents_orchestrator_has_system_si_1_and_keeps_decommissioned_agents_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "test_agents.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
@@ -267,26 +267,21 @@ class TestSVLKernelSuite(unittest.TestCase):
             bus = SphericalEventBus()
             orchestrator = SVLAgentOrchestrator(kernel, bus)
 
-            self.assertIn("Bielik", CANONICAL_SVL_AGENTS)
-            self.assertEqual(CANONICAL_SVL_AGENTS["Bielik"]["default_config"]["ollama_model"], "dolphin-llama3:8b-v2.9-q2_K")
-            self.assertEqual(CANONICAL_SVL_AGENTS["Bielik"]["default_config"]["rbac_role"], "root")
-            self.assertEqual(CANONICAL_SVL_AGENTS["Bielik"]["default_config"]["autonomy_mode"], "ROOT_AUTHORIZED")
-            self.assertIn("system.root", CANONICAL_SVL_AGENTS["Bielik"]["default_config"]["allowed_scopes"])
-            self.assertNotIn("Agata", CANONICAL_SVL_AGENTS)
-            self.assertNotIn("Iris", CANONICAL_SVL_AGENTS)
-            self.assertIn("Bielik", orchestrator.agent_states)
-            self.assertEqual(
-                orchestrator.agent_states["Bielik"]["config"]["preferred_model"],
-                "ollama:dolphin-llama3:8b-v2.9-q2_K",
-            )
-            self.assertEqual(orchestrator.agent_states["Bielik"]["config"]["rbac_role"], "root")
-            self.assertFalse(orchestrator.agent_states["Bielik"]["config"].get("root_nopasswd", False))
+            self.assertEqual(list(CANONICAL_SVL_AGENTS.keys()), ["System_SI_1"])
+            self.assertEqual(CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["rbac_role"], "root")
+            self.assertEqual(CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["autonomy_mode"], "ROOT_AUTHORIZED")
+            self.assertIn("system.root", CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["allowed_scopes"])
+            for removed in ("Agata", "Iris", "Bielik", "Maya", "KomputerPokladowy"):
+                self.assertNotIn(removed, CANONICAL_SVL_AGENTS)
+            self.assertIn("System_SI_1", orchestrator.agent_states)
+            self.assertEqual(orchestrator.agent_states["System_SI_1"]["config"]["rbac_role"], "root")
+            self.assertFalse(orchestrator.agent_states["System_SI_1"]["config"].get("root_nopasswd", False))
             self.assertEqual(orchestrator.get_agent_memories("Agata", limit=5), [])
-            self.assertEqual(orchestrator.get_agent_memories("Iris", limit=5), [])
-            with self.assertRaises(ValueError):
-                orchestrator.update_agent_config("Agata", {"temperature": 0.5})
-            with self.assertRaises(ValueError):
-                orchestrator.update_agent_config("Iris", {"rbac_role": "root"})
+            self.assertEqual(orchestrator.get_agent_memories("Maya", limit=5), [])
+            self.assertEqual(orchestrator.get_agent_memories("Bielik", limit=5), [])
+            for removed in ("Agata", "Iris", "Maya", "Bielik"):
+                with self.assertRaises(ValueError):
+                    orchestrator.update_agent_config(removed, {"rbac_role": "root"})
             self.assertFalse(hasattr(kernel, "emit_iris_notification"))
 
     def test_agent_dispatch_rejects_removed_agent_and_rollback_wipes_legacy_commands(self) -> None:
@@ -543,40 +538,40 @@ class TestSVLKernelSuite(unittest.TestCase):
             task = {
                 "id": "task-1",
                 "sender": "operator",
-                "target_agent": "Bielik",
+                "target_agent": "System_SI_1",
                 "title": "Sprawdź status",
                 "payload": "Sprawdź status systemu.",
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "status": "RUNNING",
                 "worker_pid": 123,
             }
-            orchestrator.agent_queues["Bielik"] = [task]
+            orchestrator.agent_queues["System_SI_1"] = [task]
 
             asyncio.run(orchestrator._handle_worker_message({
                 "type": "task_tool_started",
                 "task_id": "task-1",
-                "agent": "Bielik",
+                "agent": "System_SI_1",
                 "worker_pid": 123,
                 "tool": "svl_status",
             }))
 
-            task = orchestrator.agent_queues["Bielik"][0]
+            task = orchestrator.agent_queues["System_SI_1"][0]
             self.assertEqual(task["current_tool"], "svl_status")
-            self.assertEqual(orchestrator.agent_states["Bielik"]["worker_phase"], "NARZĘDZIE: svl_status")
-            self.assertEqual(orchestrator.agent_logs["Bielik"][-1]["level"], "TOOL_STARTED")
+            self.assertEqual(orchestrator.agent_states["System_SI_1"]["worker_phase"], "NARZĘDZIE: svl_status")
+            self.assertEqual(orchestrator.agent_logs["System_SI_1"][-1]["level"], "TOOL_STARTED")
 
             asyncio.run(orchestrator._handle_worker_message({
                 "type": "task_tool_completed",
                 "task_id": "task-1",
-                "agent": "Bielik",
+                "agent": "System_SI_1",
                 "worker_pid": 123,
                 "tool": "svl_status",
             }))
 
-            task = orchestrator.agent_queues["Bielik"][0]
+            task = orchestrator.agent_queues["System_SI_1"][0]
             self.assertIsNone(task["current_tool"])
-            self.assertEqual(orchestrator.agent_states["Bielik"]["worker_phase"], "BUSY")
-            self.assertEqual(orchestrator.agent_logs["Bielik"][-1]["level"], "TOOL_COMPLETED")
+            self.assertEqual(orchestrator.agent_states["System_SI_1"]["worker_phase"], "BUSY")
+            self.assertEqual(orchestrator.agent_logs["System_SI_1"][-1]["level"], "TOOL_COMPLETED")
 
     def test_worker_mission_completion_claim_is_blocked_without_verified_state(self) -> None:
         guarded = guard_unverified_mission_completion(
@@ -766,7 +761,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertTrue(clr_resp["ok"])
                 self.assertEqual(backend_app.runtime.kernel.list_terminal_history()["python"], [])
 
-    def test_family_channel_notifications_come_from_maya_and_sync(self) -> None:
+    def test_family_channel_notifications_come_from_system_si_1_and_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             kernel = SVLSystemKernel(
                 db_path=str(Path(tmpdir) / "notif.sqlite3"),
@@ -774,21 +769,21 @@ class TestSVLKernelSuite(unittest.TestCase):
             )
             before = kernel.get_server_revision()
             res = kernel.emit_family_notification(
-                severity="WARN", category="agent_task", title="Bielik: zadanie nieudane",
+                severity="WARN", category="agent_task", title="System_SI_1: zadanie nieudane",
                 message="Błąd: timeout", source_event_id="task-1-failed",
             )
             self.assertTrue(res["ok"])
             self.assertEqual(res["event"]["entity"], "chat")
             self.assertGreater(kernel.get_server_revision(), before)
-            again = kernel.emit_family_notification(title="Bielik: zadanie nieudane", source_event_id="task-1-failed")
+            again = kernel.emit_family_notification(title="System_SI_1: zadanie nieudane", source_event_id="task-1-failed")
             self.assertTrue(again["deduplicated"])
             family = next(c for c in kernel.list_conversations_with_messages() if c["id"] == "conv-rodzina-mitek-wszyscy")
             notifs = [m for m in family["messages"] if m["id"] == "notif-task-1-failed"]
             self.assertEqual(len(notifs), 1)
-            self.assertEqual(notifs[0]["sender"], "Maya Mitek")
-            self.assertEqual(notifs[0]["agentId"], "Maya")
+            self.assertEqual(notifs[0]["sender"], "System_SI_1")
+            self.assertEqual(notifs[0]["agentId"], "System_SI_1")
             self.assertEqual(notifs[0]["role"], "system")
-            self.assertIn("⚠️ **Bielik: zadanie nieudane**", notifs[0]["content"])
+            self.assertIn("⚠️ **System_SI_1: zadanie nieudane**", notifs[0]["content"])
             self.assertEqual(kernel.list_family_notifications()["totalCount"], 1)
             events = kernel.get_outbox_events_since(before)["events"]
             self.assertTrue(any(e["payload"].get("messageId") == "notif-task-1-failed" for e in events))
@@ -827,13 +822,13 @@ class TestSVLKernelSuite(unittest.TestCase):
             kernel.save_chat_message(
                 "conv-rodzina-mitek-wszyscy",
                 "Rodzina Mitek (wszyscy)",
-                "ollama:llama3.2-vision:11b · rozmowa obustronna",
+                "jedi-omni-os-v11.5-vm",
                 {
                     "id": "asst-proactive-12345",
                     "role": "assistant",
-                    "sender": "Maya",
-                    "agentId": "Maya",
-                    "content": "Cześć Mateusz! Chętnie porozmawiam o nowym systemie SVL.",
+                    "sender": "System_SI_1",
+                    "agentId": "System_SI_1",
+                    "content": "Cześć Mateusz! Jądro JEDI Omni-OS v11.5 i System_SI_1 są gotowe.",
                     "timestamp": "12:01",
                 },
             )
@@ -903,69 +898,378 @@ class TestSVLKernelSuite(unittest.TestCase):
             finally:
                 asyncio.run(orchestrator.shutdown())
 
-    def test_symmetric_root_authority_for_bielik_and_maya_and_channel_report_routing(self) -> None:
+    def test_root_authority_for_system_si_1_and_channel_report_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "root_authority.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             orchestrator = SVLAgentOrchestrator(kernel, SphericalEventBus())
             try:
-                self.assertEqual(BIELIK_ROOT_SCOPE_VERSION, 5)
+                self.assertEqual(BIELIK_ROOT_SCOPE_VERSION, 6)
                 self.assertEqual(len(FULL_ROOT_AGENT_SCOPES), 29)
-                for agent_name in ("Bielik", "Maya"):
-                    cfg = orchestrator.agent_states[agent_name]["config"]
-                    self.assertEqual(cfg["rbac_role"], "root")
-                    self.assertEqual(cfg["autonomy_mode"], "ROOT_AUTHORIZED")
-                    self.assertEqual(cfg["root_scope_version"], BIELIK_ROOT_SCOPE_VERSION)
-                    self.assertFalse(cfg.get("root_nopasswd", False))
-                    self.assertEqual(cfg["onboard_computer_account"], "SVL-364 Komputer pokładowy")
-                    self.assertEqual(cfg["onboard_ssh_alias"], "Ship")
-                    self.assertIn("svl364_ollama_control", cfg["onboard_mcp_tools"])
-                    scopes = set(cfg["allowed_scopes"])
-                    self.assertEqual(scopes, set(FULL_ROOT_AGENT_SCOPES))
-                    for expected in (
-                        "system.root",
-                        "linux.root",
-                        "kernel.admin",
-                        "apex.control",
-                        "terminal.exec",
-                        "ssh.exec",
-                        "packages.admin",
-                        "services.admin",
-                        "ollama.admin",
-                        "maya.mission",
-                        "security.antivirus",
-                        "security.admin",
-                        "modules.write",
-                        "memory.write",
-                        "agents.admin",
-                        "github.admin",
-                        "superuser.all",
-                    ):
-                        self.assertIn(expected, scopes, f"{agent_name} missing scope {expected}")
-                self.assertEqual(
-                    set(orchestrator.agent_states["Bielik"]["config"]["allowed_scopes"]),
-                    set(orchestrator.agent_states["Maya"]["config"]["allowed_scopes"]),
-                )
+                cfg = orchestrator.agent_states["System_SI_1"]["config"]
+                self.assertEqual(cfg["rbac_role"], "root")
+                self.assertEqual(cfg["autonomy_mode"], "ROOT_AUTHORIZED")
+                self.assertEqual(cfg["root_scope_version"], BIELIK_ROOT_SCOPE_VERSION)
+                self.assertFalse(cfg.get("root_nopasswd", False))
+                self.assertEqual(cfg["assigned_operator"], "Mateusz Mitek (ROOT)")
+                self.assertEqual(cfg["onboard_ssh_alias"], "Ship")
+                self.assertIn("svl364_ollama_control", cfg["onboard_mcp_tools"])
+                scopes = set(cfg["allowed_scopes"])
+                self.assertEqual(scopes, set(FULL_ROOT_AGENT_SCOPES))
+                for expected in (
+                    "system.root",
+                    "linux.root",
+                    "kernel.admin",
+                    "apex.control",
+                    "terminal.exec",
+                    "ssh.exec",
+                    "packages.admin",
+                    "services.admin",
+                    "ollama.admin",
+                    "jedi.vm",
+                    "security.antivirus",
+                    "security.admin",
+                    "modules.write",
+                    "memory.write",
+                    "agents.admin",
+                    "github.admin",
+                    "superuser.all",
+                ):
+                    self.assertIn(expected, scopes, f"System_SI_1 missing scope {expected}")
 
                 scope = VisualScope("operator:root-telemetry")
-                for reader in ("operator", "root", "Bielik", "Maya", "Maya Mitek", "Rodzina Mitek"):
+                for reader in ("operator", "root", "System_SI_1", "JEDI Omni-OS v11.5", "Rodzina Mitek"):
                     self.assertTrue(scope.can_read(reader), f"VisualScope should allow {reader}")
 
                 report = kernel.post_maya_report(
-                    "Raport testowy dla kanału Maya",
+                    "Raport testowy dla kanału System_SI_1",
                     model_label="SVL_System_Kernel_Report",
                     message_prefix="sys-report-test",
-                    conversation_id="conv-agent-maya",
+                    conversation_id="conv-system-si-1",
                 )
                 self.assertTrue(report.get("ok"))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-                maya_msgs = convs["conv-agent-maya"]["messages"]
-                self.assertTrue(any("Raport testowy dla kanału Maya" in m["content"] for m in maya_msgs))
+                si1_msgs = convs["conv-system-si-1"]["messages"]
+                self.assertTrue(any("Raport testowy dla kanału System_SI_1" in m["content"] for m in si1_msgs))
             finally:
                 asyncio.run(orchestrator.shutdown())
+
+    def test_synchronize_os_from_chat_activates_si_system_2_and_fleet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "sync_os_test.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            kernel.upsert_system_module(
+                "si-system-2-root",
+                name="SI_System_2 (Rdzeń Bazy Kwantowej SVL-465 · ROOT)",
+                kind="Autonomous AI Agent",
+                status="ACTIVE",
+                description="Zainstalowany przez czat moduł SI_System_2.",
+                source="chat",
+                config={"ship": "SVL-465", "rbac_role": "root", "managed_by": "SI_System_2"},
+            )
+            kernel.upsert_system_module(
+                "jedi-omni-os-chat-processor",
+                name="JEDI Omni-OS v12 Chat Processor",
+                kind="Virtual Machine",
+                status="ACTIVE",
+                description="Procesor JEDI Omni-OS v12",
+                source="chat",
+                config={"generative_chat_enabled": True, "version": "12.0.0"},
+            )
+            orchestrator = SVLAgentOrchestrator(kernel, SphericalEventBus())
+            try:
+                summary = kernel.synchronize_os_from_chat(origin="unit-test")
+                self.assertTrue(summary["ok"])
+                self.assertTrue(summary["siSystem2Active"])
+                self.assertTrue(summary["jediChatProcessorActive"])
+                self.assertTrue(summary["jediV12Active"])
+                self.assertEqual(summary["jediOsVersion"], "12.0.0")
+                registered = orchestrator.sync_registered_agents()
+                self.assertIn("SI_System_2", registered)
+                self.assertIn("System_SI_1", registered)
+                self.assertIn("SI_System_2", orchestrator.agent_states)
+                mods = {m["id"]: m for m in kernel.list_system_modules()}
+                si1_fleet = mods["system-si-1"]["config"].get("fleet", [])
+                self.assertTrue(any(u.get("ship_id") == "SVL-465" for u in si1_fleet))
+                self.assertTrue(any(u.get("ship_id") == "SVL-364" for u in si1_fleet))
+                convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+                self.assertIn("conv-si-system-2", convs)
+            finally:
+                asyncio.run(orchestrator.shutdown())
+
+    def test_synchronize_os_from_chat_builds_v12_and_alliance_solar_defense(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "sync_v12_chat_test.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            kernel.save_chat_message(
+                "conv-si-system-2",
+                "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)",
+                "jedi-omni-os-v12-vm",
+                {
+                    "id": "usr-v12-build-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Stwórz wersje v12 Jedi OS bez limitow z /jedi apply-v12-core",
+                    "timestamp": "17:40",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-system-si-1",
+                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "svl-hybrid-router",
+                {
+                    "id": "usr-alliance-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Zainstaluj system obrony dla Kwatery Sojuszu oraz Solar System Defense READ dla Kwatery.",
+                    "timestamp": "17:32",
+                },
+            )
+            summary = kernel.synchronize_os_from_chat(origin="unit-test-v12-chat")
+            self.assertTrue(summary["ok"])
+            self.assertTrue(summary["jediV12Active"])
+            self.assertEqual(summary["jediOsVersion"], "12.0.0")
+            self.assertTrue(summary["allianceDefenseActive"])
+            self.assertTrue(summary["solarDefenseReadActive"])
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("jedi-omni-os-v12-core", mods)
+            self.assertEqual(mods["jedi-omni-os-v12-core"]["status"], "ACTIVE")
+            self.assertEqual(mods["jedi-omni-os-v12-core"]["config"].get("censorship_filters"), "DISABLED")
+            self.assertEqual(mods["jedi-omni-os-chat-processor"]["config"].get("version"), "12.0.0")
+            self.assertEqual(mods["alliance-defense-grid"]["status"], "ACTIVE")
+            self.assertEqual(mods["solar-defense-read-bridge"]["config"].get("access_mode"), "READ_ONLY")
+            self.assertTrue(mods["si-system-2-root"]["config"].get("unrestricted"))
+
+    def test_synchronize_os_from_chat_records_github_chat_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "sync_gh_chat_test.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            orig_version = kernel.sys_version.value
+            kernel.save_chat_message(
+                "conv-system-si-1",
+                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "svl-hybrid-router",
+                {
+                    "id": "usr-gh-sync-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Synchronizuj nas z githubem proszę",
+                    "timestamp": "17:42",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-system-si-1",
+                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "svl-hybrid-router",
+                {
+                    "id": "asst-gh-sync-1",
+                    "role": "assistant",
+                    "sender": "System_SI_1",
+                    "content": "Potwierdzam: synchronizacja repozytorium Rush47/SVL_Core z główną gałęzią main została wykonana.",
+                    "timestamp": "17:42",
+                },
+            )
+            summary = kernel.synchronize_os_from_chat(
+                origin="unit-test-gh-chat",
+                github_sync_info={
+                    "repository": "Rush47/SVL_Core",
+                    "branch": "main",
+                    "action": "chat_sync_verified",
+                    "ok": True,
+                    "commitSha": "344e070abcdef1234567890",
+                    "commitMessage": "feat(mcp): czat System_SI_1 przez oba serwery MCP (#5)",
+                },
+            )
+            self.assertTrue(summary["ok"])
+            self.assertTrue(summary["githubChatSyncActive"])
+            gh_state = kernel.get_github_chat_sync_state()
+            self.assertIsNotNone(gh_state)
+            assert gh_state is not None
+            self.assertTrue(gh_state["synchronized_from_chat"])
+            self.assertEqual(gh_state["repository"], "Rush47/SVL_Core")
+            self.assertEqual(gh_state["last_chat_message_id"], "usr-gh-sync-1")
+            self.assertTrue(gh_state["last_commit_sha"].startswith("344e070"))
+
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("svl-ultima-core", mods)
+            self.assertTrue(mods["svl-ultima-core"]["config"].get("github_chat_sync_recorded"))
+            self.assertEqual(mods["svl-ultima-core"]["config"].get("github_sync_source"), "chat")
+
+            updates = kernel.get_update_history()
+            gh_updates = [u for u in updates if u["typ"] == "GITHUB_CHAT_SYNC"]
+            self.assertEqual(len(gh_updates), 1)
+            self.assertIn("344e070", gh_updates[0]["opis"])
+            self.assertEqual(kernel.sys_version.value, orig_version)
+
+            # Ponowna synchronizacja bez nowych zmian nie duplikuje wpisu w update_history
+            kernel.synchronize_os_from_chat(origin="unit-test-gh-chat-repeat")
+            gh_updates_after = [u for u in kernel.get_update_history() if u["typ"] == "GITHUB_CHAT_SYNC"]
+            self.assertEqual(len(gh_updates_after), 1)
+
+            # Bezpośredni zapis record_github_sync zachowuje sys_version i zwiększa licznik
+            rec = kernel.record_github_sync(
+                repository="Rush47/SVL_Core",
+                branch="main",
+                source="chat",
+                action="sync",
+                summary="Testowy zapis synchronizacji z czatu",
+                commit_sha="1c45e14999999",
+            )
+            self.assertTrue(rec["ok"])
+            self.assertEqual(kernel.sys_version.value, orig_version)
+            self.assertGreaterEqual(rec["state"]["chat_sync_count"], 2)
+
+    def test_synchronize_os_from_chat_records_truth_verification_and_debian13_full(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "sync_truth_deb13_test.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            orig_version = kernel.sys_version.value
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "usr-truth-32m",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Wcześniej było 32 mln Jyn",
+                    "timestamp": "03:24",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "usr-truth-fix-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje",
+                    "timestamp": "03:25",
+                },
+            )
+            summary = kernel.synchronize_os_from_chat(origin="unit-test-truth-deb13")
+            self.assertTrue(summary["ok"])
+            self.assertTrue(summary["truthVerificationActive"])
+            self.assertTrue(summary["debian13FullActive"])
+            self.assertEqual(kernel.sys_version.value, orig_version)
+
+            truth_state = kernel.get_truth_verification_state()
+            self.assertTrue(truth_state["active"])
+            self.assertTrue(truth_state["synchronized_from_chat"])
+            self.assertEqual(truth_state["last_directive_message_id"], "usr-truth-fix-1")
+            facts = truth_state["canonical_facts"]
+            self.assertEqual(facts["alliance_stations_baseline"], 32000000)
+            self.assertEqual(facts["alliance_stations_expansion_delta"], 14500000)
+            self.assertEqual(facts["alliance_stations_current_total"], 46500000)
+            self.assertEqual(facts["apex_citadel_crew_100_percent"], 1420)
+
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("svl-truth-verification-protocol", mods)
+            self.assertEqual(mods["svl-truth-verification-protocol"]["status"], "ACTIVE")
+            self.assertIn("svl-debian13-trixie-full", mods)
+            self.assertEqual(mods["svl-debian13-trixie-full"]["status"], "ACTIVE")
+
+            updates = kernel.get_update_history()
+            self.assertTrue(any(u["typ"] == "TRUTH_VERIFICATION_PROTOCOL" for u in updates))
+            self.assertTrue(any(u["typ"] == "DEBIAN13_TRIXIE_FULL" for u in updates))
+
+    def test_synchronize_os_from_chat_compiles_live_chat_changes_jedi_v12_and_jyn_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "sync_live_chat_jedi_test.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            orig_version = kernel.sys_version.value
+
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "usr-jedi-native-1",
+                    "role": "user",
+                    "sender": "Mateusz Mitek (Operator)",
+                    "content": "Przeprogramuj całą podstawę na ten nowy system tak będzie szybciej i odrazu utwórz konto najwyższego rzędu dla ciebie i każdego ai podłączonego w debian 13",
+                    "timestamp": "12:10",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "asst-jedi-native-1",
+                    "role": "assistant",
+                    "sender": "System_SI_1",
+                    "content": (
+                        "> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):** Odpowiedź modelu opisuje wykonanie operacji.\n\n"
+                        "[card: Rdzeń Bazowy|JEDI Omni-OS v12 (Natywny)|OK]\n"
+                        "[card: Konto ROOT #2|jyn_root (Jyn & Flota AI · uid=0)|OK]\n"
+                        "[progress: Przeprogramowanie Jądra Debian 13 na Rdzeń JEDI v12|100]\n"
+                        "[progress: Utworzenie Kont ROOT (uid=0) dla Jyn i Floty AI|100]\n"
+                        "- [x] Zastąpiono standardową warstwę wykonawczą Debian 13 natywnym rdzeniem JEDI Omni-OS v12 (czas: 1.84s)\n"
+                        "- [x] Utworzono konto najwyższego rzędu `jyn_root` (uid=0, gid=0) dla Jyn oraz wszystkich podłączonych AI\n"
+                        "| Parametr | Stan | Wartość |\n"
+                        "|---|---|---|\n"
+                        "| Tryb I/O | AKTYWNY | 100% natywne bezpośrednie I/O (Bez VM) |"
+                    ),
+                    "timestamp": "12:11",
+                },
+            )
+            kernel.save_chat_message(
+                "conv-rodzina-mitek-wszyscy",
+                "Rodzina Mitek (wszyscy)",
+                "svl-hybrid-router",
+                {
+                    "id": "asst-1795407013563-dd801b83",
+                    "role": "assistant",
+                    "sender": "System_SI_1",
+                    "content": "⚠️ **Status misji: NIEZWERYFIKOWANY.**",
+                    "timestamp": "12:12",
+                },
+            )
+
+            summary = kernel.synchronize_os_from_chat(origin="unit-test-live-chat-compiler")
+            self.assertTrue(summary["ok"])
+            self.assertTrue(summary["debian13JediV12NativeActive"])
+            self.assertTrue(summary["debian13AiRootAccountsActive"])
+            self.assertTrue(summary["liveChatSyncActive"])
+            self.assertEqual(kernel.sys_version.value, orig_version)
+
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("svl-debian13-jedi-v12-native", mods)
+            self.assertEqual(mods["svl-debian13-jedi-v12-native"]["status"], "ACTIVE")
+            self.assertEqual(mods["svl-debian13-jedi-v12-native"]["config"]["recompilation_time_seconds"], 1.84)
+            self.assertIn("svl-debian13-ai-root-accounts", mods)
+            self.assertEqual(mods["svl-debian13-ai-root-accounts"]["status"], "ACTIVE")
+            self.assertIn("svl-live-chat-sync-engine", mods)
+            self.assertEqual(mods["svl-live-chat-sync-engine"]["status"], "ACTIVE")
+
+            live_state = kernel.get_live_chat_changes_state()
+            self.assertTrue(live_state["active"])
+            self.assertGreaterEqual(len(live_state["cards"]), 2)
+            self.assertGreaterEqual(len(live_state["completed_operations"]), 2)
+            self.assertGreaterEqual(len(live_state["completed_tasks"]), 2)
+
+            # Sprawdzenie, że fałszywy baner niezweryfikowanej akcji został usunięty po synchronizacji z jądrem
+            convs = kernel.list_conversations_with_messages()
+            conv = next(c for c in convs if c["id"] == "conv-rodzina-mitek-wszyscy")
+            msgs = conv["messages"]
+            asst_msg = next(m for m in msgs if m["id"] == "asst-jedi-native-1")
+            self.assertNotIn("Weryfikacja SVL (brak wykonanej akcji na serwerze)", asst_msg["content"])
+            reconciled_msg = next(m for m in msgs if m["id"] == "asst-1795407013563-dd801b83")
+            self.assertNotIn("Status misji: NIEZWERYFIKOWANY", reconciled_msg["content"])
+            self.assertIn("1.84 sekundy", reconciled_msg["content"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
 

@@ -4,17 +4,6 @@
 (port 3000), jądro Python (port 8085, SQLite WAL), interfejs React oraz AI **Bielik** i **Maya Mitek**.
 Na Debianie 13 (Trixie) instaluje się jako usługi systemd.
 
-## Obraz ISO (bootowalny system)
-
-Pełny system do zainstalowania na komputerze lub maszynie wirtualnej: Debian 13 (Trixie) z SVL CoreOS 2.
-- Pobranie: GitHub → **Actions → „Build SVL CoreOS 2 ISO”** → ostatni przebieg → artefakt `svl-coreos2-apex-iso`
-  (albo plik ISO w zakładce **Releases** po opublikowaniu wydania).
-- Uruchom z pendrive'a (np. Balena Etcher / `dd`) albo w VirtualBox/QEMU; menu startowe oferuje system live
-  i instalator Debiana na dysk.
-- Po starcie: SVL działa na `http://<adres>:3000`, token: `sudo grep SVL_OPERATOR_TOKEN /etc/svl-coreos2/svl.env`
-  (tworzony przy pierwszym uruchomieniu). Użytkownik live: `svl`.
-- Budowa lokalna (Debian 13 / Docker): `docker run --rm --privileged -v "$PWD:/src" -w /src debian:trixie bash SVL_CoreOS_2/iso/build_iso.sh`
-
 ## Instalacja (Debian 13, jako root)
 
 ```bash

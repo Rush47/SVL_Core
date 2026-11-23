@@ -13,16 +13,12 @@ export interface SvlMcpContext {
   logDir: string;
 }
 
-const AGENTS = ['Bielik', 'Maya', 'System_SI_1'] as const;
+const AGENTS = ['System_SI_1'] as const;
 const CHANNELS: Record<string, string> = {
   wszyscy: 'conv-rodzina-mitek-wszyscy',
-  svl364: 'conv-svl364-komputer-pokladowy',
-  komputer_pokladowy: 'conv-svl364-komputer-pokladowy',
   system_si_1: 'conv-system-si-1',
   system_si: 'conv-system-si-1',
   systemsi1: 'conv-system-si-1',
-  bielik: 'conv-agent-bielik',
-  maya: 'conv-agent-maya',
 };
 const LOG_FILES: Record<string, string> = {
   system: 'system_wszystko.txt',
@@ -73,14 +69,15 @@ const TOOLS = [
   {
     name: 'svl_chat',
     description:
-      'Wysyła wiadomość do Bielika lub Mayi w czacie SVL i zwraca odpowiedź. Wiadomość i odpowiedź są zapisane w kanale (widoczne w aplikacji, podpisane „Claude (MCP)”). ' +
-      'Obsługuje też polecenia czatu, np. "/status", "/moduly", "/github status", "/gh pr list".',
+      'Wysyła wiadomość lub polecenie do System_SI_1 (ROOT) przez maszynę wirtualną JEDI Omni-OS v11.5 w czacie SVL i zwraca odpowiedź. ' +
+      'Wiadomość i odpowiedź są zapisane w kanale (widoczne w aplikacji, podpisane „Claude (MCP)”). ' +
+      'Obsługuje też polecenia czatu, np. "/jedi status", "/status", "/moduly", "/github status", "/gh pr list".',
     inputSchema: {
       type: 'object',
       properties: {
         message: { type: 'string', minLength: 1, maxLength: 8000 },
-        agent: { type: 'string', enum: [...AGENTS], description: 'Domyślnie Bielik.' },
-        channel: { type: 'string', enum: Object.keys(CHANNELS), description: 'wszyscy | bielik | maya (domyślnie kanał agenta).' },
+        agent: { type: 'string', enum: [...AGENTS], description: 'Domyślnie System_SI_1.' },
+        channel: { type: 'string', enum: Object.keys(CHANNELS), description: 'system_si_1 | wszyscy (domyślnie kanał agenta).' },
       },
       required: ['message'],
       additionalProperties: false,
@@ -89,7 +86,7 @@ const TOOLS = [
   },
   {
     name: 'svl_conversation',
-    description: 'Ostatnie wiadomości z kanału czatu (wszyscy / bielik / maya), w tym powiadomienia Mayi.',
+    description: 'Ostatnie wiadomości z kanału czatu (system_si_1 / wszyscy), w tym powiadomienia System_SI_1.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -193,7 +190,7 @@ const TOOLS = [
   {
     name: 'svl_ship_manage',
     description:
-      'Zarządza komputerem pokładowym SVL-364 przez allowlistowane narzędzia: zasoby, usługi, Ollama, pliki/backup, sieć i aktualizacje. Operacje zapisujące wymagają confirmed=true.',
+      'Zarządza hostem SVL-364 przez allowlistowane narzędzia: zasoby, usługi, Ollama, pliki/backup, sieć i aktualizacje. Operacje zapisujące wymagają confirmed=true.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -286,7 +283,7 @@ const TOOLS = [
   },
   {
     name: 'svl_notify',
-    description: 'Publikuje powiadomienie od Mayi na kanale „Rodzina Mitek (wszyscy)”.',
+    description: 'Publikuje powiadomienie od System_SI_1 na kanale „Rodzina Mitek (wszyscy)”.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -301,13 +298,13 @@ const TOOLS = [
   },
   {
     name: 'svl_antivirus_scan',
-    description: 'Uruchamia skan antywirusowy SVL-365 (pliki + baza); wynik publikuje Maya Mitek na kanale „wszyscy”.',
+    description: 'Uruchamia skan antywirusowy SVL-365 (pliki + baza); wynik publikuje System_SI_1 na kanale „wszyscy”.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
     name: 'svl_report',
-    description: 'Generuje pełny raport SVL_System (host, moduły, pamięć); publikuje go Maya Mitek na kanale „wszyscy”.',
+    description: 'Generuje pełny raport SVL_System (host, moduły, pamięć); publikuje go System_SI_1 na kanale „wszyscy”.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false },
   },
@@ -361,7 +358,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
     {
       capabilities: { tools: {} },
       instructions:
-        'SVL Python OS (Rush47/SVL_Core): czat z AI Bielik i Maya Mitek, terminale ROOT, statek SVL-364 przez SSH, logi, pamięć, GitHub. ' +
+        'SVL Python OS (Rush47/SVL_Core): czat z AI System_SI_1 (ROOT) przetwarzanym przez VM JEDI Omni-OS v11.5, terminale ROOT, statek SVL-364 przez SSH, logi, pamięć, GitHub. ' +
         'Wiadomości wysłane przez svl_chat są widoczne w aplikacji jako „Claude (MCP)”.',
     },
   );
@@ -390,9 +387,9 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
           });
         }
         case 'svl_chat': {
-          const agent = AGENTS.includes(String(args.agent) as any) ? String(args.agent) : 'Bielik';
-          const channelKey = String(args.channel || agent.toLowerCase());
-          const conversationId = CHANNELS[channelKey] || CHANNELS[agent.toLowerCase()];
+          const agent = AGENTS.includes(String(args.agent) as any) ? String(args.agent) : 'System_SI_1';
+          const channelKey = String(args.channel || 'system_si_1');
+          const conversationId = CHANNELS[channelKey] || CHANNELS.system_si_1;
           const message = str(args.message, 8000);
           const msgId = `user-mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           await call(ctx, 'POST', '/api/py/chat/conversations/message', {
@@ -494,7 +491,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
           return asText(await readLogTail(ctx.logDir, String(args.file || 'system'), Number(args.lines) || 80, str(args.contains, 200), str(args.level, 10)));
         case 'svl_memory_search': {
           const r = await call(ctx, 'POST', '/api/py/agents/memory/search', {
-            agent: String(args.agent || 'Bielik'),
+            agent: String(args.agent || 'System_SI_1'),
             query: str(args.query, 500),
             limit: Math.max(1, Math.min(50, Number(args.limit) || 12)),
           });
@@ -502,7 +499,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
         }
         case 'svl_memory_add': {
           const r = await call(ctx, 'POST', '/api/py/agents/memory', {
-            agent: String(args.agent || 'Bielik'),
+            agent: String(args.agent || 'System_SI_1'),
             kind: String(args.kind || 'fact'),
             content: str(args.content, 2000),
             source: 'mcp-claude',
@@ -532,7 +529,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
             category: 'mcp',
             origin: 'mcp-claude',
           });
-          return asText(r.deduplicated ? 'Takie powiadomienie już istnieje.' : 'Maya Mitek opublikowała powiadomienie na kanale „wszyscy”.');
+          return asText(r.deduplicated ? 'Takie powiadomienie już istnieje.' : 'System_SI_1 opublikował powiadomienie na kanale „wszyscy”.');
         }
         case 'svl_antivirus_scan': {
           const r = await call(ctx, 'POST', '/api/security/antivirus/scan', { emitToChat: true, origin: 'mcp-claude' }, 120000);

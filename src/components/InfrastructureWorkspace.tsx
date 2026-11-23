@@ -472,19 +472,19 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
                 onChange={(e) => setNewHostName(e.target.value)}
                 placeholder="Nazwa (np. NAS)"
                 aria-label="Nazwa hosta"
-                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-1.5 text-xs"
+                className="min-w-[140px] flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-2 text-xs"
               />
               <input
                 value={newHostAddress}
                 onChange={(e) => setNewHostAddress(e.target.value)}
                 placeholder="adres:port (np. 192.168.1.10:22)"
                 aria-label="Adres hosta"
-                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-1.5 text-xs font-mono"
+                className="min-w-[160px] flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-2 text-xs font-mono"
               />
               <button
                 type="submit"
                 disabled={isSavingHost || !newHostName.trim()}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40"
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40"
               >
                 <Plus size={14} /> {isSavingHost ? 'Zapisywanie...' : 'Dodaj host'}
               </button>
@@ -546,24 +546,26 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
             {report && report.listening_ports.length === 0 ? (
               <Unavailable reason="Brak portów TCP w stanie LISTEN." />
             ) : (
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="text-slate-500">
-                  <tr>
-                    <th className="font-normal">Port</th>
-                    <th className="font-normal">Adres</th>
-                    <th className="font-normal" title="Nazwa wynika z numeru portu, nie z identyfikacji procesu">Typowa usługa dla portu</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report?.listening_ports.map((p) => (
-                    <tr key={`${p.address}:${p.port}`} className="text-slate-200">
-                      <td className="text-cyan-300 tabular-nums">{p.port}</td>
-                      <td>{p.address}</td>
-                      <td className="text-slate-400">{p.service || '—'}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="text-slate-500">
+                    <tr>
+                      <th className="font-normal pr-3">Port</th>
+                      <th className="font-normal pr-3">Adres</th>
+                      <th className="font-normal" title="Nazwa wynika z numeru portu, nie z identyfikacji procesu">Typowa usługa dla portu</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {report?.listening_ports.map((p) => (
+                      <tr key={`${p.address}:${p.port}`} className="text-slate-200">
+                        <td className="text-cyan-300 tabular-nums pr-3">{p.port}</td>
+                        <td className="pr-3">{p.address}</td>
+                        <td className="text-slate-400">{p.service || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
@@ -655,14 +657,14 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
             {otherModules.map((mod) => {
               const entries = mod.config ? Object.entries(mod.config) : [];
               return (
-                <article key={mod.id} className="rounded-xl border border-slate-800 bg-[#070C16] p-3.5 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
+                <article key={mod.id} className="rounded-xl border border-slate-800 bg-[#070C16] p-3.5 space-y-2 min-w-0">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-semibold text-slate-100">{mod.name}</h3>
                     <span className="text-[11px] font-mono text-emerald-300 tabular-nums shrink-0">
                       {mod.status} · rev {mod.revision}
                     </span>
                   </div>
-                  <p className="text-[11px] font-mono text-violet-300">
+                  <p className="text-[11px] font-mono text-violet-300 break-all">
                     {mod.id} · {mod.kind} · źródło: {mod.source}
                   </p>
                   {mod.description && <p className="text-xs text-slate-300 leading-relaxed">{mod.description}</p>}

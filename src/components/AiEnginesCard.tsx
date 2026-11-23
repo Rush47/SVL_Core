@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Cpu, Satellite, Sparkles, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
+import { Cpu, Satellite, Sparkles, Zap, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
 import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } from '../utils/svlLogic';
 
 interface OllamaModel { name: string; size: number | null; parameterSize: string | null; vision: boolean }
@@ -25,6 +25,7 @@ interface EnginesState {
       diskFreeGb: number | null;
       error: string | null;
     };
+    grok: { configured: boolean; model: string; timeoutMs: number; paid: boolean };
     gemini: { configured: boolean; models: string[]; modelCount: number; forcedModel: string | null };
     image: { engine: string; available: boolean | null; detail: string | null };
   };
@@ -113,7 +114,7 @@ export const AiEnginesCard: React.FC = () => {
       {error && <p className="text-xs text-amber-300">{error}</p>}
 
       {e && (
-        <div className="grid gap-3 lg:grid-cols-3">
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
           {/* Ollama (lokalna lub ze statku SVL-364) */}
           <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
@@ -214,6 +215,24 @@ export const AiEnginesCard: React.FC = () => {
                 </div>
               );
             })()}
+          </div>
+
+          {/* Grok (xAI) — główny płatny silnik */}
+          <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+              <Zap className="w-3.5 h-3.5 text-emerald-400" /> Grok (xAI)
+              <span className="ml-auto"><Dot ok={Boolean(e.grok?.configured)} /></span>
+            </div>
+            <div className="text-[11px] text-slate-400">
+              {e.grok?.configured
+                ? <>Główny silnik · model <span className="font-mono text-slate-200">{e.grok.model}</span></>
+                : 'Brak klucza XAI_API_KEY — używana darmowa Ollama'}
+            </div>
+            {e.grok?.configured && (
+              <div className="text-[10px] text-slate-500">
+                Płatne API · timeout {Math.round((e.grok.timeoutMs || 60000) / 1000)} s · przy błędzie zapas: Ollama
+              </div>
+            )}
           </div>
 
           {/* Gemini */}

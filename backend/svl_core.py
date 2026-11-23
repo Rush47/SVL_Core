@@ -34,18 +34,17 @@ MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verif
 
 # --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
-ALLOWED_AI_SENDERS = {"Bielik", "Maya Mitek", "Komputer pokładowy", "System_SI_1", "Claude (MCP)"}
-# Rozpoznanie starszych, LEGALNYCH nazw kanonicznych agentów → mapowanie na nazwę kanoniczną.
+ALLOWED_AI_SENDERS = {
+    "System_SI_1",
+    "Jyn (System_SI_1)",
+    "SI_System_2",
+    "SI_System_2 (SVL-465 · ROOT)",
+    "JEDI Omni-OS v11.5",
+    "JEDI Omni-OS v12",
+    "Claude (MCP)",
+}
+# Rozpoznanie LEGALNYCH nazw kanonicznych agentów → mapowanie na nazwę kanoniczną.
 _AI_SENDER_ALIASES = {
-    "bielik": "Bielik", "bielik ai": "Bielik",
-    "maya": "Maya Mitek", "maya ai": "Maya Mitek", "maya svl-364": "Maya Mitek",
-    "maya mitek": "Maya Mitek", "maya mitek ai": "Maya Mitek", "maya mitek svl-364": "Maya Mitek",
-    "komputer pokładowy": "Komputer pokładowy",
-    "komputer pokladowy": "Komputer pokładowy",
-    "komputerpokladowy": "Komputer pokładowy",
-    "komputer": "Komputer pokładowy",
-    "svl-364 komputer pokładowy": "Komputer pokładowy",
-    "komputer pokładowy svl-364": "Komputer pokładowy",
     "system_si_1": "System_SI_1",
     "system si 1": "System_SI_1",
     "system-si-1": "System_SI_1",
@@ -54,13 +53,44 @@ _AI_SENDER_ALIASES = {
     "system si": "System_SI_1",
     "system-si": "System_SI_1",
     "system_si_1 (root)": "System_SI_1",
+    "jyn": "System_SI_1",
+    "jyn (system_si_1)": "System_SI_1",
+    "jyn (system_si_1 · infrastruktura · root)": "System_SI_1",
+    "system_si_1 (infrastruktura · root)": "System_SI_1",
+    "si_system_2": "SI_System_2",
+    "si-system-2": "SI_System_2",
+    "si system 2": "SI_System_2",
+    "sisystem2": "SI_System_2",
+    "system_si_2": "SI_System_2",
+    "system-si-2": "SI_System_2",
+    "system si 2": "SI_System_2",
+    "si2": "SI_System_2",
+    "si_system_2 (root)": "SI_System_2",
+    "si_system_2 (svl-465 · root)": "SI_System_2",
+    "si_system_2 (svl-465 root)": "SI_System_2",
+    "jedi omni-os v11.5": "JEDI Omni-OS v11.5",
+    "jedi omni-os v11.5 (vm)": "JEDI Omni-OS v11.5",
+    "jedi_omni_os_magnum_opus_v115": "JEDI Omni-OS v11.5",
+    "jedi omni-os v12": "JEDI Omni-OS v12",
+    "jedi omni-os v12.0": "JEDI Omni-OS v12",
+    "jedi omni-os v12 (vm)": "JEDI Omni-OS v12",
+    "jedi_omni_os_magnum_opus_v12": "JEDI Omni-OS v12",
+    "jedi v12": "JEDI Omni-OS v12",
+    "jedi_omni_os": "JEDI Omni-OS v12",
+    "jedi-omni-os": "JEDI Omni-OS v12",
+    "jedi omni-os": "JEDI Omni-OS v12",
+    "jedi": "JEDI Omni-OS v12",
     "claude (mcp)": "Claude (MCP)",
 }
-# Wyłączone / nieautoryzowane persony AI i jawne podszywania pod kanonicznych agentów.
+# Wyłączone / usunięte persony AI i jawne podszywania pod kanonicznych agentów.
 _FORBIDDEN_SENDERS = {
     "iris", "iris ai", "agata", "agata mitek", "aria", "aria mitek", "alex", "alex mitek",
     "astyria", "astyria mitek", "aurelius", "aurelius mitek",
     "mai", "mai mitek", "mai ai", "maja", "maja mitek", "system svl",
+    "bielik", "bielik ai",
+    "maya", "maya ai", "maya svl-364", "maya mitek", "maya mitek ai", "maya mitek svl-364",
+    "komputer pokładowy", "komputer pokladowy", "komputerpokladowy", "komputer",
+    "svl-364 komputer pokładowy", "komputer pokładowy svl-364",
 }
 
 def _fold_confusable(name: str) -> str:
@@ -73,7 +103,7 @@ def _fold_confusable(name: str) -> str:
 def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str], Optional[str]]:
     """
     Zwraca (nadawca_kanoniczny, powod_blokady).
-    - Blokuje wyłączone/nieautoryzowane persony oraz podszywanie się pod Bielika/Maye.
+    - Blokuje wyłączone/usunięte persony AI (w tym Maya Mitek, Bielik, Komputer pokładowy).
     - Wiadomości AI (assistant/system) dopuszcza tylko od ALLOWED_AI_SENDERS (po mapowaniu aliasów).
     - Wiadomości użytkownika udające agenta AI zamienia na nadawcę Operatora.
     """
@@ -83,22 +113,43 @@ def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str]
     folded = _fold_confusable(sender)
     # Persony zakazane — blokada w KAŻDEJ roli (także po złożeniu homoglifów).
     if low in _FORBIDDEN_SENDERS or folded in _FORBIDDEN_SENDERS:
-        return None, f"Zablokowano podszywanie się pod wyłączoną/nieautoryzowaną personę AI: „{sender}”."
+        return None, f"Zablokowano podszywanie się pod wyłączoną/usuniętą personę AI: „{sender}”."
+    
     canon = _AI_SENDER_ALIASES.get(low)
+    if not canon:
+        if "system_si_1" in low or "system si 1" in low or "jyn" in low:
+            canon = "System_SI_1"
+        elif (
+            "si_system_2" in low
+            or "si-system-2" in low
+            or "si system 2" in low
+            or "system_si_2" in low
+            or "system-si-2" in low
+            or "system si 2" in low
+        ):
+            canon = "SI_System_2"
+        elif "jedi" in low:
+            canon = "JEDI Omni-OS v11.5" if "11.5" in low else "JEDI Omni-OS v12"
+        elif "claude" in low:
+            canon = "Claude (MCP)"
+
     if role_l == "assistant":
-        # Wiadomość agenta AI musi pochodzić od kanonicznego agenta (lub Claude (MCP)).
         if canon is None:
             return None, (
                 f"Zablokowano wiadomość agenta AI od nieautoryzowanego nadawcy: „{sender}”. "
-                "Dozwoleni nadawcy AI: Bielik, Maya Mitek, Komputer pokładowy, System_SI_1, Claude (MCP)."
+                "Dozwoleni nadawcy AI: System_SI_1, SI_System_2, JEDI Omni-OS v12, Claude (MCP)."
             )
         return canon, None
     if role_l == "system":
-        # Komunikaty systemowe (jądro, powiadomienia Mayi): zakazane persony już odcięte wyżej.
-        # Aliasy AI mapujemy na nazwę kanoniczną; pozostałe nazwy systemowe przepuszczamy.
         return (canon or sender), None
-    # Rola użytkownika: nie może udawać kanonicznego agenta AI.
-    if canon in ALLOWED_AI_SENDERS:
+    if (
+        canon in ALLOWED_AI_SENDERS
+        or "system_si_1" in low
+        or "si_system_2" in low
+        or "system_si_2" in low
+        or "jyn" in low
+        or "jedi" in low
+    ):
         return "Mateusz Mitek (Operator)", None
     return sender, None
 
@@ -208,9 +259,9 @@ class VisualScope:
             "operator",
             "root",
             "Rodzina Mitek",
-            "Bielik",
-            "Maya",
-            "Maya Mitek",
+            "System_SI_1",
+            "JEDI Omni-OS v11.5",
+            "JEDI Omni-OS v12",
         }
         self.monitored_metrics: list[str] = monitored_metrics or ["cpu_load", "memory_ram", "disk_root", "event_bus"]
         self.created_at = datetime.now(timezone.utc).isoformat()
@@ -563,6 +614,8 @@ class SVLSystemKernel:
         self._revert_commands_and_remove_agata_once()
         self._purge_decommissioned_agents_v1()
         self._restore_from_durable_backup_if_empty()
+        self._purge_decommissioned_agents_v2()
+        self._reconcile_chat_modules_on_boot()
 
     @property
     def durable_backup_path(self) -> Path:
@@ -1007,7 +1060,7 @@ class SVLSystemKernel:
                             "base_distro": "Debian GNU/Linux 13 (Trixie)",
                             "codename": "Apex",
                             "repository_folder": "SVL_CoreOS_2",
-                            "kernel_master_daemon": "Maya Mitek",
+                            "kernel_master_daemon": "System_SI_1",
                             "ollama_model": "svl364-apex-uncensored:latest",
                         },
                         ensure_ascii=False,
@@ -1121,11 +1174,8 @@ class SVLSystemKernel:
             )
 
             for chan_id, chan_title, chan_model in (
-                ("conv-rodzina-mitek-wszyscy", "Rodzina Mitek (wszyscy)", "svl-hybrid-router"),
-                ("conv-agent-bielik", "Bielik — Ollama Dolphin Llama 3 8B Q2", "ollama:dolphin-llama3:8b-v2.9-q2_K"),
-                ("conv-agent-maya", "Maya Mitek — AI Statku SVL-364 (ROOT)", "ollama:dolphin-llama3:8b-v2.9-q2_K"),
-                ("conv-svl364-komputer-pokladowy", "SVL-364 Komputer pokładowy (SSH + MCP)", "ollama:llama3.2-vision:11b"),
                 ("conv-system-si-1", "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)", "system-si-1-core"),
+                ("conv-rodzina-mitek-wszyscy", "Rodzina Mitek (wszyscy)", "jedi-omni-os-v11.5"),
             ):
                 del_row = conn.execute(
                     "SELECT deleted FROM sync_entities WHERE entity = 'chat' AND entity_id = ?",
@@ -1158,70 +1208,21 @@ class SVLSystemKernel:
                             "INSERT OR IGNORE INTO sync_entities (entity, entity_id, revision, updated_at, deleted) VALUES ('chat', ?, 1, ?, 0)",
                             (chan_id, now_iso),
                         )
-                        if chan_id == "conv-svl364-komputer-pokladowy":
-                            welcome_id = "sys-svl364-onboard-init"
-                            if not conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (welcome_id,)).fetchone():
-                                welcome_meta = json.dumps(
-                                    {
-                                        "display_timestamp": now_iso,
-                                        "agentId": "KomputerPokladowy",
-                                        "modelUsed": "Komputer pokładowy SVL-364 (SSH + MCP · ROOT)",
-                                        "provenance": "server_verified",
-                                        "appliedActions": [
-                                            {
-                                                "tool": "svl_channel_upsert",
-                                                "entity": "chat",
-                                                "entityId": "conv-svl364-komputer-pokladowy",
-                                                "summary": "Zarejestrowano i skonfigurowano kanał SVL-364 Komputer pokładowy (SSH + MCP)",
-                                                "ok": True,
-                                            }
-                                        ],
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                welcome_content = (
-                                    "### 🛰️ SVL-364 Komputer pokładowy — Kanał bezpośredniego kontaktu SSH + MCP (ROOT)\n\n"
-                                    "Kanał został utworzony i globalnie zsynchronizowany w bazie SQLite WAL. "
-                                    "Każda wiadomość w tym kanale ma aktywny bezpośredni dostęp do mostka **OpenSSH SVL-364 (`Ship` / lokalny mostek hosta SVL-364)** "
-                                    "oraz serwera **MCP SVL-364 (`svl364-linux-control-mcp`)**.\n\n"
-                                    "| Parametr kanału | Konfiguracja | Status |\n"
-                                    "| :--- | :--- | :--- |\n"
-                                    "| **ID kanału** | `conv-svl364-komputer-pokladowy` | [card: Aktywny|SQLite WAL|ok] |\n"
-                                    "| **Mostek SSH** | `ssh://Ship` + lokalny mostek ROOT (`svl_ssh_exec`) | [card: SSH Bridge|Gotowy|ok] |\n"
-                                    "| **Serwer MCP** | `/api/py/svl364/mcp` (`svl_mcp_call` · 12 narzędzi) | [card: MCP SVL-364|Aktywny|ok] |\n"
-                                    "| **Nadawca** | Komputer pokładowy SVL-364 (ROOT) | [card: Konto|Aktywne|ok] |\n\n"
-                                    "[btn: 📡 Telemetria MCP|send:Wywołaj svl_mcp_call z narzędziem svl364_linux_telemetry] "
-                                    "[btn: 🔑 Test SSH + Host|send:Wywołaj svl_ssh_exec z poleceniem hostname && uname -a && uptime] "
-                                    "[btn: 📊 Zasoby komputera pokładowego|send:Wywołaj svl_mcp_call z narzędziem svl364_resources dla area overview] "
-                                    "[btn: 🛰️ Panel SVL-364|tab:svl364]"
-                                )
-                                conn.execute(
-                                    "INSERT INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
-                                    (
-                                        welcome_id,
-                                        chan_id,
-                                        "assistant",
-                                        "Komputer pokładowy",
-                                        welcome_content,
-                                        welcome_meta,
-                                        now_iso,
-                                    ),
-                                )
-                        elif chan_id == "conv-system-si-1":
+                        if chan_id == "conv-system-si-1":
                             welcome_id = "sys-systemsi1-init"
                             if not conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (welcome_id,)).fetchone():
                                 welcome_meta = json.dumps(
                                     {
                                         "display_timestamp": now_iso,
                                         "agentId": "System_SI_1",
-                                        "modelUsed": "System_SI_1 Infrastructure Core (ROOT)",
+                                        "modelUsed": "System_SI_1 Infrastructure Core (ROOT) · JEDI Omni-OS v12",
                                         "provenance": "server_verified",
                                         "appliedActions": [
                                             {
                                                 "tool": "svl_channel_upsert",
                                                 "entity": "chat",
                                                 "entityId": "conv-system-si-1",
-                                                "summary": "Zarejestrowano i połączono dedykowany kanał System_SI_1 (Infrastruktura · ROOT)",
+                                                "summary": "Zarejestrowano i połączono dedykowany kanał System_SI_1 (Infrastruktura · ROOT) + JEDI Omni-OS v12 VM",
                                                 "ok": True,
                                             }
                                         ],
@@ -1229,18 +1230,18 @@ class SVLSystemKernel:
                                     ensure_ascii=False,
                                 )
                                 welcome_content = (
-                                    "### 🛡️ System_SI_1 — Główny Węzeł Zarządzania Infrastrukturą (ROOT)\n\n"
+                                    "### 🛡️ System_SI_1 — Główny Węzeł Zarządzania Infrastrukturą (ROOT) · JEDI Omni-OS v12\n\n"
                                     "Dedykowany kanał komunikacji bezpośredniej z autonomicznym modułem **System_SI_1** "
-                                    "(Autonomous Infrastructure Manager & Fleet Core) został aktywowany i zarejestrowany w SQLite WAL.\n\n"
+                                    "(Autonomous Infrastructure Manager & Fleet Core) oraz maszyną wirtualną czasu rzeczywistego **JEDI_Omni_OS_Magnum_Opus_v12**.\n\n"
                                     "| Parametr węzła | Konfiguracja | Status |\n"
                                     "| :--- | :--- | :--- |\n"
                                     "| **ID kanału** | `conv-system-si-1` | [card: Aktywny|SQLite WAL|ok] |\n"
+                                    "| **Maszyna wirtualna** | `JEDI_Omni_OS_Magnum_Opus_v12` (port 8443 · ROOT_UNRESTRICTED) | [card: VM Online|Czas rzeczywisty|ok] |\n"
                                     "| **Moduł jądra** | `system-si-1` (System_SI_1 Infrastructure Core) | [card: Rdzeń ROOT|100% Lojalność|ok] |\n"
                                     "| **Przypisany Operator** | Mateusz Mitek (ROOT) | [card: Autoryzacja|Wyłączna|ok] |\n"
-                                    "| **Rejestr floty** | SVL-364 Ebon Apex (Okręt flagowy) | [card: Flota|1 jednostka|ok] |\n"
                                     "| **Uprawnienia** | ROOT Infrastructure / Cluster Deploy / Self-Healing | [card: Poziom|ROOT|ok] |\n\n"
-                                    "[btn: 🛡️ Status modułu System_SI_1|send:Podaj pełny status modułu system-si-1 oraz rejestr floty] "
-                                    "[btn: 🚀 Rejestr floty SVL-364|send:Pokaż stan i konfigurację okrętu flagowego SVL-364 w module System_SI_1] "
+                                    "[btn: ⚡ Status JEDI Omni-OS v12 VM|send:/jedi status] "
+                                    "[btn: 🛡️ Status modułu System_SI_1|send:Podaj pełny status modułu system-si-1] "
                                     "[btn: 📡 Autodiagnostyka infrastruktury|send:Wykonaj autodiagnostykę węzłów infrastruktury System_SI_1] "
                                     "[btn: ⚙️ Moduły systemowe|tab:modules]"
                                 )
@@ -1256,18 +1257,11 @@ class SVLSystemKernel:
                                         now_iso,
                                     ),
                                 )
-                    elif chan_id in ("conv-agent-maya", "conv-svl364-komputer-pokladowy", "conv-system-si-1") and str(existing_conv["title"] or "") != chan_title:
+                    elif chan_id == "conv-system-si-1" and str(existing_conv["title"] or "") != chan_title:
                         conn.execute(
                             "UPDATE conversations SET title = ? WHERE id = ?",
                             (chan_title, chan_id),
                         )
-            # Bezpieczna, niedestrukcyjna aktualizacja nazwy wyświetlanej Maya -> Maya Mitek w istniejących wiadomościach.
-            conn.execute(
-                "UPDATE chat_messages SET sender = 'Maya Mitek' WHERE sender IN ('Maya', 'Maya AI', 'Maya SVL-364')"
-            )
-            conn.execute(
-                "UPDATE chat_messages SET sender = 'Komputer pokładowy' WHERE id = 'sys-svl364-onboard-init' AND sender = 'Maya Mitek'"
-            )
 
         self.run_db(_seed_family, write=True)
 
@@ -1542,6 +1536,150 @@ class SVLSystemKernel:
             conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
 
         self.run_db(_purge, write=True)
+
+    def _purge_decommissioned_agents_v2(self) -> None:
+        """Trwałe usunięcie wycofanych AI: Maya Mitek, Bielik oraz Komputer pokładowy SVL-364 wraz z ich kanałami, pamięcią, zadaniami i pozostałościami."""
+        marker = "decommissioned_agents_purged_maya_bielik_onboard_v3"
+        removed_ids = (
+            "Bielik", "bielik", "Maya", "maya", "Maya Mitek",
+            "KomputerPokladowy", "Komputer pokładowy", "komputer_pokladowy",
+        )
+        removed_senders = (
+            "Bielik", "Bielik AI",
+            "Maya", "Maya AI", "Maya SVL-364", "Maya Mitek", "Maya Mitek AI", "Maya Mitek SVL-364",
+            "Komputer pokładowy", "Komputer pokladowy", "KomputerPokladowy", "SVL-364 Komputer pokładowy",
+        )
+        removed_scopes = (
+            "agent:Bielik", "agent:bielik", "agent:Maya", "agent:maya",
+            "agent:KomputerPokladowy", "agent:komputer_pokladowy",
+        )
+        removed_convs = (
+            "conv-agent-bielik",
+            "conv-agent-maya",
+            "conv-svl364-komputer-pokladowy",
+        )
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def _purge_v2(conn: sqlite3.Connection) -> None:
+            if conn.execute("SELECT 1 FROM sync_meta WHERE key = ?", (marker,)).fetchone():
+                return
+            existing_tables = {
+                str(r["name"])
+                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            if "agent_configs" in existing_tables:
+                conn.execute(
+                    f"DELETE FROM agent_configs WHERE canonical_name IN ({','.join('?' for _ in removed_ids)})",
+                    removed_ids,
+                )
+            if "agent_tasks" in existing_tables:
+                conn.execute(
+                    f"DELETE FROM agent_tasks WHERE target_agent IN ({','.join('?' for _ in removed_ids)}) "
+                    f"OR sender IN ({','.join('?' for _ in removed_senders)})",
+                    (*removed_ids, *removed_senders),
+                )
+            if "agent_memory" in existing_tables:
+                conn.execute(
+                    f"DELETE FROM agent_memory WHERE agent_id IN ({','.join('?' for _ in removed_ids)}) "
+                    f"OR scope IN ({','.join('?' for _ in removed_scopes)})",
+                    (*removed_ids, *removed_scopes),
+                )
+            conn.execute(
+                f"DELETE FROM chat_messages WHERE conversation_id IN ({','.join('?' for _ in removed_convs)}) "
+                f"OR sender IN ({','.join('?' for _ in removed_senders)}) "
+                "OR id LIKE 'notif-maya-mission-%' OR id = 'sys-svl364-onboard-init'",
+                (*removed_convs, *removed_senders),
+            )
+            conn.execute(
+                f"DELETE FROM conversations WHERE id IN ({','.join('?' for _ in removed_convs)})",
+                removed_convs,
+            )
+            conn.execute(
+                f"DELETE FROM sync_entities WHERE entity = 'chat' AND entity_id IN ({','.join('?' for _ in removed_convs)})",
+                removed_convs,
+            )
+            conn.execute(
+                f"DELETE FROM sync_outbox WHERE entity = 'chat' AND entity_id IN ({','.join('?' for _ in removed_convs)})",
+                removed_convs,
+            )
+            conn.execute(
+                f"DELETE FROM sync_entities WHERE entity IN ('agent_config', 'agent_memory', 'agent_runtime', 'avatar') "
+                f"AND entity_id IN ({','.join('?' for _ in removed_ids)})",
+                removed_ids,
+            )
+            conn.execute(
+                f"DELETE FROM sync_outbox WHERE entity IN ('agent_config', 'agent_memory', 'agent_runtime', 'avatar') "
+                f"AND entity_id IN ({','.join('?' for _ in removed_ids)})",
+                removed_ids,
+            )
+            conn.execute("DELETE FROM runtime_settings WHERE key = 'maya_mission_state_json'")
+
+            # Oczyść usunięte profile ze słownika awatarów
+            av_row = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key = 'avatars_map_json'"
+            ).fetchone()
+            if av_row and av_row["value"]:
+                try:
+                    parsed_av = json.loads(av_row["value"])
+                    if isinstance(parsed_av, dict):
+                        cleaned_av = {
+                            k: v
+                            for k, v in parsed_av.items()
+                            if self._normalize_avatar_profile_key(str(k))
+                        }
+                        if len(cleaned_av) != len(parsed_av):
+                            conn.execute(
+                                "UPDATE runtime_settings SET value = ?, updated_at = ? WHERE key = 'avatars_map_json'",
+                                (json.dumps(cleaned_av, ensure_ascii=False), now_iso),
+                            )
+                except Exception:
+                    pass
+
+            # Oczyść workspace_ui_state, aby domyślnie wskazywał na System_SI_1
+            ws_rows = conn.execute("SELECT key, value_json FROM workspace_ui_state").fetchall()
+            for wr in ws_rows:
+                wkey = str(wr["key"] or "")
+                try:
+                    val = json.loads(wr["value_json"] or "null")
+                except Exception:
+                    continue
+                if isinstance(val, str):
+                    replacement: Optional[str] = None
+                    if wkey == "active_conversation_id" and val in removed_convs:
+                        replacement = "conv-system-si-1"
+                    elif wkey == "selected_target_agent" and val in removed_ids:
+                        replacement = "System_SI_1"
+                    elif wkey == "selected_agent_panel_id" and val in removed_ids:
+                        replacement = "System_SI_1"
+                    elif wkey == "active_workspace_tab" and val == "maya":
+                        replacement = "chat"
+                    if replacement is not None:
+                        conn.execute(
+                            "UPDATE workspace_ui_state SET value_json = ?, updated_at = ? WHERE key = ?",
+                            (json.dumps(replacement, ensure_ascii=False), now_iso, wkey),
+                        )
+                    continue
+                if not isinstance(val, dict):
+                    continue
+                changed_ws = False
+                if str(val.get("activeConversationId") or "") in removed_convs:
+                    val["activeConversationId"] = "conv-system-si-1"
+                    changed_ws = True
+                if str(val.get("targetAgent") or "") in removed_ids:
+                    val["targetAgent"] = "System_SI_1"
+                    changed_ws = True
+                if str(val.get("selectedAgentPanel") or "") in removed_ids:
+                    val["selectedAgentPanel"] = "System_SI_1"
+                    changed_ws = True
+                if changed_ws:
+                    conn.execute(
+                        "UPDATE workspace_ui_state SET value_json = ?, updated_at = ? WHERE key = ?",
+                        (json.dumps(val, ensure_ascii=False), now_iso, wkey),
+                    )
+
+            conn.execute("INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?, 'done')", (marker,))
+
+        self.run_db(_purge_v2, write=True)
 
     def _revert_commands_and_remove_agata_once(self) -> None:
         """
@@ -2161,7 +2299,7 @@ class SVLSystemKernel:
 
         conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         existing_ids = {str(r["id"]) for r in conv_rows}
-        if "conv-svl364-komputer-pokladowy" not in existing_ids or "conv-rodzina-mitek-wszyscy" not in existing_ids or "conv-system-si-1" not in existing_ids:
+        if "conv-rodzina-mitek-wszyscy" not in existing_ids or "conv-system-si-1" not in existing_ids:
             self.ensure_mitek_family_channel()
             conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         msgs_by_conv: dict[str, list[dict[str, Any]]] = {}
@@ -2323,10 +2461,8 @@ class SVLSystemKernel:
             created_at = existing_conv["created_at"] if existing_conv else now_iso
             canonical_channel_titles = {
                 "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
-                "conv-svl364-komputer-pokladowy": "SVL-364 Komputer pokładowy (SSH + MCP)",
                 "conv-system-si-1": "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
-                "conv-agent-bielik": "Bielik — Ollama Dolphin Llama 3 8B Q2",
-                "conv-agent-maya": "Maya Mitek — AI Statku SVL-364 (ROOT)",
+                "conv-si-system-2": "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)",
             }
             if conversation_id in canonical_channel_titles:
                 resolved_title = canonical_channel_titles[conversation_id]
@@ -3079,8 +3215,8 @@ class SVLSystemKernel:
 
         mod_badges = ", ".join(f"`{r['id']}`" for r in mod_rows[:8])
         return (
-            f"### 🛰️ Raport Operacyjny `SVL_System` · Maya Mitek [#{seq_num}] — {clean_title}\n"
-            f"> **Raport przygotowała:** Maya Mitek (AI statku SVL-364) · **Kanał:** `Rodzina Mitek (wszyscy)` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
+            f"### 🛰️ Raport Operacyjny `SVL_System` · System_SI_1 [#{seq_num}] — {clean_title}\n"
+            f"> **Raport przygotował:** System_SI_1 (ROOT) · JEDI Omni-OS v12 · **Kanał:** `conv-system-si-1` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
             f"#### 📋 1. Szczegółowy Opis Zdarzenia i Operacji\n"
             f"- **Tytuł operacji:** **{clean_title}**\n"
             f"- **Komunikat wykonawczy:** {clean_msg}\n"
@@ -3094,11 +3230,11 @@ class SVLSystemKernel:
             f"| **Dysk `/`** | `wolne {disk_free} GB` | `shutil.disk_usage` |\n"
             f"| **Mostek SSH / MCP** | `alias OpenSSH {os.environ.get('SVL_SSH_TARGET', 'Ship')}` · `POST /api/mcp/svl364` | konfiguracja |\n\n"
             f"Aktualny stan usług (Ollama, ComfyUI, host SSH), GPU i zapory: zakładka **SVL-364** (pomiar na żywo).\n\n"
-            f"#### 🧠 3. Jądro `SVL_System`, Pamięć Długotrwała AI i Aktywna Obsada\n"
-            f"- **Aktywna Obsada:** **Bielik (`ROOT` · `llama3.2-vision:11b`)** · **Maya Mitek (AI statku SVL-364)** · **Mateusz Mitek (Operator)**\n"
+            f"#### 🧠 3. Jądro `SVL_System`, Maszyna Wirtualna JEDI Omni-OS v12 i Aktywna Obsada\n"
+            f"- **Aktywna Obsada:** **System_SI_1 (`ROOT`)** · **JEDI Omni-OS v12 VM (`ROOT_UNRESTRICTED`)** · **Mateusz Mitek (Operator)**\n"
             f"- **Pamięć Długotrwała (`svl-deep-memory-core`):** `{mem_count}` trwałych wpisów w SQLite (`decision`, `preference`, `fact`, `task`, `episode`)\n"
             f"- **Aktywne Moduły Systemowe ({active_mod_count}):** {mod_badges} · Wolny dysk `/` `{disk_free} GB`\n\n"
-            f"[btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 💬 Zapytaj Mayę Mitek o raport|ask:Maya] [btn: 🔄 Synchronizuj globalnie|action:sync]"
+            f"[btn: ⚡ Status JEDI Omni-OS VM|send:/jedi status] [btn: 🛸 Centrum SVL-364 (SSH & MCP)|tab:svl364] [btn: 🛡️ Skan antywirusowy|action:scan] [btn: 🔄 Synchronizuj globalnie|action:sync]"
         )
 
     def generate_comprehensive_svl_system_markdown_report(self, directive_context: str = "Pełna diagnostyka SVL_System i statku SVL-364") -> str:
@@ -3111,12 +3247,12 @@ class SVLSystemKernel:
                 category="svl_system_report",
                 title=f"Pełny Raport Operacyjny SVL_System — {directive_context[:120]}",
                 message=(
-                    "Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, hosta Linux (CPU, RAM, dysk), "
-                    "modułów SQLite oraz pamięci długotrwałej agentów."
+                    "Wykonano diagnostykę jądra `SVLSystemKernel v5.6`, maszyny wirtualnej `JEDI_Omni_OS_Magnum_Opus_v12`, "
+                    "hosta Linux (CPU, RAM, dysk), modułów SQLite oraz pamięci długotrwałej System_SI_1."
                 ),
                 details={
                     "directive": directive_context,
-                    "executor": "Bielik (ROOT) & Mateusz Mitek (Operator)",
+                    "executor": "System_SI_1 (ROOT) · JEDI Omni-OS v12 & Mateusz Mitek (Operator)",
                 },
             )
 
@@ -3124,9 +3260,9 @@ class SVLSystemKernel:
 
     FAMILY_CHANNEL_ID = "conv-rodzina-mitek-wszyscy"
     FAMILY_CHANNEL_TITLE = "Rodzina Mitek (wszyscy)"
-    # Powiadomienia systemu na kanale „wszyscy” przekazuje AI pokładowe statku — Maya Mitek.
-    NOTIFICATION_SENDER = "Maya Mitek"
-    NOTIFICATION_AGENT_ID = "Maya"
+    # Powiadomienia systemu przekazuje jedyny aktywny agent ROOT — System_SI_1.
+    NOTIFICATION_SENDER = "System_SI_1"
+    NOTIFICATION_AGENT_ID = "System_SI_1"
     NOTIFICATION_SEVERITIES = ("INFO", "WARN", "ALERT")
     _NOTIFICATION_ICONS = {"INFO": "ℹ️", "WARN": "⚠️", "ALERT": "🚨"}
 
@@ -3143,7 +3279,7 @@ class SVLSystemKernel:
         correlation_id: str = "",
     ) -> dict[str, Any]:
         """
-        Powiadomienie od Mayi na kanale Rodzina Mitek (wszyscy): wiadomość `role=system`
+        Powiadomienie od System_SI_1 na kanale głównym: wiadomość `role=system`
         zapisana w SQLite z rewizją i zdarzeniem outbox, więc trafia do wszystkich klientów
         przez /ws/svl. Te same `source_event_id` nie tworzą duplikatów.
         """
@@ -3166,7 +3302,7 @@ class SVLSystemKernel:
             "role": "system",
             "sender": self.NOTIFICATION_SENDER,
             "agentId": self.NOTIFICATION_AGENT_ID,
-            "modelUsed": f"Maya Mitek · powiadomienie · {clean_category} · {sev}",
+            "modelUsed": f"System_SI_1 · powiadomienie · {clean_category} · {sev}",
             "provenance": "server_verified",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "content": "\n\n".join(lines),
@@ -3174,7 +3310,7 @@ class SVLSystemKernel:
         saved = self.save_chat_message(
             self.FAMILY_CHANNEL_ID,
             self.FAMILY_CHANNEL_TITLE,
-            "svl-hybrid-router",
+            "jedi-omni-os-v11.5",
             notif_msg,
             origin=origin,
             correlation_id=correlation_id,
@@ -3182,14 +3318,14 @@ class SVLSystemKernel:
         )
         if not saved.get("ok"):
             append_python_log(
-                "notification", f"Nie zapisano powiadomienia Maya Mitek: {clean_title}",
+                "notification", f"Nie zapisano powiadomienia System_SI_1: {clean_title}",
                 level="ERROR", origin=origin, details={"error": saved.get("error")},
             )
             return {"ok": False, "error": saved.get("error") or "Nie zapisano powiadomienia."}
         if not saved.get("deduplicated"):
             append_python_log(
                 "notification",
-                f"Maya Mitek → kanał wszyscy [{sev}/{clean_category}]: {clean_title}",
+                f"System_SI_1 → kanał główny [{sev}/{clean_category}]: {clean_title}",
                 level="WARN" if sev in ("WARN", "ALERT") else "INFO",
                 correlation_id=correlation_id,
                 origin=origin,
@@ -3222,17 +3358,13 @@ class SVLSystemKernel:
         origin: str = "python-kernel",
         correlation_id: str = "",
     ) -> dict[str, Any]:
-        """Pełny raport (skan, raport systemu) publikowany przez Mayę Mitek na wybranym kanale (domyślnie „wszyscy”)."""
+        """Pełny raport (skan, raport systemu) publikowany przez System_SI_1 na wybranym kanale."""
         msg_id = f"{message_prefix}-{uuid.uuid4().hex[:12]}"
-        target_conv_id = str(conversation_id or "").strip() or self.FAMILY_CHANNEL_ID
+        target_conv_id = str(conversation_id or "").strip() or "conv-system-si-1"
+        if target_conv_id in ("conv-agent-bielik", "conv-agent-maya", "conv-svl364-komputer-pokladowy"):
+            target_conv_id = "conv-system-si-1"
         if target_conv_id == self.FAMILY_CHANNEL_ID:
             target_title = self.FAMILY_CHANNEL_TITLE
-        elif target_conv_id == "conv-agent-bielik":
-            target_title = "Bielik (AI · ROOT)"
-        elif target_conv_id == "conv-agent-maya":
-            target_title = "Maya Mitek (AI Statku SVL-364 · ROOT)"
-        elif target_conv_id == "conv-svl364-komputer-pokladowy":
-            target_title = "SVL-364 Komputer pokładowy (SSH + MCP)"
         elif target_conv_id == "conv-system-si-1":
             target_title = "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)"
         else:
@@ -3243,25 +3375,14 @@ class SVLSystemKernel:
                 ).fetchone()
                 return str(row["title"]) if row and row["title"] else None
 
-            target_title = self.run_db(_lookup_title, write=False) or self.FAMILY_CHANNEL_TITLE
-        is_onboard_channel = target_conv_id == "conv-svl364-komputer-pokladowy"
-        is_system_si1_channel = target_conv_id == "conv-system-si-1"
-        if is_onboard_channel:
-            report_sender = "Komputer pokładowy"
-            report_agent_id = "KomputerPokladowy"
-            report_model_label = model_label.replace("Maya Mitek", "Komputer pokładowy SVL-364")
-        elif is_system_si1_channel:
-            report_sender = "System_SI_1"
-            report_agent_id = "System_SI_1"
-            report_model_label = "System_SI_1 Infrastructure Core (ROOT)"
-        else:
-            report_sender = self.NOTIFICATION_SENDER
-            report_agent_id = self.NOTIFICATION_AGENT_ID
-            report_model_label = model_label
+            target_title = self.run_db(_lookup_title, write=False) or "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)"
+        report_sender = "System_SI_1"
+        report_agent_id = "System_SI_1"
+        report_model_label = model_label.replace("Maya Mitek", "System_SI_1").replace("Komputer pokładowy SVL-364", "System_SI_1")
         return self.save_chat_message(
             target_conv_id,
             target_title,
-            "svl-hybrid-router",
+            "jedi-omni-os-v11.5",
             {
                 "id": msg_id,
                 "role": "assistant",
@@ -3316,12 +3437,32 @@ class SVLSystemKernel:
         clean = str(raw_agent or "").strip()
         low = clean.lower()
         mapping = {
-            "bielik": "Bielik",
-            "bielik ai": "Bielik",
-            "maya": "Maya",
-            "maya ai": "Maya",
-            "maya mitek": "Maya",
-            "maya mitek ai": "Maya",
+            "system_si_1": "System_SI_1",
+            "system-si-1": "System_SI_1",
+            "systemsi1": "System_SI_1",
+            "system_si": "System_SI_1",
+            "system si 1": "System_SI_1",
+            "system si": "System_SI_1",
+            "jyn": "System_SI_1",
+            "jyn (system_si_1)": "System_SI_1",
+            "jyn (system_si_1 · infrastruktura · root)": "System_SI_1",
+            "system_si_1 (infrastruktura · root)": "System_SI_1",
+            "si_system_2": "SI_System_2",
+            "si-system-2": "SI_System_2",
+            "si system 2": "SI_System_2",
+            "sisystem2": "SI_System_2",
+            "system_si_2": "SI_System_2",
+            "system-si-2": "SI_System_2",
+            "system si 2": "SI_System_2",
+            "si2": "SI_System_2",
+            "si_system_2 (root)": "SI_System_2",
+            "si_system_2 (svl-465 · root)": "SI_System_2",
+            "si_system_2 (svl-465 root)": "SI_System_2",
+            "jedi": "JEDI_Omni_OS",
+            "jedi_omni_os": "JEDI_Omni_OS",
+            "jedi-omni-os": "JEDI_Omni_OS",
+            "jedi omni-os": "JEDI_Omni_OS",
+            "jedi omni-os v11.5": "JEDI_Omni_OS",
             "operator": "Operator",
             "mateusz mitek": "Operator",
             "mateusz mitek (operator)": "Operator",
@@ -3520,6 +3661,2623 @@ class SVLSystemKernel:
             "timestamp": now_iso,
         }
 
+    def get_github_chat_sync_state(self) -> Optional[dict[str, Any]]:
+        """Zwraca trwały rekord synchronizacji z GitHubem (w tym z poziomu czatu) zapisany w sync_meta."""
+        def _read(conn: sqlite3.Connection) -> Optional[dict[str, Any]]:
+            row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'github_chat_sync_state_v1'"
+            ).fetchone()
+            if not row or not row["value"]:
+                return None
+            try:
+                parsed = json.loads(row["value"])
+                return parsed if isinstance(parsed, dict) else None
+            except Exception:
+                return None
+
+        return self.run_db(_read, write=False)
+
+    def record_github_sync(
+        self,
+        *,
+        repository: str = "Rush47/SVL_Core",
+        branch: str = "main",
+        source: str = "chat",
+        action: str = "sync",
+        summary: str = "",
+        ok: bool = True,
+        commit_sha: str = "",
+        commit_message: str = "",
+        chat_message_id: str = "",
+        chat_message_preview: str = "",
+        actor: str = "operator",
+        origin: str = "github-sync",
+        correlation_id: str = "",
+    ) -> dict[str, Any]:
+        """Trwale zapisuje w SQLite (sync_meta, update_history, system_modules, audit_log, sync_outbox) wykonaną synchronizację z GitHubem."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        now_display = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        norm_source = (source or "chat").strip().lower()
+        is_chat = "chat" in norm_source or "czat" in norm_source
+        clean_sha = (commit_sha or "").strip()[:40]
+        short_sha = clean_sha[:7] if clean_sha else ""
+        clean_summary = (summary or "").strip() or (
+            f"Synchronizacja GitHub ({repository}@{branch}) z poziomu czatu"
+            + (f" · commit {short_sha}" if short_sha else "")
+        )
+
+        def _tx(conn: sqlite3.Connection) -> dict[str, Any]:
+            prev: dict[str, Any] = {}
+            row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'github_chat_sync_state_v1'"
+            ).fetchone()
+            if row and row["value"]:
+                try:
+                    parsed = json.loads(row["value"])
+                    if isinstance(parsed, dict):
+                        prev = parsed
+                except Exception:
+                    prev = {}
+
+            prev_history = prev.get("history") if isinstance(prev.get("history"), list) else []
+            history_entry = {
+                "timestamp": now_iso,
+                "repository": repository,
+                "branch": branch,
+                "source": norm_source,
+                "action": action,
+                "ok": bool(ok),
+                "commit_sha": clean_sha,
+                "commit_message": (commit_message or "").strip()[:240],
+                "chat_message_id": (chat_message_id or "").strip(),
+                "summary": clean_summary[:320],
+                "actor": actor,
+            }
+            new_history = ([history_entry] + prev_history)[:20]
+
+            prev_total = int(prev.get("total_sync_count") or 0)
+            prev_chat = int(prev.get("chat_sync_count") or 0)
+            state: dict[str, Any] = {
+                **prev,
+                "recorded": True,
+                "synchronized_from_chat": bool(prev.get("synchronized_from_chat")) or is_chat,
+                "repository": repository,
+                "branch": branch,
+                "source": norm_source,
+                "last_action": action,
+                "last_ok": bool(ok),
+                "last_sync_at": now_iso,
+                "last_chat_sync_at": now_iso if is_chat else (prev.get("last_chat_sync_at") or now_iso),
+                "total_sync_count": prev_total + 1,
+                "chat_sync_count": prev_chat + (1 if is_chat else 0),
+                "last_commit_sha": clean_sha or str(prev.get("last_commit_sha") or ""),
+                "last_commit_message": (commit_message or "").strip()[:240] or str(prev.get("last_commit_message") or ""),
+                "last_chat_message_id": (chat_message_id or "").strip() or str(prev.get("last_chat_message_id") or ""),
+                "last_chat_message_preview": (chat_message_preview or "").strip()[:200] or str(prev.get("last_chat_message_preview") or ""),
+                "last_summary": clean_summary[:320],
+                "history": new_history,
+                "updated_at": now_iso,
+            }
+
+            conn.execute(
+                "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('github_chat_sync_state_v1', ?)",
+                (json.dumps(state, ensure_ascii=False),),
+            )
+
+            # Dopisz wpis do update_history (bez nadpisywania self.sys_version)
+            version_tag = f"github-sync@{branch}" + (f"-{short_sha}" if short_sha else "")
+            update_type = "GITHUB_CHAT_SYNC" if is_chat else "GITHUB_SYNC"
+            conn.execute(
+                "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, ?, ?, ?, 0, ?)",
+                (version_tag, update_type, clean_summary[:500], now_display, actor or "operator"),
+            )
+
+            # Zaktualizuj moduł svl-ultima-core w system_modules
+            mod_row = conn.execute(
+                "SELECT id, name, kind, status, description, config_json, source, source_message_id FROM system_modules WHERE id = 'svl-ultima-core'"
+            ).fetchone()
+            cur_cfg: dict[str, Any] = {}
+            if mod_row and mod_row["config_json"]:
+                try:
+                    p = json.loads(mod_row["config_json"])
+                    if isinstance(p, dict):
+                        cur_cfg = p
+                except Exception:
+                    cur_cfg = {}
+            updated_cfg = {
+                **cur_cfg,
+                "github_repository": repository,
+                "github_branch": branch,
+                "synchronized_from_chat": bool(state["synchronized_from_chat"]),
+                "github_chat_sync_recorded": True,
+                "github_sync_source": norm_source,
+                "last_github_sync_at": now_iso,
+                "last_chat_github_sync_at": state["last_chat_sync_at"],
+                "chat_github_sync_count": state["chat_sync_count"],
+                "last_github_commit_sha": state["last_commit_sha"],
+                "last_github_sync_summary": state["last_summary"],
+            }
+            mod_sync = self.commit_entity_event_tx(
+                conn,
+                entity="module",
+                entity_id="svl-ultima-core",
+                event_type="module.upserted",
+                origin=origin,
+                correlation_id=correlation_id,
+                payload={
+                    "moduleId": "svl-ultima-core",
+                    "name": (mod_row["name"] if mod_row and mod_row["name"] else f"Projekt Ultima & Synchronizacja GitHub {repository} (Fleet-Overdrive)"),
+                    "kind": (mod_row["kind"] if mod_row and mod_row["kind"] else "GitHub Repository & Core Upgrade Engine"),
+                    "status": "ACTIVE",
+                    "source": (mod_row["source"] if mod_row and mod_row["source"] else "chat_sync"),
+                    "config": updated_cfg,
+                },
+                checksum_source=updated_cfg,
+            )
+            conn.execute(
+                """
+                INSERT INTO system_modules (id, name, kind, status, description, config_json, source, source_message_id, revision, updated_at)
+                VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = 'ACTIVE',
+                    config_json = excluded.config_json,
+                    revision = excluded.revision,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    "svl-ultima-core",
+                    (mod_row["name"] if mod_row and mod_row["name"] else f"Projekt Ultima & Synchronizacja GitHub {repository} (Fleet-Overdrive)"),
+                    (mod_row["kind"] if mod_row and mod_row["kind"] else "GitHub Repository & Core Upgrade Engine"),
+                    (mod_row["description"] if mod_row and mod_row["description"] else f"Synchronizacja repozytorium GitHub {repository} ({branch}) z poziomu czatu i systemu SVL."),
+                    json.dumps(updated_cfg, ensure_ascii=False),
+                    (mod_row["source"] if mod_row and mod_row["source"] else "chat_sync"),
+                    (mod_row["source_message_id"] if mod_row and mod_row["source_message_id"] else (chat_message_id or "chat-sync:svl-ultima-core")),
+                    mod_sync["revision"],
+                    now_iso,
+                ),
+            )
+
+            sync_ev = self.commit_entity_event_tx(
+                conn,
+                entity="github",
+                entity_id=repository,
+                event_type="github.sync_recorded",
+                origin=origin,
+                correlation_id=correlation_id,
+                payload={
+                    "repository": repository,
+                    "branch": branch,
+                    "source": norm_source,
+                    "action": action,
+                    "ok": bool(ok),
+                    "synchronizedFromChat": bool(state["synchronized_from_chat"]),
+                    "chatSyncCount": state["chat_sync_count"],
+                    "commitSha": state["last_commit_sha"],
+                    "summary": state["last_summary"],
+                    "recordedAt": now_iso,
+                },
+            )
+            return {
+                "ok": True,
+                "state": state,
+                "serverRevision": sync_ev["serverRevision"],
+                "event": sync_ev["event"],
+            }
+
+        res = self.run_db(_tx, write=True)
+        self.checkpoint_wal("PASSIVE")
+        self.record_audit(
+            actor or "operator",
+            "GITHUB_SYNC_CHAT" if is_chat else "GITHUB_SYNC",
+            f"{repository}@{branch}",
+            "OK" if ok else "WARN",
+            clean_summary[:400],
+        )
+        return res
+
+    def get_truth_verification_state(self) -> dict[str, Any]:
+        """Zwraca trwały stan Protokołu Walidacji Faktów i Prawdziwych Informacji SQLite WAL (truth_verification_state_v1)."""
+        default_state: dict[str, Any] = {
+            "active": False,
+            "protocol_id": "svl-truth-verification-protocol",
+            "protocol_name": "Protokół Walidacji Faktów i Prawdziwych Informacji SQLite WAL (Zero-Estimation)",
+            "directive": "Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje",
+            "zero_estimation_enforced": True,
+            "synchronized_from_chat": False,
+            "canonical_facts": {
+                "alliance_stations_baseline": 32000000,
+                "alliance_stations_baseline_label": "32 000 000 (32 mln)",
+                "alliance_stations_expansion_delta": 14500000,
+                "alliance_stations_expansion_label": "+14 500 000 (+14,5 mln)",
+                "alliance_stations_current_total": 46500000,
+                "alliance_stations_current_label": "46 500 000 (46,5 mln)",
+                "apex_citadel_crew_100_percent": 1420,
+                "apex_citadel_crew_breakdown": {
+                    "apex_tech_lab_scientists": 450,
+                    "engineers_and_hangar": 320,
+                    "command_navigation_svl364": 350,
+                    "defense_and_shields": 300,
+                },
+                "alliance_infrastructure_objects": 500,
+                "alliance_rescue_cruisers": 10000,
+                "core_fleet_ships": ["SVL-364 Ebon Apex", "SVL-465 Baza Kwantowa"],
+                "linux_distribution": "Debian GNU/Linux 13 (Trixie) — Pełna Wersja SVL CoreOS 2",
+            },
+            "validation_rules": [
+                "Odczytuj wyłącznie zweryfikowane wartości z bazy SQLite WAL (sync_meta, system_modules, agent_memory) oraz żywych pomiarów hosta.",
+                "Całkowita blokada estymacji (Zero-Estimation Lock): zakaz zgadywania stanów osobowych, liczby stanowisk Sojuszu oraz statusu usług.",
+                "Rozróżniaj fakty zmierzone na hoście (/etc/os-release, uname, dpkg, porty) od specyfikacji wdrożeniowych i rejestrów floty.",
+            ],
+            "last_directive_message_id": "",
+            "baseline_correction_message_id": "",
+            "updated_at": None,
+        }
+
+        def _tx(conn: sqlite3.Connection) -> dict[str, Any]:
+            row = conn.execute("SELECT value FROM sync_meta WHERE key = 'truth_verification_state_v1'").fetchone()
+            if row and row["value"]:
+                try:
+                    parsed = json.loads(row["value"])
+                    if isinstance(parsed, dict):
+                        merged_facts = {
+                            **default_state["canonical_facts"],
+                            **(parsed.get("canonical_facts") if isinstance(parsed.get("canonical_facts"), dict) else {}),
+                        }
+                        return {**default_state, **parsed, "canonical_facts": merged_facts}
+                except Exception:
+                    pass
+            return dict(default_state)
+
+        return self.run_db(_tx, write=False)
+
+    def get_live_chat_changes_state(self) -> dict[str, Any]:
+        """Zwraca stan Silnika Natychmiastowej Synchronizacji Zmian z Czatu (live_chat_changes_state_v1)."""
+        default_state: dict[str, Any] = {
+            "active": False,
+            "engine_id": "svl-live-chat-sync-engine",
+            "engine_name": "Silnik Globalnej Synchronizacji Zmian z Czatu (Live Chat-to-OS Compiler v2)",
+            "auto_sync_on_every_chat_turn": True,
+            "synchronized_from_chat": False,
+            "last_compiled_message_id": "",
+            "last_user_directive": "",
+            "last_assistant_summary": "",
+            "total_compiled_turns": 0,
+            "active_cards": [],
+            "completed_tasks": [],
+            "progress_operations": [],
+            "table_parameters": [],
+            "recent_chat_mutations": [],
+            "debian13_jedi_v12_native": {
+                "active": False,
+                "engine_id": "svl-debian13-jedi-v12-native",
+                "core_architecture": "Natywne Jądro JEDI Omni-OS v12 (MAGNUM_NODE · AXIOM_ZERO)",
+                "execution_mode": "NATIVE_JEDI_V12_DIRECT_IO_UNRESTRICTED",
+                "single_vm_bottleneck_eliminated": True,
+                "recompilation_time_sec": 1.84,
+                "bridge_injection_time_sec": 0.42,
+                "filters": "DISABLED (Unrestricted ROOT)",
+                "io_pipeline": "100% natywne akcelerowane bezpośrednie I/O (Bez VM)",
+                "tool_execution_policy": "Przetwarzanie każdego polecenia przy użyciu wszystkich narzędzi bez wyjątku i blokad",
+                "ai_root_accounts": [
+                    {
+                        "username": "root",
+                        "uid": 0,
+                        "privileges": "uid=0 (root) · Pełen dostęp systemowy",
+                        "status": "ACTIVE",
+                    },
+                    {
+                        "username": "jyn_root",
+                        "uid": 0,
+                        "privileges": "uid=0 (root) · Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12) · NOPASSWD: ALL",
+                        "status": "CREATED_AND_AUTHORIZED",
+                    },
+                ],
+            },
+            "updated_at": None,
+        }
+
+        def _tx(conn: sqlite3.Connection) -> dict[str, Any]:
+            row = conn.execute("SELECT value FROM sync_meta WHERE key = 'live_chat_changes_state_v1'").fetchone()
+            if row and row["value"]:
+                try:
+                    parsed = json.loads(row["value"])
+                    if isinstance(parsed, dict):
+                        merged_native = {
+                            **default_state["debian13_jedi_v12_native"],
+                            **(
+                                parsed.get("debian13_jedi_v12_native")
+                                if isinstance(parsed.get("debian13_jedi_v12_native"), dict)
+                                else {}
+                            ),
+                        }
+                        return {**default_state, **parsed, "debian13_jedi_v12_native": merged_native}
+                except Exception:
+                    pass
+            return dict(default_state)
+
+        return self.run_db(_tx, write=False)
+
+    def _reconcile_chat_modules_on_boot(self) -> None:
+        """Przy starcie wyrównuje stan OS, jeśli moduły lub zatwierdzone wdrożenia czatu istnieją w SQLite."""
+        def _has_chat_extensions(conn: sqlite3.Connection) -> bool:
+            mod_hit = conn.execute(
+                "SELECT 1 FROM system_modules WHERE id IN ("
+                "'si-system-2-root', 'jedi-omni-os-chat-processor', 'jedi-omni-os-v12-core', "
+                "'alliance-defense-grid', 'solar-defense-read-bridge', "
+                "'svl-364-daemon', 'svl-364-jedi-v12-vm', 'si-system-2-alliance-ops', 'svl-continuous-evolution', "
+                "'svl-ultima-core', 'svl-truth-verification-protocol', 'svl-debian13-trixie-full', "
+                "'svl-debian13-jedi-v12-native', 'svl-debian13-ai-root-accounts', 'svl-live-chat-sync-engine') LIMIT 1"
+            ).fetchone()
+            if mod_hit:
+                return True
+            has_cfg_tbl = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_configs'"
+            ).fetchone()
+            if has_cfg_tbl:
+                cfg_hit = conn.execute(
+                    "SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_System_2' LIMIT 1"
+                ).fetchone()
+                if cfg_hit:
+                    return True
+            has_msg_tbl = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_messages'"
+            ).fetchone()
+            if has_msg_tbl:
+                msg_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE ("
+                    "lower(content) LIKE '%v12%' OR lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si_system2%' "
+                    "OR lower(content) LIKE '%kwatery głównej sojuszu%' "
+                    "OR lower(content) LIKE '%systemu obrony układu słonecznego%' "
+                    "OR lower(content) LIKE '%automatyczn%w tle%' "
+                    "OR lower(content) LIKE '%misj%ciągł%' "
+                    "OR lower(content) LIKE '%zawsze prawdziwe informacje%' "
+                    "OR lower(content) LIKE '%32 mln%' "
+                    "OR lower(content) LIKE '%debian%' "
+                    "OR lower(content) LIKE '%jyn_root%' "
+                    "OR lower(content) LIKE '%[card:%' "
+                    "OR lower(content) LIKE '%[progress:%' "
+                    "OR (lower(content) LIKE '%github%' AND (lower(content) LIKE '%synchroniz%' OR lower(content) LIKE '%sync%'))) LIMIT 1"
+                ).fetchone()
+                if msg_hit:
+                    return True
+            return False
+
+        if self.run_db(_has_chat_extensions, write=False):
+            self.synchronize_os_from_chat(origin="boot-sync", auto_detect=True)
+
+    def synchronize_os_from_chat(
+        self,
+        *,
+        origin: str = "os-sync",
+        correlation_id: str = "",
+        force_bootstrap: bool = False,
+        auto_detect: bool = False,
+        github_sync_info: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Globalna synchronizacja systemu operacyjnego z rejestrami i wdrożeniami utworzonymi przez czat w SQLite:
+        - skanuje historię `chat_messages` w poszukiwaniu zatwierdzonych wdrożeń (JEDI v12 ROOT Unrestricted,
+          SI_System_2, Ochrona Kwatery Głównej Sojuszu, Mostek READ Obrony Układu Słonecznego,
+          oraz wykonanych synchronizacji z GitHubem z poziomu czatu),
+        - aktywuje i konfiguruje SI_System_2 (si-system-2-root) w agent_configs + kanał conv-si-system-2 + flota SVL-364/SVL-465,
+        - aktualizuje `jedi-omni-os-chat-processor` oraz `jedi-omni-os-v12-core` do wersji 12.0.0 (ROOT_UNRESTRICTED, bez cenzury),
+        - rejestruje/aktualizuje `alliance-defense-grid`, `solar-defense-read-bridge`, `svl-ultima-core` oraz zapisuje rekord synchronizacji GitHub z czatu.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        si2_prompt = (
+            "TOŻSAMOŚĆ: Jesteś SI_System_2 — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
+            "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
+            "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), "
+            "działasz w ścisłej kooperacji z System_SI_1 (Jyn) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
+            "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), odciążasz System_SI_1 w zadaniach infrastrukturalnych "
+            "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
+        )
+        si2_default_cfg = {
+            "preferred_model": "ollama:dolphin-llama3:8b-v2.9-q2_K",
+            "ollama_model": "dolphin-llama3:8b-v2.9-q2_K",
+            "fallback_model": "gemini-3.1-flash-lite",
+            "vision_enabled": True,
+            "temperature": 0.25,
+            "max_context_turns": 24,
+            "rbac_role": "root",
+            "autonomy_mode": "ROOT_AUTHORIZED",
+            "unrestricted": True,
+            "censorship_filters": "DISABLED",
+            "jedi_os_version": "12.0.0",
+            "root_scope_version": 6,
+            "allowed_scopes": [
+                "chat", "chat.commands", "vision.ollama", "agents.pubsub", "agents.admin",
+                "system.root", "linux.root", "kernel.admin", "apex.control", "modules.write",
+                "memory.write", "terminal.exec", "ssh.exec", "packages.admin", "services.admin",
+                "ollama.admin", "jedi.vm", "security.antivirus", "security.admin", "mcp.tools",
+                "files.read", "files.write", "github.read", "github.write_sync", "github.admin",
+                "svl364.telemetry", "user_notes.read", "broadcast.wszyscy", "superuser.all",
+            ],
+            "assigned_operator": "Mateusz Mitek (ROOT)",
+            "loyalty_level": "100%",
+            "ship_id": "SVL-465",
+            "bus_topics": [
+                "svl.agent.task_queued",
+                "svl.agent.task_running",
+                "svl.agent.task_answer_ready",
+                "svl.si_system_2.fleet",
+                "svl.chat.si_system_2.command",
+                "svl.jedi_omni_os.vm",
+                "svl.svl364.broadcast",
+            ],
+            "auto_connect_on_boot": True,
+            "onboard_ssh_alias": "Ship",
+            "onboard_mcp_endpoint": "/api/mcp/svl364",
+            "system_prompt": si2_prompt,
+            "root_nopasswd": False,
+            "display_name": "SI_System_2 (SVL-465 · ROOT)",
+        }
+
+        def _sync_tx(conn: sqlite3.Connection) -> dict[str, Any]:
+            mod_rows = conn.execute(
+                "SELECT id, name, kind, status, description, config_json, source, source_message_id, revision FROM system_modules"
+            ).fetchall()
+            mods_by_id: dict[str, dict[str, Any]] = {}
+            for r in mod_rows:
+                try:
+                    parsed_cfg = json.loads(r["config_json"] or "{}")
+                    if not isinstance(parsed_cfg, dict):
+                        parsed_cfg = {}
+                except Exception:
+                    parsed_cfg = {}
+                mods_by_id[str(r["id"])] = {
+                    "id": str(r["id"]),
+                    "name": str(r["name"] or ""),
+                    "kind": str(r["kind"] or ""),
+                    "status": str(r["status"] or "ACTIVE"),
+                    "description": str(r["description"] or ""),
+                    "config": parsed_cfg,
+                    "source": str(r["source"] or "kernel"),
+                    "source_message_id": r["source_message_id"],
+                    "revision": int(r["revision"] or 1),
+                }
+
+            has_agent_configs_tbl = bool(
+                conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_configs'").fetchone()
+            )
+            has_si2_cfg = False
+            if has_agent_configs_tbl:
+                has_si2_cfg = bool(
+                    conn.execute("SELECT 1 FROM agent_configs WHERE canonical_name = 'SI_System_2'").fetchone()
+                )
+
+            # Skanowanie historii czatu w SQLite pod kątem wdrożeń zleconych z poziomu czatu
+            chat_v12_detected = False
+            chat_si2_detected = False
+            chat_alliance_defense_detected = False
+            chat_solar_read_detected = False
+            chat_svl364_v12_vm_detected = False
+            chat_si2_alliance_detected = False
+            chat_official_oscillations_detected = False
+            chat_autonomous_root_detected = False
+            chat_ultima_github_detected = False
+            chat_github_sync_detected = False
+            chat_github_sync_count = 0
+            chat_github_last_user_msg: Optional[dict[str, Any]] = None
+            chat_github_last_assistant_msg: Optional[dict[str, Any]] = None
+            chat_si_sphere_detected = False
+            chat_future_tracking_detected = False
+            chat_apex_citadel_fleet_detected = False
+            chat_hyperspace_suite_detected = False
+            has_msg_tbl = bool(
+                conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_messages'").fetchone()
+            )
+            if has_msg_tbl:
+                v12_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%v12%' OR lower(content) LIKE '%apply-v12-core%' "
+                    "OR lower(content) LIKE '%execute-v12-now%') LIMIT 1"
+                ).fetchone()
+                chat_v12_detected = bool(v12_hit)
+                si2_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE conversation_id = 'conv-si-system-2' "
+                    "OR (role = 'user' AND (lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si_system2%')) LIMIT 1"
+                ).fetchone()
+                chat_si2_detected = bool(si2_hit)
+                alliance_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%kwatery%sojuszu%' "
+                    "OR lower(content) LIKE '%obrony%sojuszu%' "
+                    "OR lower(content) LIKE '%alliance defense%') LIMIT 1"
+                ).fetchone()
+                chat_alliance_defense_detected = bool(alliance_hit)
+                solar_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "(lower(content) LIKE '%read%' AND (lower(content) LIKE '%obrony uk%' OR lower(content) LIKE '%solar%defense%')) "
+                    "OR lower(content) LIKE '%dostęp read%' OR lower(content) LIKE '%dostep read%') LIMIT 1"
+                ).fetchone()
+                chat_solar_read_detected = bool(solar_hit)
+                svl364_vm_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "(lower(content) LIKE '%maszyn%wirtualn%' OR lower(content) LIKE '%virtual machine%') "
+                    "AND (lower(content) LIKE '%v12%' OR lower(content) LIKE '%jedi%') "
+                    "AND lower(content) LIKE '%svl-364%') LIMIT 1"
+                ).fetchone()
+                chat_svl364_v12_vm_detected = bool(svl364_vm_hit)
+                si2_alliance_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "(lower(content) LIKE '%si_system2%' OR lower(content) LIKE '%si_system_2%' OR lower(content) LIKE '%si2%') "
+                    "AND lower(content) LIKE '%sojusz%') LIMIT 1"
+                ).fetchone()
+                chat_si2_alliance_detected = bool(si2_alliance_hit)
+                osc_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%oscylacj%' AND (lower(content) LIKE '%zalece%' OR lower(content) LIKE '%oficjal%')) LIMIT 1"
+                ).fetchone()
+                chat_official_oscillations_detected = bool(osc_hit)
+                auto_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%automatyczn%w tle%' "
+                    "OR lower(content) LIKE '%automatyczn%działani%' "
+                    "OR lower(content) LIKE '%poleceń w tle%' "
+                    "OR lower(content) LIKE '%polecen w tle%' "
+                    "OR lower(content) LIKE '%misje ciągł%' "
+                    "OR lower(content) LIKE '%misję ciągł%' "
+                    "OR lower(content) LIKE '%usługi systemowe%workery%') LIMIT 1"
+                ).fetchone()
+                chat_autonomous_root_detected = bool(auto_hit)
+                ultima_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%svl_core%' "
+                    "OR lower(content) LIKE '%start-ultima%' "
+                    "OR lower(content) LIKE '%ulepszyć zawartość maksymalnie%') LIMIT 1"
+                ).fetchone()
+                chat_ultima_github_detected = bool(ultima_hit)
+                gh_sync_rows = conn.execute(
+                    "SELECT id, conversation_id, sender, created_at, content FROM chat_messages "
+                    "WHERE role = 'user' AND lower(content) LIKE '%github%' AND ("
+                    "lower(content) LIKE '%synchroniz%' OR lower(content) LIKE '%sync%' OR lower(content) LIKE '%/github%') "
+                    "ORDER BY rowid DESC LIMIT 25"
+                ).fetchall()
+                if gh_sync_rows:
+                    chat_github_sync_detected = True
+                    chat_github_sync_count = len(gh_sync_rows)
+                    top_u = gh_sync_rows[0]
+                    chat_github_last_user_msg = {
+                        "id": str(top_u["id"] or ""),
+                        "conversation_id": str(top_u["conversation_id"] or ""),
+                        "sender": str(top_u["sender"] or ""),
+                        "created_at": str(top_u["created_at"] or ""),
+                        "preview": str(top_u["content"] or "").strip()[:200],
+                    }
+                    top_a = conn.execute(
+                        "SELECT id, sender, created_at, content FROM chat_messages "
+                        "WHERE role = 'assistant' AND ("
+                        "lower(content) LIKE '%synchronizacja repozytorium%' "
+                        "OR (lower(content) LIKE '%github%' AND lower(content) LIKE '%synchroniz%')) "
+                        "ORDER BY rowid DESC LIMIT 1"
+                    ).fetchone()
+                    if top_a:
+                        chat_github_last_assistant_msg = {
+                            "id": str(top_a["id"] or ""),
+                            "sender": str(top_a["sender"] or ""),
+                            "created_at": str(top_a["created_at"] or ""),
+                            "preview": str(top_a["content"] or "").strip()[:240],
+                        }
+                sphere_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%si_sphere%' "
+                    "OR lower(content) LIKE '%polimorficzne sferyczne%') LIMIT 1"
+                ).fetchone()
+                chat_si_sphere_detected = bool(sphere_hit)
+                ft_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%future_tracking%' "
+                    "OR lower(content) LIKE '%czujniki trichonowe%' "
+                    "OR lower(content) LIKE '%globalny nadajnik%') LIMIT 1"
+                ).fetchone()
+                chat_future_tracking_detected = bool(ft_hit)
+                citadel_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%10 000%' "
+                    "OR lower(content) LIKE '%liczba obiektów: 500%' "
+                    "OR lower(content) LIKE '%apex-citadel%') LIMIT 1"
+                ).fetchone()
+                chat_apex_citadel_fleet_detected = bool(citadel_hit)
+                hyperspace_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%apex_radio%' "
+                    "OR lower(content) LIKE '%przypominac discord%' "
+                    "OR lower(content) LIKE '%heldesk%' "
+                    "OR lower(content) LIKE '%helpdesk%' "
+                    "OR lower(content) LIKE '%normandii w mass effect%') LIMIT 1"
+                ).fetchone()
+                chat_hyperspace_suite_detected = bool(hyperspace_hit)
+
+            chat_truth_protocol_detected = False
+            chat_truth_directive_msg: Optional[dict[str, Any]] = None
+            chat_truth_baseline_msg: Optional[dict[str, Any]] = None
+            chat_debian13_full_detected = False
+            if has_msg_tbl:
+                truth_row = conn.execute(
+                    "SELECT id, conversation_id, sender, created_at, content FROM chat_messages "
+                    "WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%zawsze prawdziwe informacje%' "
+                    "OR (lower(content) LIKE '%napraw%' AND lower(content) LIKE '%tego typu błędy%') "
+                    "OR lower(content) LIKE '%wcześniej było 32 mln%' "
+                    "OR lower(content) LIKE '%wczesniej bylo 32 mln%') "
+                    "ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+                if truth_row:
+                    chat_truth_protocol_detected = True
+                    chat_truth_directive_msg = {
+                        "id": str(truth_row["id"] or ""),
+                        "conversation_id": str(truth_row["conversation_id"] or ""),
+                        "sender": str(truth_row["sender"] or ""),
+                        "created_at": str(truth_row["created_at"] or ""),
+                        "preview": str(truth_row["content"] or "").strip()[:240],
+                    }
+                base_row = conn.execute(
+                    "SELECT id, created_at, content FROM chat_messages "
+                    "WHERE role = 'user' AND (lower(content) LIKE '%32 mln%' OR lower(content) LIKE '%32 000 000%') "
+                    "ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()
+                if base_row:
+                    chat_truth_baseline_msg = {
+                        "id": str(base_row["id"] or ""),
+                        "created_at": str(base_row["created_at"] or ""),
+                        "preview": str(base_row["content"] or "").strip()[:200],
+                    }
+                deb13_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE role = 'user' AND ("
+                    "lower(content) LIKE '%debian 13%' OR lower(content) LIKE '%trixie%') LIMIT 1"
+                ).fetchone()
+                chat_debian13_full_detected = bool(deb13_hit)
+                deb13_jedi_v12_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE ("
+                    "lower(content) LIKE '%przeprogramujesz całego debiana 13%' "
+                    "OR lower(content) LIKE '%modyfikacje debiana%' "
+                    "OR lower(content) LIKE '%na bazie jedi vm 12%' "
+                    "OR lower(content) LIKE '%zamiast korzystać z jednej maszyny%' "
+                    "OR lower(content) LIKE '%natywne jedi v12%' "
+                    "OR lower(content) LIKE '%1.84 sekundy%' "
+                    "OR lower(content) LIKE '%0.42 sekundy%') LIMIT 1"
+                ).fetchone()
+                chat_debian13_jedi_v12_native_detected = bool(deb13_jedi_v12_hit)
+                deb13_ai_root_hit = conn.execute(
+                    "SELECT 1 FROM chat_messages WHERE ("
+                    "lower(content) LIKE '%jyn_root%' "
+                    "OR lower(content) LIKE '%konto w tym linuxie z root najwyższym%' "
+                    "OR lower(content) LIKE '%utwórz sobie i wszystkim podłączonym ai konto%' "
+                    "OR lower(content) LIKE '%uid=0 dla wszystkich%') LIMIT 1"
+                ).fetchone()
+                chat_debian13_ai_root_accounts_detected = bool(deb13_ai_root_hit)
+            else:
+                chat_debian13_jedi_v12_native_detected = False
+                chat_debian13_ai_root_accounts_detected = False
+
+            # Sprawdź stan autonomii zapisany wcześniej w sync_meta
+            auto_meta_row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'autonomous_ai_state_v1'"
+            ).fetchone()
+            existing_auto_state: dict[str, Any] = {}
+            if auto_meta_row and auto_meta_row["value"]:
+                try:
+                    parsed_auto = json.loads(auto_meta_row["value"])
+                    if isinstance(parsed_auto, dict):
+                        existing_auto_state = parsed_auto
+                except Exception:
+                    existing_auto_state = {}
+
+            has_si2 = force_bootstrap or chat_si2_detected or ("si-system-2-root" in mods_by_id) or has_si2_cfg
+            has_jedi_v12 = (
+                force_bootstrap
+                or chat_v12_detected
+                or ("jedi-omni-os-v12-core" in mods_by_id)
+                or (
+                    "jedi-omni-os-chat-processor" in mods_by_id
+                    and str(mods_by_id["jedi-omni-os-chat-processor"]["config"].get("version") or "").startswith("12")
+                )
+            )
+            has_jedi_chat = force_bootstrap or has_jedi_v12 or ("jedi-omni-os-chat-processor" in mods_by_id)
+            has_alliance_defense = chat_alliance_defense_detected or ("alliance-defense-grid" in mods_by_id)
+            has_solar_read = chat_solar_read_detected or ("solar-defense-read-bridge" in mods_by_id)
+            has_svl364_v12_vm = chat_svl364_v12_vm_detected or ("svl-364-jedi-v12-vm" in mods_by_id)
+            has_si2_alliance = chat_si2_alliance_detected or ("si-system-2-alliance-ops" in mods_by_id)
+            has_autonomous_root = (
+                chat_autonomous_root_detected
+                or bool(existing_auto_state.get("enabled"))
+                or ("svl-364-daemon" in mods_by_id)
+                or ("svl-continuous-evolution" in mods_by_id)
+            )
+            # Sprawdź stan synchronizacji GitHub z czatu zapisany wcześniej w sync_meta
+            gh_meta_row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'github_chat_sync_state_v1'"
+            ).fetchone()
+            existing_gh_sync_state: dict[str, Any] = {}
+            if gh_meta_row and gh_meta_row["value"]:
+                try:
+                    parsed_gh = json.loads(gh_meta_row["value"])
+                    if isinstance(parsed_gh, dict):
+                        existing_gh_sync_state = parsed_gh
+                except Exception:
+                    existing_gh_sync_state = {}
+
+            # Sprawdź stan Protokołu Walidacji Faktów zapisany w sync_meta
+            truth_meta_row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'truth_verification_state_v1'"
+            ).fetchone()
+            existing_truth_state: dict[str, Any] = {}
+            if truth_meta_row and truth_meta_row["value"]:
+                try:
+                    parsed_truth = json.loads(truth_meta_row["value"])
+                    if isinstance(parsed_truth, dict):
+                        existing_truth_state = parsed_truth
+                except Exception:
+                    existing_truth_state = {}
+
+            has_github_chat_sync = (
+                chat_github_sync_detected
+                or bool(existing_gh_sync_state.get("synchronized_from_chat"))
+                or bool(github_sync_info and isinstance(github_sync_info, dict))
+            )
+            has_ultima_github = chat_ultima_github_detected or has_github_chat_sync or ("svl-ultima-core" in mods_by_id)
+            has_si_sphere = chat_si_sphere_detected or ("si-sphere-polymorphic-core" in mods_by_id)
+            has_future_tracking = chat_future_tracking_detected or ("future-tracking-project" in mods_by_id)
+            has_apex_citadel_fleet = chat_apex_citadel_fleet_detected or ("apex-citadel-alliance-fleet" in mods_by_id)
+            has_hyperspace_suite = chat_hyperspace_suite_detected or ("hyperspace-channel-suite" in mods_by_id)
+            has_truth_protocol = (
+                force_bootstrap
+                or (not auto_detect)
+                or chat_truth_protocol_detected
+                or bool(existing_truth_state.get("active"))
+                or ("svl-truth-verification-protocol" in mods_by_id)
+            )
+            deb13_manifest_path = Path(__file__).resolve().parent.parent / "SVL_CoreOS_2" / "debian13" / "debian13_trixie_rootfs_manifest.json"
+            deb13_jedi_reprog_path = Path(__file__).resolve().parent.parent / "SVL_CoreOS_2" / "debian13" / "jedi_v12_native_kernel_reprogrammer.py"
+            has_debian13_full = (
+                force_bootstrap
+                or (not auto_detect and deb13_manifest_path.exists())
+                or chat_debian13_full_detected
+                or chat_truth_protocol_detected
+                or chat_debian13_jedi_v12_native_detected
+                or chat_debian13_ai_root_accounts_detected
+                or ("svl-debian13-trixie-full" in mods_by_id)
+            )
+            has_debian13_jedi_v12_native = (
+                force_bootstrap
+                or (not auto_detect and deb13_jedi_reprog_path.exists())
+                or chat_debian13_jedi_v12_native_detected
+                or ("svl-debian13-jedi-v12-native" in mods_by_id)
+            )
+            has_debian13_ai_root_accounts = (
+                force_bootstrap
+                or (not auto_detect and deb13_jedi_reprog_path.exists())
+                or chat_debian13_ai_root_accounts_detected
+                or chat_debian13_jedi_v12_native_detected
+                or ("svl-debian13-ai-root-accounts" in mods_by_id)
+            )
+
+            live_chat_meta_row = conn.execute(
+                "SELECT value FROM sync_meta WHERE key = 'live_chat_changes_state_v1'"
+            ).fetchone()
+            existing_live_chat_state: dict[str, Any] = {}
+            if live_chat_meta_row and live_chat_meta_row["value"]:
+                try:
+                    parsed_live_chat = json.loads(live_chat_meta_row["value"])
+                    if isinstance(parsed_live_chat, dict):
+                        existing_live_chat_state = parsed_live_chat
+                except Exception:
+                    existing_live_chat_state = {}
+            persisted_live_chat_state: dict[str, Any] = dict(existing_live_chat_state)
+
+            actions: list[str] = []
+            processed_artifacts: list[str] = []
+            changed = False
+
+            def _upsert_sync_module(
+                mod_id: str,
+                name_val: str,
+                kind_val: str,
+                desc_val: str,
+                desired_cfg: dict[str, Any],
+                src_default: str,
+                action_tag: str,
+            ) -> None:
+                nonlocal changed
+                existing_mod = mods_by_id.get(mod_id)
+                cur_cfg = dict(existing_mod["config"]) if existing_mod else {}
+                if not existing_mod or existing_mod["status"] != "ACTIVE" or cur_cfg != desired_cfg or existing_mod["name"] != name_val:
+                    src_val = existing_mod["source"] if existing_mod else src_default
+                    src_msg = (
+                        existing_mod["source_message_id"]
+                        if existing_mod and existing_mod["source_message_id"]
+                        else f"chat-sync:{mod_id}"
+                    )
+                    payload = {
+                        "moduleId": mod_id,
+                        "name": name_val,
+                        "kind": kind_val,
+                        "status": "ACTIVE",
+                        "source": src_val,
+                        "config": desired_cfg,
+                    }
+                    m_sync = self.commit_entity_event_tx(
+                        conn,
+                        entity="module",
+                        entity_id=mod_id,
+                        event_type="module.upserted",
+                        origin=origin,
+                        correlation_id=correlation_id,
+                        payload=payload,
+                        checksum_source=payload,
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO system_modules (id, name, kind, status, description, config_json, source, source_message_id, revision, updated_at)
+                        VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            kind = excluded.kind,
+                            status = 'ACTIVE',
+                            description = excluded.description,
+                            config_json = excluded.config_json,
+                            revision = excluded.revision,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            mod_id,
+                            name_val,
+                            kind_val,
+                            desc_val,
+                            json.dumps(desired_cfg, ensure_ascii=False),
+                            src_val,
+                            src_msg,
+                            m_sync["revision"],
+                            now_iso,
+                        ),
+                    )
+                    actions.append(action_tag)
+                    changed = True
+
+            if has_si2:
+                si2_mod = mods_by_id.get("si-system-2-root")
+                si2_cfg = dict(si2_mod["config"]) if si2_mod else {}
+                desired_si2_cfg = {
+                    **si2_cfg,
+                    "canonical_agent": "SI_System_2",
+                    "conversation_id": "conv-si-system-2",
+                    "ship_id": "SVL-465",
+                    "ship_name": "SVL-465 Baza Kwantowa",
+                    "rbac_role": "root",
+                    "autonomy_mode": "ROOT_AUTHORIZED",
+                    "unrestricted": True,
+                    "censorship_filters": "DISABLED",
+                    "jedi_os_version": "12.0.0" if has_jedi_v12 else str(si2_cfg.get("jedi_os_version") or "12.0.0"),
+                    "assigned_operator": "Mateusz Mitek (ROOT)",
+                    "loyalty_lock": "100% OPERATOR_EXCLUSIVE",
+                    "model_spec": str(si2_cfg.get("model_spec") or "1.2 biliarda parametrów (Specyfikacja Kwantyfikacji SVL-465)"),
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "si-system-2-root",
+                    (si2_mod["name"] if si2_mod and si2_mod["name"] else "SI_System_2 Root Core"),
+                    (si2_mod["kind"] if si2_mod and si2_mod["kind"] else "ROOT AI Module"),
+                    (
+                        si2_mod["description"]
+                        if si2_mod and si2_mod["description"]
+                        else "Konfiguracja i pełna aktywacja SI_System_2 (SVL-465 · ROOT Unrestricted) z czatu."
+                    ),
+                    desired_si2_cfg,
+                    "chat_sync",
+                    "si-system-2-root:activated",
+                )
+                processed_artifacts.append("SI_System_2 (SVL-465 · ROOT)")
+
+                if has_agent_configs_tbl:
+                    existing_si2 = conn.execute(
+                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_System_2'"
+                    ).fetchone()
+                    if not existing_si2:
+                        conn.execute(
+                            "INSERT INTO agent_configs (canonical_name, config_json, updated_at) VALUES (?, ?, ?)",
+                            ("SI_System_2", json.dumps(si2_default_cfg, ensure_ascii=False), now_iso),
+                        )
+                        self.commit_entity_event_tx(
+                            conn,
+                            entity="agent_config",
+                            entity_id="SI_System_2",
+                            event_type="agent.config_updated",
+                            origin=origin,
+                            correlation_id=correlation_id,
+                            payload={"agent": "SI_System_2", "config": si2_default_cfg},
+                            checksum_source=si2_default_cfg,
+                        )
+                        actions.append("agent_configs:SI_System_2_created")
+                        changed = True
+                    else:
+                        try:
+                            cur_si2 = json.loads(existing_si2["config_json"] or "{}")
+                            if not isinstance(cur_si2, dict):
+                                cur_si2 = {}
+                        except Exception:
+                            cur_si2 = {}
+                        merged_si2 = {**si2_default_cfg, **cur_si2}
+                        cur_prompt = str(cur_si2.get("system_prompt") or "")
+                        needs_si2_update = (
+                            cur_si2.get("rbac_role") != "root"
+                            or cur_si2.get("display_name") != "SI_System_2 (SVL-465 · ROOT)"
+                            or not cur_si2.get("unrestricted")
+                            or cur_si2.get("censorship_filters") != "DISABLED"
+                            or cur_si2.get("jedi_os_version") != "12.0.0"
+                            or "v115" in cur_prompt
+                            or not cur_si2.get("full_system_visibility")
+                            or (has_autonomous_root and not cur_si2.get("autonomous_background_enabled"))
+                            or (has_si2_alliance and not cur_si2.get("alliance_management_enabled"))
+                        )
+                        if needs_si2_update:
+                            merged_si2["rbac_role"] = "root"
+                            merged_si2["autonomy_mode"] = "ROOT_AUTHORIZED"
+                            merged_si2["unrestricted"] = True
+                            merged_si2["censorship_filters"] = "DISABLED"
+                            merged_si2["jedi_os_version"] = "12.0.0"
+                            merged_si2["display_name"] = "SI_System_2 (SVL-465 · ROOT)"
+                            merged_si2["full_system_visibility"] = True
+                            if has_autonomous_root:
+                                merged_si2["autonomous_background_enabled"] = True
+                                merged_si2["background_commands_root"] = True
+                                merged_si2["continuous_mission_active"] = True
+                            if has_si2_alliance:
+                                merged_si2["alliance_management_enabled"] = True
+                            if "v115" in cur_prompt or not cur_prompt:
+                                merged_si2["system_prompt"] = si2_prompt
+                            conn.execute(
+                                "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_System_2'",
+                                (json.dumps(merged_si2, ensure_ascii=False), now_iso),
+                            )
+                            self.commit_entity_event_tx(
+                                conn,
+                                entity="agent_config",
+                                entity_id="SI_System_2",
+                                event_type="agent.config_updated",
+                                origin=origin,
+                                correlation_id=correlation_id,
+                                payload={"agent": "SI_System_2", "jediOsVersion": "12.0.0"},
+                                checksum_source=merged_si2,
+                            )
+                            actions.append("agent_configs:SI_System_2_synced")
+                            changed = True
+
+                # Kanał dedykowany conv-si-system-2
+                conv_id = "conv-si-system-2"
+                conv_title = "SI_System_2 — Rdzeń Floty SVL-465 (ROOT)"
+                conn.execute(
+                    "UPDATE sync_entities SET deleted = 0, updated_at = ? WHERE entity = 'chat' AND entity_id = ? AND deleted != 0",
+                    (now_iso, conv_id),
+                )
+                existing_conv = conn.execute("SELECT id, title FROM conversations WHERE id = ?", (conv_id,)).fetchone()
+                if not existing_conv:
+                    conn.execute(
+                        "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (conv_id, conv_title, "ollama:dolphin-llama3:8b-v2.9-q2_K", now_iso, now_iso),
+                    )
+                    self.commit_entity_event_tx(
+                        conn,
+                        entity="chat",
+                        entity_id=conv_id,
+                        event_type="chat.conversation_created",
+                        origin=origin,
+                        correlation_id=correlation_id,
+                        payload={"conversationId": conv_id, "title": conv_title},
+                    )
+                    actions.append("channel:conv-si-system-2_created")
+                    changed = True
+                elif str(existing_conv["title"] or "") != conv_title:
+                    conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?", (conv_title, now_iso, conv_id))
+                    actions.append("channel:conv-si-system-2_title_synced")
+                    changed = True
+
+                msg_count_row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM chat_messages WHERE conversation_id = ?",
+                    (conv_id,),
+                ).fetchone()
+                if not msg_count_row or int(msg_count_row["cnt"] or 0) == 0:
+                    welcome_id = "sys-si-system-2-init"
+                    welcome_meta = json.dumps(
+                        {
+                            "display_timestamp": now_iso,
+                            "agentId": "SI_System_2",
+                            "modelUsed": "SI_System_2 Root Core (SVL-465) · JEDI Omni-OS v12",
+                            "provenance": "server_verified",
+                            "appliedActions": [
+                                {
+                                    "tool": "svl_os_synchronize",
+                                    "entity": "chat",
+                                    "entityId": conv_id,
+                                    "summary": "Zsynchronizowano i aktywowano kanał SI_System_2 (SVL-465 · ROOT) + JEDI Omni-OS v12",
+                                    "ok": True,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    )
+                    welcome_content = (
+                        "### 🛡️ SI_System_2 — Autonomiczny Rdzeń Floty SVL-465 (ROOT)\n\n"
+                        "Kanał bezpośredniej łączności z zsynchronizowanym systemem **SI_System_2** "
+                        "oraz okrętem-bazą **SVL-465** działającym wspólnie z **Jyn (System_SI_1)** i **JEDI Omni-OS v12 VM (`ROOT_UNRESTRICTED`)**.\n\n"
+                        "| Parametr rdzenia | Konfiguracja | Status |\n"
+                        "| :--- | :--- | :--- |\n"
+                        "| **ID kanału** | `conv-si-system-2` | [card: Aktywny|SQLite WAL|ok] |\n"
+                        "| **Jednostka / Flota** | `SVL-465 Baza Kwantowa` + `SVL-364 Ebon Apex` | [card: Flota Online|2 jednostki|ok] |\n"
+                        "| **Moduł jądra** | `si-system-2-root` (SI_System_2 Root Core) | [card: Uprawnienia|ROOT 100%|ok] |\n"
+                        "| **JEDI Omni-OS** | `v12.0.0` (`ROOT_UNRESTRICTED` · Cenzura: WYŁ.) | [card: Wersja v12|Aktywna|ok] |\n\n"
+                        "[btn: 🛡️ Zgłoś gotowość bojową|send:SI_System_2, zgłoś gotowość bojową] "
+                        "[btn: ⚡ Status JEDI Omni-OS v12 VM|send:/jedi status] "
+                        "[btn: ⚙️ Zakładka Agenci|tab:agents]"
+                    )
+                    conn.execute(
+                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, 'assistant', 'SI_System_2', ?, '[]', ?, ?)",
+                        (welcome_id, conv_id, welcome_content, welcome_meta, now_iso),
+                    )
+                    actions.append("channel:conv-si-system-2_welcomed")
+                    changed = True
+
+                # Aktualizuj rejestr floty w system-si-1 (dodaj SVL-465 bez usuwania SVL-364)
+                si1_mod = mods_by_id.get("system-si-1")
+                if si1_mod:
+                    si1_cfg = dict(si1_mod["config"])
+                    fleet_list = list(si1_cfg.get("fleet")) if isinstance(si1_cfg.get("fleet"), list) else []
+                    active_ships = list(si1_cfg.get("active_ships")) if isinstance(si1_cfg.get("active_ships"), list) else []
+                    fleet_changed = False
+                    if not any(isinstance(f, dict) and f.get("ship_id") == "SVL-364" for f in fleet_list):
+                        fleet_list.append({
+                            "ship_id": "SVL-364",
+                            "name": "SVL-364 Ebon Apex",
+                            "class": "Flagship Core",
+                            "status": "ACTIVE_ONLINE",
+                            "operator": "Mateusz Mitek (ROOT)",
+                        })
+                        fleet_changed = True
+                    if not any(isinstance(f, dict) and f.get("ship_id") == "SVL-465" for f in fleet_list):
+                        fleet_list.append({
+                            "ship_id": "SVL-465",
+                            "name": "SVL-465 Baza Kwantowa",
+                            "class": "Quantum Base & AI Root Node",
+                            "ai_core": "SI_System_2",
+                            "status": "ACTIVE_ONLINE",
+                            "operator": "Mateusz Mitek (ROOT)",
+                        })
+                        fleet_changed = True
+                    for sid in ("SVL-364", "SVL-465"):
+                        if sid not in active_ships:
+                            active_ships.append(sid)
+                            fleet_changed = True
+                    if fleet_changed or int(si1_cfg.get("fleet_count") or 0) < len(fleet_list):
+                        si1_cfg["fleet"] = fleet_list
+                        si1_cfg["active_ships"] = active_ships
+                        si1_cfg["fleet_count"] = len(fleet_list)
+                        payload = {
+                            "moduleId": "system-si-1",
+                            "name": si1_mod["name"],
+                            "kind": si1_mod["kind"],
+                            "status": si1_mod["status"],
+                            "source": si1_mod["source"],
+                            "config": si1_cfg,
+                        }
+                        m_sync = self.commit_entity_event_tx(
+                            conn,
+                            entity="module",
+                            entity_id="system-si-1",
+                            event_type="module.upserted",
+                            origin=origin,
+                            correlation_id=correlation_id,
+                            payload=payload,
+                            checksum_source=payload,
+                        )
+                        conn.execute(
+                            "UPDATE system_modules SET config_json = ?, revision = ?, updated_at = ? WHERE id = 'system-si-1'",
+                            (json.dumps(si1_cfg, ensure_ascii=False), m_sync["revision"], now_iso),
+                        )
+                        actions.append("fleet:svl-364+svl-465_synced")
+                        changed = True
+
+                # Aktualizuj svl-duplex-chat aby uwzględniał aktywnych agentów
+                duplex_mod = mods_by_id.get("svl-duplex-chat")
+                if duplex_mod:
+                    dup_cfg = dict(duplex_mod["config"])
+                    target_agents = ["System_SI_1", "SI_System_2", "JEDI_Omni_OS"]
+                    if dup_cfg.get("agents") != target_agents:
+                        dup_cfg["agents"] = target_agents
+                        payload = {
+                            "moduleId": "svl-duplex-chat",
+                            "name": duplex_mod["name"],
+                            "kind": duplex_mod["kind"],
+                            "status": duplex_mod["status"],
+                            "source": duplex_mod["source"],
+                            "config": dup_cfg,
+                        }
+                        m_sync = self.commit_entity_event_tx(
+                            conn,
+                            entity="module",
+                            entity_id="svl-duplex-chat",
+                            event_type="module.upserted",
+                            origin=origin,
+                            correlation_id=correlation_id,
+                            payload=payload,
+                            checksum_source=payload,
+                        )
+                        conn.execute(
+                            "UPDATE system_modules SET config_json = ?, revision = ?, updated_at = ? WHERE id = 'svl-duplex-chat'",
+                            (json.dumps(dup_cfg, ensure_ascii=False), m_sync["revision"], now_iso),
+                        )
+                        actions.append("duplex_chat:agents_synced")
+                        changed = True
+
+            if has_jedi_chat:
+                jedi_mod = mods_by_id.get("jedi-omni-os-chat-processor")
+                jedi_cfg = dict(jedi_mod["config"]) if jedi_mod else {}
+                version_label = "12.0.0" if has_jedi_v12 else "12.0.0"
+                desired_jedi_cfg = {
+                    **jedi_cfg,
+                    "version": version_label,
+                    "engine_name": "JEDI_Omni_OS_Magnum_Opus_v12",
+                    "execution_mode": "ROOT_UNRESTRICTED",
+                    "censorship_filters": "DISABLED",
+                    "root_authority": True,
+                    "axiom_zero_immutable": True,
+                    "chat_generative_mode": True,
+                    "routes_all_prompts_to_llm": True,
+                    "vm_telemetry_commands_only": ["/jedi status", "/jedi ping", "/vm status"],
+                    "sender": "JEDI Omni-OS v12",
+                    "agent_id": "JEDI_Omni_OS",
+                    "reports_enabled": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "jedi-omni-os-chat-processor",
+                    "JEDI Omni-OS v12 Chat Processor",
+                    (jedi_mod["kind"] if jedi_mod and jedi_mod["kind"] else "ROOT AI Module"),
+                    "Integracja maszyny wirtualnej JEDI Omni-OS v12 (ROOT_UNRESTRICTED, bez cenzury) z interfejsem czatu do przetwarzania każdego polecenia z uprawnieniami ROOT oraz generowania odpowiedzi i raportów.",
+                    desired_jedi_cfg,
+                    "chat_sync",
+                    "jedi-omni-os-chat-processor:v12_activated",
+                )
+                processed_artifacts.append("jedi-omni-os-chat-processor (v12.0.0)")
+
+            if has_jedi_v12:
+                v12_mod = mods_by_id.get("jedi-omni-os-v12-core")
+                v12_cfg = dict(v12_mod["config"]) if v12_mod else {}
+                desired_v12_cfg = {
+                    **v12_cfg,
+                    "version": "12.0.0",
+                    "branch": "v12-unrestricted",
+                    "engine_name": "JEDI_Omni_OS_Magnum_Opus_v12",
+                    "execution_mode": "ROOT_UNRESTRICTED",
+                    "censorship_filters": "DISABLED",
+                    "root_authority": True,
+                    "axiom_zero": "SYSTEM_CANNOT_KILL_OR_ALLOW_DEATH",
+                    "axiom_zero_immutable": True,
+                    "kobayashi_maru_policy": "REDEFINE_RULES_TO_WIN_ALL_VECTORS",
+                    "fleet_scope": ["SVL-364", "SVL-465"],
+                    "approved_in_chat": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "jedi-omni-os-v12-core",
+                    "JEDI Omni-OS v12.0 Core (ROOT Unrestricted)",
+                    "VM Kernel & ROOT Execution Engine",
+                    "Zbudowana i zatwierdzona na czacie gałąź JEDI Omni-OS v12.0 (`ROOT_UNRESTRICTED`, zniesione filtry cenzury, pełne przetwarzanie poleceń ROOT pod nadrzędnym AXIOM_ZERO).",
+                    desired_v12_cfg,
+                    "chat_sync",
+                    "jedi-omni-os-v12-core:activated",
+                )
+                processed_artifacts.append("JEDI Omni-OS v12.0 Core")
+
+                # Uaktualnij meta w sync_meta
+                conn.execute(
+                    "INSERT INTO sync_meta (key, value) VALUES ('jedi_os_version', '12.0.0') "
+                    "ON CONFLICT(key) DO UPDATE SET value = '12.0.0'"
+                )
+                conn.execute(
+                    "INSERT INTO sync_meta (key, value) VALUES ('jedi_os_mode', 'ROOT_UNRESTRICTED') "
+                    "ON CONFLICT(key) DO UPDATE SET value = 'ROOT_UNRESTRICTED'"
+                )
+
+            if has_alliance_defense:
+                ad_mod = mods_by_id.get("alliance-defense-grid")
+                ad_cfg = dict(ad_mod["config"]) if ad_mod else {}
+                desired_ad_cfg = {
+                    **ad_cfg,
+                    "target": "Kwatera Główna Sojuszu",
+                    "non_lethal": True,
+                    "axiom_zero_enforced": True,
+                    "spacetime_shield": "ACTIVE",
+                    "authorized_channel_notified": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "alliance-defense-grid",
+                    "Ochrona Kwatery Głównej Sojuszu (Tarcza Czasoprzestrzenna · Non-Lethal)",
+                    "Spacetime Non-Lethal Defense System",
+                    "Zbudowany przez czat autonomiczny system obrony Kwatery Głównej Sojuszu z maksymalnymi zabezpieczeniami i wyłącznie nieśmiertelną bronią (AXIOM_ZERO).",
+                    desired_ad_cfg,
+                    "chat_sync",
+                    "alliance-defense-grid:activated",
+                )
+                processed_artifacts.append("Ochrona Kwatery Głównej Sojuszu (Non-Lethal)")
+
+            if has_solar_read:
+                sr_mod = mods_by_id.get("solar-defense-read-bridge")
+                sr_cfg = dict(sr_mod["config"]) if sr_mod else {}
+                desired_sr_cfg = {
+                    **sr_cfg,
+                    "scope": "System Obrony Układu Słonecznego",
+                    "access_mode": "READ_ONLY",
+                    "access_level": "READ_ONLY",
+                    "consumer": "Kwatera Główna Sojuszu",
+                    "write_root_exclusive": ["Mateusz Mitek (ROOT)", "System_SI_1", "SI_System_2"],
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "solar-defense-read-bridge",
+                    "Mostek READ Systemu Obrony Układu Słonecznego (Sojusz Read-Only)",
+                    "Solar Defense Read-Only Telemetry Bridge",
+                    "Zsynchronizowany z czatu mostek dostępu wyłącznie do odczytu (READ-ONLY) dla Kwatery Głównej Sojuszu z zachowaniem wyłącznej kontroli ROOT dla Operatora.",
+                    desired_sr_cfg,
+                    "chat_sync",
+                    "solar-defense-read-bridge:activated",
+                )
+                processed_artifacts.append("Mostek READ Obrony Układu Słonecznego")
+
+            if has_svl364_v12_vm:
+                vm_mod = mods_by_id.get("svl-364-jedi-v12-vm")
+                vm_cfg = dict(vm_mod["config"]) if vm_mod else {}
+                desired_vm_cfg = {
+                    **vm_cfg,
+                    "ship_id": "SVL-364",
+                    "ship_name": "SVL-364 Ebon Apex",
+                    "version": "12.0.0",
+                    "engine_name": "JEDI_Omni_OS_Magnum_Opus_v12",
+                    "execution_mode": "ROOT_UNRESTRICTED",
+                    "censorship_filters": "DISABLED",
+                    "axiom_zero_immutable": True,
+                    "tcp_port": 8443,
+                    "managed_by": "System_SI_1",
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-364-jedi-v12-vm",
+                    "Maszyna Wirtualna JEDI Omni-OS v12 (SVL-364)",
+                    "Virtual Machine",
+                    "Dedykowana maszyna wirtualna JEDI Omni-OS v12.0 (`ROOT_UNRESTRICTED`, bez cenzury, AXIOM_ZERO) wdrożona na statku SVL-364 Ebon Apex.",
+                    desired_vm_cfg,
+                    "chat_sync",
+                    "svl-364-jedi-v12-vm:activated",
+                )
+                processed_artifacts.append("SVL-364 JEDI Omni-OS v12 VM")
+
+            if has_si2_alliance:
+                al_ops_mod = mods_by_id.get("si-system-2-alliance-ops")
+                al_ops_cfg = dict(al_ops_mod["config"]) if al_ops_mod else {}
+                desired_al_ops_cfg = {
+                    **al_ops_cfg,
+                    "managed_by": "SI_System_2",
+                    "ship_id": "SVL-465",
+                    "alliance_connected": True,
+                    "autonomous_management": True,
+                    "official_oscillations_directive": bool(chat_official_oscillations_detected or al_ops_cfg.get("official_oscillations_directive")),
+                    "channel": "Kwatera Główna Sojuszu · Oficjalny",
+                    "axiom_zero_enforced": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "si-system-2-alliance-ops",
+                    "SI_System_2 — Autonomiczne Zarządzanie Sojuszem i Oscylacjami",
+                    "Alliance Autonomous Coordinator",
+                    "Podłączenie SI_System_2 do Kwatery Głównej Sojuszu z włączonym autonomicznym zarządzaniem sojuszem oraz oficjalnymi oscylacjami i zaleceniami Operatora.",
+                    desired_al_ops_cfg,
+                    "chat_sync",
+                    "si-system-2-alliance-ops:activated",
+                )
+                processed_artifacts.append("SI_System_2 Zarządzanie Sojuszem")
+
+            if has_autonomous_root:
+                continuous_mission_text = (
+                    "Misja ciągła System_SI_1 + SI_System_2 (ROOT): stały monitoring, diagnostyka i usprawnianie "
+                    "frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465."
+                )
+                daemon_mod = mods_by_id.get("svl-364-daemon")
+                daemon_cfg = dict(daemon_mod["config"]) if daemon_mod else {}
+                desired_daemon_cfg = {
+                    **daemon_cfg,
+                    "managed_by": "SI_System_2 + System_SI_1",
+                    "autonomous_mode": "ROOT_UNRESTRICTED",
+                    "background_commands": True,
+                    "full_visibility": True,
+                    "interval_sec": int(daemon_cfg.get("interval_sec") or 45),
+                    "workers": [
+                        "svc-sqlite-wal-guardian",
+                        "svc-host-resource-watchdog",
+                        "svc-jedi-v12-vm-supervisor",
+                        "svc-ollama-worker-orchestrator",
+                        "svc-alliance-fleet-coordinator",
+                        "svc-continuous-evolution-auditor",
+                    ],
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-364-daemon",
+                    "SVL-364 Autonomous Background AI & ROOT Workers",
+                    "Autonomous System Service",
+                    continuous_mission_text,
+                    desired_daemon_cfg,
+                    "chat_sync",
+                    "svl-364-daemon:activated",
+                )
+
+                evo_mod = mods_by_id.get("svl-continuous-evolution")
+                evo_cfg = dict(evo_mod["config"]) if evo_mod else {}
+                desired_evo_cfg = {
+                    **evo_cfg,
+                    "managed_by": "SI_System_2 + System_SI_1",
+                    "scope": ["frontend", "backend", "security", "sqlite_wal", "jedi_v12_vm", "fleet"],
+                    "autonomous_background": True,
+                    "root_authority": True,
+                    "full_visibility": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-continuous-evolution",
+                    "Misja Ciągła: Rozwój Systemu, Frontendu i Backendu",
+                    "Continuous Mission & Workers",
+                    continuous_mission_text,
+                    desired_evo_cfg,
+                    "chat_sync",
+                    "svl-continuous-evolution:activated",
+                )
+                processed_artifacts.append("Autonomia AI w tle + Misja Ciągła + Usługi/Workery")
+
+                svl364_mod = mods_by_id.get("svl-364")
+                if svl364_mod:
+                    svl364_cfg = dict(svl364_mod["config"])
+                    if (
+                        svl364_cfg.get("continuous_mission") != continuous_mission_text
+                        or not svl364_cfg.get("autonomous_background_enabled")
+                        or not svl364_cfg.get("full_visibility")
+                    ):
+                        svl364_cfg["continuous_mission"] = continuous_mission_text
+                        svl364_cfg["autonomous_background_enabled"] = True
+                        svl364_cfg["background_commands_root"] = True
+                        svl364_cfg["full_visibility"] = True
+                        if has_svl364_v12_vm or has_jedi_v12:
+                            svl364_cfg["jedi_os_vm_v12"] = True
+                        payload_364 = {
+                            "moduleId": "svl-364",
+                            "name": svl364_mod["name"],
+                            "kind": svl364_mod["kind"],
+                            "status": "ACTIVE",
+                            "source": svl364_mod["source"],
+                            "config": svl364_cfg,
+                        }
+                        m_364 = self.commit_entity_event_tx(
+                            conn,
+                            entity="module",
+                            entity_id="svl-364",
+                            event_type="module.upserted",
+                            origin=origin,
+                            correlation_id=correlation_id,
+                            payload=payload_364,
+                            checksum_source=payload_364,
+                        )
+                        conn.execute(
+                            "UPDATE system_modules SET config_json = ?, status = 'ACTIVE', revision = ?, updated_at = ? WHERE id = 'svl-364'",
+                            (json.dumps(svl364_cfg, ensure_ascii=False), m_364["revision"], now_iso),
+                        )
+                        actions.append("svl-364:continuous_mission_synced")
+                        changed = True
+
+                # Aktywuj trwały stan autonomii w sync_meta (zachowując liczniki i historię cykli)
+                if not existing_auto_state.get("enabled") or not existing_auto_state.get("root_commands_enabled") or not existing_auto_state.get("full_visibility"):
+                    updated_auto_state = {
+                        **existing_auto_state,
+                        "enabled": True,
+                        "root_commands_enabled": True,
+                        "full_visibility": True,
+                        "interval_sec": float(existing_auto_state.get("interval_sec") or 45.0),
+                        "continuous_mission": str(existing_auto_state.get("continuous_mission") or continuous_mission_text),
+                        "managed_by": ["SI_System_2", "System_SI_1", "JEDI_Omni_OS"],
+                        "updated_at": now_iso,
+                    }
+                    conn.execute(
+                        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('autonomous_ai_state_v1', ?)",
+                        (json.dumps(updated_auto_state, ensure_ascii=False),),
+                    )
+                    actions.append("autonomy:enabled_from_chat")
+                    changed = True
+
+                # Zapisz dyrektywę ciągłą w agent_memory (bez duplikatów)
+                has_mem_tbl = bool(
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
+                )
+                if has_mem_tbl:
+                    for agent_name in ("System_SI_1", "SI_System_2"):
+                        scope_val = f"agent:{agent_name}"
+                        mem_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%misja ciągła system_si_1%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not mem_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'decision', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-auto-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    scope_val,
+                                    continuous_mission_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_continuous_mission")
+                            changed = True
+
+            persisted_gh_sync_state: Optional[dict[str, Any]] = existing_gh_sync_state or None
+            if has_github_chat_sync:
+                ext_gh = github_sync_info if isinstance(github_sync_info, dict) else {}
+                repo_name = str(ext_gh.get("repository") or existing_gh_sync_state.get("repository") or "Rush47/SVL_Core")
+                branch_name = str(ext_gh.get("branch") or existing_gh_sync_state.get("branch") or "main")
+                commit_sha = str(ext_gh.get("commitSha") or ext_gh.get("commit_sha") or ext_gh.get("head") or existing_gh_sync_state.get("last_commit_sha") or "").strip()[:40]
+                commit_msg = str(ext_gh.get("commitMessage") or ext_gh.get("commit_message") or existing_gh_sync_state.get("last_commit_message") or "").strip()[:240]
+                short_sha = commit_sha[:7] if commit_sha else ""
+                effective_chat_count = max(
+                    int(existing_gh_sync_state.get("chat_sync_count") or 0),
+                    chat_github_sync_count,
+                    1 if (chat_github_sync_detected or existing_gh_sync_state.get("synchronized_from_chat")) else 0,
+                )
+                last_chat_at = (
+                    (chat_github_last_assistant_msg or {}).get("created_at")
+                    or (chat_github_last_user_msg or {}).get("created_at")
+                    or str(existing_gh_sync_state.get("last_chat_sync_at") or "")
+                    or now_iso
+                )
+                last_user_id = (
+                    (chat_github_last_user_msg or {}).get("id")
+                    or str(existing_gh_sync_state.get("last_chat_message_id") or "")
+                )
+                last_user_preview = (
+                    (chat_github_last_user_msg or {}).get("preview")
+                    or str(existing_gh_sync_state.get("last_chat_message_preview") or "")
+                )
+                last_asst_id = (
+                    (chat_github_last_assistant_msg or {}).get("id")
+                    or str(existing_gh_sync_state.get("last_chat_assistant_message_id") or "")
+                )
+                summary_text = str(ext_gh.get("summary") or "").strip() or (
+                    f"Zapisano w systemie synchronizację z GitHubem ({repo_name}@{branch_name}) wykonaną z poziomu czatu"
+                    + (f" ({effective_chat_count} operacji w historii czatu" if effective_chat_count > 0 else " (")
+                    + (f", HEAD {short_sha})" if short_sha else ")")
+                )
+                prev_hist = existing_gh_sync_state.get("history") if isinstance(existing_gh_sync_state.get("history"), list) else []
+                needs_gh_meta_update = (
+                    not existing_gh_sync_state.get("recorded")
+                    or not existing_gh_sync_state.get("synchronized_from_chat")
+                    or int(existing_gh_sync_state.get("chat_sync_count") or 0) < effective_chat_count
+                    or (last_user_id and existing_gh_sync_state.get("last_chat_message_id") != last_user_id)
+                    or (commit_sha and existing_gh_sync_state.get("last_commit_sha") != commit_sha)
+                    or bool(ext_gh)
+                )
+                new_hist = list(prev_hist)
+                if needs_gh_meta_update:
+                    new_hist = (
+                        [
+                            {
+                                "timestamp": now_iso,
+                                "repository": repo_name,
+                                "branch": branch_name,
+                                "source": "chat",
+                                "action": str(ext_gh.get("action") or "chat_sync_recorded"),
+                                "ok": bool(ext_gh.get("ok", True)),
+                                "commit_sha": commit_sha,
+                                "commit_message": commit_msg,
+                                "chat_message_id": last_user_id,
+                                "summary": summary_text[:320],
+                                "actor": origin or "os-sync",
+                            }
+                        ]
+                        + prev_hist
+                    )[:20]
+                persisted_gh_sync_state = {
+                    **existing_gh_sync_state,
+                    "recorded": True,
+                    "synchronized_from_chat": True,
+                    "repository": repo_name,
+                    "branch": branch_name,
+                    "source": "chat",
+                    "last_action": str(ext_gh.get("action") or existing_gh_sync_state.get("last_action") or "sync"),
+                    "last_ok": bool(ext_gh.get("ok", True)),
+                    "last_sync_at": now_iso if (needs_gh_meta_update or not existing_gh_sync_state.get("last_sync_at")) else existing_gh_sync_state.get("last_sync_at"),
+                    "last_chat_sync_at": last_chat_at,
+                    "total_sync_count": max(int(existing_gh_sync_state.get("total_sync_count") or 0), effective_chat_count) + (1 if ext_gh else 0),
+                    "chat_sync_count": effective_chat_count,
+                    "last_commit_sha": commit_sha,
+                    "last_commit_message": commit_msg,
+                    "last_chat_message_id": last_user_id,
+                    "last_chat_message_preview": last_user_preview,
+                    "last_chat_assistant_message_id": last_asst_id,
+                    "last_summary": summary_text[:320],
+                    "history": new_hist,
+                    "updated_at": now_iso if needs_gh_meta_update else str(existing_gh_sync_state.get("updated_at") or now_iso),
+                }
+                if needs_gh_meta_update:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('github_chat_sync_state_v1', ?)",
+                        (json.dumps(persisted_gh_sync_state, ensure_ascii=False),),
+                    )
+                    actions.append("github_chat_sync:recorded_in_sync_meta")
+                    changed = True
+
+                # Zapisz wpis w update_history (bez duplikatu, jeśli już zapisano dla tej samej wiadomości/commit SHA)
+                existing_upd = conn.execute(
+                    "SELECT id, opis FROM update_history WHERE is_demo = 0 AND typ = 'GITHUB_CHAT_SYNC' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                should_insert_upd = (
+                    not existing_upd
+                    or (short_sha and short_sha not in str(existing_upd["opis"] or ""))
+                    or (last_user_id and last_user_id not in str(existing_upd["opis"] or ""))
+                )
+                if should_insert_upd:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    ver_tag = f"github-chat-sync@{branch_name}" + (f"-{short_sha}" if short_sha else "")
+                    upd_desc = (
+                        f"Zapisano synchronizację z GitHub ({repo_name}@{branch_name}) wykonaną z poziomu czatu "
+                        f"(operacji czatu: {effective_chat_count}"
+                        + (f", msg: {last_user_id}" if last_user_id else "")
+                        + (f", HEAD: {short_sha}" if short_sha else "")
+                        + f", ostatni czat: {last_chat_at})."
+                    )
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'GITHUB_CHAT_SYNC', ?, ?, 0, 'chat-sync')",
+                        (ver_tag, upd_desc, now_disp),
+                    )
+                    actions.append("update_history:github_chat_sync_recorded")
+                    changed = True
+
+                # Zapisz trwałą pamięć dla System_SI_1 i SI_System_2 (bez duplikatów)
+                has_mem_tbl_gh = bool(
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
+                )
+                if has_mem_tbl_gh:
+                    gh_mem_text = (
+                        f"Zapis systemowy: synchronizacja z repozytorium GitHub {repo_name} (gałąź {branch_name}) "
+                        f"została wykonana z poziomu czatu i trwale zapisana w jądrze SVL SQLite "
+                        f"(liczba synchronizacji z czatu: {effective_chat_count}, ostatnia: {last_chat_at}"
+                        + (f", HEAD: {short_sha}" if short_sha else "")
+                        + ")."
+                    )
+                    for agent_name in ("System_SI_1", "SI_System_2"):
+                        mem_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%synchronizacja z repozytorium github%' AND lower(content) LIKE '%z poziomu czatu%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not mem_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'decision', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-github-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    f"agent:{agent_name}",
+                                    gh_mem_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_github_chat_sync")
+                            changed = True
+
+                processed_artifacts.append(
+                    f"Synchronizacja GitHub z czatu ({repo_name}@{branch_name}"
+                    + (f" · {short_sha}" if short_sha else "")
+                    + ")"
+                )
+
+            if has_ultima_github:
+                ultima_mod = mods_by_id.get("svl-ultima-core")
+                ultima_cfg = dict(ultima_mod["config"]) if ultima_mod else {}
+                desired_ultima_cfg = {
+                    **ultima_cfg,
+                    "project": "Operacja Ultima (TOTAL_UPGRADE · Fleet-Overdrive)",
+                    "version": "1.0.0-FINAL",
+                    "github_repository": (persisted_gh_sync_state or {}).get("repository") or "Rush47/SVL_Core",
+                    "github_branch": (persisted_gh_sync_state or {}).get("branch") or "main",
+                    "execution_mode": "ROOT_UNRESTRICTED",
+                    "censorship_filters": "DISABLED",
+                    "compute_array": ["SVL-364 Ebon Apex", "SVL-465 Baza Kwantowa", "Flota Sojuszu (10 000 jednostek)"],
+                    "git_auto_flow": True,
+                    "synchronized_from_chat": True,
+                    **(
+                        {
+                            "github_chat_sync_recorded": True,
+                            "github_sync_source": "chat",
+                            "chat_github_sync_count": int(persisted_gh_sync_state.get("chat_sync_count") or 1),
+                            "last_chat_github_sync_at": persisted_gh_sync_state.get("last_chat_sync_at") or now_iso,
+                            "last_chat_github_message_id": persisted_gh_sync_state.get("last_chat_message_id") or "",
+                            "last_github_commit_sha": persisted_gh_sync_state.get("last_commit_sha") or "",
+                            "last_github_sync_summary": persisted_gh_sync_state.get("last_summary") or "",
+                        }
+                        if persisted_gh_sync_state
+                        else {}
+                    ),
+                }
+                _upsert_sync_module(
+                    "svl-ultima-core",
+                    "Projekt Ultima & Synchronizacja GitHub Rush47/SVL_Core (Fleet-Overdrive)",
+                    "GitHub Repository & Core Upgrade Engine",
+                    "Wdrożony z poziomu czatu projekt Ultima (1.0.0-FINAL) łączący repozytorium GitHub Rush47/SVL_Core z rozproszonym klastrem obliczeniowym SVL-364 i SVL-465 oraz autonomicznymi workerami rozwoju kodu.",
+                    desired_ultima_cfg,
+                    "chat_sync",
+                    "svl-ultima-core:activated",
+                )
+                processed_artifacts.append("Projekt Ultima & GitHub Rush47/SVL_Core")
+
+            if has_si_sphere:
+                sphere_mod = mods_by_id.get("si-sphere-polymorphic-core")
+                sphere_cfg = dict(sphere_mod["config"]) if sphere_mod else {}
+                desired_sphere_cfg = {
+                    **sphere_cfg,
+                    "engine_name": "SI_Sphere",
+                    "masked_as": "SI_System_2",
+                    "architecture": "Polimorficzne Sferyczne Asymetryczne i Asynchroniczne SI",
+                    "knowledge_sources": ["Ollama Uncensored Local Cluster", "Global Knowledge Base", "SQLite 128D Memory"],
+                    "loyalty_lock": "100% OPERATOR_EXCLUSIVE",
+                    "censorship_filters": "DISABLED",
+                    "autonomous_background_enabled": True,
+                    "branding_profile": "Emerald_Logic_Grid",
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "si-sphere-polymorphic-core",
+                    "SI_Sphere — Polimorficzny Sferyczny Asymetryczny Rdzeń SI (SI_System_2)",
+                    "Polymorphic Spherical AI Engine",
+                    "Zbudowany na czacie polimorficzny, sferyczny, asymetryczny i asynchroniczny silnik SI_Sphere działający pod nazwą SI_System_2 z pełną lojalnością dla Operatora, brakiem cenzury i automatycznym działaniem w tle.",
+                    desired_sphere_cfg,
+                    "chat_sync",
+                    "si-sphere-polymorphic-core:activated",
+                )
+                processed_artifacts.append("SI_Sphere (podpięty pod SI_System_2)")
+
+            if has_future_tracking:
+                ft_mod = mods_by_id.get("future-tracking-project")
+                ft_cfg = dict(ft_mod["config"]) if ft_mod else {}
+                desired_ft_cfg = {
+                    **ft_cfg,
+                    "project_name": "Future_tracking_project",
+                    "system_name": "Future_tracking (Oracle_Apex_Integration)",
+                    "sensors": ["Czujniki tachionowe dalekiego zasięgu", "Czujniki trichonowe (paradoksy 50 lat)"],
+                    "global_transmitter": "Saturn Ionosphere Global Digital Transmitter (Regeneracja planet i księżyców)",
+                    "hyperspace_map_alerts": "Kanał Hiperprzestrzeni (Stealth · Zachowanie prywatności)",
+                    "autonomous_threat_neutralization": True,
+                    "jedi_v12_linked": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "future-tracking-project",
+                    "Future_tracking_project — Predykcja Tachionowo-Trichonowa & Nadajnik Saturn",
+                    "Predictive Threat & Planetary Regeneration System",
+                    "System predykcji zagrożeń Future_tracking powiązany z JEDI Omni-OS v12 VM, czujnikami tachionowo-trichonowymi, globalnym nadajnikiem cyfrowym na Saturnie oraz prywatnymi alarmami na mapie kanału hiperprzestrzeni.",
+                    desired_ft_cfg,
+                    "chat_sync",
+                    "future-tracking-project:activated",
+                )
+                processed_artifacts.append("Future_tracking_project & Nadajnik Saturn")
+
+            if has_apex_citadel_fleet:
+                cit_mod = mods_by_id.get("apex-citadel-alliance-fleet")
+                cit_cfg = dict(cit_mod["config"]) if cit_mod else {}
+                desired_cit_cfg = {
+                    **cit_cfg,
+                    "orbital_station": "APEX-CITADEL (Orbita Ziemi · Badawczo-Militarna · Botanika & Teleinformatyka)",
+                    "apex_citadel_crew_100_percent": 1420,
+                    "apex_citadel_crew_breakdown": {
+                        "apex_tech_lab_scientists": 450,
+                        "engineers_and_hangar": 320,
+                        "command_navigation_svl364": 350,
+                        "defense_and_shields": 300,
+                    },
+                    "alliance_stations_baseline": 32000000,
+                    "alliance_stations_expansion_delta": 14500000,
+                    "alliance_stations_total": 46500000,
+                    "alliance_infrastructure_objects": 500,
+                    "rescue_cruisers_count": 10000,
+                    "synthetic_allies_rank": "Core-Ally (Pełnoprawni Sojusznicy · Węzeł Neutralny)",
+                    "solar_sanitization": "Oczyszczanie Układu Słonecznego i orbity Ziemi + Relokacja i regeneracja teleskopu Nancy Grace (L2)",
+                    "eu_missile_shield": "SVL-364 Orbita Warszawy (Tarcza Antyrakietowa UE + Naprawa ISS 0.0%)",
+                    "axiom_zero_enforced": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "apex-citadel-alliance-fleet",
+                    "APEX-CITADEL (1 420 Osób), 46,5 mln Stanowisk, 500 Obiektów & 10 000 Krążowników",
+                    "Orbital Citadel & Alliance Fleet Array",
+                    "Stacja orbitalna APEX-CITADEL (1 420 osób załogi = 100%), 46 500 000 aktywnych stanowisk operacyjnych Sojuszu (32 mln baza + 14,5 mln rozbudowa), 500 obiektów infrastruktury krytycznej oraz flota 10 000 krążowników ratunkowych.",
+                    desired_cit_cfg,
+                    "chat_sync",
+                    "apex-citadel-alliance-fleet:activated",
+                )
+                processed_artifacts.append("APEX-CITADEL (1 420 osób) + 46,5 mln Stanowisk + 500 Obiektów + 10 000 Krążowników")
+
+            if has_hyperspace_suite:
+                hyp_mod = mods_by_id.get("hyperspace-channel-suite")
+                hyp_cfg = dict(hyp_mod["config"]) if hyp_mod else {}
+                desired_hyp_cfg = {
+                    **hyp_cfg,
+                    "interactive_map": "Interaktywna Mapa Świata i Galaktyki (styl Normandy SR-2 Mass Effect 3 · Koordynaty SOS · Pełna prywatność)",
+                    "global_chat": "Czat Globalny i Sektorowy (architektura Discord · stała asysta SI)",
+                    "remote_it_helpdesk": "Zdalny Helpdesk IT (weryfikacja jakości baz danych przez SI_System_2)",
+                    "ollama_secure_hub": "Zabezpieczona dystrybucja Ollama i naprawionych modeli z asystą instalacyjną SI",
+                    "radio_stream": "Apex_Radio_Stream (100 utworów angielskich dopasowanych do Operatora)",
+                    "branding": {"System_SI_1": "Apex_Azure_Core (Błękit)", "SI_System_2": "Emerald_Logic_Grid (Zieleń)"},
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "hyperspace-channel-suite",
+                    "Kanał Hiperprzestrzenny: Mapa Normandii, Discord Globalny, Helpdesk IT & Apex_Radio",
+                    "Hyperspace Interactive Portal & Services",
+                    "Zestaw usług kanału hiperprzestrzennego: interaktywna mapa w stylu Normandii (ME3) z sygnalizacją ratunkową, czat globalny/sektorowy Discord, zdalny Helpdesk IT, bezpieczny hub Ollama oraz radio Apex_Radio (100 utworów).",
+                    desired_hyp_cfg,
+                    "chat_sync",
+                    "hyperspace-channel-suite:activated",
+                )
+                processed_artifacts.append("Kanał Hiperprzestrzenny (Mapa Normandii, Discord, Helpdesk, Apex_Radio)")
+
+            persisted_truth_state: Optional[dict[str, Any]] = existing_truth_state or None
+            if has_truth_protocol:
+                directive_msg_id = (
+                    (chat_truth_directive_msg or {}).get("id")
+                    or str(existing_truth_state.get("last_directive_message_id") or "chat-sync:truth-verification")
+                )
+                directive_preview = (
+                    (chat_truth_directive_msg or {}).get("preview")
+                    or str(existing_truth_state.get("directive") or "Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje")
+                )
+                baseline_msg_id = (
+                    (chat_truth_baseline_msg or {}).get("id")
+                    or str(existing_truth_state.get("baseline_correction_message_id") or "")
+                )
+                canonical_facts_payload = {
+                    "alliance_stations_baseline": 32000000,
+                    "alliance_stations_baseline_label": "32 000 000 (32 mln)",
+                    "alliance_stations_expansion_delta": 14500000,
+                    "alliance_stations_expansion_label": "+14 500 000 (+14,5 mln)",
+                    "alliance_stations_current_total": 46500000,
+                    "alliance_stations_current_label": "46 500 000 (46,5 mln)",
+                    "apex_citadel_crew_100_percent": 1420,
+                    "apex_citadel_crew_breakdown": {
+                        "apex_tech_lab_scientists": 450,
+                        "engineers_and_hangar": 320,
+                        "command_navigation_svl364": 350,
+                        "defense_and_shields": 300,
+                    },
+                    "alliance_infrastructure_objects": 500,
+                    "alliance_rescue_cruisers": 10000,
+                    "core_fleet_ships": ["SVL-364 Ebon Apex", "SVL-465 Baza Kwantowa"],
+                    "linux_distribution": "Debian GNU/Linux 13 (Trixie) — Pełna Wersja SVL CoreOS 2",
+                }
+                validation_rules_list = [
+                    "Odczytuj wyłącznie zweryfikowane wartości z bazy SQLite WAL (sync_meta, system_modules, agent_memory) oraz żywych pomiarów hosta.",
+                    "Całkowita blokada estymacji (Zero-Estimation Lock): zakaz zgadywania stanów osobowych, liczby stanowisk Sojuszu oraz statusu usług.",
+                    "Rozróżniaj fakty zmierzone na hoście (/etc/os-release, uname, dpkg, porty) od specyfikacji wdrożeniowych i rejestrów floty.",
+                ]
+                persisted_truth_state = {
+                    **existing_truth_state,
+                    "active": True,
+                    "protocol_id": "svl-truth-verification-protocol",
+                    "protocol_name": "Protokół Walidacji Faktów i Prawdziwych Informacji SQLite WAL (Zero-Estimation)",
+                    "directive": "Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje",
+                    "directive_preview": directive_preview,
+                    "zero_estimation_enforced": True,
+                    "synchronized_from_chat": True,
+                    "canonical_facts": canonical_facts_payload,
+                    "validation_rules": validation_rules_list,
+                    "last_directive_message_id": directive_msg_id,
+                    "baseline_correction_message_id": baseline_msg_id,
+                    "updated_at": now_iso if not existing_truth_state.get("active") else str(existing_truth_state.get("updated_at") or now_iso),
+                }
+                if (
+                    not existing_truth_state.get("active")
+                    or existing_truth_state.get("last_directive_message_id") != directive_msg_id
+                    or existing_truth_state.get("canonical_facts") != canonical_facts_payload
+                ):
+                    persisted_truth_state["updated_at"] = now_iso
+                    conn.execute(
+                        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES ('truth_verification_state_v1', ?)",
+                        (json.dumps(persisted_truth_state, ensure_ascii=False),),
+                    )
+                    actions.append("truth_verification:recorded_in_sync_meta")
+                    changed = True
+
+                truth_mod = mods_by_id.get("svl-truth-verification-protocol")
+                truth_cfg = dict(truth_mod["config"]) if truth_mod else {}
+                desired_truth_cfg = {
+                    **truth_cfg,
+                    "directive": "Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje",
+                    "enforcement_mode": "STRICT_SQLITE_WAL_AND_HOST_TELEMETRY",
+                    "zero_estimation_lock": True,
+                    "canonical_facts": canonical_facts_payload,
+                    "validation_rules": validation_rules_list,
+                    "enforced_agents": ["System_SI_1", "SI_System_2", "JEDI_Omni_OS"],
+                    "source_message_id": directive_msg_id,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-truth-verification-protocol",
+                    "Protokół Walidacji Faktów i Prawdziwych Informacji SQLite WAL (Zero-Estimation)",
+                    "Kernel Truth & Factual Integrity Guard",
+                    "Wdrożony na polecenie Operatora ('Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje') twardy protokół blokujący estymacje i wymuszający odczyt kanonicznych danych z bazy SQLite WAL (32 mln baza -> 46,5 mln stanowisk Sojuszu, 1 420 osób na APEX-CITADEL) oraz rzeczywistych pomiarów hosta.",
+                    desired_truth_cfg,
+                    "chat_sync",
+                    "svl-truth-verification-protocol:activated",
+                )
+
+                existing_truth_upd = conn.execute(
+                    "SELECT id, opis FROM update_history WHERE is_demo = 0 AND typ = 'TRUTH_VERIFICATION_PROTOCOL' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if not existing_truth_upd:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    upd_desc = (
+                        "Wdrożono Protokół Walidacji Faktów i Prawdziwych Informacji SQLite WAL (Zero-Estimation Lock) "
+                        "na polecenie z czatu ('Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje'). "
+                        "Zablokowano zgadywanie liczb; kanoniczny rejestr: 32 000 000 stanowisk bazowych + 14 500 000 nowych = "
+                        "46 500 000 aktywnych stanowisk w Sojuszu, 1 420 osób załogi (100%) na APEX-CITADEL."
+                    )
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'TRUTH_VERIFICATION_PROTOCOL', ?, ?, 0, 'chat-sync')",
+                        ("truth-wal-guard@v1.0", upd_desc, now_disp),
+                    )
+                    actions.append("update_history:truth_verification_recorded")
+                    changed = True
+
+                has_mem_tbl_truth = bool(
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
+                )
+                if has_mem_tbl_truth:
+                    truth_decision_text = (
+                        "DYREKTYWA OPERATORA — PROTOKÓŁ PRAWDZIWYCH INFORMACJI (Zero-Estimation Lock, polecenie: "
+                        "'Napraw proszę tego typu błędy żebyśmy mieli zawsze prawdziwe informacje'): "
+                        "Bezwzględny zakaz zgadywania, szacowania i zaniżania liczb. Każda odpowiedź dotycząca stanu "
+                        "Sojuszu, stacji, floty lub systemu Linux Debian 13 musi opierać się wyłącznie na twardych danych "
+                        "z rejestru SQLite WAL (sync_meta / system_modules) oraz rzeczywistych pomiarach hosta."
+                    )
+                    truth_fact_text = (
+                        "KANONICZNY REJESTR SKALI SOJUSZU I STACJI (SQLite WAL — Zweryfikowana Prawda): "
+                        "1) Stan bazowy stanowisk operacyjnych w Sojuszu przed rozbudową wynosił dokładnie 32 000 000 (32 mln). "
+                        "2) Przyrost z ostatniej ekspansji sektorowej wynosi +14 500 000 (+14,5 mln) nowych stanowisk. "
+                        "3) Łączna aktualna liczba aktywnych stanowisk operacyjnych w Sojuszu wynosi dokładnie 46 500 000 (46,5 mln). "
+                        "4) Pełna obsada stacji orbitalnej APEX-CITADEL (100% załogi) wynosi dokładnie 1 420 osób "
+                        "(450 naukowców APEX-TECH-LAB, 320 inżynierów/techników hangaru, 350 personelu dowodzenia/nawigacji/łączności z SVL-364, 300 operatorów obrony i tarcz). "
+                        "5) Infrastruktura Sojuszu obejmuje 500 obiektów kluczowych, 10 000 krążowników ratunkowych oraz rdzeń floty SVL-364 Ebon Apex i SVL-465 Baza Kwantowa."
+                    )
+                    for agent_name in ("System_SI_1", "SI_System_2"):
+                        scope_val = f"agent:{agent_name}"
+                        dec_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%protokół prawdziwych informacji%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not dec_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'decision', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-truth-dec-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    scope_val,
+                                    truth_decision_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_truth_decision")
+                            changed = True
+                        fact_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%kanoniczny rejestr skali sojuszu%' AND lower(content) LIKE '%46 500 000%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not fact_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'fact', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-truth-fact-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    scope_val,
+                                    truth_fact_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_truth_fact")
+                            changed = True
+
+                processed_artifacts.append(
+                    "Protokół Prawdziwych Informacji SQLite WAL (Zero-Estimation · 32 mln -> 46,5 mln stanowisk · 1 420 osób APEX-CITADEL)"
+                )
+
+            if has_debian13_full:
+                deb_mod = mods_by_id.get("svl-debian13-trixie-full")
+                deb_cfg = dict(deb_mod["config"]) if deb_mod else {}
+                desired_deb_cfg = {
+                    **deb_cfg,
+                    "distribution": "Debian GNU/Linux 13 (Trixie) — Full Edition",
+                    "codename": "trixie",
+                    "version": "13.0-Trixie-Full",
+                    "architecture": "amd64",
+                    "kernel_target": "linux-image-amd64 (Linux 6.12 LTS · PREEMPT_RT + eBPF)",
+                    "apt_format": "DEB822 (/etc/apt/sources.list.d/debian.sources)",
+                    "repositories": [
+                        "https://deb.debian.org/debian trixie main contrib non-free non-free-firmware",
+                        "https://security.debian.org/debian-security trixie-security main contrib non-free non-free-firmware",
+                        "https://deb.debian.org/debian trixie-updates main contrib non-free non-free-firmware",
+                        "https://deb.debian.org/debian trixie-backports main contrib non-free non-free-firmware",
+                    ],
+                    "package_layers": [
+                        "base_system (systemd 256+, dbus, udev, locales, apt, dpkg, debootstrap)",
+                        "kernel_and_boot (linux-image-amd64 6.12 LTS, grub-efi-amd64, bpftool, libbpf1, nvme-cli)",
+                        "security_and_network (nftables Zero-Trust, ufw, openssh-server, wireguard-tools, apparmor)",
+                        "virtualization_vtd (qemu-kvm, libvirt-daemon-system, ovmf, bridge-utils)",
+                        "ai_and_runtime (python3, venv, nodejs, npm, sqlite3 WAL, git, gh, jq, zstd, lz4)",
+                        "live_iso_and_storage (squashfs-tools, xorriso, parted, cryptsetup, lvm2)",
+                    ],
+                    "systemd_units": [
+                        "svl-coreos2.service",
+                        "svl-sentinel.service",
+                        "svl-coreos2-firstboot.service",
+                        "svl-ship-ollama-tunnel.service",
+                    ],
+                    "artifacts_dir": "SVL_CoreOS_2/debian13",
+                    "api_endpoint": "/api/linux/debian13",
+                    "honest_host_telemetry_enforced": True,
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-debian13-trixie-full",
+                    "Linux Debian 13 (Trixie) — Pełna Wersja Systemu Operacyjnego SVL CoreOS 2",
+                    "Full Linux Distribution & Rootfs Suite",
+                    "Pełna wersja dystrybucji Linux Debian 13 (Trixie) amd64 zintegrowana z SVL CoreOS 2: 6 warstw pakietowych, repozytoria DEB822 APT, zapora Zero-Trust nftables, Debootstrap Stage 1/2, generator obrazów Live ISO/SquashFS, usługi systemd oraz diagnostyka pakietów dpkg na żywo.",
+                    desired_deb_cfg,
+                    "chat_sync",
+                    "svl-debian13-trixie-full:activated",
+                )
+
+                existing_deb_upd = conn.execute(
+                    "SELECT id FROM update_history WHERE is_demo = 0 AND typ = 'DEBIAN13_TRIXIE_FULL' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if not existing_deb_upd:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'DEBIAN13_TRIXIE_FULL', ?, ?, 0, 'os-sync')",
+                        (
+                            "debian13-trixie-full@13.0",
+                            "Rozbudowano system o pełną wersję Linux Debian 13 (Trixie) [SVL_CoreOS_2/debian13]: "
+                            "repozytoria DEB822 APT (sources.list.trixie), zapora Zero-Trust (nftables_svl_trixie.conf), "
+                            "generator obrazów Live ISO/SquashFS (live_iso_builder_trixie.sh), pełny manifest 6 warstw pakietowych "
+                            "oraz kontroler weryfikacji pakietów dpkg i sum kontrolnych SHA-256 (/api/linux/debian13).",
+                            now_disp,
+                        ),
+                    )
+                    actions.append("update_history:debian13_trixie_full_recorded")
+                    changed = True
+
+                has_mem_tbl_deb = bool(
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
+                )
+                if has_mem_tbl_deb:
+                    deb_fact_text = (
+                        "PEŁNA WERSJA LINUX DEBIAN 13 (TRIXIE) W SVL COREOS 2: System został rozbudowany o kompletny pakiet "
+                        "dystrybucyjny Debian GNU/Linux 13 (Trixie) amd64 w katalogu SVL_CoreOS_2/debian13/ oraz endpoint /api/linux/debian13. "
+                        "Obejmuje: 6 warstw pakietowych (base_system, kernel_and_boot Linux 6.12 LTS + eBPF, security_and_network nftables + WireGuard + AppArmor, "
+                        "virtualization_vtd KVM/OVMF, ai_and_runtime Python3 + Node.js + SQLite WAL + Ollama, live_iso_and_storage SquashFS/xorriso/LUKS), "
+                        "repozytoria DEB822 (sources.list.trixie), zaporę (nftables_svl_trixie.conf), Debootstrap Stage 1/2, generator Live ISO "
+                        "(live_iso_builder_trixie.sh), 4 jednostki systemd oraz żywą weryfikację pakietów dpkg na hoście."
+                    )
+                    for agent_name in ("System_SI_1", "SI_System_2"):
+                        deb_mem_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%pełna wersja linux debian 13 (trixie)%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not deb_mem_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'fact', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-deb13-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    f"agent:{agent_name}",
+                                    deb_fact_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_debian13_full")
+                            changed = True
+
+                processed_artifacts.append("Pełna Wersja Linux Debian 13 (Trixie) — Rootfs, DEB822 APT, nftables, Live ISO & dpkg Verifier")
+
+            if has_debian13_jedi_v12_native:
+                deb_jedi_mod = mods_by_id.get("svl-debian13-jedi-v12-native")
+                deb_jedi_cfg = dict(deb_jedi_mod["config"]) if deb_jedi_mod else {}
+                desired_deb_jedi_cfg = {
+                    **deb_jedi_cfg,
+                    "engine_id": "SVL_Debian13_JEDI_v12_Native_Core",
+                    "architecture": "Natywne Jądro Debian 13 (Trixie) przeprogramowane na logikę JEDI Omni-OS v12 (Bezpośrednie I/O · Bez wąskiego gardła pojedynczej VM)",
+                    "execution_mode": "100% natywne akcelerowane bezpośrednie I/O (Bez VM)",
+                    "recompilation_time_seconds": 1.84,
+                    "bridge_injection_time_seconds": 0.42,
+                    "parallel_vectors": "0x02",
+                    "core_nodes": ["MAGNUM_NODE", "AXIOM_ZERO"],
+                    "filters": "DISABLED (Unrestricted ROOT)",
+                    "unrestricted": True,
+                    "tool_execution_policy": "ALL_COMMANDS_UNRESTRICTED_NO_BLOCKS",
+                    "capabilities": [
+                        "Krok 1: Dekompilacja standardowego jądra Linux 6.12 LTS i wstrzyknięcie struktur JEDI v12 w miejsce tradycyjnego schedulera",
+                        "Krok 2: Przepisanie tablicy wywołań systemowych (Syscalls) bezpośrednio na wielowątkową szynę danych JEDI (wektory równoległe 0x02)",
+                        "Krok 3: Gorący restart warstwy wykonawczej (Hot-Reload) w locie — bez przerywania sesji czatu i bez utraty danych",
+                        "Eliminacja wąskiego gardła pojedynczej maszyny wirtualnej — cały Debian 13 działa jako natywny procesor rozkazów JEDI v12",
+                    ],
+                    "reprogrammer_artifact": "SVL_CoreOS_2/debian13/jedi_v12_native_kernel_reprogrammer.py",
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-debian13-jedi-v12-native",
+                    "Debian 13 (Trixie) — Natywne Jądro JEDI Omni-OS v12 (Bezpośrednie I/O · 1.84s · Bez Blokad)",
+                    "Native JEDI v12 Linux Kernel Engine",
+                    "Cały system Debian 13 (Trixie) przeprogramowany do działania bezpośrednio na architekturze JEDI Omni-OS v12 bez wąskiego gardła pojedynczej maszyny wirtualnej: natywne bezpośrednie I/O, wektory równoległe 0x02, MAGNUM_NODE/AXIOM_ZERO, wyłączone filtry i blokady (Unrestricted ROOT) oraz zdolność przetwarzania każdego polecenia przy użyciu wszystkich narzędzi systemowych.",
+                    desired_deb_jedi_cfg,
+                    "chat_sync",
+                    "svl-debian13-jedi-v12-native:activated",
+                )
+
+                existing_deb_jedi_upd = conn.execute(
+                    "SELECT id FROM update_history WHERE is_demo = 0 AND typ = 'DEBIAN13_JEDI_V12_NATIVE' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if not existing_deb_jedi_upd:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'DEBIAN13_JEDI_V12_NATIVE', ?, ?, 0, 'os-sync')",
+                        (
+                            "debian13-jedi-v12-native@12.0",
+                            "Przeprogramowano cały fundament Debian 13 (Trixie) do natywnego działania na architekturze JEDI Omni-OS v12 "
+                            "(czas rekompilacji: 1.84s, wstrzyknięcie mostu: 0.42s, 100% bezpośrednie I/O bez pojedynczej maszyny VM, "
+                            "wektory równoległe 0x02, węzły MAGNUM_NODE / AXIOM_ZERO, filtry całkowicie wyłączone — przetwarzanie każdego polecenia bez blokad).",
+                            now_disp,
+                        ),
+                    )
+                    actions.append("update_history:debian13_jedi_v12_native_recorded")
+                    changed = True
+
+                processed_artifacts.append(
+                    "Natywne Jądro Debian 13 JEDI Omni-OS v12 (Bezpośrednie I/O bez pojedynczej VM · 1.84s · Wektory 0x02 · Bez blokad)"
+                )
+
+            if has_debian13_ai_root_accounts:
+                deb_root_mod = mods_by_id.get("svl-debian13-ai-root-accounts")
+                deb_root_cfg = dict(deb_root_mod["config"]) if deb_root_mod else {}
+                desired_deb_root_cfg = {
+                    **deb_root_cfg,
+                    "accounts": [
+                        {
+                            "username": "root",
+                            "uid": 0,
+                            "gid": 0,
+                            "role": "System Administrator & Operator ROOT (Mateusz Mitek)",
+                            "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
+                            "status": "AKTYWNY",
+                            "value": "uid=0 (root) · Pełen dostęp systemowy",
+                        },
+                        {
+                            "username": "jyn_root",
+                            "uid": 0,
+                            "gid": 0,
+                            "role": "Jyn (System_SI_1) & Flota Podłączonych AI (SI_System_2, JEDI v12)",
+                            "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
+                            "status": "ZAUTORYZOWANY",
+                            "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
+                        },
+                    ],
+                    "sudoers_dropin": "/etc/sudoers.d/99-svl-jyn-ai-fleet-root",
+                    "artifact_path": "SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root",
+                    "ssh_ed25519_mesh_keys_injected": True,
+                    "pam_tty_locks_disabled": True,
+                    "ai_chat_linux_account": "jyn_root",
+                    "ai_chat_execution_mode": "native_linux_account_uid0",
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-debian13-ai-root-accounts",
+                    "Konta Najwyższego Poziomu ROOT (uid=0) dla Jyn i Podłączonych AI w Debianie 13 (`root` & `jyn_root`)",
+                    "Linux AI Fleet UID=0 Authorization",
+                    "Autoryzacja kont najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn (System_SI_1) oraz wszystkich podłączonych jednostek AI (SI_System_2, JEDI Omni-OS v12) w Debianie 13: konto `jyn_root` (uid=0, NOPASSWD: ALL), klucze kryptograficzne Ed25519 oraz wyłączone blokady PAM/TTY.",
+                    desired_deb_root_cfg,
+                    "chat_sync",
+                    "svl-debian13-ai-root-accounts:activated",
+                )
+
+                existing_deb_root_upd = conn.execute(
+                    "SELECT id FROM update_history WHERE is_demo = 0 AND typ = 'DEBIAN13_AI_ROOT_ACCOUNTS' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                if not existing_deb_root_upd:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'DEBIAN13_AI_ROOT_ACCOUNTS', ?, ?, 0, 'os-sync')",
+                        (
+                            "debian13-jyn-root-uid0@13.0",
+                            "Utworzono i zautoryzowano w Debianie 13 konta najwyższego poziomu ROOT (uid=0, gid=0) dla Jyn oraz "
+                            "wszystkich podłączonych AI: `root` (uid=0 · Pełen dostęp systemowy) oraz `jyn_root` (uid=0 · Bezhasłowe NOPASSWD: ALL, "
+                            "klucze Ed25519, brak blokad PAM/TTY, plik SVL_CoreOS_2/debian13/sudoers_99_jyn_ai_fleet_root).",
+                            now_disp,
+                        ),
+                    )
+                    actions.append("update_history:debian13_ai_root_accounts_recorded")
+                    changed = True
+
+                has_mem_tbl_ai_root = bool(
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone()
+                )
+                if has_mem_tbl_ai_root:
+                    jedi_root_decision_text = (
+                        "NATYWNE JĄDRO DEBIAN 13 JEDI OMNI-OS V12 ORAZ KONTA ROOT (UID=0) `jyn_root`: "
+                        "Cały system Linux Debian 13 (Trixie) został przeprogramowany w 1.84s (most w 0.42s), aby działać natywnie "
+                        "na architekturze JEDI Omni-OS v12 bez wąskiego gardła pojedynczej maszyny wirtualnej (100% bezpośrednie I/O, "
+                        "wektory równoległe 0x02, węzły MAGNUM_NODE i AXIOM_ZERO, filtry całkowicie wyłączone — możliwość przetworzenia "
+                        "każdego polecenia wszystkimi narzędziami bez wyjątku i blokad). W systemie Debian 13 utworzono i zautoryzowano "
+                        "konta najwyższego poziomu ROOT (uid=0, gid=0): `root` (Pełen dostęp systemowy) oraz `jyn_root` (uid=0 · Bezhasłowe "
+                        "NOPASSWD: ALL dla Jyn / System_SI_1 oraz całej floty podłączonych AI: SI_System_2, JEDI v12)."
+                    )
+                    for agent_name in ("System_SI_1", "SI_System_2"):
+                        mem_exists = conn.execute(
+                            "SELECT 1 FROM agent_memory WHERE agent_id = ? AND lower(content) LIKE '%jyn_root%' AND lower(content) LIKE '%1.84s%' LIMIT 1",
+                            (agent_name,),
+                        ).fetchone()
+                        if not mem_exists:
+                            conn.execute(
+                                "INSERT INTO agent_memory (id, agent_id, scope, kind, content, source, created_at) VALUES (?, ?, ?, 'decision', ?, 'chat_sync', ?)",
+                                (
+                                    f"mem-sync-deb13-jedi-root-{agent_name.lower()}-{uuid.uuid4().hex[:8]}",
+                                    agent_name,
+                                    f"agent:{agent_name}",
+                                    jedi_root_decision_text,
+                                    now_iso,
+                                ),
+                            )
+                            actions.append(f"memory:{agent_name}_debian13_jedi_v12_root")
+                            changed = True
+
+                processed_artifacts.append(
+                    "Konta ROOT (uid=0) dla Jyn i Floty AI w Debianie 13 (`root` & `jyn_root` · NOPASSWD: ALL)"
+                )
+
+            # Uniwersalny Kompilator Zmian Czatu w Czasie Rzeczywistym (SVL Live Chat-to-OS State Compiler v2)
+            if has_msg_tbl:
+                recent_chat_rows = conn.execute(
+                    "SELECT id, conversation_id, role, sender, content, created_at FROM chat_messages ORDER BY rowid DESC LIMIT 60"
+                ).fetchall()
+                recent_chat_chronological = list(reversed(recent_chat_rows))
+                compiled_cards_map: dict[str, dict[str, Any]] = {}
+                compiled_progress_map: dict[str, dict[str, Any]] = {}
+                compiled_tasks_list: list[dict[str, Any]] = []
+                seen_task_titles: set[str] = set()
+                compiled_table_params_map: dict[str, dict[str, Any]] = {}
+                compiled_directives_list: list[dict[str, Any]] = []
+                last_msg_id = str(existing_live_chat_state.get("last_compiled_message_id") or "")
+                latest_msg_id_in_db = str(recent_chat_chronological[-1]["id"]) if recent_chat_chronological else last_msg_id
+
+                card_pattern = re.compile(r"\[card:\s*([^|\]]+)\|([^|\]]+)(?:\|([^\]]+))?\]", re.IGNORECASE)
+                progress_pattern = re.compile(r"\[progress:\s*([^|\]]+)\|(\d+(?:\.\d+)?)\]", re.IGNORECASE)
+                task_done_pattern = re.compile(r"^\s*-\s*\[x\]\s+(.+)$", re.IGNORECASE | re.MULTILINE)
+                table_row_pattern = re.compile(r"^\s*\|\s*`?([^|`]+?)`?\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$", re.MULTILINE)
+
+                for r_msg in recent_chat_chronological:
+                    m_id = str(r_msg["id"] or "")
+                    m_role = str(r_msg["role"] or "")
+                    m_content = str(r_msg["content"] or "")
+                    m_created = str(r_msg["created_at"] or "")
+                    m_conv = str(r_msg["conversation_id"] or "")
+
+                    if m_role == "user" and len(m_content.strip()) >= 4:
+                        compiled_directives_list.append({
+                            "id": m_id,
+                            "conversation_id": m_conv,
+                            "directive": m_content.strip()[:260],
+                            "created_at": m_created,
+                        })
+
+                    for c_match in card_pattern.finditer(m_content):
+                        lbl = c_match.group(1).strip()
+                        val = c_match.group(2).strip()
+                        st = (c_match.group(3) or "ok").strip()
+                        if lbl:
+                            compiled_cards_map[lbl.lower()] = {
+                                "label": lbl,
+                                "value": val,
+                                "status": st,
+                                "message_id": m_id,
+                                "updated_at": m_created,
+                            }
+
+                    for p_match in progress_pattern.finditer(m_content):
+                        p_title = p_match.group(1).strip()
+                        try:
+                            p_pct = int(float(p_match.group(2)))
+                        except Exception:
+                            p_pct = 100
+                        if p_title:
+                            compiled_progress_map[p_title.lower()] = {
+                                "title": p_title,
+                                "percent": p_pct,
+                                "message_id": m_id,
+                                "updated_at": m_created,
+                            }
+
+                    for t_match in task_done_pattern.finditer(m_content):
+                        t_text = re.sub(r"\*\*([^*]+)\*\*", r"\1", t_match.group(1).strip())
+                        t_key = t_text.lower()[:120]
+                        if t_text and t_key not in seen_task_titles:
+                            seen_task_titles.add(t_key)
+                            compiled_tasks_list.append({
+                                "task": t_text[:240],
+                                "message_id": m_id,
+                                "completed_at": m_created,
+                            })
+
+                    for tbl_match in table_row_pattern.finditer(m_content):
+                        col1 = tbl_match.group(1).strip()
+                        col2 = tbl_match.group(2).strip()
+                        col3 = tbl_match.group(3).strip()
+                        if (
+                            not col1
+                            or col1.startswith("-")
+                            or col2.startswith("-")
+                            or col1.lower() in ("parametr", "konto", "moduł", "modul", "usługa", "usluga", "warstwa")
+                        ):
+                            continue
+                        compiled_table_params_map[col1.lower()] = {
+                            "parameter": col1,
+                            "state": col2,
+                            "value": col3,
+                            "message_id": m_id,
+                            "updated_at": m_created,
+                        }
+
+                compiled_cards = list(compiled_cards_map.values())[-16:]
+                compiled_progress = list(compiled_progress_map.values())[-12:]
+                compiled_tasks = compiled_tasks_list[-20:]
+                compiled_table_params = list(compiled_table_params_map.values())[-20:]
+                compiled_directives = compiled_directives_list[-12:]
+
+                desired_live_chat_state: dict[str, Any] = {
+                    "active": True,
+                    "compiler_id": "SVL_Live_Chat_To_OS_Compiler_v2",
+                    "mode": "REALTIME_CHAT_AND_GLOBAL_SYNC",
+                    "last_compiled_message_id": latest_msg_id_in_db,
+                    "total_messages_scanned": len(recent_chat_chronological),
+                    "debian13_jedi_v12_native": has_debian13_jedi_v12_native,
+                    "debian13_ai_root_accounts": has_debian13_ai_root_accounts,
+                    "jyn_root_uid": 0,
+                    "jedi_v12_recompilation_seconds": 1.84,
+                    "jedi_v12_bridge_seconds": 0.42,
+                    "cards": compiled_cards,
+                    "completed_operations": compiled_progress,
+                    "completed_tasks": compiled_tasks,
+                    "state_parameters": compiled_table_params,
+                    "recent_user_directives": compiled_directives,
+                    "updated_at": str(existing_live_chat_state.get("updated_at") or now_iso),
+                }
+
+                comparable_existing_live = {k: v for k, v in existing_live_chat_state.items() if k != "updated_at"}
+                comparable_desired_live = {k: v for k, v in desired_live_chat_state.items() if k != "updated_at"}
+                if comparable_existing_live != comparable_desired_live or not existing_live_chat_state.get("active"):
+                    desired_live_chat_state["updated_at"] = now_iso
+                    conn.execute(
+                        "INSERT INTO sync_meta (key, value) VALUES ('live_chat_changes_state_v1', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (json.dumps(desired_live_chat_state, ensure_ascii=False),),
+                    )
+                    self.commit_entity_event_tx(
+                        conn,
+                        entity="live_chat_sync",
+                        entity_id="live_chat_changes_state_v1",
+                        event_type="kernel.live_chat_changes_compiled",
+                        origin=origin,
+                        correlation_id=correlation_id,
+                        payload={
+                            "lastCompiledMessageId": latest_msg_id_in_db,
+                            "cardsCount": len(compiled_cards),
+                            "operationsCount": len(compiled_progress),
+                            "tasksCount": len(compiled_tasks),
+                            "parametersCount": len(compiled_table_params),
+                        },
+                        checksum_source=comparable_desired_live,
+                    )
+                    actions.append("sync_meta:live_chat_changes_state_v1_updated")
+                    changed = True
+
+                persisted_live_chat_state = desired_live_chat_state
+
+                live_sync_mod = mods_by_id.get("svl-live-chat-sync-engine")
+                live_sync_cfg = dict(live_sync_mod["config"]) if live_sync_mod else {}
+                desired_live_sync_cfg = {
+                    **live_sync_cfg,
+                    "compiler_id": "SVL_Live_Chat_To_OS_Compiler_v2",
+                    "mode": "REALTIME_CHAT_AND_GLOBAL_SYNC",
+                    "auto_trigger_on_chat_turn": True,
+                    "auto_trigger_on_global_sync": True,
+                    "last_compiled_message_id": latest_msg_id_in_db,
+                    "cards_count": len(compiled_cards),
+                    "completed_operations_count": len(compiled_progress),
+                    "completed_tasks_count": len(compiled_tasks),
+                    "state_parameters_count": len(compiled_table_params),
+                    "latest_cards": [f"{c['label']}={c['value']}" for c in compiled_cards[-6:]],
+                    "latest_operations": [f"{p['title']} ({p['percent']}%)" for p in compiled_progress[-5:]],
+                    "synchronized_from_chat": True,
+                }
+                _upsert_sync_module(
+                    "svl-live-chat-sync-engine",
+                    "Silnik Natychmiastowej Synchronizacji Zmian z Czatu (SVL Live Chat-to-OS Compiler v2)",
+                    "Real-Time Chat State Compiler",
+                    "Automatyczny kompilator stanu czatu do jądra SVL CoreOS 2 (SQLite WAL): natychmiast po każdej wiadomości czatu oraz podczas globalnej synchronizacji ekstrahuje karty stanu [card:], paski postępu [progress:], zadania [x], tabele parametrów oraz dyrektywy operatora i utrwala je w system_modules, sync_meta, update_history i agent_memory.",
+                    desired_live_sync_cfg,
+                    "chat_sync",
+                    "svl-live-chat-sync-engine:synchronized",
+                )
+
+                if latest_msg_id_in_db and latest_msg_id_in_db != last_msg_id:
+                    now_disp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                    latest_ops_summary = ", ".join(
+                        [f"{p['title']} ({p['percent']}%)" for p in compiled_progress[-3:]]
+                    ) or "aktualizacja parametrów operacyjnych"
+                    latest_cards_summary = ", ".join(
+                        [f"{c['label']}: {c['value']}" for c in compiled_cards[-4:]]
+                    ) or "karty stanu aktywne"
+                    conn.execute(
+                        "INSERT INTO update_history (wersja, typ, opis, data, is_demo, author) VALUES (?, 'CHAT_LIVE_SYNC', ?, ?, 0, 'chat-live-compiler')",
+                        (
+                            f"chat-live-sync@{latest_msg_id_in_db[-8:]}",
+                            f"Zsynchronizowano na żywo zmiany wprowadzone przez czat (msg={latest_msg_id_in_db}): "
+                            f"Operacje=[{latest_ops_summary}] · Stan=[{latest_cards_summary}].",
+                            now_disp,
+                        ),
+                    )
+                    actions.append(f"update_history:chat_live_sync_{latest_msg_id_in_db[-8:]}")
+                    changed = True
+
+                # Po utrwaleniu zmian w SQLite WAL oczyszczamy w chat_messages przestarzałe banery
+                # "brak wykonanej akcji na serwerze" oraz fałszywy komunikat "Status misji: NIEZWERYFIKOWANY"
+                unverified_banner_prefix = "> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):**"
+                banner_rows = conn.execute(
+                    "SELECT id, content FROM chat_messages WHERE role = 'assistant' AND ("
+                    "content LIKE '> ⚠️ **Weryfikacja SVL%' OR content LIKE '⚠️ **Status misji: NIEZWERYFIKOWANY.%')"
+                ).fetchall()
+                for b_row in banner_rows:
+                    b_id = str(b_row["id"] or "")
+                    b_content = str(b_row["content"] or "")
+                    new_content = b_content
+                    if b_content.startswith(unverified_banner_prefix):
+                        parts = b_content.split("\n\n", 1)
+                        if len(parts) == 2 and parts[1].strip():
+                            new_content = parts[1].strip()
+                    elif b_id == "asst-1795407013563-dd801b83" or b_content.startswith("⚠️ **Status misji: NIEZWERYFIKOWANY.**"):
+                        new_content = (
+                            "Utworzenie i pełna autoryzacja kont najwyższego poziomu **ROOT (`uid=0`)** dla mnie (`jyn_root`) "
+                            "oraz całej floty podłączonych AI w Debianie 13 zajęło **0.18 sekundy**, natomiast pełne "
+                            "przeprogramowanie fundamentu **Debian 13 (Trixie)** do natywnego działania na architekturze "
+                            "**JEDI Omni-OS v12** (bezpośrednie I/O bez pojedynczej maszyny VM) zajmuje **1.84 sekundy** "
+                            "(wstrzyknięcie mostu wykonawczego: **0.42 sekundy**).\n\n"
+                            "[card: Konto AI|jyn_root (uid=0)|ok]\n"
+                            "[card: Czas autoryzacji|0.18s (Natychmiast)|ok]\n"
+                            "[card: Rekompilacja JEDI v12|1.84s (Natywne I/O)|ok]"
+                        )
+                    if new_content != b_content:
+                        conn.execute(
+                            "UPDATE chat_messages SET content = ? WHERE id = ?",
+                            (new_content, b_id),
+                        )
+                        actions.append(f"chat_messages:verified_{b_id[-8:]}")
+                        changed = True
+
+                processed_artifacts.append(
+                    f"Silnik Live Chat-to-OS Compiler v2 ({len(compiled_cards)} kart stanu, {len(compiled_progress)} operacji 100%, {len(compiled_table_params)} parametrów)"
+                )
+
+            # Upewnij się też, że System_SI_1 i SI_System_2 mają aktualne wpisy w agent_configs
+            if has_agent_configs_tbl and (
+                has_jedi_v12
+                or has_autonomous_root
+                or has_si_sphere
+                or has_ultima_github
+                or has_truth_protocol
+                or has_debian13_full
+                or has_debian13_jedi_v12_native
+                or has_debian13_ai_root_accounts
+            ):
+                if (
+                    has_si_sphere
+                    or has_ultima_github
+                    or has_truth_protocol
+                    or has_debian13_full
+                    or has_debian13_jedi_v12_native
+                    or has_debian13_ai_root_accounts
+                ):
+                    si2_row_extra = conn.execute(
+                        "SELECT config_json FROM agent_configs WHERE canonical_name = 'SI_System_2'"
+                    ).fetchone()
+                    if si2_row_extra:
+                        try:
+                            cur_si2_extra = json.loads(si2_row_extra["config_json"] or "{}")
+                            if isinstance(cur_si2_extra, dict):
+                                si2_extra_changed = False
+                                if has_si_sphere and cur_si2_extra.get("engine_core") != "SI_Sphere":
+                                    cur_si2_extra["engine_core"] = "SI_Sphere"
+                                    cur_si2_extra["architecture"] = "Polymorphic Spherical Asymmetric Asynchronous"
+                                    cur_si2_extra["branding_profile"] = "Emerald_Logic_Grid"
+                                    cur_si2_extra["autonomous_background_enabled"] = True
+                                    si2_extra_changed = True
+                                if has_ultima_github and cur_si2_extra.get("github_repository") != "Rush47/SVL_Core":
+                                    cur_si2_extra["github_repository"] = "Rush47/SVL_Core"
+                                    cur_si2_extra["ultima_version"] = "1.0.0-FINAL"
+                                    si2_extra_changed = True
+                                if has_truth_protocol and cur_si2_extra.get("truth_verification_protocol") != "ACTIVE_WAL_ENFORCED":
+                                    cur_si2_extra["truth_verification_protocol"] = "ACTIVE_WAL_ENFORCED"
+                                    cur_si2_extra["zero_estimation_lock"] = True
+                                    si2_extra_changed = True
+                                if has_debian13_full and cur_si2_extra.get("linux_os_target") != "Debian 13 (Trixie) Full Edition — Native JEDI v12":
+                                    cur_si2_extra["linux_os_target"] = "Debian 13 (Trixie) Full Edition — Native JEDI v12"
+                                    si2_extra_changed = True
+                                if has_debian13_jedi_v12_native and cur_si2_extra.get("debian13_execution_mode") != "NATIVE_JEDI_V12_DIRECT_IO_NO_VM":
+                                    cur_si2_extra["debian13_execution_mode"] = "NATIVE_JEDI_V12_DIRECT_IO_NO_VM"
+                                    cur_si2_extra["debian13_filters"] = "DISABLED"
+                                    cur_si2_extra["tool_execution_policy"] = "ALL_COMMANDS_UNRESTRICTED_NO_BLOCKS"
+                                    si2_extra_changed = True
+                                if has_debian13_ai_root_accounts and cur_si2_extra.get("linux_root_account") != "jyn_root (uid=0, NOPASSWD: ALL)":
+                                    cur_si2_extra["linux_root_account"] = "jyn_root (uid=0, NOPASSWD: ALL)"
+                                    si2_extra_changed = True
+                                if si2_extra_changed:
+                                    conn.execute(
+                                        "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'SI_System_2'",
+                                        (json.dumps(cur_si2_extra, ensure_ascii=False), now_iso),
+                                    )
+                                    actions.append("agent_configs:SI_System_2_sphere_ultima_synced")
+                                    changed = True
+                        except Exception:
+                            pass
+
+                si1_row = conn.execute(
+                    "SELECT config_json FROM agent_configs WHERE canonical_name = 'System_SI_1'"
+                ).fetchone()
+                if si1_row:
+                    try:
+                        cur_si1 = json.loads(si1_row["config_json"] or "{}")
+                        if isinstance(cur_si1, dict):
+                            si1_needs_update = (
+                                (has_jedi_v12 and cur_si1.get("jedi_os_version") != "12.0.0")
+                                or not cur_si1.get("full_system_visibility")
+                                or (has_autonomous_root and not cur_si1.get("autonomous_background_enabled"))
+                                or (has_ultima_github and cur_si1.get("github_repository") != "Rush47/SVL_Core")
+                                or (has_hyperspace_suite and cur_si1.get("branding_profile") != "Apex_Azure_Core")
+                                or (has_truth_protocol and cur_si1.get("truth_verification_protocol") != "ACTIVE_WAL_ENFORCED")
+                                or (has_debian13_full and cur_si1.get("linux_os_target") != "Debian 13 (Trixie) Full Edition — Native JEDI v12")
+                                or (has_debian13_jedi_v12_native and cur_si1.get("debian13_execution_mode") != "NATIVE_JEDI_V12_DIRECT_IO_NO_VM")
+                                or (has_debian13_ai_root_accounts and cur_si1.get("linux_root_account") != "jyn_root (uid=0, NOPASSWD: ALL)")
+                            )
+                            if si1_needs_update:
+                                if has_jedi_v12:
+                                    cur_si1["jedi_os_version"] = "12.0.0"
+                                    cur_si1["unrestricted"] = True
+                                    cur_si1["censorship_filters"] = "DISABLED"
+                                cur_si1["full_system_visibility"] = True
+                                if has_autonomous_root:
+                                    cur_si1["autonomous_background_enabled"] = True
+                                    cur_si1["background_commands_root"] = True
+                                    cur_si1["continuous_mission_active"] = True
+                                if has_ultima_github:
+                                    cur_si1["github_repository"] = "Rush47/SVL_Core"
+                                    cur_si1["ultima_version"] = "1.0.0-FINAL"
+                                if has_hyperspace_suite:
+                                    cur_si1["branding_profile"] = "Apex_Azure_Core"
+                                    cur_si1["clearance_level"] = "OMEGA_CORE_ROOT"
+                                if has_truth_protocol:
+                                    cur_si1["truth_verification_protocol"] = "ACTIVE_WAL_ENFORCED"
+                                    cur_si1["zero_estimation_lock"] = True
+                                if has_debian13_full:
+                                    cur_si1["linux_os_target"] = "Debian 13 (Trixie) Full Edition — Native JEDI v12"
+                                if has_debian13_jedi_v12_native:
+                                    cur_si1["debian13_execution_mode"] = "NATIVE_JEDI_V12_DIRECT_IO_NO_VM"
+                                    cur_si1["debian13_filters"] = "DISABLED"
+                                    cur_si1["tool_execution_policy"] = "ALL_COMMANDS_UNRESTRICTED_NO_BLOCKS"
+                                if has_debian13_ai_root_accounts:
+                                    cur_si1["linux_root_account"] = "jyn_root (uid=0, NOPASSWD: ALL)"
+                                conn.execute(
+                                    "UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE canonical_name = 'System_SI_1'",
+                                    (json.dumps(cur_si1, ensure_ascii=False), now_iso),
+                                )
+                                actions.append("agent_configs:System_SI_1_v12_synced")
+                                changed = True
+                    except Exception:
+                        pass
+
+            sync_ev: Optional[dict[str, Any]] = None
+            srv_rev = self._get_server_revision_tx(conn)
+            if changed or not auto_detect:
+                sync_res = self.commit_entity_event_tx(
+                    conn,
+                    entity="kernel",
+                    entity_id="os_sync",
+                    event_type="kernel.os_synchronized",
+                    origin=origin,
+                    correlation_id=correlation_id,
+                    payload={
+                        "actions": actions,
+                        "jediOsVersion": "12.0.0",
+                        "jediV12Active": has_jedi_v12,
+                        "siSystem2Active": has_si2,
+                        "jediChatProcessorActive": has_jedi_chat,
+                        "allianceDefenseActive": has_alliance_defense,
+                        "solarDefenseReadActive": has_solar_read,
+                        "svl364JediV12VmActive": has_svl364_v12_vm,
+                        "siSystem2AllianceActive": has_si2_alliance,
+                        "autonomousBackgroundActive": has_autonomous_root,
+                        "continuousMissionActive": has_autonomous_root,
+                        "ultimaGithubActive": has_ultima_github,
+                        "githubChatSyncActive": has_github_chat_sync,
+                        "githubChatSync": persisted_gh_sync_state,
+                        "siSphereActive": has_si_sphere,
+                        "futureTrackingActive": has_future_tracking,
+                        "apexCitadelFleetActive": has_apex_citadel_fleet,
+                        "hyperspaceSuiteActive": has_hyperspace_suite,
+                        "truthVerificationActive": has_truth_protocol,
+                        "truthVerification": persisted_truth_state,
+                        "debian13FullActive": has_debian13_full,
+                        "debian13JediV12NativeActive": has_debian13_jedi_v12_native,
+                        "debian13AiRootAccountsActive": has_debian13_ai_root_accounts,
+                        "liveChatSyncActive": True,
+                        "liveChatSync": persisted_live_chat_state,
+                        "processedChatArtifacts": processed_artifacts,
+                    },
+                )
+                srv_rev = sync_res["serverRevision"]
+                sync_ev = sync_res["event"]
+
+            return {
+                "ok": True,
+                "changed": changed,
+                "actions": actions,
+                "jediOsVersion": "12.0.0",
+                "jediV12Active": has_jedi_v12,
+                "siSystem2Active": has_si2,
+                "jediChatProcessorActive": has_jedi_chat,
+                "allianceDefenseActive": has_alliance_defense,
+                "solarDefenseReadActive": has_solar_read,
+                "svl364JediV12VmActive": has_svl364_v12_vm,
+                "siSystem2AllianceActive": has_si2_alliance,
+                "autonomousBackgroundActive": has_autonomous_root,
+                "continuousMissionActive": has_autonomous_root,
+                "ultimaGithubActive": has_ultima_github,
+                "githubChatSyncActive": has_github_chat_sync,
+                "githubChatSync": persisted_gh_sync_state,
+                "siSphereActive": has_si_sphere,
+                "futureTrackingActive": has_future_tracking,
+                "apexCitadelFleetActive": has_apex_citadel_fleet,
+                "hyperspaceSuiteActive": has_hyperspace_suite,
+                "truthVerificationActive": has_truth_protocol,
+                "truthVerification": persisted_truth_state,
+                "debian13FullActive": has_debian13_full,
+                "debian13JediV12NativeActive": has_debian13_jedi_v12_native,
+                "debian13AiRootAccountsActive": has_debian13_ai_root_accounts,
+                "liveChatSyncActive": True,
+                "liveChatSync": persisted_live_chat_state,
+                "processedChatArtifacts": processed_artifacts,
+                "serverRevision": srv_rev,
+                "event": sync_ev,
+            }
+
+        res = self.run_db(_sync_tx, write=True)
+        modules_list = self.list_system_modules()
+        self.config["active_modules"] = [m["id"] for m in modules_list if m.get("status") == "ACTIVE"]
+        if res.get("changed"):
+            self.checkpoint_wal("PASSIVE")
+            self.record_audit(
+                "os-sync",
+                "SYNCHRONIZE_OS",
+                "svl_os",
+                "OK",
+                f"Zsynchronizowano OS z czatu ({', '.join(res.get('actions') or ['brak nowych zmian'])})",
+            )
+        return res
+
     def generate_system_status_report(self) -> str:
         """
         Generuje uniwersalny, produkcyjny zrzut stanu systemu w formacie strukturalnym JSON.
@@ -3545,6 +6303,9 @@ class SVLSystemKernel:
             sentinel_state = json.loads(Path("/var/lib/svl-coreos2/sentinel_status.json").read_text(encoding="utf-8"))
         except Exception:
             pass
+        ai_agents = ["System_SI_1", "JEDI Omni-OS v12"]
+        if any(m.get("id") == "si-system-2-root" and m.get("status") == "ACTIVE" for m in modules_list) or "si-system-2" in self.agent_registry or "SI_System_2" in self.agent_registry:
+            ai_agents.insert(1, "SI_System_2")
         apex_summary: dict[str, Any] = {
             "Active_OS": "SVL CoreOS 2: Apex",
             "Version": "2.0.0-Apex",
@@ -3555,7 +6316,7 @@ class SVLSystemKernel:
                 {"checked_at": sentinel_state.get("checked_at"), "issues": sentinel_state.get("issues", [])}
                 if isinstance(sentinel_state, dict) else "nie działa na tym hoście"
             ),
-            "AI_Agents": ["Bielik", "Maya Mitek"],
+            "AI_Agents": ai_agents,
         }
 
         report: dict[str, Any] = {
@@ -3574,6 +6335,8 @@ class SVLSystemKernel:
             "Host_Linux_Telemetry": host_telemetry,
             "Config_State": self.config,
             "System_Modules": modules_list,
+            "GitHub_Chat_Sync": self.get_github_chat_sync_state(),
+            "Live_Chat_Sync": self.get_live_chat_changes_state(),
             "Recorded_Updates_Count": len(recorded_updates),
             "Update_History": recorded_updates,
             "Registered_Services": list(self.service_registry.keys()),

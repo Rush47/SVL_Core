@@ -117,7 +117,7 @@ export function buildProactiveStarterPrompt(
   operatorName = 'Mateusz',
   memoryContext = '',
 ): string {
-  const speakerLabel = speaker === 'Maya' ? 'Maya Mitek' : speaker;
+  const speakerLabel = speaker;
   const memoryHint = memoryContext
     ? ` Jeśli pasuje to naturalnie do rozmowy, możesz delikatnie nawiązać do swojej trwałej pamięci.`
     : '';
