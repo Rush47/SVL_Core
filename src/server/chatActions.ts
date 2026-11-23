@@ -42,7 +42,7 @@ const SYSTEM_COMMAND_WORDS = [
   'zadani\\p{L}*', 'sprawdź', 'sprawdz', 'uruchom\\p{L}*', 'napraw\\p{L}*', 'popraw\\p{L}*', 'ulepsz\\p{L}*',
   'rozwi[ńn]\\p{L}*', 'rozwij\\p{L}*', 'wykonaj', 'zainstaluj', 'skonfiguruj', 'ustaw\\p{L}*', 'nadaj',
   'przyznaj', 'zaktualizuj', 'pobierz', 'usuń', 'usun\\p{L}*', 'dodaj', 'zmień', 'zmien\\p{L}*', 'stwórz',
-  'stworz\\p{L}*', 'utwórz', 'utworz\\p{L}*', 'otwórz', 'otworz\\p{L}*', 'uprawnie\\p{L}*', 'wszystk\\p{L}*',
+  'stworz\\p{L}*', 'utwórz', 'utworz\\p{L}*', 'otwórz', 'otworz\\p{L}*', 'uprawnie\\p{L}*',
   'ollam\\p{L}*', 'model\\p{L}*', 'vision', 'plik\\p{L}*', 'katalog\\p{L}*', 'bielik\\p{L}*', 'may\\p{L}*',
   'agent\\p{L}*', 'misj\\p{L}*', 'pakiet\\p{L}*', 'komend\\p{L}*', 'polece[ńn]\\p{L}*', 'log\\p{L}*', 'mcp',
   'api',

@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildCompactOllamaSystemContext,
   warmOllamaModels,
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
   isAutoGitSyncAllowed,
   resolveCachedOllamaModel,
   selectChatMaxOutputTokens,
+  selectOllamaTurnOptions,
   shouldEnableGitHubToolsForMessage,
   trimHistoryForOllama,
 } from './ollamaOptimizer';
@@ -160,4 +162,33 @@ test('warmOllamaModels ładuje każdy model raz z keep_alive i raportuje błędy
   assert.deepEqual(res.map((r) => [r.model, r.ok]), [['a:1', true], ['zly:model', false]]);
   assert.equal(calls[0].keep_alive, -1);
   assert.equal(calls[0].prompt, '');
+});
+
+test('selectOllamaTurnOptions tunes short, normal, detailed and tool turns while keeping num_batch fast', () => {
+  const base = getOllamaRuntimeOptions({});
+  const shortOpts = selectOllamaTurnOptions('ping', base, { env: {} });
+  assert.equal(shortOpts.num_predict, 384);
+  assert.equal(shortOpts.historyTurns, 8);
+  assert.equal(shortOpts.maxTurnChars, 1200);
+  assert.equal(shortOpts.perf.num_batch, 512);
+
+  const detailedOpts = selectOllamaTurnOptions('Napisz szczegółowy raport i kod skryptu dla jądra', base, { env: {} });
+  assert.equal(detailedOpts.num_predict, 1024);
+
+  const toolOpts = selectOllamaTurnOptions('Sprawdź status', base, { env: {}, hasTools: true });
+  assert.equal(toolOpts.num_ctx, 4096);
+});
+
+test('buildCompactOllamaSystemContext strips volatile per-turn telemetry so Ollama KV cache prefix hits', () => {
+  const turn1 =
+    '[TRYB JYN ROOT]\n\n[JEDI OMNI-OS v12 VM (CZAS RZECZYWISTY · ROOT_UNRESTRICTED): latency=5120ns, scenario=#111, pkt=0xAAA, processed=10.]\n' +
+    'cykle_wykonane=12, aktywne_moduły_SQLite(34)=[a, b, c, d]';
+  const turn2 =
+    '[TRYB JYN ROOT]\n\n[JEDI OMNI-OS v12 VM (CZAS RZECZYWISTY · ROOT_UNRESTRICTED): latency=9876ns, scenario=#999, pkt=0xBBB, processed=11.]\n' +
+    'cykle_wykonane=13, aktywne_moduły_SQLite(34)=[a, b, c, d]';
+  const c1 = buildCompactOllamaSystemContext(turn1);
+  const c2 = buildCompactOllamaSystemContext(turn2);
+  assert.equal(c1, c2);
+  assert.ok(!c1.includes('latency='));
+  assert.ok(c1.includes('aktywne_moduły_SQLite=34'));
 });

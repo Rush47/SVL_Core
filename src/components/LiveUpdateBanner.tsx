@@ -161,7 +161,7 @@ export const LiveUpdateBanner: React.FC<{ getViewState?: () => Record<string, un
   return (
     <div
       role={banner.kind === 'failed' ? 'alert' : 'status'}
-      className={`fixed bottom-3 right-3 z-[9999] max-w-md rounded-lg border px-3 py-2 text-xs shadow-lg backdrop-blur ${tone}`}
+      className={`fixed bottom-3 right-3 z-[9999] max-w-md rounded-lg border px-3 py-2 text-xs shadow-lg ${tone}`}
     >
       <div className="flex items-start gap-2">
         {banner.kind === 'failed' || banner.kind === 'restart' ? (

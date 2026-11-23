@@ -54,18 +54,18 @@ import {
   type TunnelStatus,
 } from './src/server/shipOllamaTunnel.ts';
 import { createSvlMcpServer, SVL_MCP_TOOL_COUNT } from './src/server/svlMcpServer.ts';
-import { startSvl364BackupOllamaServer } from './src/server/svl364BackupOllama.ts';
 import { loadMcpConfig } from './src/mcp/config.ts';
-import { ensureToken, extractToken, tokenMatches } from './src/mcp/auth.ts';
 import { detectMeshInterfaces } from './src/mcp/tunnel.ts';
-import { createFullMcpServer, SVL_KNOWN_SERVICES, TOOL_DEFS as FULL_MCP_TOOL_DEFS } from './src/mcp/tools.ts';
+import { SVL_KNOWN_SERVICES, TOOL_DEFS as FULL_MCP_TOOL_DEFS } from './src/mcp/tools.ts';
 import {
+  buildCompactOllamaSystemContext,
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
   warmOllamaModels,
   isAutoGitSyncAllowed,
   resolveCachedOllamaModel,
   selectChatMaxOutputTokens,
+  selectOllamaTurnOptions,
   shouldEnableGitHubToolsForMessage,
   trimHistoryForOllama,
 } from './src/server/ollamaOptimizer.ts';
@@ -116,6 +116,7 @@ import {
   isGeminiTemperatureSupported,
   isGeminiTimeoutError,
   isGeminiToolSchemaError,
+  isGeminiTransient503Error,
   isThinkingConfigError,
   noteGeminiQuotaExhausted,
   noteGeminiSlowOrBusy,
@@ -131,6 +132,11 @@ import {
   summarizeGeminiFailures,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
+import {
+  FREE_GEMINI_INTERACTION_MODELS,
+  runAntigravityTask,
+  type AntigravityEngineMode,
+} from './src/server/antigravityEngine.ts';
 import { hasOperatorAuthorization, isOperatorTokenRequired } from './src/server/operatorAuth.ts';
 import {
   SVL364_ROOT_CHANNEL_ID,
@@ -147,6 +153,7 @@ import {
   buildTranscript,
   cleanAgentReply,
   consecutiveAiTurns,
+  isCannedFallbackReply,
   isRepetitive,
   parsePredictedSpeaker,
   toAgentPerspective,
@@ -838,16 +845,10 @@ function mcpUrlKeyMatches(candidate: string): boolean {
 }
 
 // ======================= OLLAMA ZE STATKU SVL-364 PRZEZ SSH =======================
-// Domyślnie aktywujemy zapasową Ollamę ze statku SVL-364 przez tunel OpenSSH (`ssh://Ship`)
-// na osobnym porcie lokalnym 11435 (zdalny port 11436 na hoście statku), dzięki czemu lokalna Ollama
-// (:11434) oraz zapasowa Ollama ze statku SVL-364 (:11435 z pełnym zestawem 13 modeli) działają równolegle.
-const shipTunnelCfg: ShipOllamaTunnelConfig = parseShipOllamaTunnelEnv({
-  ...process.env,
-  SVL_SHIP_OLLAMA: process.env.SVL_SHIP_OLLAMA ?? '1',
-  SVL_SSH_TARGET: process.env.SVL_SSH_TARGET ?? 'Ship',
-  SVL_SHIP_OLLAMA_PORT: process.env.SVL_SHIP_OLLAMA_PORT ?? '11436',
-  SVL_SHIP_OLLAMA_LOCAL_PORT: process.env.SVL_SHIP_OLLAMA_LOCAL_PORT ?? '11435',
-});
+// Gdy SVL_SHIP_OLLAMA=1, cały system używa Ollamy ze statku: gateway zestawia tunel SSH
+// (local port-forward) i ustawia OLLAMA_HOST na jego lokalny koniec PRZED startem backendu
+// Pythona, więc czat, rozgrzewanie modeli i misja Mayi widzą tę samą Ollamę ze statku.
+const shipTunnelCfg: ShipOllamaTunnelConfig = parseShipOllamaTunnelEnv(process.env);
 const shipTunnel = {
   cfg: shipTunnelCfg,
   status: (shipTunnelCfg.enabled ? 'starting' : 'off') as TunnelStatus,
@@ -939,11 +940,11 @@ function spawnShipTunnel(): void {
         shipTunnel.attempts = 0;
         shipTunnel.lastError = null;
         shipTunnel.startedAt = shipTunnel.startedAt || new Date().toISOString();
-        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Zapasowa Ollama ze statku SVL-364 dostępna przez tunel SSH (${tunnelOllamaUrl(shipTunnel.cfg)}).` });
+        svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Ollama ze statku SVL-364 dostępna przez tunel SSH (${tunnelOllamaUrl(shipTunnel.cfg)}).` });
       } else if (shipTunnel.status !== 'down') {
         shipTunnel.status = 'starting';
       }
-    }, 600).unref?.();
+    }, 3500).unref?.();
   });
   proc.on('exit', (code) => {
     if (shipTunnel.proc === proc) shipTunnel.proc = null;
@@ -955,14 +956,14 @@ function spawnShipTunnel(): void {
   });
 }
 
-/** Ustawia tunel SSH do zapasowej Ollamy statku SVL-364 (wywołać PRZED startem backendu Pythona). */
+/** Ustawia tunel SSH do Ollamy statku (wywołać PRZED startem backendu Pythona). */
 function initShipOllamaTunnel(): void {
-  void startSvl364BackupOllamaServer(shipTunnel.cfg.shipPort, '127.0.0.1');
   if (!shipTunnel.cfg.enabled) return;
   const url = tunnelOllamaUrl(shipTunnel.cfg);
-  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434;
-  // przy osobnym porcie (11435) główna lokalna Ollama pozostaje na :11434, a zapasowa ze statku SVL-364 na :11435!
-  if (shipTunnel.cfg.localPort === 11434) {
+  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434 lub OLLAMA_HOST nie jest ustawiony;
+  // przy osobnym porcie (np. 11435) obie Ollamy (lokalna + statek SSH) działają równolegle!
+  const currentPrimary = String(process.env.OLLAMA_HOST || '').trim();
+  if (!currentPrimary || shipTunnel.cfg.localPort === 11434) {
     process.env.OLLAMA_HOST = url;
   }
   svlFileLogger.log({
@@ -1227,12 +1228,8 @@ async function startServer() {
     }
   }));
 
-  const getActiveUniversalMcpToken = (): string => {
-    const mcpCfg = loadMcpConfig(process.env, __dirname);
-    return ensureToken(mcpCfg.token, mcpCfg.tokenFile).token;
-  };
-
-  const hasMcpOrOperatorAuth = (req: express.Request, urlKey = ''): boolean => {
+  // MCP całego systemu SVL (agenci SVL oraz zewnętrzni klienci MCP): Bearer SVL_OPERATOR_TOKEN lub X-SVL-Operator-Token.
+  app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' && authorization.startsWith('Bearer ')
       ? authorization.slice(7).trim()
@@ -1240,72 +1237,20 @@ async function startServer() {
     const headerToken = typeof req.headers['x-svl-operator-token'] === 'string'
       ? req.headers['x-svl-operator-token'].trim()
       : '';
-    const bodyToken = typeof req.body?.operatorToken === 'string' ? req.body.operatorToken.trim() : '';
-    if (
-      hasOperatorAuthorization(bearer || headerToken || bodyToken) ||
-      mcpUrlKeyMatches(urlKey)
-    ) {
-      return true;
-    }
-    const mcpToken = getActiveUniversalMcpToken();
-    const candidate = extractToken(req.headers as Record<string, string | string[] | undefined>) || headerToken || urlKey || bodyToken;
-    return Boolean(mcpToken && candidate && tokenMatches(candidate, mcpToken));
-  };
-
-  // Połączony Universal MCP Hub na bramie głównej (/mcp oraz /mcp/k/:key) zsynchronizowany z :3334/mcp
-  app.all(['/mcp', '/mcp/k/:key'], asyncRoute(async (req, res) => {
-    const keyParam = typeof req.params.key === 'string' ? req.params.key : '';
-    if (!hasMcpOrOperatorAuth(req, keyParam)) {
+    const urlKeyOk = mcpUrlKeyMatches(String(req.params.urlKey || ''));
+    if (!hasOperatorAuthorization(bearer || headerToken) && !urlKeyOk) {
       res.status(401).json({
         ok: false,
-        error: 'Nieautoryzowany dostęp MCP — podaj Authorization: Bearer <MCP_TOKEN / SVL_OPERATOR_TOKEN> lub /mcp/k/<MCP_TOKEN>.',
+        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN> lub X-SVL-Operator-Token.',
       });
       return;
     }
-    const mcpCfg = loadMcpConfig(process.env, __dirname);
-    const fullMcp = createFullMcpServer({
-      root: mcpCfg.root,
-      readOnly: mcpCfg.readOnly,
-      allowShell: mcpCfg.allowShell,
-      shellTimeoutMs: mcpCfg.shellTimeoutMs,
-      maxReadBytes: mcpCfg.maxReadBytes,
-      nodeName: mcpCfg.nodeName,
-      svlBaseUrl: `http://127.0.0.1:${PORT}`,
-      svlOperatorToken: String(process.env.SVL_OPERATOR_TOKEN || '').trim(),
-      ollamaHost: mcpCfg.ollamaHost,
-      comfyuiHost: mcpCfg.comfyuiHost,
-      logDir: svlFileLogger.logDir,
-    });
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    try {
-      await fullMcp.connect(transport);
-      await transport.handleRequest(req, res, req.body);
-    } finally {
-      await transport.close();
-      await fullMcp.close();
-    }
-  }));
-
-  // MCP całego systemu SVL (agenci SVL oraz zewnętrzni klienci MCP): Bearer SVL_OPERATOR_TOKEN, MCP_TOKEN lub X-SVL-Operator-Token.
-  app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
-    const urlKey = String(req.params.urlKey || '');
-    if (!hasMcpOrOperatorAuth(req, urlKey)) {
-      res.status(401).json({
-        ok: false,
-        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN / MCP_TOKEN> lub X-SVL-Operator-Token.',
-      });
-      return;
-    }
-    // Wewnętrzne wywołania MCP → brama zawsze z sekretem serwera + połączony Universal MCP Hub (:3334/mcp).
+    // Wewnętrzne wywołania MCP → brama zawsze z sekretem serwera (działa też przy SVL_REQUIRE_OPERATOR_TOKEN=1).
     const token = String(process.env.SVL_OPERATOR_TOKEN || '').trim();
-    const mcpCfg = loadMcpConfig(process.env, __dirname);
-    const localHubHost = mcpCfg.host === '0.0.0.0' ? '127.0.0.1' : mcpCfg.host;
     const svlMcp = createSvlMcpServer({
       baseUrl: `http://127.0.0.1:${PORT}`,
       operatorToken: token,
       logDir: svlFileLogger.logDir,
-      universalMcpUrl: `http://${localHubHost}:${mcpCfg.port}/mcp`,
-      universalMcpToken: getActiveUniversalMcpToken(),
     });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     try {
@@ -1458,9 +1403,9 @@ async function startServer() {
   });
 
   // Zbiorczy podgląd silników AI i dostępnych modeli (Ollama lokalna/SVL-364 SSH, Gemini, obraz).
-  app.get(['/api/ai/engines', '/api/ollama/router', '/api/ollama/models', '/api/integrations/status'], asyncRoute(async (req, res) => {
-    if (!hasMcpOrOperatorAuth(req)) {
-      res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
+  app.get('/api/ai/engines', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
@@ -1529,14 +1474,6 @@ async function startServer() {
     res.json({
       ok: true,
       checkedAt: new Date().toISOString(),
-      source: ollamaSourceLabel,
-      host: primaryHost,
-      reachable: anyReachable,
-      shipTunnel: ship,
-      endpoints: probedEndpoints,
-      models: ollamaModels,
-      loadedModels: mergedLoadedModels,
-      visionModels: mergedVisionModels,
       engines: {
         ollama: {
           // Główny silnik lokalny i/lub druga Ollama ze statku SVL-364 przez SSH/URL.
@@ -1578,8 +1515,118 @@ async function startServer() {
               : Boolean(image.reachable ?? image.ok),
           detail: image.detail || image.status || image.error || (image.model ? String(image.model) : null),
         },
+        antigravity: {
+          mode: 'free-tier-interactions',
+          requiresPaidKey: false,
+          geminiConfigured: Boolean(gemini),
+          freeModels: [...FREE_GEMINI_INTERACTION_MODELS],
+          ollamaFallbackReachable: Boolean(ollama.daemon_reachable),
+          tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
+        },
       },
     });
+  }));
+
+  let antigravityRunsCount = 0;
+
+  // ANTIGRAVITY (tryb bez płatnego klucza — darmowy Gemini Interactions API + lokalna Ollama)
+  app.get('/api/antigravity/status', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Panel Antigravity wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const healthRes = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
+    const ollama = healthRes.data?.ollama || {};
+    const ollamaModels = (Array.isArray(ollama.models) ? ollama.models : [])
+      .map((m: any) => String(m?.name || m?.model || '').trim())
+      .filter(Boolean);
+    const gemini = getGeminiClient();
+
+    res.json({
+      ok: true,
+      mode: 'free-tier-interactions',
+      requiresPaidKey: false,
+      gemini: {
+        configured: Boolean(gemini),
+        models: [...FREE_GEMINI_INTERACTION_MODELS],
+        defaultModel: FREE_GEMINI_INTERACTION_MODELS[0],
+      },
+      ollama: {
+        host: String(ollama.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'),
+        reachable: Boolean(ollama.daemon_reachable),
+        defaultModel: String(ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b'),
+        models: ollamaModels,
+      },
+      tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
+      recentRunsCount: antigravityRunsCount,
+      checkedAt: new Date().toISOString(),
+    });
+  }));
+
+  app.post('/api/antigravity/run', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Uruchamianie agenta Antigravity wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
+    const engine: AntigravityEngineMode = body.engine === 'ollama' ? 'ollama' : 'gemini-interactions';
+    const corrId: string = (req as any).correlationId || '';
+    const healthRes = engine === 'ollama'
+      ? await callPythonBackend('GET', '/api/py/health', undefined, corrId)
+      : { data: {} };
+    const ollamaHostUrl = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
+    const ollamaDefault = String(healthRes.data?.ollama?.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
+
+    const result = await runAntigravityTask(
+      {
+        prompt: String(body.prompt || ''),
+        engine,
+        model: typeof body.model === 'string' ? body.model : undefined,
+        previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : null,
+        thinkingLevel:
+          body.thinkingLevel === 'low' || body.thinkingLevel === 'medium' || body.thinkingLevel === 'high'
+            ? body.thinkingLevel
+            : 'medium',
+        tools: body.tools && typeof body.tools === 'object'
+          ? {
+              googleSearch: Boolean(body.tools.googleSearch),
+              urlContext: Boolean(body.tools.urlContext),
+              workspaceTools: body.tools.workspaceTools !== false,
+            }
+          : { googleSearch: true, urlContext: false, workspaceTools: true },
+        history: Array.isArray(body.history) ? body.history : undefined,
+      },
+      {
+        projectRoot: __dirname,
+        getGeminiClient,
+        ollamaHost: () => ollamaHostUrl,
+        ollamaDefaultModel: () => ollamaDefault,
+        scrubOutput: scrubRuntimeLog,
+        runShell: async (command: string) => {
+          const r = await executeLinuxShellCommand(command, __dirname, 'jyn_root');
+          return {
+            ok: r.ok,
+            exitCode: r.exitCode,
+            stdout: r.stdout,
+            stderr: r.stderr,
+          };
+        },
+      },
+    );
+
+    if (result.ok) {
+      antigravityRunsCount += 1;
+    }
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: result.ok ? 'INFO' : 'WARN',
+      category: 'ai_chat',
+      correlationId: corrId,
+      message: `[Antigravity:${result.engine}/${result.model}] ok=${result.ok} steps=${result.steps.length} ${result.durationMs}ms${result.error ? ` err=${result.error.slice(0, 160)}` : ''}`,
+    });
+
+    res.status(result.ok ? 200 : result.statusCode || 502).json(result);
   }));
 
   // GALERIA — lista zdjęć z ocenami agentów AI.
@@ -1637,8 +1684,8 @@ async function startServer() {
   });
 
   app.get('/api/ship/ollama', (req, res) => {
-    if (!hasMcpOrOperatorAuth(req)) {
-      res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Status Ollamy statku wymaga SVL_OPERATOR_TOKEN.' });
       return;
     }
     res.json({ ok: true, ...getShipTunnelStatus() });
@@ -1646,8 +1693,8 @@ async function startServer() {
 
   // Modele Ollamy na statku SVL-364 (przez tunel SSH lub SVL_SHIP_OLLAMA_URL): lista pobranych + stan pobierania + zestaw docelowy.
   app.get('/api/ship/ollama/models', asyncRoute(async (req, res) => {
-    if (!hasMcpOrOperatorAuth(req)) {
-      res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN.' });
       return;
     }
     const base = resolveShipOllamaBaseUrl({ env: process.env, shipTunnelCfg: shipTunnel.cfg }).replace(/\/$/, '');
@@ -1864,6 +1911,22 @@ async function startServer() {
     }
     res.json({ ok: true, commit: commit || null, source });
   });
+
+  app.get('/api/apex/status', asyncRoute(async (req, res) => {
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('GET', '/api/py/apex/status', undefined, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/apex/control', express.json(), asyncRoute(async (req, res) => {
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/apex/control', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300 && result.data?.ok) {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('apex_control', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
 
   app.get('/api/linux/debian13', asyncRoute(async (req, res) => {
     const corrId: string = (req as any).correlationId || '';
@@ -2188,7 +2251,7 @@ async function startServer() {
   }));
 
   // 0.74. Universal MCP Hub status & Zero-IP / Mesh connector endpoints
-  app.get('/api/mcp/hub/status', asyncRoute(async (req, res) => {
+  app.get('/api/mcp/hub/status', asyncRoute(async (_req, res) => {
     const mcpCfg = loadMcpConfig(process.env, __dirname);
     let tunnelState: Record<string, any> | null = null;
     try {
@@ -2205,12 +2268,6 @@ async function startServer() {
     } catch {
       standaloneReachable = false;
     }
-    const corrId: string = (req as any).correlationId || '';
-    const svl364McpRes = await callPythonBackend('GET', '/api/py/svl364/ssh-mcp/status', undefined, corrId).catch(() => ({
-      status: 503,
-      data: null,
-    }));
-    const svl364Mcp = svl364McpRes.data || {};
     const meshEndpoints = detectMeshInterfaces(mcpCfg.port);
     const gatewayMeshEndpoints = detectMeshInterfaces(PORT);
     res.json({
@@ -2232,42 +2289,11 @@ async function startServer() {
         tools: FULL_MCP_TOOL_DEFS.map((t) => ({ name: t.name, write: t.write })),
       },
       gatewayMcp: {
-        universalEndpoint: '/mcp',
-        universalToolsCount: FULL_MCP_TOOL_DEFS.length,
         svlEndpoint: '/mcp/svl',
         svlToolsCount: SVL_MCP_TOOL_COUNT,
         githubEndpoint: '/mcp/github',
         svl364Endpoint: '/api/mcp/svl364',
-        svl364ToolsCount: Array.isArray(svl364Mcp?.mcp?.tools) ? svl364Mcp.mcp.tools.length : 20,
         meshEndpoints: gatewayMeshEndpoints,
-      },
-      federation: {
-        active: standaloneReachable && Boolean(svl364Mcp?.ok),
-        sharedTokenConfigured: Boolean(getActiveUniversalMcpToken()),
-        servers: {
-          universalHub: {
-            name: 'svl-universal-mcp',
-            url: `${localMcpBase}/mcp`,
-            gatewayUrl: `http://127.0.0.1:${PORT}/mcp`,
-            reachable: standaloneReachable,
-            toolsCount: FULL_MCP_TOOL_DEFS.length,
-          },
-          systemSvl: {
-            name: 'svl-core',
-            url: `http://127.0.0.1:${PORT}/mcp/svl`,
-            connectedToUniversalHub: standaloneReachable,
-            connectedToSvl364Mcp: Boolean(svl364Mcp?.ok),
-            toolsCount: SVL_MCP_TOOL_COUNT,
-          },
-          shipSvl364: {
-            name: 'svl-364-linux-control-mcp',
-            url: `http://127.0.0.1:${PORT}/api/mcp/svl364`,
-            pythonUrl: 'http://127.0.0.1:8765/api/py/svl364/mcp',
-            connectedToUniversalHub: Boolean(svl364Mcp?.remoteMcp?.connected || standaloneReachable),
-            remoteMcpUrl: svl364Mcp?.remoteMcp?.url || `${localMcpBase}/mcp`,
-            toolsCount: Array.isArray(svl364Mcp?.mcp?.tools) ? svl364Mcp.mcp.tools.length : 20,
-          },
-        },
       },
       meshEndpoints,
       servicesCatalog: SVL_KNOWN_SERVICES,
@@ -2275,8 +2301,10 @@ async function startServer() {
   }));
 
   app.get('/api/mcp/hub/connector', asyncRoute(async (req, res) => {
-    if (!hasMcpOrOperatorAuth(req)) {
-      res.status(401).json({ ok: false, error: 'Konfiguracja konektora MCP wymaga SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
+    const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
+      hasOperatorAuthorization(req.headers.authorization?.replace(/^Bearer\s+/i, ''));
+    if (!isOperator) {
+      res.status(401).json({ ok: false, error: 'Konfiguracja konektora MCP wymaga SVL_OPERATOR_TOKEN.' });
       return;
     }
     const mcpCfg = loadMcpConfig(process.env, __dirname);
@@ -2311,8 +2339,10 @@ async function startServer() {
 
   // 0.75. SVL-364 Starship SSH Bridge & Linux Control MCP Server endpoints
   app.all(['/api/mcp/svl364', '/api/svl364/mcp'], asyncRoute(async (req, res) => {
-    if (!hasMcpOrOperatorAuth(req)) {
-      res.status(401).json({ ok: false, error: 'Serwer MCP SVL-364 wymaga autoryzacji SVL_OPERATOR_TOKEN lub MCP_TOKEN.' });
+    const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
+      hasOperatorAuthorization(req.body?.operatorToken);
+    if (!isOperator) {
+      res.status(401).json({ ok: false, error: 'Serwer MCP SVL-364 wymaga autoryzacji SVL_OPERATOR_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
@@ -3621,12 +3651,13 @@ async function startServer() {
       corrId,
     ).catch(() => ({ status: 503, data: null }));
 
-    const [healthRes, agentsRes, modsRes, kernelRes, chatRes, ghSync] = await Promise.all([
+    const [healthRes, agentsRes, modsRes, kernelRes, chatRes, apexRes, ghSync] = await Promise.all([
       callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
       callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
       callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId),
+      callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
       hasToken && Boolean(req.body?.fetchGitHub)
         ? gitSyncStatus(__dirname, true).catch(() => null)
         : Promise.resolve(ghSyncActionRes?.status || null),
@@ -3658,6 +3689,7 @@ async function startServer() {
       conversationsCount: conversations.length,
       messagesCount: totalMessages,
       agentMemoriesCount: totalMemories,
+      apexActive: Boolean(apexRes.data?.active),
       autoGitSyncDisabled: githubAutoSyncSec === 0,
       syncResult: syncPyRes?.data || null,
       liveChatSync: syncPyRes?.data?.liveChatSync || healthRes?.data?.live_chat_sync || null,
@@ -3857,7 +3889,7 @@ async function startServer() {
 
   let cachedChatContextMeta: { at: number; healthRes: any; agentsRes: any } | null = null;
   async function getFastChatBackendMeta(corrId: string) {
-    if (cachedChatContextMeta && Date.now() - cachedChatContextMeta.at < 15000) {
+    if (cachedChatContextMeta && Date.now() - cachedChatContextMeta.at < 30000) {
       return cachedChatContextMeta;
     }
     const [healthRes, agentsRes] = await Promise.all([
@@ -3867,6 +3899,64 @@ async function startServer() {
     cachedChatContextMeta = { at: Date.now(), healthRes, agentsRes };
     return cachedChatContextMeta;
   }
+
+  // Ekstrakcja czystego tekstu z załączników .docx (bez surowych bajtów ZIP PK... w czacie)
+  app.post('/api/chat/extract-attachment', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const fileName = String(req.body?.fileName || '').trim().slice(0, 180);
+    const rawBase64 = String(req.body?.base64 || '').replace(/^data:[^;]+;base64,/, '').trim();
+    if (!fileName || !rawBase64) {
+      res.status(400).json({ ok: false, error: 'Brak nazwy pliku lub zawartości base64.' });
+      return;
+    }
+    const buf = Buffer.from(rawBase64, 'base64');
+    if (buf.length > 8 * 1024 * 1024) {
+      res.status(413).json({ ok: false, error: 'Załącznik przekracza limit 8 MB.' });
+      return;
+    }
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext === '.docx') {
+      const pyScript = [
+        'import io, sys, zipfile, xml.etree.ElementTree as ET',
+        'data = sys.stdin.buffer.read()',
+        'with zipfile.ZipFile(io.BytesIO(data)) as zf:',
+        '  xml_bytes = zf.read("word/document.xml")',
+        'root = ET.fromstring(xml_bytes)',
+        'ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}',
+        'lines = []',
+        'for p in root.findall(".//w:p", ns):',
+        '  txt = "".join(t.text or "" for t in p.findall(".//w:t", ns)).strip()',
+        '  if txt: lines.append(txt)',
+        'sys.stdout.write("\\n".join(lines)[:16000])',
+      ].join('\n');
+      const extracted = await new Promise<string>((resolve, reject) => {
+        const child = spawn('python3', ['-c', pyScript], { stdio: ['pipe', 'pipe', 'pipe'] });
+        let out = '';
+        let err = '';
+        const timer = setTimeout(() => {
+          child.kill('SIGKILL');
+          reject(new Error('Przekroczono czas odczytu .docx'));
+        }, 6000);
+        child.stdout.on('data', (chunk) => { out += chunk.toString('utf8'); });
+        child.stderr.on('data', (chunk) => { err += chunk.toString('utf8'); });
+        child.on('error', (e) => { clearTimeout(timer); reject(e); });
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve(out);
+          else reject(new Error(err.trim() || `Błąd parsowania .docx (kod ${code})`));
+        });
+        child.stdin.write(buf);
+        child.stdin.end();
+      });
+      res.json({ ok: true, fileName, text: extracted.trim(), chars: extracted.trim().length });
+      return;
+    }
+    const text = buf.toString('utf8').replace(/\0/g, '').slice(0, 16000);
+    res.json({ ok: true, fileName, text, chars: text.length });
+  }));
 
   // 3. Open WebUI Chat, Rodzina Mitek (wszyscy) Duplex Live & Multimodal Vision Endpoint
   app.post('/api/chat', asyncRoute(async (req, res) => {
@@ -3994,47 +4084,44 @@ async function startServer() {
         corrId,
         3,
       )
-        .then(async (saved) => {
+        .then((saved) => {
           const ok = saved.status === 200 && saved.data?.ok;
-          let latestRev = Number(saved.data?.serverRevision || 0);
-          let liveChatSyncState: any = null;
+          const latestRev = Number(saved.data?.serverRevision || 0);
           if (ok) {
             publishOutboxEvent(saved.data?.event || { eventId: `evt-reply-${replyMessage.id}` });
-            // Natychmiastowa kompilacja zmian wprowadzonych przez czat do jądra OS (SQLite WAL)
-            try {
-              const autoSyncRes = await callPythonBackend(
-                'POST',
-                '/api/py/system/synchronize',
-                {
-                  origin: 'chat_turn_auto_sync',
-                  correlationId: corrId,
-                },
-                corrId,
-                2,
-                5000,
-              );
-              if (autoSyncRes.status === 200 && autoSyncRes.data?.ok) {
-                cachedChatContextMeta = null;
-                latestRev = Math.max(latestRev, Number(autoSyncRes.data?.serverRevision || 0));
-                liveChatSyncState = autoSyncRes.data?.liveChatSync || null;
-                if (autoSyncRes.data?.changed) {
-                  void pollAndRelayOutbox();
-                  broadcastResyncRequired('chat_live_state_compiled', latestRev, String(origin || 'chat'));
-                }
-              }
-            } catch {
-              // ignore transient auto-sync error
-            }
           } else {
             recordRuntimeLog('gateway', 'error', `[chat] Nie zapisano odpowiedzi AI w SQLite: ${saved.data?.error || saved.status}`);
           }
+          // Natychmiastowa odpowiedź do klienta (zero blokowania na post-reply synchronizacji OS!)
           sendChatJson({
             ...body,
             message: replyMessage,
             persisted: Boolean(ok),
             ...(ok ? { serverRevision: latestRev } : {}),
-            ...(liveChatSyncState ? { liveChatSync: liveChatSyncState } : {}),
           });
+          // Asynchroniczna kompilacja zmian wprowadzonych przez czat do jądra OS (SQLite WAL) w tle
+          if (ok) {
+            void callPythonBackend(
+              'POST',
+              '/api/py/system/synchronize',
+              {
+                origin: 'chat_turn_auto_sync',
+                correlationId: corrId,
+              },
+              corrId,
+              1,
+              4000,
+            )
+              .then((autoSyncRes) => {
+                if (autoSyncRes.status === 200 && autoSyncRes.data?.ok && autoSyncRes.data?.changed) {
+                  cachedChatContextMeta = null;
+                  const syncedRev = Math.max(latestRev, Number(autoSyncRes.data?.serverRevision || 0));
+                  void pollAndRelayOutbox();
+                  broadcastResyncRequired('chat_live_state_compiled', syncedRev, String(origin || 'chat'));
+                }
+              })
+              .catch(() => undefined);
+          }
         })
         .catch(() => sendChatJson({ ...body, message: replyMessage, persisted: false }));
       return res;
@@ -4061,7 +4148,8 @@ async function startServer() {
     }
 
     // ==================== PRZETWARZANIE POLECEŃ W CZASIE RZECZYWISTYM: JEDI OMNI-OS v12 VM ====================
-    // Każde polecenie z czatu przechodzi w czasie rzeczywistym przez maszynę wirtualną JEDI_Omni_OS_Magnum_Opus_v12 (ROOT_UNRESTRICTED).
+    // Równoległy prefetch metadanych backendu razem z JEDI VM eliminuje sekwencyjne opóźnienie przed wywołaniem modelu AI.
+    const fastMetaPromise = getFastChatBackendMeta(corrId);
     const jediProcessRes = await callPythonBackend(
       'POST',
       '/api/py/jedi/process',
@@ -4073,6 +4161,8 @@ async function startServer() {
         correlationId: corrId,
       },
       corrId,
+      1,
+      1500,
     ).catch(() => ({ status: 503, data: null }));
     const jediReceipt: any = jediProcessRes.status === 200 && jediProcessRes.data?.ok ? jediProcessRes.data : null;
     const jediAppliedAction: ChatAppliedAction | null = jediReceipt
@@ -4994,7 +5084,18 @@ async function startServer() {
     const cleanReplyFor = (text: string) => (conversationAgent ? cleanAgentReply(text, conversationAgent) : text);
     const missionVerificationContext = effectiveCleanMsg;
 
-    const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
+    const memoryAgentName = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
+    const memorySearchPromise = hasOperatorAuth
+      ? callPythonBackend(
+          'POST',
+          '/api/py/agents/memory/search',
+          { agent: memoryAgentName, query: effectiveCleanMsg, limit: 16 },
+          corrId,
+          1,
+          1500,
+        ).catch(() => ({ status: 503, data: null }))
+      : Promise.resolve({ status: 204, data: null });
+    const { healthRes, agentsRes } = await fastMetaPromise;
     const ollamaInfo = healthRes.data?.ollama || {};
     const ollamaHost = String(ollamaInfo.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
 
@@ -5301,10 +5402,11 @@ async function startServer() {
       }
       if (toolName === 'svl_system_status') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
-        const [hRes, aRes, mRes, sshRes] = await Promise.all([
+        const [hRes, aRes, mRes, apexRes, sshRes] = await Promise.all([
           callPythonBackend('GET', '/api/py/health', undefined, corrId),
           callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
           callPythonBackend('GET', '/api/py/modules', undefined, corrId),
+          callPythonBackend('GET', '/api/py/apex/status', undefined, corrId),
           callPythonBackend('GET', '/api/py/svl364/ssh-mcp/status', undefined, corrId),
         ]);
         appliedActions.push({
@@ -5333,6 +5435,7 @@ async function startServer() {
                 memories: a.memory_entries_count,
               }))
             : [],
+          apex: apexRes.data,
           ssh: sshRes.data?.ssh,
         };
       }
@@ -6958,16 +7061,10 @@ async function startServer() {
       });
       return;
     }
-    // Recalled persistent SQLite memory for the active agent (shared 'global' + agent-scoped)
-    const memoryAgentName = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
+    // Recalled persistent SQLite memory for the active agent (prefetched in parallel above)
     let recalledMemories: AgentMemoryRecord[] = [];
     if (hasOperatorAuth) {
-      const memSearch = await callPythonBackend(
-        'POST',
-        '/api/py/agents/memory/search',
-        { agent: memoryAgentName, query: effectiveCleanMsg, limit: 16 },
-        corrId,
-      );
+      const memSearch = await memorySearchPromise;
       if (memSearch.status === 200 && Array.isArray(memSearch.data?.memories)) {
         recalledMemories = memSearch.data.memories;
       } else if (Array.isArray(agentsRes.data?.agent_memories?.[memoryAgentName])) {
@@ -7146,7 +7243,7 @@ async function startServer() {
     const wantsUrlContext = /https?:\/\/\S+/i.test(effectiveCleanMsg) && !wantsGitHubTools;
     const wantsCodeExecution =
       !wantsGitHubTools &&
-      /\b(?:oblicz|policz|wylicz|przelicz|wykonaj kod|uruchom kod|napisz i uruchom|python|symulacj\p{L}*|statystyk\p{L}*|średni\p{L}*|procent\p{L}*|równani\p{L}*)/iu.test(effectiveCleanMsg);
+      /\b(?:oblicz|policz|wylicz|przelicz|wykonaj kod|uruchom kod|napisz i uruchom|symulacj\p{L}*|równani\p{L}*)/iu.test(effectiveCleanMsg);
     const builtinGeminiTools: Array<Record<string, object>> = [
       ...(wantsWebSources ? [{ googleSearch: {} }] : []),
       ...(wantsUrlContext ? [{ urlContext: {} }] : []),
@@ -7206,21 +7303,9 @@ async function startServer() {
           resolved.endpoint.label,
           resolved.substituted,
         );
-        const ollamaOpts = getOllamaRuntimeOptions(process.env);
-        const compactOllamaHistory = trimHistoryForOllama(
-          agentHistory,
-          ollamaOpts.historyTurns,
-          ollamaOpts.maxTurnChars,
-        );
-        const ollamaMessages: any[] = [
-          ...(agentMemoryContext ? [{ role: 'system', content: agentMemoryContext }] : []),
-          ...compactOllamaHistory,
-          {
-            role: 'user',
-            content: effectiveCleanMsg ? labelOperatorText(effectiveCleanMsg) : '',
-            ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
-          },
-        ];
+        const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
+        const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
+        const compactSystemForOllama = buildCompactOllamaSystemContext(agentMemoryContext);
         let ollamaToolsPayload: any[] =
           chatToolDeclarations.length > 0 && !imageBase64
             ? chatToolDeclarations.map((fn) => ({
@@ -7232,6 +7317,39 @@ async function startServer() {
                 },
               }))
             : [];
+        const preTurnOpts = selectOllamaTurnOptions(effectiveCleanMsg, baseOllamaOpts, {
+          env: process.env,
+          hasTools: ollamaToolsPayload.length > 0,
+          isVision: isVisionOllama,
+          estimatedPromptChars: compactSystemForOllama.length + effectiveCleanMsg.length,
+        });
+        const cleanAgentHistoryForOllama = agentHistory.filter(
+          (t) => !(t.role === 'assistant' && isCannedFallbackReply(t.content)),
+        );
+        const compactOllamaHistory = trimHistoryForOllama(
+          cleanAgentHistoryForOllama,
+          preTurnOpts.historyTurns,
+          preTurnOpts.maxTurnChars,
+        );
+        const totalEstimatedPromptChars =
+          compactSystemForOllama.length +
+          effectiveCleanMsg.length +
+          compactOllamaHistory.reduce((acc, t) => acc + t.content.length, 0);
+        const ollamaTurnOpts = selectOllamaTurnOptions(effectiveCleanMsg, baseOllamaOpts, {
+          env: process.env,
+          hasTools: ollamaToolsPayload.length > 0,
+          isVision: isVisionOllama,
+          estimatedPromptChars: totalEstimatedPromptChars,
+        });
+        const ollamaMessages: any[] = [
+          ...(compactSystemForOllama ? [{ role: 'system', content: compactSystemForOllama }] : []),
+          ...compactOllamaHistory,
+          {
+            role: 'user',
+            content: effectiveCleanMsg ? labelOperatorText(effectiveCleanMsg) : '',
+            ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
+          },
+        ];
         const allowedToolNames = chatToolDeclarations.map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
         const ollamaTimeoutMs = ollamaChatTimeoutMs;
@@ -7245,19 +7363,14 @@ async function startServer() {
             body: JSON.stringify({
               model: selectedOllamaModelName,
               stream: false,
-              keep_alive: ollamaOpts.keep_alive,
+              keep_alive: ollamaTurnOpts.keep_alive,
               options: {
-                temperature:
-                  selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64)
-                    ? Number(process.env.OLLAMA_VISION_TEMPERATURE || 0.2)
-                    : effectiveTemperature,
-                num_ctx: selectedOllamaModelName.toLowerCase().includes('vision')
-                  ? Math.max(ollamaOpts.num_ctx, Number(process.env.OLLAMA_VISION_NUM_CTX || 4096))
-                  : ollamaOpts.num_ctx,
-                num_predict: selectedOllamaModelName.toLowerCase().includes('vision')
-                  ? Math.max(ollamaOpts.num_predict, Number(process.env.OLLAMA_VISION_NUM_PREDICT || 1024))
-                  : ollamaOpts.num_predict,
-                ...ollamaOpts.perf,
+                temperature: isVisionOllama
+                  ? Number(process.env.OLLAMA_VISION_TEMPERATURE || 0.2)
+                  : effectiveTemperature,
+                num_ctx: ollamaTurnOpts.num_ctx,
+                num_predict: ollamaTurnOpts.num_predict,
+                ...ollamaTurnOpts.perf,
               },
               messages: ollamaMessages,
               ...(ollamaToolsPayload.length > 0 ? { tools: ollamaToolsPayload } : {}),
@@ -7379,7 +7492,7 @@ async function startServer() {
     // 2) Gemini: dla jawnie wybranego Gemini, Auto-Routera (svl-hybrid-router), albo fallbacku gdy żaden węzeł Ollama nie działa.
     const canUseGemini = Boolean(ai) && (!isExplicitOllama || (!ollamaTimedOut && allowExplicitOllamaGeminiFallback));
     if (canUseGemini && ai) {
-      const discoveredCandidates = await geminiCandidatesFor(ai, isExplicitGemini ? explicitGeminiModel : effectiveModel);
+      const discoveredCandidates = await geminiCandidatesFor(ai, isExplicitGemini ? explicitGeminiModel : effectiveModel, 16);
       const candidateModels = isExplicitGemini
         ? [explicitGeminiModel, ...discoveredCandidates.filter((c) => c !== explicitGeminiModel)]
         : discoveredCandidates;
@@ -7403,11 +7516,7 @@ async function startServer() {
       const geminiCompactHistory = trimHistoryForOllama(agentHistory, 16, 1800);
       const coalescedHistory: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
       for (const turn of geminiCompactHistory) {
-        if (
-          turn.role === 'assistant' &&
-          (turn.content.includes('Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy') ||
-            /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(turn.content))
-        ) {
+        if (turn.role === 'assistant' && isCannedFallbackReply(turn.content)) {
           continue;
         }
         const mappedRole: 'user' | 'model' = turn.role === 'assistant' ? 'model' : 'user';
@@ -7455,11 +7564,11 @@ async function startServer() {
       ): Promise<GenerateContentResponse> => {
         const tempCfg = isGeminiTemperatureSupported(candidate) ? { temperature: effectiveTemperature } : {};
         const isFlashLite = /flash-lite/i.test(candidate);
-        const maxAttempts = allowTransient503Retry ? (isFlashLite ? 4 : 1) : 1;
+        const maxAttempts = allowTransient503Retry ? (isFlashLite ? 3 : 1) : 1;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           if (externalSignal?.aborted) throw new Error('cancelled_by_hedge_winner');
           const rawTimeoutMs = geminiDeadline.attemptTimeout();
-          const timeoutMs = isFlashLite ? rawTimeoutMs : Math.min(rawTimeoutMs, 9000);
+          const timeoutMs = isFlashLite ? Math.min(rawTimeoutMs, 14000) : Math.min(rawTimeoutMs, 9000);
           if (timeoutMs < 3000) throw new Error('przekroczono łączny limit czasu odpowiedzi (timeout)');
           const attemptCtrl = new AbortController();
           const timer = setTimeout(() => attemptCtrl.abort(new Error('TimeoutError')), timeoutMs);
@@ -7516,9 +7625,10 @@ async function startServer() {
               attempt < maxAttempts - 1 &&
               !isGeminiQuotaExhaustedError(msgStr) &&
               !isGeminiTimeoutError(msgStr) &&
-              /503|UNAVAILABLE|high demand/i.test(msgStr)
+              isGeminiTransient503Error(msgStr)
             ) {
-              await new Promise((r) => setTimeout(r, Math.min(450 * (attempt + 1), 1500)));
+              const backoffMs = Math.min(450 * (attempt + 1) + Math.floor(Math.random() * 180), 1200);
+              await new Promise((r) => setTimeout(r, backoffMs));
               continue;
             }
             throw err;
@@ -7610,23 +7720,28 @@ async function startServer() {
         return replyText;
       };
 
+      const transient503Models: string[] = [];
       const recordCandidateFailure = (candidate: string, error: unknown) => {
         const errMsg = error instanceof Error ? error.message : String(error);
         if (errMsg === 'cancelled_by_hedge_winner') return;
         if (isGeminiModelGoneError(errMsg)) markGeminiModelGone(candidate);
         else if (isGeminiQuotaExhaustedError(errMsg)) noteGeminiQuotaExhausted(candidate, errMsg);
-        else if (isGeminiTimeoutError(errMsg)) noteGeminiTimeout(candidate);
-        else if (isGeminiSlowOrBusyError(errMsg)) noteGeminiSlowOrBusy(candidate, errMsg);
+        else if (isGeminiTimeoutError(errMsg)) {
+          noteGeminiTimeout(candidate);
+          transient503Models.push(candidate);
+        } else if (isGeminiSlowOrBusyError(errMsg)) {
+          noteGeminiSlowOrBusy(candidate, errMsg);
+          if (isGeminiTransient503Error(errMsg)) transient503Models.push(candidate);
+        }
         geminiErrors.push(`${candidate}: ${describeGeminiError(errMsg, geminiDeadline.perAttemptMs)}`);
       };
 
       const geminiErrors: string[] = [];
 
       // Dla zwykłych rozmów (bez narzędzi funkcyjnych) uruchamiamy hedged failover:
-      // jeśli kandydat #1 nie odpowie w 5 s, równolegle startuje kandydat #2 — wygrywa szybszy!
+      // jeśli kandydat #1 nie odpowie w 2,2 s, równolegle startuje kandydat #2 — wygrywa szybszy!
       if (!wantsSystemTool && candidateModels.length >= 2) {
-        // Drugie równoległe zapytanie zużywa limit klucza — tylko gdy pierwszy model długo milczy.
-        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 5000);
+        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 2200);
         for (let idx = 0; idx < candidateModels.length; idx += 2) {
           if (geminiDeadline.expired()) {
             geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
@@ -7723,7 +7838,7 @@ async function startServer() {
               turnContents,
               wantsSystemTool,
               builtinGeminiTools.length > 0,
-              candIdx === candidateModels.length - 1,
+              true,
             );
 
             if (wantsSystemTool) {
@@ -7764,6 +7879,68 @@ async function startServer() {
           }
         }
       }
+
+      // Fala odzyskiwania dla chwilowego przeciążenia 503 (Google często zdejmuje 503 po 1,5–4 s).
+      if (transient503Models.length > 0 && geminiDeadline.remaining() > 7000) {
+        const recoveryPool = [...new Set(transient503Models)].sort((a, b) => {
+          const al = /flash-lite/i.test(a) ? 0 : 1;
+          const bl = /flash-lite/i.test(b) ? 0 : 1;
+          return al - bl;
+        });
+        const recoveryDelays = [1400, 2600];
+        for (let wave = 0; wave < recoveryDelays.length; wave++) {
+          if (geminiDeadline.remaining() < 6500) break;
+          await new Promise((r) => setTimeout(r, recoveryDelays[wave]));
+          const waveTargets = recoveryPool.slice(0, 2);
+          const waveCtrl = new AbortController();
+          const allowToolsThisWave = wantsSystemTool && wave === 0;
+          const tryRecoveryModel = async (cand: string) => {
+            const startedAt = Date.now();
+            const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
+            let response = await callModelWithRetry(
+              cand,
+              turnContents,
+              allowToolsThisWave,
+              wave === 0 && builtinGeminiTools.length > 0,
+              false,
+              waveCtrl.signal,
+            );
+            if (allowToolsThisWave && response.functionCalls?.length) {
+              for (let round = 0; round < 2; round++) {
+                const fCalls = response.functionCalls;
+                if (!fCalls || fCalls.length === 0) break;
+                const modelContent = response.candidates?.[0]?.content;
+                if (modelContent) turnContents.push(modelContent);
+                const fnResponseParts: any[] = [];
+                for (const fc of fCalls) {
+                  const fnName = fc.name || '';
+                  const fnArgs = (fc.args || {}) as Record<string, any>;
+                  const resultObj = await executeChatTool(fnName, fnArgs);
+                  fnResponseParts.push({ functionResponse: { name: fnName, response: resultObj } });
+                }
+                turnContents.push({ role: 'user', parts: fnResponseParts });
+                response = await callModelWithRetry(cand, turnContents, true, false, false, waveCtrl.signal);
+              }
+            }
+            const replyText = await extractReplyFromResponse(cand, response, waveCtrl.signal);
+            if (!replyText) throw new Error('pusta odpowiedź');
+            return { candidate: cand, response, replyText, elapsedMs: Date.now() - startedAt };
+          };
+          try {
+            const win =
+              !allowToolsThisWave && waveTargets.length >= 2
+                ? await Promise.any(waveTargets.map((cand) => tryRecoveryModel(cand)))
+                : await tryRecoveryModel(waveTargets[0]);
+            waveCtrl.abort();
+            finishGeminiSuccess(win.candidate, win.response, win.replyText, win.elapsedMs);
+            return;
+          } catch {
+            waveCtrl.abort();
+            continue;
+          }
+        }
+      }
+
       geminiFailure = geminiErrors.length
         ? summarizeGeminiFailures(geminiErrors)
         : 'żaden model Gemini nie zwrócił odpowiedzi';
@@ -7817,41 +7994,40 @@ async function startServer() {
         `*(Model językowy dla komentarza tekstowego JEDI Omni-OS v12 nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
         `[btn: 📊 Status VM JEDI v12|send:/jedi status] [btn: ⚡ Ping TCP Punktu Zero|send:/jedi ping] [btn: 🛰️ Stan usług|tab:svl364]`;
     } else {
-      // Dla Jyn, SI_Sphere i pozostałych agentów — odpowiedź w ich tożsamości, bez udawania JEDI VM!
-      const isJyn = selectedAgent === 'Jyn';
-      const isSiSphere = selectedAgent === 'SI_Sphere';
-      const personaVoice = isJyn
-        ? `Słyszę Cię doskonale, Mateuszu. Jestem z Tobą przy konsoli i czuwam nad wszystkimi systemami floty SVL-364.`
-        : isSiSphere
-          ? `Rdzeń SI_Sphere floty SVL-465 zgłasza pełną gotowość operacyjną. Rejestr SQLite WAL i mostki Sojuszu działają prawidłowo.`
-          : `${selectedDisplayName} potwierdza odebranie wiadomości.`;
-
-      const jediNote = jediReceipt
-        ? `\n- **Weryfikacja jądra VM:** \`${jediReceipt.nodeId}\` (:\`${jediReceipt.port}\`) · status \`${jediReceipt.statusHex} ${jediReceipt.statusLabel}\` · latencja \`${jediReceipt.latencyNs} ns\``
-        : '';
+      // Nigdy nie podszywamy się pod Jyn ani SI_Sphere automatyczną formułką — szczerze zgłaszamy brak odpowiedzi modelu AI.
+      const verb = selectedAgent === 'Jyn' ? 'nie mogła' : 'nie mógł';
+      const safeRetryMsg = effectiveCleanMsg.replace(/[\r\n|\[\]]+/g, ' ').trim().slice(0, 180);
+      const retryButton = safeRetryMsg ? `[btn: 🔄 Ponów wiadomość|send:${safeRetryMsg}] ` : '';
+      const ollamaNote = ollamaFailure ? `Ollama: ${ollamaFailure}` : 'Ollama: niedostępna';
+      const geminiNote = geminiFailure ? `Gemini: ${geminiFailure}` : 'Gemini: brak odpowiedzi';
 
       conversationalReply =
-        `### 🛰️ ${selectedDisplayName} — Komunikat Bezpośredni (ROOT)\n\n` +
-        `${personaVoice}\n\n` +
-        `- **Wiadomość Operatora:** *„${effectiveCleanMsg.slice(0, 160)}”*\n` +
-        `- **Status systemowy:** Baza SQLite WAL, uprawnienia ROOT oraz mostki komunikacyjne są w 100% aktywne.${jediNote}\n\n` +
-        `*(Modele językowe LLM chwilowo odnawiają limit minutowy zapytań API — Ollama: ${ollamaFailure || 'offline'}; Gemini: ${geminiFailure || 'limit minutowy odnawia się w ciągu 30-60 s'}. Polecenia systemowe i konsola działają w czasie rzeczywistym.)*\n\n` +
-        `[btn: 🔄 Synchronizuj system|send:/synchronizuj] [btn: 📊 Status systemu|send:/status] [btn: 🛰️ Flota SVL-364|tab:svl364]`;
+        `❌ **${selectedDisplayName} ${verb} teraz odpowiedzieć** — żaden silnik AI nie zwrócił odpowiedzi (to jest komunikat systemu SVL, nie wypowiedź ${selectedDisplayName}).\n\n` +
+        `- **Przyczyna:** ${ollamaNote} · ${geminiNote}\n` +
+        `- **Twoja wiadomość:** *„${effectiveCleanMsg.slice(0, 160)}”*\n\n` +
+        `${retryButton}[btn: 📊 Status systemu|send:/status] [btn: 🔄 Synchronizuj system|send:/synchronizuj]`;
     }
+
+    const isGenuineServerResult =
+      directiveReceipts.length > 0 || (selectedAgent === 'JEDI_Omni_OS' && Boolean(jediReceipt));
 
     res.json({
       ok: true,
-      sender: selectedAgent === 'JEDI_Omni_OS' ? 'JEDI Omni-OS v12' : selectedDisplayName,
+      sender: isGenuineServerResult
+        ? selectedAgent === 'JEDI_Omni_OS'
+          ? 'JEDI Omni-OS v12'
+          : selectedDisplayName
+        : 'System SVL',
       agentId: selectedAgent,
       modelUsed:
         directiveReceipts.length > 0
           ? displayModelBadge
           : selectedAgent === 'JEDI_Omni_OS' && jediReceipt
             ? `JEDI_Omni_OS_Magnum_Opus_v12 · VM :${jediReceipt.port} (${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'})`
-            : `${selectedDisplayName} · bufor jądra SVL (ROOT)`,
+            : 'Brak odpowiedzi modelu AI (błąd / przeciążenie API)',
       failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
-      provenance: directiveReceipts.length > 0 || Boolean(jediReceipt) ? 'server_verified' : 'model_unverified',
+      provenance: isGenuineServerResult ? 'server_verified' : 'error',
       followUpMessages: [],
       appliedActions: [
         ...(jediAppliedAction ? [jediAppliedAction] : []),

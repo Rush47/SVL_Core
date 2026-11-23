@@ -44,8 +44,8 @@ import {
 } from '../utils/svlLogic';
 import {
   CHAT_WINDOW_STEP,
-  DEFAULT_CHAT_WINDOW_SIZE,
   computeMessageWindow,
+  getInitialChatWindowSize,
   nextMessageWindowLimit,
 } from '../utils/chatViewport';
 import { useSvlSync, getCanonicalConversationTitle } from '../utils/svlSyncStore';
@@ -59,7 +59,7 @@ export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
 
 interface ChatWorkspaceProps {
-  onNavigateTab: (tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
+  onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {
@@ -193,8 +193,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   }, [isSending]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
-  const [messageWindowLimit, setMessageWindowLimit] = useState<number>(DEFAULT_CHAT_WINDOW_SIZE);
+  const [messageWindowLimit, setMessageWindowLimit] = useState<number>(() => getInitialChatWindowSize());
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const scrollRafRef = useRef<number | null>(null);
   const [controlsExpanded, setControlsExpanded] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const toolsMenuRef = useRef<HTMLDivElement | null>(null);
@@ -403,7 +404,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     if (convId !== prevConvIdRef.current) {
       prevConvIdRef.current = convId;
       prevScrollHeightRef.current = null;
-      setMessageWindowLimit(DEFAULT_CHAT_WINDOW_SIZE);
+      setMessageWindowLimit(getInitialChatWindowSize());
       setShowScrollToBottom(false);
       requestAnimationFrame(() => {
         const box = messagesScrollRef.current;
@@ -416,17 +417,35 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     if (!container) return;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < 180 || isSending) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      requestAnimationFrame(() => {
+        const box = messagesScrollRef.current;
+        if (box) {
+          box.scrollTop = box.scrollHeight;
+        } else {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        }
+      });
       setShowScrollToBottom(false);
     }
   }, [activeConv?.id, activeConv?.messages.length, isSending]);
 
+  useEffect(() => () => {
+    if (scrollRafRef.current !== null) {
+      cancelAnimationFrame(scrollRafRef.current);
+      scrollRafRef.current = null;
+    }
+  }, []);
+
   const handleMessagesScroll = useCallback(() => {
-    const box = messagesScrollRef.current;
-    if (!box) return;
-    const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
-    const shouldShow = distanceFromBottom > 260;
-    setShowScrollToBottom((prev) => (prev === shouldShow ? prev : shouldShow));
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const box = messagesScrollRef.current;
+      if (!box) return;
+      const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+      const shouldShow = distanceFromBottom > 260;
+      setShowScrollToBottom((prev) => (prev === shouldShow ? prev : shouldShow));
+    });
   }, []);
 
   const handleExpandOlderMessages = useCallback((showAll: boolean, totalCount: number) => {
@@ -804,6 +823,29 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         });
       };
       reader.readAsDataURL(file);
+    } else if (/\.docx$/i.test(file.name)) {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const dataUrl = String(reader.result || '');
+        const extracted = await safeFetchJson<{ ok: boolean; text?: string; error?: string }>(
+          '/api/chat/extract-attachment',
+          {
+            method: 'POST',
+            timeoutMs: 10000,
+            body: JSON.stringify({ fileName: file.name, base64: dataUrl }),
+          },
+        );
+        if (extracted.ok && extracted.data?.ok && typeof extracted.data.text === 'string') {
+          setAttachedTextFile({
+            name: file.name,
+            content: extracted.data.text.slice(0, 12000),
+          });
+          showNotice(`Wczytano dokument ${file.name} (${extracted.data.text.length} znaków).`, 'ok');
+        } else {
+          setChatActionError(extracted.data?.error || extracted.error || `Nie udało się odczytać pliku ${file.name}.`);
+        }
+      };
+      reader.readAsDataURL(file);
     } else {
       const reader = new FileReader();
       reader.onload = () => {
@@ -1008,8 +1050,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         setChatActionError(`Błąd zapisu odpowiedzi w SQLite: ${replyPersist.error}`);
       }
 
-      void refreshAllDomains('chat_message_global_sync');
-      if (isFamilyDuplex && !isSlashCmd && hasSvlOperatorAccessToken()) {
+      if (appliedActions && appliedActions.some((a: { tool?: string }) => a.tool !== 'jedi_omni_os_vm')) {
+        void refreshDomainModules(['modules', 'agents', 'health']);
+      }
+      if (isFamilyDuplex && !isSlashCmd && data.provenance !== 'error' && hasSvlOperatorAccessToken()) {
         const nextFamilyAgent = data.agentId === 'SI_Sphere' ? 'Jyn' : 'SI_Sphere';
         setTimeout(() => {
           if (!sendingRef.current) {
@@ -1460,7 +1504,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         </div>
 
         {/* Conversations List */}
-        <div className="flex-1 min-h-0 overflow-y-auto svl-scroll-smooth p-3 space-y-1">
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
           <div className="px-2 py-1.5 text-xs font-medium text-slate-400">
             Kanały i konwersacje ({conversations.length})
           </div>
@@ -1555,7 +1599,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         </div>
 
         {/* Agents Live Sidebar Summary */}
-        <div className="p-4 border-t border-slate-800/80 bg-[#0D1018] space-y-2.5 shrink-0">
+        <div className="p-4 border-t border-slate-800/80 bg-[#0D1018] space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-300">
               Rodzina Mitek ({effectiveAgents.length} AI)
@@ -1602,15 +1646,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       </aside>
 
       {/* Main Full-Screen ChatGPT-Work Responsive Chat Column */}
-      <div className="flex-1 flex flex-col min-h-0 h-full min-w-0">
-        {/* Responsive Toolbar: stacked clean 2-row on Mobile/Tablet (<lg), compact single-row on Desktop */}
-        <div className="px-2.5 sm:px-3 py-1.5 border-b border-slate-800/80 bg-[#111520]/95 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1.5 shrink-0">
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 min-w-0 flex-1">
+      <div className="flex-1 flex flex-col h-full min-w-0">
+        {/* Responsive Toolbar: compact single-row on both Mobile & Desktop */}
+        <div className="px-2 sm:px-3 py-1.5 border-b border-slate-800 bg-[#0C101B] flex flex-row items-center justify-between gap-1.5 shrink-0 z-10">
+          <div className="flex flex-nowrap items-center gap-1.5 min-w-0 flex-1">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
               aria-label={`Historia konwersacji (${conversations.length})`}
-              className="lg:hidden min-h-[38px] px-2.5 py-1 rounded-md bg-[#0B0D13] border border-slate-700/80 text-xs font-medium text-slate-200 flex items-center gap-1 whitespace-nowrap shrink-0"
+              className="lg:hidden min-h-[34px] px-2 py-1 rounded-md bg-[#0B0D13] border border-slate-700/80 text-xs font-medium text-slate-200 flex items-center gap-1 whitespace-nowrap shrink-0"
             >
               <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
               <span>({conversations.length})</span>
@@ -1650,7 +1694,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   setTargetAgent(val);
                 }
               }}
-              className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
+              className="min-w-0 min-h-[34px] sm:min-h-[32px] flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-1.5 sm:px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
             >
               <option value="Jyn">Jyn Mitek (Infrastruktura · ROOT)</option>
               {(hasSi2Agent || targetAgent === 'SI_Sphere') && (
@@ -1694,7 +1738,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   id="openwebui-model-select"
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
-                  className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
+                  className="min-w-0 min-h-[34px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-1.5 sm:px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
                   <optgroup label="Auto-Router (Ollama Lokalna + SVL-364 SSH → awaryjnie Gemini)">
                     <option value="svl-hybrid-router">
@@ -1753,7 +1797,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               aria-haspopup="menu"
               aria-label="Narzędzia czatu i systemu"
               title="Narzędzia (Real Vision, Generuj obraz, Raport SVL_System, Skaner AV, JEDI VM, Sync, Opcje)"
-              className={`min-h-[34px] sm:min-h-[30px] px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+              className={`min-h-[34px] sm:min-h-[30px] px-2 sm:px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 toolsMenuOpen
                   ? 'bg-violet-600/25 border-violet-500/55 text-violet-100'
                   : 'bg-[#0B0D13] hover:bg-slate-800 border-slate-700/80 text-slate-200'
@@ -1764,7 +1808,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               ) : (
                 <Wrench className="w-3.5 h-3.5 shrink-0 text-violet-400" />
               )}
-              <span>Narzędzia</span>
+              <span className="hidden sm:inline">Narzędzia</span>
               {duplexActive && (
                 <span
                   className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"
@@ -1782,7 +1826,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               <div
                 role="menu"
                 aria-label="Narzędzia czatu i systemu"
-                className="absolute right-0 top-full mt-1.5 z-40 w-[min(92vw,280px)] rounded-xl border border-slate-700/90 bg-[#0D111C]/95 backdrop-blur-md shadow-2xl p-1.5 space-y-1"
+                className="absolute right-0 top-full mt-1.5 z-40 w-[min(92vw,280px)] rounded-xl border border-slate-700 bg-[#0D111C] shadow-2xl p-1.5 space-y-1"
               >
                 <div className="px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-slate-500">
                   AI i Media
@@ -2179,7 +2223,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         )}
 
         {duplexActive && duplexStatus && (
-          <div role="status" aria-live="polite" className="shrink-0 border-b border-violet-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
+          <div role="status" aria-live="polite" className="shrink-0 border-b border-violet-500/20 bg-[#0B0D13] px-3 py-2 md:px-5">
             <div
               className={`mx-auto flex max-w-5xl items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
                 duplexStatus.reason === 'no_model' || duplexStatus.reason === 'auth' || duplexStatus.reason === 'error'
@@ -2208,7 +2252,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         )}
 
         {chatActionNotice && (
-          <div role="status" aria-live="polite" className="shrink-0 border-b border-emerald-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
+          <div role="status" aria-live="polite" className="shrink-0 border-b border-emerald-500/20 bg-[#0B0D13] px-3 py-2 md:px-5">
             <div
               className={`mx-auto flex max-w-5xl items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs ${
                 chatActionNotice.kind === 'ok'
@@ -2233,7 +2277,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         )}
 
         {chatActionError && (
-          <div role="alert" aria-live="assertive" className="shrink-0 border-b border-rose-500/20 bg-[#0B0D13]/95 px-3 py-2.5 md:px-5">
+          <div role="alert" aria-live="assertive" className="shrink-0 border-b border-rose-500/20 bg-[#0B0D13] px-3 py-2.5 md:px-5">
             <div className="mx-auto flex max-w-5xl items-start gap-3 rounded-xl border border-rose-500/35 bg-gradient-to-r from-rose-950/70 via-[#17131d] to-[#111520] p-3 shadow-lg shadow-rose-950/20">
               <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-rose-400/25 bg-rose-500/10 text-rose-300">
                 <AlertTriangle className="h-4 w-4" aria-hidden="true" />
@@ -2274,23 +2318,23 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           >
             <div className="max-w-6xl mx-auto w-full space-y-4">
               {messageWindow.hasMore && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800/90 bg-[#111520]/90 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-1.5 rounded-lg border border-slate-800/90 bg-[#111520]/90 px-2.5 py-1.5 text-[11px]">
                   <span className="font-mono tabular-nums text-slate-400">
-                    Wyświetlono {windowedMessages.length} z {visibleMessages.length} wiadomości
+                    {windowedMessages.length} / {visibleMessages.length} wiad.
                   </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => handleExpandOlderMessages(false, visibleMessages.length)}
-                      className="min-h-[34px] px-2.5 py-1 rounded-lg bg-violet-600/20 hover:bg-violet-600/35 border border-violet-500/40 text-violet-200 font-semibold transition-colors cursor-pointer"
+                      className="min-h-[28px] px-2 py-0.5 rounded-md bg-violet-600/20 hover:bg-violet-600/35 border border-violet-500/40 text-violet-200 font-semibold transition-colors cursor-pointer"
                     >
-                      Pokaż starsze (+{Math.min(CHAT_WINDOW_STEP, messageWindow.hiddenCount)})
+                      +{Math.min(CHAT_WINDOW_STEP, messageWindow.hiddenCount)} starsze
                     </button>
                     {messageWindow.hiddenCount > CHAT_WINDOW_STEP && (
                       <button
                         type="button"
                         onClick={() => handleExpandOlderMessages(true, visibleMessages.length)}
-                        className="min-h-[34px] px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors cursor-pointer"
+                        className="min-h-[28px] px-2 py-0.5 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-medium transition-colors cursor-pointer"
                       >
                         Wszystkie ({visibleMessages.length})
                       </button>
@@ -2420,7 +2464,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,.py,.json,.md,.txt,.sh,.yaml,.yml"
+              accept="image/*,.docx,.py,.json,.md,.txt,.sh,.yaml,.yml"
               onChange={handleFileUpload}
               className="hidden"
             />

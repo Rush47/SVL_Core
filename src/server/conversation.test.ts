@@ -113,3 +113,31 @@ test('toAgentPerspective handles SI_Sphere and JEDI Omni-OS v12 labels cleanly',
   assert.equal(parsePredictedSpeaker('SI_Sphere: gotowe'), 'SI_Sphere');
 });
 
+test('canned automated fallback templates and System SVL error notices are excluded from history', async () => {
+  const { isCannedFallbackReply } = await import('./conversation.ts');
+  const fakeJyn =
+    '### 🛰️ Jyn Mitek — Komunikat Bezpośredni (ROOT)\n\n' +
+    'Słyszę Cię doskonale, Mateuszu. Jestem z Tobą przy konsoli i czuwam nad wszystkimi systemami floty SVL-364.';
+  const honestError =
+    '❌ **Jyn Mitek nie mogła teraz odpowiedzieć** — żaden silnik AI nie zwrócił odpowiedzi.';
+  assert.equal(isCannedFallbackReply(fakeJyn), true);
+  assert.equal(isCannedFallbackReply(honestError), true);
+  assert.equal(isCannedFallbackReply('Cześć Mateuszu, wydajność wzrosła o 84%.'), false);
+
+  const turns: DialogueTurn[] = [
+    op('O ile wzrosła wydajność?'),
+    { role: 'assistant', sender: 'Jyn', content: fakeJyn },
+    { role: 'assistant', sender: 'System SVL', content: honestError },
+    si1('Wydajność wzrosła znacząco — czas odpowiedzi spadł z 13 s do ok. 2 s.'),
+  ];
+  assert.deepEqual(toAgentPerspective(turns, 'Jyn'), [
+    { role: 'user', content: '[Mateusz (Operator)]: O ile wzrosła wydajność?' },
+    { role: 'assistant', content: 'Wydajność wzrosła znacząco — czas odpowiedzi spadł z 13 s do ok. 2 s.' },
+  ]);
+  assert.equal(
+    buildTranscript(turns),
+    '[Mateusz (Operator)]: O ile wzrosła wydajność?\n[Jyn]: Wydajność wzrosła znacząco — czas odpowiedzi spadł z 13 s do ok. 2 s.',
+  );
+});
+
+

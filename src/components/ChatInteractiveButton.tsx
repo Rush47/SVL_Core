@@ -130,8 +130,10 @@ export const ChatInteractiveButton: React.FC<ChatInteractiveButtonProps> = ({
 
   const baseIcon = disabled
     ? <AlertTriangle className={iconCls} aria-hidden="true" />
-    : normalizedAction.startsWith('tab:svl364') || normalizedAction.startsWith('nav:svl364')
-      ? <Rocket className={iconCls} aria-hidden="true" />
+    : normalizedAction.startsWith('tab:apex') || normalizedAction.startsWith('nav:apex')
+      ? <Zap className={iconCls} aria-hidden="true" />
+      : normalizedAction.startsWith('tab:svl364') || normalizedAction.startsWith('nav:svl364')
+        ? <Rocket className={iconCls} aria-hidden="true" />
         : normalizedAction.startsWith('tab:infrastructure') || normalizedAction.startsWith('nav:infrastructure')
           ? <Server className={iconCls} aria-hidden="true" />
           : normalizedAction.startsWith('tab:terminals') || normalizedAction.startsWith('nav:terminals')
@@ -208,7 +210,7 @@ export const ChatInteractiveButton: React.FC<ChatInteractiveButtonProps> = ({
       disabled={isDisabled}
       onClick={() => void handleClick()}
       title={disabled ? 'Przyciski czatu nie mogą uruchamiać poleceń powłoki.' : `Akcja: ${action}`}
-      className={`group inline-flex items-center font-medium tracking-[0.01em] border backdrop-blur-sm transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 ${
+      className={`group inline-flex items-center font-medium tracking-[0.01em] border transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 ${
         isDisabled ? '' : 'cursor-pointer hover:-translate-y-[0.5px] active:translate-y-0 active:scale-[0.97]'
       } ${sizeClass} ${surfaceClass} ${spacingClass}`.trim()}
     >

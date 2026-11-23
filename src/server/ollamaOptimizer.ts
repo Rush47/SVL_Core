@@ -25,8 +25,8 @@ export interface OllamaRuntimeOptions {
 }
 
 const DEFAULT_CACHE_TTL_MS = 30_000;
-// Krótko: zajęta Ollama (ładowanie modelu) nie może na długo uchodzić za niedostępną.
-const DEFAULT_OFFLINE_CACHE_TTL_MS = 5_000;
+// Negatywny cache 25 s zapobiega powtarzaniu wolnych prób połączenia przy każdej wiadomości, gdy Ollama jest wyłączona.
+const DEFAULT_OFFLINE_CACHE_TTL_MS = 25_000;
 const ollamaTagsCache = new Map<
   string,
   { checkedAt: number; version: string; models: Array<{ name?: string; model?: string; [k: string]: unknown }> }
@@ -96,6 +96,105 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
     maxTurnChars: parsePosInt(env.OLLAMA_MAX_TURN_CHARS, 2000, 200, 12000),
     perf: parsePerfOptions(env),
   };
+}
+
+export interface OllamaTurnOptions {
+  num_ctx: number;
+  num_predict: number;
+  keep_alive: string | number;
+  historyTurns: number;
+  maxTurnChars: number;
+  perf: Record<string, number | boolean>;
+}
+
+/**
+ * Dobiera adaptacyjne opcje na pojedynczą turę Ollamy:
+ * - krótkie pytania / pingi dostają mniejszy num_predict (szybsze zakończenie generacji),
+ * - zapytania o kod/raporty dostają większy limit wyjściowy,
+ * - domyślny num_batch=512 przyspiesza prompt_eval bez zmiany jawnych ustawień z env,
+ * - przy mniejszym domyślnym oknie historii (8 tur × 1200 znaków) Ollama przetwarza prompt wielokrotnie szybciej.
+ */
+export function selectOllamaTurnOptions(
+  message: string,
+  baseOpts: OllamaRuntimeOptions,
+  opts: {
+    env?: Record<string, string | undefined>;
+    hasTools?: boolean;
+    isVision?: boolean;
+    estimatedPromptChars?: number;
+  } = {},
+): OllamaTurnOptions {
+  const env = opts.env ?? process.env;
+  const text = String(message || '').trim();
+  const isDetailed =
+    text.length > 420 ||
+    /\b(?:szczegółow\p{L}*|szczegolow\p{L}*|pełny\s+raport|pelny\s+raport|dokumentacj\p{L}*|architektur\p{L}*|napisz\s+(?:kod|skrypt|program|klasę|funkcję)|przeanalizuj\s+cał\p{L}*|wyjaśnij\s+dokładn\p{L}*)\b/iu.test(
+      text,
+    );
+  const isShort = !isDetailed && text.length > 0 && text.length <= 48 && !text.includes('\n');
+
+  let numPredict = baseOpts.num_predict;
+  if (opts.isVision) {
+    numPredict = Math.max(numPredict, Number(env.OLLAMA_VISION_NUM_PREDICT || 1024));
+  } else if (isDetailed) {
+    numPredict = Math.min(4096, Math.max(numPredict, 1024));
+  } else if (isShort && !env.OLLAMA_NUM_PREDICT) {
+    numPredict = Math.min(numPredict, 384);
+  }
+
+  let numCtx = baseOpts.num_ctx;
+  if (opts.isVision) {
+    numCtx = Math.max(numCtx, Number(env.OLLAMA_VISION_NUM_CTX || 4096));
+  } else if (!env.OLLAMA_NUM_CTX) {
+    const promptChars = opts.estimatedPromptChars ?? 0;
+    if (opts.hasTools || promptChars > 4500) {
+      numCtx = Math.max(numCtx, 4096);
+    }
+  }
+
+  const perf: Record<string, number | boolean> = {
+    ...(baseOpts.perf.num_batch === undefined ? { num_batch: 512 } : {}),
+    ...baseOpts.perf,
+  };
+
+  const historyTurns = env.OLLAMA_HISTORY_TURNS
+    ? baseOpts.historyTurns
+    : Math.min(baseOpts.historyTurns, 8);
+  const maxTurnChars = env.OLLAMA_MAX_TURN_CHARS
+    ? baseOpts.maxTurnChars
+    : Math.min(baseOpts.maxTurnChars, 1200);
+
+  return {
+    num_ctx: Math.min(32768, numCtx),
+    num_predict: numPredict,
+    keep_alive: baseOpts.keep_alive,
+    historyTurns,
+    maxTurnChars,
+    perf,
+  };
+}
+
+/**
+ * Stabilizuje i skraca kontekst systemowy dla Ollamy, usuwając zmienne z każdej tury
+ * (np. latency=5752ns, scenario=#848530, pkt=0x..., cykle_wykonane=N), dzięki czemu
+ * prefix promptu pozostaje identyczny między turami i trafia w KV-cache Ollamy.
+ */
+export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 2800): string {
+  const raw = String(fullContext || '').trim();
+  if (!raw) return '';
+  let compact = raw
+    // Usuń blok zmiennej telemetrii JEDI VM z per-turn ns/scenario/grid/pkt, który unieważnia KV-cache
+    .replace(/\n*\[JEDI OMNI-OS v12 VM \(CZAS RZECZYWISTY[^\]]*\]/gi, '')
+    // Zastąp dynamiczny licznik cykli stałą etykietą w opisie widoczności
+    .replace(/cykle_wykonane=\d+/g, 'cykle_wykonane=ACTIVE')
+    // Usuń długą listę kilkudziesięciu ID modułów SQLite (zostaw liczbę modułów)
+    .replace(/aktywne_moduły_SQLite\((\d+)\)=\[[^\]]*\]/g, 'aktywne_moduły_SQLite=$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (compact.length > maxChars) {
+    compact = `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+  }
+  return compact;
 }
 
 /** `-1`/`0`/liczba → sekundy (Ollama: -1 = model zostaje w pamięci na stałe); inaczej czas typu „30m”. */

@@ -7,9 +7,10 @@
 
 /** Zapas, gdy listy modeli nie da się pobrać (szybkie i stabilne modele darmowe na początku). */
 export const GEMINI_STATIC_FALLBACK = [
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
   'gemini-3.1-flash-lite',
   'gemini-4-hydrogen',
-  'gemini-flash-lite-latest',
   'gemini-flash-latest',
 ];
 
@@ -336,7 +337,7 @@ export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void
   if (!isFreePriority) {
     workingModels.delete(model);
   }
-  const cooldown = isFreePriority ? 3000 : COOLDOWN_MS;
+  const cooldown = isFreePriority ? 8_000 : COOLDOWN_MS;
   coolingDown.set(model, Date.now() + cooldown);
   persistModelState();
   modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony (503) — na ${Math.round(cooldown / 1000)} s na koniec kolejki`);
@@ -350,6 +351,11 @@ export function getSoonestGeminiRetryMs(): number | null {
   return Math.min(...future) - now;
 }
 
+export function isGeminiTransient503Error(message: string): boolean {
+  const raw = String(message || '');
+  return /\b503\b|UNAVAILABLE|high demand|overloaded/i.test(raw) && !isGeminiQuotaExhaustedError(raw);
+}
+
 export function isGeminiSlowOrBusyError(message: string): boolean {
   return /aborted|AbortError|TimeoutError|timed? ?out|\b503\b|UNAVAILABLE|high demand|\b429\b|RESOURCE_EXHAUSTED|overloaded/i.test(
     String(message || ''),
@@ -358,9 +364,9 @@ export function isGeminiSlowOrBusyError(message: string): boolean {
 
 /** Modele darmowe o najwyższej dostępności w darmowym kluczu Gemini API. */
 export const FREE_TIER_PRIORITY_MODELS = [
-  'gemini-3.1-flash-lite',
   'gemini-3.5-flash-lite',
   'gemini-flash-lite-latest',
+  'gemini-3.1-flash-lite',
   'gemini-3.1-flash-lite-preview',
 ];
 
@@ -368,7 +374,7 @@ export const FREE_TIER_PRIORITY_MODELS = [
 export async function geminiCandidatesFor(
   client: any,
   requestedModel?: string,
-  max = 8,
+  max = 16,
   opts: { skipCooling?: boolean } = {},
 ): Promise<string[]> {
   const requested = String(requestedModel || '').trim();

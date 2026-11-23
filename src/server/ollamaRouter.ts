@@ -340,14 +340,21 @@ export async function resolveOllamaAcrossEndpoints(
 
   const probeResults = await Promise.all(
     candidates.map(async (endpoint): Promise<EndpointProbeAttempt> => {
+      const isLoopback = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(endpoint.host);
+      const defaultProbeMs = endpoint.explicit ? (isLoopback ? 900 : 1500) : 500;
+      const effectiveProbeTimeoutMs =
+        opts.probeTimeoutMs !== undefined
+          ? endpoint.explicit
+            ? opts.probeTimeoutMs
+            : Math.min(opts.probeTimeoutMs, 600)
+          : defaultProbeMs;
       const res: ResolveCachedOllamaResult = await resolveCachedOllamaModel(
         endpoint.host,
         requestedModel,
         {
           requireVision: opts.requireVision,
           forceRefresh: opts.forceRefresh,
-          // Dla pasywnego autodetektora portu 11435 używamy krótszego timeoutu, żeby nie opóźniać czatu.
-          probeTimeoutMs: endpoint.explicit ? (opts.probeTimeoutMs ?? 4500) : Math.min(opts.probeTimeoutMs ?? 1200, 1200),
+          probeTimeoutMs: effectiveProbeTimeoutMs,
           fetchImpl: opts.fetchImpl,
         },
       );

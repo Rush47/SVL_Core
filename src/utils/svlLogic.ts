@@ -329,11 +329,15 @@ export function isUnsafeChatInteractiveAction(action: string): boolean {
   return /^\/exec(?:\s|$)/i.test(dispatchedText);
 }
 
-export type WorkspaceTabKey = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+export type WorkspaceTabKey = 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
 
 const WORKSPACE_TAB_ALIASES: Record<string, WorkspaceTabKey> = {
   chat: 'chat',
   czat: 'chat',
+  apex: 'apex',
+  'apex-os': 'apex',
+  apexos: 'apex',
+  coreos: 'apex',
   svl364: 'svl364',
   'svl-364': 'svl364',
   ship: 'svl364',
@@ -929,8 +933,19 @@ export function buildChatHistoryPayload(
       if ((m.role !== 'user' && m.role !== 'assistant') || !m.content?.trim()) return false;
       if (m.provenance === 'error') return false;
       const txt = m.content.trim();
-      if (m.role === 'assistant' && txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył/i.test(txt)) {
-        return false;
+      if (m.role === 'assistant') {
+        const senderLow = String(m.sender || '').trim().toLowerCase();
+        if (senderLow === 'system svl' || senderLow === 'svl system') return false;
+        if (
+          (txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył|nie zwrócił odpowiedzi/i.test(txt)) ||
+          /^❌\s*\*?\*?.*nie (?:mogła|mógł|może) teraz odpowiedzieć/i.test(txt) ||
+          /Słyszę Cię doskonale,\s*Mateuszu\.\s*Jestem z Tobą przy konsoli/i.test(txt) ||
+          /Modele językowe LLM chwilowo odnawiają limit minutowy zapytań API/i.test(txt) ||
+          /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(txt) ||
+          /bufor jądra SVL/i.test(txt)
+        ) {
+          return false;
+        }
       }
       return true;
     })

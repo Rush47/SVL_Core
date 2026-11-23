@@ -303,6 +303,193 @@ def extract_ssh_profiles_from_messages(messages: list[Any]) -> list[dict[str, An
 
     return [profiles_by_key[k] for k in order]
 
+
+def extract_chat_projects_and_auto_updates(messages: list[Any]) -> dict[str, Any]:
+    """
+    Czysty ekstraktor projektów wdrożonych przez czat oraz auto-aktualizacji opartych na załącznikach
+    (.docx, .py, .json, .md, .txt). Zwraca deterministyczną strukturę gotową do zapisu w SQLite WAL.
+    """
+    card_proj_pat = re.compile(
+        r"\[card:\s*([^|\]]*(?:projekt|warstwa\s+cyfrowa|generowanie\s+funkcji\s+losowej|lockdown\s+aktywny|raport\s+operacyjny)[^|\]]*)\|([^|\]]+)(?:\|([^\]]+))?\]",
+        re.IGNORECASE,
+    )
+    heading_proj_pat = re.compile(
+        r"^\s*#{2,4}\s*[^\n]*?\b(?:Architektura\s+Projektu|Projekt)\s*:\s*`?([A-Za-z0-9_ĄĆĘŁŃÓŚŹŻąćęłńóśźż\- ().]{2,80})`?",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    attachment_pat = re.compile(
+        r"(?:\[(?:Załączony\s+plik|Plik):\s*([^\]]+)\]|`([A-Za-z0-9_.\-]+\.(?:docx|pdf|py|ts|tsx|json|md|txt|yaml|yml|sh))`)",
+        re.IGNORECASE,
+    )
+    project_path_pat = re.compile(r"(/opt/svl/projects/[A-Za-z0-9_./\-]+)")
+    auto_update_pat = re.compile(
+        r"(?i)(auto[\s\-]?aktualizacj|attachment[\-\s]?driven\s+continuous\s+evolution|svc-continuous-evolution-auditor|weryfikac[ji]+a\s+auto[\s\-]?aktualizacji)"
+    )
+
+    projects_by_key: dict[str, dict[str, Any]] = {}
+    project_order: list[str] = []
+    attachments_by_name: dict[str, dict[str, Any]] = {}
+    attachment_order: list[str] = []
+    auto_updates_verified = False
+    auto_update_message_id = ""
+    auto_update_at = ""
+
+    def _slug(raw: str) -> str:
+        s = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
+        return s[:64] or "chat-project"
+
+    def _clean_project_name(raw: str) -> str:
+        name = re.sub(r"\*\*([^*]+)\*\*", r"\1", str(raw or "")).strip(" `*—–-:")
+        name = re.sub(
+            r"(?i)^(?:STATUS\s+PROJEKTU|INICJACJA\s+PROJEKTU|PROJEKT|NOWA\s+WARSTWA\s+CYFROWA)\s*:?\s*",
+            "",
+            name,
+        ).strip()
+        name = re.sub(r"\s*\(v\d+[^)]*\)?\s*$", "", name, flags=re.IGNORECASE).strip()
+        return redact_sensitive_chat_text(name)[:96]
+
+    def _record_project(
+        *,
+        name: str,
+        status: str,
+        attachment: str,
+        target_path: str,
+        msg_id: str,
+        conv_id: str,
+        created_at: str,
+    ) -> None:
+        cleaned = _clean_project_name(name)
+        if not cleaned or len(cleaned) < 2:
+            return
+        key = _slug(cleaned)
+        existing = projects_by_key.get(key)
+        entry = {
+            "id": f"proj-{key}",
+            "name": cleaned,
+            "status": redact_sensitive_chat_text(status).strip()[:80] or "ACTIVE",
+            "attachment": attachment or (existing.get("attachment", "") if existing else ""),
+            "target_path": target_path or (existing.get("target_path", "") if existing else ""),
+            "source_message_id": msg_id,
+            "conversation_id": conv_id,
+            "updated_at": created_at,
+            "source": "chat_sync",
+        }
+        if key in projects_by_key:
+            project_order.remove(key)
+        project_order.append(key)
+        projects_by_key[key] = entry
+
+    for row in messages:
+        if isinstance(row, dict):
+            m_id = str(row.get("id") or "")
+            m_conv = str(row.get("conversation_id") or "")
+            m_content = str(row.get("content") or "")
+            m_created = str(row.get("created_at") or "")
+        else:
+            m_id = str(row["id"] or "")
+            m_conv = str(row["conversation_id"] or "")
+            m_content = str(row["content"] or "")
+            m_created = str(row["created_at"] or "")
+        if not m_content.strip():
+            continue
+
+        if auto_update_pat.search(m_content):
+            auto_updates_verified = True
+            auto_update_message_id = m_id
+            auto_update_at = m_created
+
+        msg_attachments: list[str] = []
+        for am in attachment_pat.finditer(m_content):
+            fname = (am.group(1) or am.group(2) or "").strip()
+            if fname and len(fname) <= 120:
+                msg_attachments.append(fname)
+                akey = fname.lower()
+                att_entry = {
+                    "filename": fname,
+                    "extension": Path(fname).suffix.lower() or ".txt",
+                    "source_message_id": m_id,
+                    "conversation_id": m_conv,
+                    "processed_at": m_created,
+                    "auto_evolution": True,
+                }
+                if akey in attachments_by_name:
+                    attachment_order.remove(akey)
+                attachment_order.append(akey)
+                attachments_by_name[akey] = att_entry
+
+        first_att = msg_attachments[0] if msg_attachments else ""
+        path_m = project_path_pat.search(m_content)
+        target_path = path_m.group(1) if path_m else ""
+
+        found_in_msg = False
+        for hm in heading_proj_pat.finditer(m_content):
+            _record_project(
+                name=hm.group(1),
+                status="WDROŻONY",
+                attachment=first_att,
+                target_path=target_path,
+                msg_id=m_id,
+                conv_id=m_conv,
+                created_at=m_created,
+            )
+            found_in_msg = True
+
+        for cm in card_proj_pat.finditer(m_content):
+            lbl = cm.group(1).strip()
+            val = cm.group(2).strip()
+            if "generowanie funkcji losowej" in val.lower() or "losowa.docx" in lbl.lower():
+                _record_project(
+                    name="Quantum_Random_Engine (QRE)",
+                    status="WDROŻONY",
+                    attachment=first_att or "Losowa.docx",
+                    target_path=target_path,
+                    msg_id=m_id,
+                    conv_id=m_conv,
+                    created_at=m_created,
+                )
+                found_in_msg = True
+            elif "nowa warstwa cyfrowa" in val.lower():
+                _record_project(
+                    name=val,
+                    status="WDROŻONY",
+                    attachment=first_att,
+                    target_path=target_path,
+                    msg_id=m_id,
+                    conv_id=m_conv,
+                    created_at=m_created,
+                )
+                found_in_msg = True
+            elif "lockdown aktywny" in lbl.lower():
+                _record_project(
+                    name="OMEGA_SHIELD Sector Lockdown",
+                    status=val or "OMEGA_SHIELD: 100%",
+                    attachment=first_att,
+                    target_path=target_path,
+                    msg_id=m_id,
+                    conv_id=m_conv,
+                    created_at=m_created,
+                )
+                found_in_msg = True
+            elif "projekt" in lbl.lower():
+                _record_project(
+                    name=lbl,
+                    status=val,
+                    attachment=first_att,
+                    target_path=target_path,
+                    msg_id=m_id,
+                    conv_id=m_conv,
+                    created_at=m_created,
+                )
+
+    return {
+        "deployed_projects": [projects_by_key[k] for k in project_order][-24:],
+        "attachment_auto_updates": [attachments_by_name[k] for k in attachment_order][-24:],
+        "attachment_auto_evolution_active": auto_updates_verified or len(attachment_order) > 0,
+        "last_auto_update_message_id": auto_update_message_id,
+        "last_auto_update_at": auto_update_at,
+    }
+
+
 def sanitize_message_identity(role: str, raw_sender: str) -> tuple[Optional[str], Optional[str]]:
     """
     Zwraca (nadawca_kanoniczny, powod_blokady).
@@ -1250,6 +1437,27 @@ class SVLSystemKernel:
                     ),
                     "kernel",
                     "init-duplex",
+                    1,
+                    now_iso,
+                ),
+                (
+                    "svl-coreos-2-apex",
+                    "SVL CoreOS 2: Apex — Debian 13 (Trixie) & Ollama Uncensored (SVL-364)",
+                    "Operating System & AI Core",
+                    "ACTIVE",
+                    "System operacyjny SVL CoreOS 2: Apex na bazie Debian 13 (Trixie), zintegrowany z diagnozowanym przez OpenSSH komputerem SVL-364 oraz pokładową Ollamą.",
+                    json.dumps(
+                        {
+                            "base_distro": "Debian GNU/Linux 13 (Trixie)",
+                            "codename": "Apex",
+                            "repository_folder": "SVL_CoreOS_2",
+                            "kernel_master_daemon": "Jyn",
+                            "ollama_model": "svl364-apex-uncensored:latest",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "kernel",
+                    "init-coreos-2-apex",
                     1,
                     now_iso,
                 ),
@@ -2388,22 +2596,20 @@ class SVLSystemKernel:
                 fake_history_versions,
             )
 
-            for retired_mod_id in ("svl-autonomy-core", "svl-coreos-2-apex", "antigravity"):
-                retired_row = conn.execute(
-                    "SELECT id FROM system_modules WHERE id = ?",
-                    (retired_mod_id,),
-                ).fetchone()
-                if retired_row:
-                    conn.execute("DELETE FROM system_modules WHERE id = ?", (retired_mod_id,))
-                    self.commit_entity_event_tx(
-                        conn,
-                        entity="module",
-                        entity_id=retired_mod_id,
-                        event_type="module.deleted",
-                        origin="nonproduction-cleanup",
-                        deleted=True,
-                        payload={"moduleId": retired_mod_id},
-                    )
+            autonomy_module = conn.execute(
+                "SELECT id FROM system_modules WHERE id = 'svl-autonomy-core'"
+            ).fetchone()
+            if autonomy_module:
+                conn.execute("DELETE FROM system_modules WHERE id = 'svl-autonomy-core'")
+                self.commit_entity_event_tx(
+                    conn,
+                    entity="module",
+                    entity_id="svl-autonomy-core",
+                    event_type="module.deleted",
+                    origin="nonproduction-cleanup",
+                    deleted=True,
+                    payload={"moduleId": "svl-autonomy-core"},
+                )
 
             chat_placeholders = conn.execute(
                 """
@@ -6254,7 +6460,7 @@ class SVLSystemKernel:
             # Uniwersalny Kompilator Zmian Czatu w Czasie Rzeczywistym (SVL Live Chat-to-OS State Compiler v2)
             if has_msg_tbl:
                 recent_chat_rows = conn.execute(
-                    "SELECT id, conversation_id, role, sender, content, created_at FROM chat_messages ORDER BY rowid DESC LIMIT 60"
+                    "SELECT id, conversation_id, role, sender, content, created_at FROM chat_messages ORDER BY rowid DESC LIMIT 120"
                 ).fetchall()
                 recent_chat_chronological = list(reversed(recent_chat_rows))
                 compiled_cards_map: dict[str, dict[str, Any]] = {}
@@ -6358,6 +6564,10 @@ class SVLSystemKernel:
                 compiled_directives = compiled_directives_list[-12:]
                 compiled_ssh_profiles = extract_ssh_profiles_from_messages(recent_chat_chronological)[-10:]
                 latest_ssh_profile = compiled_ssh_profiles[-1] if compiled_ssh_profiles else None
+                chat_evolution_bundle = extract_chat_projects_and_auto_updates(recent_chat_chronological)
+                compiled_projects = list(chat_evolution_bundle.get("deployed_projects") or [])
+                compiled_attachment_updates = list(chat_evolution_bundle.get("attachment_auto_updates") or [])
+                attachment_auto_evolution_active = bool(chat_evolution_bundle.get("attachment_auto_evolution_active"))
 
                 desired_live_chat_state: dict[str, Any] = {
                     "active": True,
@@ -6377,6 +6587,9 @@ class SVLSystemKernel:
                     "recent_user_directives": compiled_directives,
                     "ssh_profiles": compiled_ssh_profiles,
                     "latest_ssh_profile": latest_ssh_profile,
+                    "deployed_projects": compiled_projects,
+                    "attachment_auto_updates": compiled_attachment_updates,
+                    "attachment_auto_evolution_active": attachment_auto_evolution_active,
                     "updated_at": str(existing_live_chat_state.get("updated_at") or now_iso),
                 }
 
@@ -6470,6 +6683,56 @@ class SVLSystemKernel:
                         f"Profil SSH z czatu: {latest_ssh_profile['command']} (port {latest_ssh_profile['port']}, hasło ukryte)"
                     )
 
+                if attachment_auto_evolution_active or compiled_attachment_updates:
+                    _upsert_sync_module(
+                        "svl-attachment-auto-evolution",
+                        "Silnik Auto-Aktualizacji z Załączników Czatu (Attachment-Driven Evolution)",
+                        "Attachment-Driven Continuous Evolution",
+                        (
+                            f"Zautomatyzowany potok auto-aktualizacji na bazie załączników czatu (.docx, .py, .json, .md) "
+                            f"zsynchronizowany z SQLite WAL ({len(compiled_attachment_updates)} przetworzonych załączników, "
+                            f"{len(compiled_projects)} wdrożonych projektów)."
+                        ),
+                        {
+                            "active": True,
+                            "auditor_service": "svc-continuous-evolution-auditor",
+                            "compiler_engine": "svl-live-chat-sync-engine",
+                            "supported_extensions": [".docx", ".py", ".ts", ".tsx", ".json", ".md", ".txt", ".yaml", ".yml", ".sh"],
+                            "attachments_processed_count": len(compiled_attachment_updates),
+                            "recent_attachments": [a["filename"] for a in compiled_attachment_updates[-12:]],
+                            "last_auto_update_message_id": chat_evolution_bundle.get("last_auto_update_message_id") or latest_msg_id_in_db,
+                            "synchronized_from_chat": True,
+                        },
+                        "chat_sync",
+                        "svl-attachment-auto-evolution:synchronized",
+                    )
+                    processed_artifacts.append(
+                        f"Auto-aktualizacje z załączników czatu ({len(compiled_attachment_updates)} plików)"
+                    )
+
+                if compiled_projects:
+                    project_names = [p["name"] for p in compiled_projects]
+                    _upsert_sync_module(
+                        "svl-chat-deployed-projects",
+                        f"Rejestr Projektów Wdrożonych z Czatu ({len(compiled_projects)} projektów)",
+                        "Chat-Deployed Projects Registry",
+                        (
+                            "Trwały rejestr projektów i modułów zaprojektowanych oraz wdrożonych bezpośrednio "
+                            f"z czatu w SQLite WAL: {', '.join(project_names[-10:])}."
+                        ),
+                        {
+                            "projects_count": len(compiled_projects),
+                            "project_names": project_names,
+                            "projects": compiled_projects,
+                            "synchronized_from_chat": True,
+                        },
+                        "chat_sync",
+                        "svl-chat-deployed-projects:synchronized",
+                    )
+                    processed_artifacts.append(
+                        f"Projekty wdrożone z czatu ({len(compiled_projects)}): {', '.join(project_names[-6:])}"
+                    )
+
                 live_sync_mod = mods_by_id.get("svl-live-chat-sync-engine")
                 live_sync_cfg = dict(live_sync_mod["config"]) if live_sync_mod else {}
                 desired_live_sync_cfg = {
@@ -6484,6 +6747,9 @@ class SVLSystemKernel:
                     "completed_tasks_count": len(compiled_tasks),
                     "state_parameters_count": len(compiled_table_params),
                     "ssh_profiles_count": len(compiled_ssh_profiles),
+                    "deployed_projects_count": len(compiled_projects),
+                    "attachment_auto_updates_count": len(compiled_attachment_updates),
+                    "deployed_project_names": [p["name"] for p in compiled_projects[-10:]],
                     "latest_ssh_target": latest_ssh_profile["target"] if latest_ssh_profile else None,
                     "latest_ssh_command": latest_ssh_profile["command"] if latest_ssh_profile else None,
                     "latest_cards": [f"{c['label']}={c['value']}" for c in compiled_cards[-6:]],
@@ -6494,7 +6760,7 @@ class SVLSystemKernel:
                     "svl-live-chat-sync-engine",
                     "Silnik Natychmiastowej Synchronizacji Zmian z Czatu (SVL Live Chat-to-OS Compiler v2)",
                     "Real-Time Chat State Compiler",
-                    "Automatyczny kompilator stanu czatu do jądra SVL CoreOS 2 (SQLite WAL): natychmiast po każdej wiadomości czatu oraz podczas globalnej synchronizacji ekstrahuje karty stanu [card:], paski postępu [progress:], zadania [x], tabele parametrów, profile SSH oraz dyrektywy operatora i utrwala je w system_modules, sync_meta, update_history i agent_memory (z maskowaniem haseł).",
+                    "Automatyczny kompilator stanu czatu do jądra SVL CoreOS 2 (SQLite WAL): natychmiast po każdej wiadomości czatu oraz podczas globalnej synchronizacji ekstrahuje karty stanu [card:], paski postępu [progress:], zadania [x], tabele parametrów, projekty wdrożone z czatu, auto-aktualizacje z załączników, profile SSH oraz dyrektywy operatora i utrwala je w system_modules, sync_meta, update_history i agent_memory (z maskowaniem haseł).",
                     desired_live_sync_cfg,
                     "chat_sync",
                     "svl-live-chat-sync-engine:synchronized",

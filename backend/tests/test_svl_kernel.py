@@ -36,6 +36,7 @@ from svl_core import (
     SVLSystemKernel,
     TopologicalInfinityEngine,
     VisualScope,
+    extract_chat_projects_and_auto_updates,
     extract_ssh_profiles_from_messages,
     redact_sensitive_chat_text,
     resolve_sqlite_path,
@@ -1393,6 +1394,67 @@ class TestSVLKernelSuite(unittest.TestCase):
             self.assertNotIn(fake_secret, serialized_live)
             self.assertNotIn(fake_secret, serialized_mods)
             self.assertNotIn(fake_secret, serialized_hist)
+
+    def test_synchronize_os_from_chat_persists_projects_and_attachment_auto_updates(self) -> None:
+        sample_messages = [
+            {
+                "id": "usr-proj-1",
+                "conversation_id": "conv-jyn",
+                "role": "user",
+                "content": "[Plik: Plussfera.docx] Zaktualizuj automatycznie system o nową teorię z załącznika.",
+                "created_at": "2026-11-23T19:10:00+00:00",
+            },
+            {
+                "id": "asst-proj-1",
+                "conversation_id": "conv-jyn",
+                "role": "assistant",
+                "content": (
+                    "[card: STATUS PROJEKTU: Sphere_cinema|WDROŻONY|ok]\n"
+                    "### Architektura Projektu: `Digital_layer`\n"
+                    "### Projekt: `Pitagoras`\n"
+                    "[card: Raport Operacyjny: Losowa.docx|Generowanie Funkcji Losowej|ok]\n"
+                    "Ścieżka: `/opt/svl/projects/sphere_cinema`\n"
+                    "Aktywowano tryb auto-aktualizacji na podstawie załączników (`Plussfera.docx`)."
+                ),
+                "created_at": "2026-11-23T19:11:00+00:00",
+            },
+        ]
+        extracted = extract_chat_projects_and_auto_updates(sample_messages)
+        project_names = {p["name"] for p in extracted["deployed_projects"]}
+        self.assertIn("Sphere_cinema", project_names)
+        self.assertIn("Digital_layer", project_names)
+        self.assertIn("Pitagoras", project_names)
+        self.assertIn("Quantum_Random_Engine (QRE)", project_names)
+        self.assertTrue(extracted["attachment_auto_evolution_active"])
+        self.assertTrue(any(a["filename"] == "Plussfera.docx" for a in extracted["attachment_auto_updates"]))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = str(Path(tmpdir) / "test_chat_projects_sync.sqlite3")
+            token = "test_operator_token_with_more_than_32_chars_abcdef"
+            kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
+            for msg in sample_messages:
+                kernel.save_chat_message(
+                    msg["conversation_id"],
+                    "Jyn — Zarządzanie Infrastrukturą (ROOT)",
+                    "svl-hybrid-router",
+                    {
+                        "id": msg["id"],
+                        "role": msg["role"],
+                        "sender": "Mateusz Mitek (Operator)" if msg["role"] == "user" else "Jyn",
+                        "content": msg["content"],
+                        "timestamp": "19:10",
+                    },
+                )
+            summary = kernel.synchronize_os_from_chat(origin="unit-test-chat-projects")
+            self.assertTrue(summary["ok"])
+            mods = {m["id"]: m for m in kernel.list_system_modules()}
+            self.assertIn("svl-attachment-auto-evolution", mods)
+            self.assertEqual(mods["svl-attachment-auto-evolution"]["status"], "ACTIVE")
+            self.assertIn("svl-chat-deployed-projects", mods)
+            self.assertEqual(mods["svl-chat-deployed-projects"]["status"], "ACTIVE")
+            live_state = kernel.get_live_chat_changes_state()
+            self.assertTrue(live_state.get("attachment_auto_evolution_active"))
+            self.assertGreaterEqual(len(live_state.get("deployed_projects") or []), 4)
 
 
 if __name__ == "__main__":

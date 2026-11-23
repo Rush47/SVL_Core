@@ -110,7 +110,7 @@ export const ChatInputField = React.memo(
           <div
             role="listbox"
             aria-label="Paleta poleceń czatu"
-            className="absolute bottom-full left-0 right-0 mb-2 z-30 rounded-xl border border-cyan-500/35 bg-[#091021]/95 backdrop-blur-md shadow-2xl overflow-hidden max-h-60 overflow-y-auto"
+            className="absolute bottom-full left-0 right-0 mb-2 z-30 rounded-xl border border-cyan-500/35 bg-[#091021] shadow-2xl overflow-hidden max-h-60 overflow-y-auto"
           >
             <div className="px-3 py-1.5 border-b border-slate-800 text-[10px] font-mono uppercase tracking-wider text-cyan-300 flex justify-between">
               <span>Polecenia SVL · Copilot Palette</span>

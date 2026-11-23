@@ -671,6 +671,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
             reason.startsWith('ws_') ||
             reason.startsWith('cross_tab_') ||
             reason === 'boot_initial_load' ||
+            reason === 'operator_token_authorized' ||
             reason === 'remote_system_mutation';
           if (!isRemoteTrigger && hasSvlOperatorAccessToken()) {
             const gsRes = await safeFetchJson<{ ok: boolean; serverRevision?: number }>('/api/system/global-sync', {
@@ -1271,12 +1272,24 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     }
     const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       if (hasSvlOperatorAccessToken()) {
         void refreshDomainModules(['health', 'agents', 'chat', 'workspace', 'modules', 'kernel']);
       }
-    }, 15000);
+    }, 20000);
+    const onVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && hasSvlOperatorAccessToken()) {
+        void refreshDomainModules(['health', 'agents', 'chat', 'workspace']);
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibility);
+    }
     return () => {
       clearInterval(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibility);
+      }
       try {
         es?.close();
       } catch {

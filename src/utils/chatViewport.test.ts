@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   CHAT_WINDOW_STEP,
   DEFAULT_CHAT_WINDOW_SIZE,
+  MOBILE_CHAT_WINDOW_SIZE,
   computeComposerTextareaHeight,
   computeMessageWindow,
+  getInitialChatWindowSize,
   nextMessageWindowLimit,
   shouldSubmitChatShortcut,
 } from './chatViewport';
@@ -40,4 +42,11 @@ test('shouldSubmitChatShortcut submits on plain Enter only', () => {
   assert.equal(shouldSubmitChatShortcut({ key: 'Enter', isComposing: true }), false);
   assert.equal(shouldSubmitChatShortcut({ key: 'Enter', ctrlKey: true }), false);
   assert.equal(shouldSubmitChatShortcut({ key: 'a' }), false);
+});
+
+test('getInitialChatWindowSize uses compact window on mobile viewports and full window on desktop', () => {
+  assert.equal(getInitialChatWindowSize(390), MOBILE_CHAT_WINDOW_SIZE);
+  assert.equal(getInitialChatWindowSize(639), MOBILE_CHAT_WINDOW_SIZE);
+  assert.equal(getInitialChatWindowSize(640), DEFAULT_CHAT_WINDOW_SIZE);
+  assert.equal(getInitialChatWindowSize(1440), DEFAULT_CHAT_WINDOW_SIZE);
 });

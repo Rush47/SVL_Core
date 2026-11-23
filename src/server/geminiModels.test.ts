@@ -217,3 +217,31 @@ test('geminiCandidatesFor skipCooling pomija modele na karencji, a getSoonestGem
   assert.ok(!skipped.includes('gemini-3.6-flash'), 'skipCooling pomija model na karencji');
   gm.resetGeminiModelHealth();
 });
+
+test('geminiCandidatesFor domyślnie zwraca do 16 modeli i rozpoznaje przejściowy 503 bez mylenia z 429', async () => {
+  const gm = await import('./geminiModels.ts');
+  gm.resetGeminiModelHealth();
+  const pool = [
+    'gemini-flash-latest', 'gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.7-flash',
+    'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3-flash-preview',
+    'gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-lite-preview', 'gemini-pro-latest', 'gemini-2.5-pro', 'gemini-3.1-pro-preview',
+  ];
+  const fakeClient = {
+    models: {
+      list: async () => ({
+        async *[Symbol.asyncIterator]() {
+          for (const n of pool) yield { name: 'models/' + n, supportedActions: ['generateContent'] };
+        },
+      }),
+    },
+  };
+  const candidates = await gm.geminiCandidatesFor(fakeClient, 'svl-hybrid-router');
+  assert.ok(candidates.length >= 15, `expected >=15 candidates by default, got ${candidates.length}`);
+  assert.ok(candidates.includes('gemini-3.7-flash'));
+  assert.ok(candidates.includes('gemini-3.6-flash'));
+  assert.equal(gm.isGeminiTransient503Error('503 UNAVAILABLE: high demand'), true);
+  assert.equal(gm.isGeminiTransient503Error('429 RESOURCE_EXHAUSTED: quota exceeded'), false);
+  gm.resetGeminiModelHealth();
+});
+

@@ -1,5 +1,20 @@
 export const DEFAULT_CHAT_WINDOW_SIZE = 60;
+export const MOBILE_CHAT_WINDOW_SIZE = 30;
 export const CHAT_WINDOW_STEP = 80;
+
+/**
+ * Zwraca optymalną początkową liczbę renderowanych wiadomości czatu dla aktualnej szerokości ekranu:
+ * na urządzeniach mobilnych (< 640px) mniejsze okno (30) przyspiesza pierwsze malowanie i przewijanie.
+ */
+export function getInitialChatWindowSize(viewportWidth?: number): number {
+  const width =
+    typeof viewportWidth === 'number' && Number.isFinite(viewportWidth)
+      ? viewportWidth
+      : typeof window !== 'undefined'
+        ? window.innerWidth
+        : 1280;
+  return width < 640 ? MOBILE_CHAT_WINDOW_SIZE : DEFAULT_CHAT_WINDOW_SIZE;
+}
 
 export interface MessageWindowSlice {
   startIndex: number;

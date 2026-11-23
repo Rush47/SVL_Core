@@ -45,15 +45,30 @@ export function stripServerVerificationBanners(rawText: string): string {
     .trim();
 }
 
+/** Czy wypowiedź pochodzi z dawnego automatu / komunikatu błędu (nie jest prawdziwą wypowiedzią AI). */
+export function isCannedFallbackReply(rawText: string): boolean {
+  const txt = String(rawText || '').trim();
+  if (!txt) return false;
+  return (
+    /Słyszę Cię doskonale,\s*Mateuszu\.\s*Jestem z Tobą przy konsoli/i.test(txt) ||
+    /Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy/i.test(txt) ||
+    /Rdzeń SI_Sphere floty SVL-465 zgłasza pełną gotowość operacyjną\.\s*Rejestr SQLite WAL/i.test(txt) ||
+    /Modele językowe LLM chwilowo odnawiają limit minutowy zapytań API/i.test(txt) ||
+    /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(txt) ||
+    /bufor jądra SVL/i.test(txt) ||
+    /^⚠️\s*.*(?:nie może teraz odpowiedzieć|nie zdążył|nie zwrócił odpowiedzi)/i.test(txt) ||
+    /^❌\s*\*?\*?.*nie (?:mogła|mógł|może) teraz odpowiedzieć/i.test(txt)
+  );
+}
+
 function isDialogueTurn(turn: DialogueTurn): boolean {
   const txt = String(turn.content || '').trim();
   if (!txt) return false;
   if (turn.role !== 'user' && turn.role !== 'assistant') return false;
-  if (turn.role === 'assistant' && txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył/i.test(txt)) {
-    return false;
-  }
-  if (turn.role === 'assistant' && /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(txt)) {
-    return false;
+  if (turn.role === 'assistant') {
+    const senderLow = String(turn.sender || '').trim().toLowerCase();
+    if (senderLow === 'system svl' || senderLow === 'svl system') return false;
+    if (isCannedFallbackReply(txt)) return false;
   }
   return true;
 }

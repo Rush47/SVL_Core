@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { BellRing, Check, CheckCircle2, ChevronDown, Copy, RefreshCw } from 'lucide-react';
 import { CANONICAL_AGENTS, DYNAMIC_AGENT_TEMPLATES, SyncableMessage, formatAgentDisplayName } from '../utils/svlLogic';
 import { SvlAvatar } from './AgentAvatar';
@@ -63,11 +63,19 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
   const isNotification = msg.role === 'system';
   const formattedSender = isUser ? msg.sender : formatAgentDisplayName(msg.sender);
   const modelLabel = stripSenderPrefix(String(msg.modelUsed || ''), [formattedSender, msg.sender]);
-  const agentMeta = [...CANONICAL_AGENTS, ...DYNAMIC_AGENT_TEMPLATES].find(
-    (a) =>
-      a.canonicalName === msg.sender ||
-      a.displayName === formattedSender ||
-      a.id === msg.agentId,
+  const agentMeta = useMemo(
+    () =>
+      [...CANONICAL_AGENTS, ...DYNAMIC_AGENT_TEMPLATES].find(
+        (a) =>
+          a.canonicalName === msg.sender ||
+          a.displayName === formattedSender ||
+          a.id === msg.agentId,
+      ),
+    [formattedSender, msg.agentId, msg.sender],
+  );
+  const formattedContentNode = useMemo(
+    () => renderFormattedContent(msg.content, onInteractiveAction),
+    [msg.content, onInteractiveAction],
   );
 
   return (
@@ -132,7 +140,7 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
       </div>
 
       <div
-        className={`w-full min-w-0 rounded-2xl p-3.5 sm:p-4 border backdrop-blur-md shadow-md overflow-hidden transition-colors ${
+        className={`w-full min-w-0 rounded-2xl p-2.5 sm:p-4 border shadow-md overflow-hidden transition-colors ${
           isUser
             ? 'bg-gradient-to-br from-violet-950/45 to-[#131026]/90 border-violet-500/40 text-slate-100 max-w-full sm:max-w-2xl shadow-violet-950/20'
             : isNotification
@@ -176,7 +184,7 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
         )}
 
         <div className="text-xs sm:text-sm break-words min-w-0 max-w-full space-y-1">
-          {renderFormattedContent(msg.content, onInteractiveAction)}
+          {formattedContentNode}
         </div>
 
         {msg.connectionReport && (
