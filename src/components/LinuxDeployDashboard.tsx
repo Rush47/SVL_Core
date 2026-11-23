@@ -493,7 +493,10 @@ export const LinuxDeployDashboard: React.FC = () => {
               {nativeJediCore.io_mode || '100% natywne bezpośrednie I/O (Bez VM)'}
             </div>
             <div className="text-[10px] text-slate-400 mt-0.5">
-              Wektory: {(nativeJediCore.parallel_vectors || ['0x02', 'MAGNUM_NODE', 'AXIOM_ZERO']).join(' · ')}
+              Wektory:{' '}
+              {Array.isArray(nativeJediCore.parallel_vectors)
+                ? nativeJediCore.parallel_vectors.join(' · ')
+                : String(nativeJediCore.parallel_vectors || '0x02 · MAGNUM_NODE · AXIOM_ZERO')}
             </div>
           </div>
 
