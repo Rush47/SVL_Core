@@ -116,11 +116,11 @@ test('validateOperatorTokenFormat rejects disallowed and short tokens', () => {
   assert.equal(validToken.error, null);
 });
 
-test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () => {
+test('CANONICAL_AGENTS contains only Jyn and blocks removed agents', () => {
   assert.deepEqual(
     CANONICAL_AGENTS.map((a) => ({ name: a.canonicalName, profile: a.sourceProfile })),
     [
-      { name: 'System_SI_1', profile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest' },
+      { name: 'Jyn', profile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest' },
     ],
   );
   assert.equal(normalizeAgentCanonicalName('Agata'), null);
@@ -131,13 +131,13 @@ test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () 
   assert.equal(normalizeAgentCanonicalName('Maya Mitek'), null);
   assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), null);
   assert.equal(normalizeAgentCanonicalName('KomputerPokladowy'), null);
-  assert.equal(normalizeAgentCanonicalName('system_si_1'), 'System_SI_1');
-  assert.equal(normalizeAgentCanonicalName('conv-system-si-1'), 'System_SI_1');
+  assert.equal(normalizeAgentCanonicalName('jyn'), 'Jyn');
+  assert.equal(normalizeAgentCanonicalName('conv-jyn'), 'Jyn');
   assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
   assert.equal(normalizeAgentCanonicalName('codex'), null);
-  assert.equal(formatAgentDisplayName('system_si_1'), 'Jyn Mitek (System_SI_1)');
-  assert.equal(formatAgentDisplayName('jyn mitek'), 'Jyn Mitek (System_SI_1)');
-  assert.equal(formatAgentDisplayName('jyn_mitek'), 'Jyn Mitek (System_SI_1)');
+  assert.equal(formatAgentDisplayName('jyn'), 'Jyn Mitek');
+  assert.equal(formatAgentDisplayName('jyn mitek'), 'Jyn Mitek');
+  assert.equal(formatAgentDisplayName('jyn_mitek'), 'Jyn Mitek');
   assert.equal(formatAgentDisplayName('jedi omni-os'), 'JEDI Omni-OS v12');
   assert.equal(formatAgentDisplayName('jedi omni-os v11.5'), 'JEDI Omni-OS v11.5');
   assert.equal(formatAgentDisplayName('bielik ai'), 'Nadawca niezweryfikowany');
@@ -147,25 +147,25 @@ test('CANONICAL_AGENTS contains only System_SI_1 and blocks removed agents', () 
   assert.equal(resolveAvatarProfileKey('Bielik', 'bielik'), null);
   assert.equal(resolveAvatarProfileKey('Maya', 'maya'), null);
   assert.equal(resolveAvatarProfileKey('Maya Mitek', 'maya'), null);
-  assert.equal(resolveAvatarProfileKey('System_SI_1', 'system_si_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('Jyn', 'jyn'), 'Jyn');
   assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v12', 'jedi_omni_os'), 'JEDI_Omni_OS');
   assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v11.5', 'jedi_omni_os'), 'JEDI_Omni_OS');
   assert.equal(resolveAvatarProfileKey('Iris AI', 'iris'), null);
 });
 
-test('resolveChatTargetAgent routes commands between System_SI_1 and JEDI_Omni_OS', () => {
+test('resolveChatTargetAgent routes commands between Jyn and JEDI_Omni_OS', () => {
   assert.equal(
     resolveChatTargetAgent({
-      message: 'System_SI_1, sprawdź status systemu',
+      message: 'Jyn, sprawdź status systemu',
       conversationId: 'conv-rodzina-mitek-wszyscy',
       targetAgent: 'Rodzina Mitek',
     }).agent,
-    'System_SI_1',
+    'Jyn',
   );
   assert.equal(
     resolveChatTargetAgent({
       message: '/jedi status',
-      conversationId: 'conv-system-si-1',
+      conversationId: 'conv-jyn',
       targetAgent: 'Auto',
       hasSlashCommand: true,
     }).agent,
@@ -182,19 +182,19 @@ test('resolveChatTargetAgent routes commands between System_SI_1 and JEDI_Omni_O
   assert.equal(
     resolveChatTargetAgent({
       message: '/status',
-      conversationId: 'conv-system-si-1',
-      targetAgent: 'System_SI_1',
+      conversationId: 'conv-jyn',
+      targetAgent: 'Jyn',
       hasSlashCommand: true,
     }).agent,
-    'System_SI_1',
+    'Jyn',
   );
   assert.equal(
     resolveChatTargetAgent({
       message: 'Sprawdź połączenie SSH statku',
-      conversationId: 'conv-system-si-1',
+      conversationId: 'conv-jyn',
       targetAgent: 'Auto',
     }).agent,
-    'System_SI_1',
+    'Jyn',
   );
   assert.equal(
     resolveChatTargetAgent({
@@ -538,7 +538,7 @@ test('resolveChatInteractiveButtonAction resolves tabs, Polish aliases, system a
   assert.deepEqual(resolveChatInteractiveButtonAction('tab:unknown_xyz'), { kind: 'invalid_tab', rawTab: 'unknown_xyz' });
 
   assert.deepEqual(resolveChatInteractiveButtonAction('send:/status'), { kind: 'send', text: '/status' });
-  assert.deepEqual(resolveChatInteractiveButtonAction('ask:System_SI_1'), { kind: 'ask', agent: 'System_SI_1' });
+  assert.deepEqual(resolveChatInteractiveButtonAction('ask:Jyn'), { kind: 'ask', agent: 'Jyn' });
   assert.deepEqual(resolveChatInteractiveButtonAction('text:Sprawdź logi'), { kind: 'text', text: 'Sprawdź logi' });
   assert.deepEqual(resolveChatInteractiveButtonAction('copy:uname -a'), { kind: 'copy', text: 'uname -a' });
 
@@ -607,7 +607,7 @@ test('isGitHubChatRequest rozpoznaje tylko sprawy GitHuba', () => {
   ]) {
     assert.equal(isGitHubChatRequest(text), true, text);
   }
-  for (const text of ['Cześć System_SI_1, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
+  for (const text of ['Cześć Jyn, jak stan?', 'Jaka jest pogoda w Warszawie?', 'Zapisz w pamięci, że lubię kawę', 'Raport statku SVL-364']) {
     assert.equal(isGitHubChatRequest(text), false, text);
   }
 });
@@ -617,7 +617,7 @@ test('isForbiddenAgentSender wykrywa podszywania i wyłączone persony', () => {
   for (const bad of ['Mai', 'mai', 'M4i', 'M@i', 'Maja', 'Iris', 'Iris AI', 'Agata', 'Aurelius', 'Bielik', 'Maya Mitek', 'Maya', 'Komputer pokładowy', 'KomputerPokladowy']) {
     assert.equal(isForbiddenAgentSender(bad), true, bad);
   }
-  for (const ok of ['System_SI_1', 'JEDI Omni-OS v12', 'JEDI Omni-OS v11.5', 'Claude (MCP)', 'Mateusz Mitek (Operator)']) {
+  for (const ok of ['Jyn', 'JEDI Omni-OS v12', 'JEDI Omni-OS v11.5', 'SVL MCP', 'Mateusz Mitek (Operator)']) {
     assert.equal(isForbiddenAgentSender(ok), false, ok);
   }
 });
@@ -629,12 +629,12 @@ test('formatAgentDisplayName nie przepuszcza podszywania ani usuniętych agentó
   assert.equal(formatAgentDisplayName('Bielik'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('KomputerPokladowy'), 'Nadawca niezweryfikowany');
   assert.equal(formatAgentDisplayName('komputer pokladowy'), 'Nadawca niezweryfikowany');
-  assert.equal(formatAgentDisplayName('System_SI_1'), 'Jyn Mitek (System_SI_1)');
+  assert.equal(formatAgentDisplayName('Jyn'), 'Jyn Mitek');
   assert.equal(formatAgentDisplayName('JEDI Omni-OS v12'), 'JEDI Omni-OS v12');
   assert.equal(formatAgentDisplayName('JEDI Omni-OS v11.5'), 'JEDI Omni-OS v11.5');
   assert.equal(resolveAvatarProfileKey('Komputer pokładowy', 'KomputerPokladowy'), null);
-  assert.equal(resolveAvatarProfileKey('System_SI_1', 'System_SI_1'), 'System_SI_1');
-  assert.equal(resolveAvatarProfileKey('Jyn Mitek (System_SI_1)', 'System_SI_1'), 'System_SI_1');
+  assert.equal(resolveAvatarProfileKey('Jyn', 'Jyn'), 'Jyn');
+  assert.equal(resolveAvatarProfileKey('Jyn Mitek', 'Jyn'), 'Jyn');
   assert.equal(resolveAvatarProfileKey('SI_Sphere', 'SI_Sphere'), 'SI_Sphere');
   assert.equal(resolveAvatarProfileKey('SI_Sphere (SVL-465 · ROOT)', 'SI_Sphere'), 'SI_Sphere');
   assert.equal(resolveAvatarProfileKey('JEDI Omni-OS v12', 'JEDI_Omni_OS'), 'JEDI_Omni_OS');
@@ -646,15 +646,15 @@ test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolutio
   assert.equal(formatAgentDisplayName('SI_Sphere'), 'SI_Sphere (SVL-465 · ROOT)');
 
   assert.deepEqual(
-    getEffectiveCanonicalAgents([{ canonical_name: 'System_SI_1' }]).map((a) => a.canonicalName),
-    ['System_SI_1'],
+    getEffectiveCanonicalAgents([{ canonical_name: 'Jyn' }]).map((a) => a.canonicalName),
+    ['Jyn'],
   );
   assert.deepEqual(
     getEffectiveCanonicalAgents([
-      { canonical_name: 'System_SI_1' },
+      { canonical_name: 'Jyn' },
       { canonical_name: 'SI_Sphere' },
     ]).map((a) => a.canonicalName),
-    ['System_SI_1', 'SI_Sphere'],
+    ['Jyn', 'SI_Sphere'],
   );
 
   assert.deepEqual(parseBielikChatCommand('/synchronizuj'), { kind: 'os_sync' });
@@ -663,7 +663,7 @@ test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolutio
   assert.equal(
     resolveChatTargetAgent({
       message: 'Cześć JEDI, opisz architekturę systemu',
-      conversationId: 'conv-system-si-1',
+      conversationId: 'conv-jyn',
       targetAgent: 'JEDI_Omni_OS',
     }).agent,
     'JEDI_Omni_OS',
@@ -696,7 +696,7 @@ test('summarizeAutonomousDaemon extracts cycle counts, workers, and safe default
     root_commands_enabled: true,
     full_visibility: true,
     services: [
-      { id: 'svl-health-watchdog', name: 'Health Watchdog', status: 'ACTIVE', kind: 'Monitor', owner: 'System_SI_1', summary: 'OK' },
+      { id: 'svl-health-watchdog', name: 'Health Watchdog', status: 'ACTIVE', kind: 'Monitor', owner: 'Jyn', summary: 'OK' },
       { id: 'svl-git-observer', name: 'Git Observer', status: 'STANDBY', kind: 'Git', owner: 'SI_Sphere', summary: 'SAFE' },
     ],
     codebase_inventory: {

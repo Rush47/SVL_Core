@@ -2,7 +2,7 @@
 // logi WARN/ERROR), bezpieczne samonaprawy oraz propozycje zmian wymagających potwierdzenia
 // Operatora. Planer jest czystą funkcją (testowalny) — wykonanie akcji i powiadomienia robi serwer.
 //
-// Zasady (zgodne z CLAUDE.md):
+// Zasady systemu SVL:
 // - Bez zmyślonych danych: wszystkie wnioski wynikają z przekazanych pomiarów.
 // - Operacje nieodwracalne (push GitHub, instalacja usługi, root-exec) NIE są wykonywane
 //   automatycznie — trafiają do `proposals` z przyciskiem potwierdzenia.

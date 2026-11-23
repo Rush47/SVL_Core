@@ -261,7 +261,7 @@ class TestSVLKernelSuite(unittest.TestCase):
 
         asyncio.run(_run())
 
-    def test_agents_orchestrator_has_system_si_1_and_keeps_decommissioned_agents_removed(self) -> None:
+    def test_agents_orchestrator_has_jyn_and_keeps_decommissioned_agents_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "test_agents.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
@@ -269,15 +269,15 @@ class TestSVLKernelSuite(unittest.TestCase):
             bus = SphericalEventBus()
             orchestrator = SVLAgentOrchestrator(kernel, bus)
 
-            self.assertEqual(list(CANONICAL_SVL_AGENTS.keys()), ["System_SI_1"])
-            self.assertEqual(CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["rbac_role"], "root")
-            self.assertEqual(CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["autonomy_mode"], "ROOT_AUTHORIZED")
-            self.assertIn("system.root", CANONICAL_SVL_AGENTS["System_SI_1"]["default_config"]["allowed_scopes"])
+            self.assertEqual(list(CANONICAL_SVL_AGENTS.keys()), ["Jyn"])
+            self.assertEqual(CANONICAL_SVL_AGENTS["Jyn"]["default_config"]["rbac_role"], "root")
+            self.assertEqual(CANONICAL_SVL_AGENTS["Jyn"]["default_config"]["autonomy_mode"], "ROOT_AUTHORIZED")
+            self.assertIn("system.root", CANONICAL_SVL_AGENTS["Jyn"]["default_config"]["allowed_scopes"])
             for removed in ("Agata", "Iris", "Bielik", "Maya", "KomputerPokladowy"):
                 self.assertNotIn(removed, CANONICAL_SVL_AGENTS)
-            self.assertIn("System_SI_1", orchestrator.agent_states)
-            self.assertEqual(orchestrator.agent_states["System_SI_1"]["config"]["rbac_role"], "root")
-            self.assertFalse(orchestrator.agent_states["System_SI_1"]["config"].get("root_nopasswd", False))
+            self.assertIn("Jyn", orchestrator.agent_states)
+            self.assertEqual(orchestrator.agent_states["Jyn"]["config"]["rbac_role"], "root")
+            self.assertFalse(orchestrator.agent_states["Jyn"]["config"].get("root_nopasswd", False))
             self.assertEqual(orchestrator.get_agent_memories("Agata", limit=5), [])
             self.assertEqual(orchestrator.get_agent_memories("Maya", limit=5), [])
             self.assertEqual(orchestrator.get_agent_memories("Bielik", limit=5), [])
@@ -540,40 +540,40 @@ class TestSVLKernelSuite(unittest.TestCase):
             task = {
                 "id": "task-1",
                 "sender": "operator",
-                "target_agent": "System_SI_1",
+                "target_agent": "Jyn",
                 "title": "Sprawdź status",
                 "payload": "Sprawdź status systemu.",
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "status": "RUNNING",
                 "worker_pid": 123,
             }
-            orchestrator.agent_queues["System_SI_1"] = [task]
+            orchestrator.agent_queues["Jyn"] = [task]
 
             asyncio.run(orchestrator._handle_worker_message({
                 "type": "task_tool_started",
                 "task_id": "task-1",
-                "agent": "System_SI_1",
+                "agent": "Jyn",
                 "worker_pid": 123,
                 "tool": "svl_status",
             }))
 
-            task = orchestrator.agent_queues["System_SI_1"][0]
+            task = orchestrator.agent_queues["Jyn"][0]
             self.assertEqual(task["current_tool"], "svl_status")
-            self.assertEqual(orchestrator.agent_states["System_SI_1"]["worker_phase"], "NARZĘDZIE: svl_status")
-            self.assertEqual(orchestrator.agent_logs["System_SI_1"][-1]["level"], "TOOL_STARTED")
+            self.assertEqual(orchestrator.agent_states["Jyn"]["worker_phase"], "NARZĘDZIE: svl_status")
+            self.assertEqual(orchestrator.agent_logs["Jyn"][-1]["level"], "TOOL_STARTED")
 
             asyncio.run(orchestrator._handle_worker_message({
                 "type": "task_tool_completed",
                 "task_id": "task-1",
-                "agent": "System_SI_1",
+                "agent": "Jyn",
                 "worker_pid": 123,
                 "tool": "svl_status",
             }))
 
-            task = orchestrator.agent_queues["System_SI_1"][0]
+            task = orchestrator.agent_queues["Jyn"][0]
             self.assertIsNone(task["current_tool"])
-            self.assertEqual(orchestrator.agent_states["System_SI_1"]["worker_phase"], "BUSY")
-            self.assertEqual(orchestrator.agent_logs["System_SI_1"][-1]["level"], "TOOL_COMPLETED")
+            self.assertEqual(orchestrator.agent_states["Jyn"]["worker_phase"], "BUSY")
+            self.assertEqual(orchestrator.agent_logs["Jyn"][-1]["level"], "TOOL_COMPLETED")
 
     def test_worker_mission_completion_claim_is_blocked_without_verified_state(self) -> None:
         guarded = guard_unverified_mission_completion(
@@ -763,7 +763,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertTrue(clr_resp["ok"])
                 self.assertEqual(backend_app.runtime.kernel.list_terminal_history()["python"], [])
 
-    def test_family_channel_notifications_come_from_system_si_1_and_sync(self) -> None:
+    def test_family_channel_notifications_come_from_jyn_and_sync(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             kernel = SVLSystemKernel(
                 db_path=str(Path(tmpdir) / "notif.sqlite3"),
@@ -771,21 +771,21 @@ class TestSVLKernelSuite(unittest.TestCase):
             )
             before = kernel.get_server_revision()
             res = kernel.emit_family_notification(
-                severity="WARN", category="agent_task", title="System_SI_1: zadanie nieudane",
+                severity="WARN", category="agent_task", title="Jyn: zadanie nieudane",
                 message="Błąd: timeout", source_event_id="task-1-failed",
             )
             self.assertTrue(res["ok"])
             self.assertEqual(res["event"]["entity"], "chat")
             self.assertGreater(kernel.get_server_revision(), before)
-            again = kernel.emit_family_notification(title="System_SI_1: zadanie nieudane", source_event_id="task-1-failed")
+            again = kernel.emit_family_notification(title="Jyn: zadanie nieudane", source_event_id="task-1-failed")
             self.assertTrue(again["deduplicated"])
             family = next(c for c in kernel.list_conversations_with_messages() if c["id"] == "conv-rodzina-mitek-wszyscy")
             notifs = [m for m in family["messages"] if m["id"] == "notif-task-1-failed"]
             self.assertEqual(len(notifs), 1)
-            self.assertEqual(notifs[0]["sender"], "System_SI_1")
-            self.assertEqual(notifs[0]["agentId"], "System_SI_1")
+            self.assertEqual(notifs[0]["sender"], "Jyn")
+            self.assertEqual(notifs[0]["agentId"], "Jyn")
             self.assertEqual(notifs[0]["role"], "system")
-            self.assertIn("⚠️ **System_SI_1: zadanie nieudane**", notifs[0]["content"])
+            self.assertIn("⚠️ **Jyn: zadanie nieudane**", notifs[0]["content"])
             self.assertEqual(kernel.list_family_notifications()["totalCount"], 1)
             events = kernel.get_outbox_events_since(before)["events"]
             self.assertTrue(any(e["payload"].get("messageId") == "notif-task-1-failed" for e in events))
@@ -828,9 +828,9 @@ class TestSVLKernelSuite(unittest.TestCase):
                 {
                     "id": "asst-proactive-12345",
                     "role": "assistant",
-                    "sender": "System_SI_1",
-                    "agentId": "System_SI_1",
-                    "content": "Cześć Mateusz! Jądro JEDI Omni-OS v11.5 i System_SI_1 są gotowe.",
+                    "sender": "Jyn",
+                    "agentId": "Jyn",
+                    "content": "Cześć Mateusz! Jądro JEDI Omni-OS v11.5 i Jyn są gotowe.",
                     "timestamp": "12:01",
                 },
             )
@@ -900,7 +900,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             finally:
                 asyncio.run(orchestrator.shutdown())
 
-    def test_root_authority_for_system_si_1_and_channel_report_routing(self) -> None:
+    def test_root_authority_for_jyn_and_channel_report_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_file = str(Path(tmpdir) / "root_authority.sqlite3")
             token = "test_operator_token_with_more_than_32_chars_abcdef"
@@ -909,7 +909,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             try:
                 self.assertEqual(BIELIK_ROOT_SCOPE_VERSION, 6)
                 self.assertEqual(len(FULL_ROOT_AGENT_SCOPES), 29)
-                cfg = orchestrator.agent_states["System_SI_1"]["config"]
+                cfg = orchestrator.agent_states["Jyn"]["config"]
                 self.assertEqual(cfg["rbac_role"], "root")
                 self.assertEqual(cfg["autonomy_mode"], "ROOT_AUTHORIZED")
                 self.assertEqual(cfg["root_scope_version"], BIELIK_ROOT_SCOPE_VERSION)
@@ -938,22 +938,22 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "github.admin",
                     "superuser.all",
                 ):
-                    self.assertIn(expected, scopes, f"System_SI_1 missing scope {expected}")
+                    self.assertIn(expected, scopes, f"Jyn missing scope {expected}")
 
                 scope = VisualScope("operator:root-telemetry")
-                for reader in ("operator", "root", "System_SI_1", "JEDI Omni-OS v11.5", "Rodzina Mitek"):
+                for reader in ("operator", "root", "Jyn", "JEDI Omni-OS v11.5", "Rodzina Mitek"):
                     self.assertTrue(scope.can_read(reader), f"VisualScope should allow {reader}")
 
                 report = kernel.post_maya_report(
-                    "Raport testowy dla kanału System_SI_1",
+                    "Raport testowy dla kanału Jyn",
                     model_label="SVL_System_Kernel_Report",
                     message_prefix="sys-report-test",
-                    conversation_id="conv-system-si-1",
+                    conversation_id="conv-jyn",
                 )
                 self.assertTrue(report.get("ok"))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-                si1_msgs = convs["conv-system-si-1"]["messages"]
-                self.assertTrue(any("Raport testowy dla kanału System_SI_1" in m["content"] for m in si1_msgs))
+                si1_msgs = convs["conv-jyn"]["messages"]
+                self.assertTrue(any("Raport testowy dla kanału Jyn" in m["content"] for m in si1_msgs))
             finally:
                 asyncio.run(orchestrator.shutdown())
 
@@ -990,10 +990,10 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertEqual(summary["jediOsVersion"], "12.0.0")
                 registered = orchestrator.sync_registered_agents()
                 self.assertIn("SI_Sphere", registered)
-                self.assertIn("System_SI_1", registered)
+                self.assertIn("Jyn", registered)
                 self.assertIn("SI_Sphere", orchestrator.agent_states)
                 mods = {m["id"]: m for m in kernel.list_system_modules()}
-                si1_fleet = mods["system-si-1"]["config"].get("fleet", [])
+                si1_fleet = mods["jyn"]["config"].get("fleet", [])
                 self.assertTrue(any(u.get("ship_id") == "SVL-465" for u in si1_fleet))
                 self.assertTrue(any(u.get("ship_id") == "SVL-364" for u in si1_fleet))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
@@ -1019,8 +1019,8 @@ class TestSVLKernelSuite(unittest.TestCase):
                 },
             )
             kernel.save_chat_message(
-                "conv-system-si-1",
-                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-jyn",
+                "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
                     "id": "usr-alliance-1",
@@ -1052,8 +1052,8 @@ class TestSVLKernelSuite(unittest.TestCase):
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             orig_version = kernel.sys_version.value
             kernel.save_chat_message(
-                "conv-system-si-1",
-                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-jyn",
+                "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
                     "id": "usr-gh-sync-1",
@@ -1064,13 +1064,13 @@ class TestSVLKernelSuite(unittest.TestCase):
                 },
             )
             kernel.save_chat_message(
-                "conv-system-si-1",
-                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-jyn",
+                "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
                     "id": "asst-gh-sync-1",
                     "role": "assistant",
-                    "sender": "System_SI_1",
+                    "sender": "Jyn",
                     "content": "Potwierdzam: synchronizacja repozytorium Rush47/SVL_Core z główną gałęzią main została wykonana.",
                     "timestamp": "17:42",
                 },
@@ -1083,7 +1083,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "action": "chat_sync_verified",
                     "ok": True,
                     "commitSha": "344e070abcdef1234567890",
-                    "commitMessage": "feat(mcp): czat System_SI_1 przez oba serwery MCP (#5)",
+                    "commitMessage": "feat(mcp): czat Jyn przez oba serwery MCP (#5)",
                 },
             )
             self.assertTrue(summary["ok"])
@@ -1207,7 +1207,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 {
                     "id": "asst-jedi-native-1",
                     "role": "assistant",
-                    "sender": "System_SI_1",
+                    "sender": "Jyn",
                     "content": (
                         "> ⚠️ **Weryfikacja SVL (brak wykonanej akcji na serwerze):** Odpowiedź modelu opisuje wykonanie operacji.\n\n"
                         "[card: Rdzeń Bazowy|JEDI Omni-OS v12 (Natywny)|OK]\n"
@@ -1230,7 +1230,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 {
                     "id": "asst-1795407013563-dd801b83",
                     "role": "assistant",
-                    "sender": "System_SI_1",
+                    "sender": "Jyn",
                     "content": "⚠️ **Status misji: NIEZWERYFIKOWANY.**",
                     "timestamp": "12:12",
                 },

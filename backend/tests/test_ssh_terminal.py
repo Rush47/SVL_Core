@@ -127,7 +127,7 @@ class SshTerminalTests(unittest.TestCase):
         controller = build_controller()
         status = controller.get_status()
         self.assertEqual(status["ssh"]["computerAccount"], "SVL-364 Ship Host")
-        self.assertEqual(status["ssh"]["agentAccounts"], ["System_SI_1"])
+        self.assertEqual(status["ssh"]["agentAccounts"], ["Jyn"])
 
     def test_remote_execution_requires_explicit_confirmation(self) -> None:
         controller = build_controller()
@@ -277,7 +277,217 @@ class SshTerminalTests(unittest.TestCase):
         self.assertIn("/app/applet/data/svl_os.sqlite3", shell_cmd)
         self.assertIn("Brak bazy svl_os.sqlite3", shell_cmd)
 
+    def test_tunnel_container_and_comfyui_mcp_tools(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="active\n", stderr="")
+        with (
+            patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+            patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
+        ):
+            status_res = controller.call_mcp_tool(
+                "svl364_tunnel_control", {"action": "status", "confirmed": False}
+            )
+            denied_restart = controller.call_mcp_tool(
+                "svl364_tunnel_control", {"action": "restart_mcp", "confirmed": False}
+            )
+            allowed_restart = controller.call_mcp_tool(
+                "svl364_tunnel_control", {"action": "restart_mcp", "confirmed": True}
+            )
+            containers = controller.call_mcp_tool(
+                "svl364_container_control", {"action": "list", "confirmed": False}
+            )
+            comfy = controller.call_mcp_tool(
+                "svl364_comfyui_control", {"action": "status", "confirmed": False}
+            )
+
+        self.assertTrue(status_res["ok"])
+        self.assertFalse(denied_restart["ok"])
+        self.assertTrue(allowed_restart["ok"])
+        self.assertTrue(containers["ok"])
+        self.assertTrue(comfy["ok"])
+        self.assertEqual(run.call_count, 4)
+
+        resources = controller.handle_mcp_jsonrpc({"id": 7, "method": "resources/list"})
+        uris = [r["uri"] for r in resources["result"]["resources"]]
+        self.assertIn("svl364://tunnel/zero-ip", uris)
+        self.assertIn("svl364://services/all", uris)
+
+    def test_remote_mcp_configure_token_secret_and_root_exec_priority(self) -> None:
+        controller = build_controller()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            controller.project_root = Path(tmpdir)
+            cfg = controller.configure_remote_mcp(
+                {
+                    "url": "https://ship.trycloudflare.com",
+                    "token": "super-secret-bearer-token-value-123456",
+                    "root_exec_enabled": True,
+                }
+            )
+            self.assertTrue(cfg["ok"])
+            self.assertEqual(cfg["url"], "https://ship.trycloudflare.com/mcp")
+            self.assertTrue(cfg["tokenConfigured"])
+            status = controller.get_status()
+            self.assertNotIn("super-secret-bearer-token-value-123456", str(status))
+            self.assertEqual(status["rootChannel"]["id"], "conv-svl364-mcp-root")
+
+            # Verify SSE + JSON Streamable HTTP parsing
+            sse_parsed = controller._parse_mcp_http_response(
+                'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"exit_code: 0\\nuid=0(root)"}]}}\n\n'
+            )
+            self.assertEqual(sse_parsed["result"]["content"][0]["text"], "exit_code: 0\nuid=0(root)")
+
+            # Verify arbitrary command runs via Remote MCP with root wrapper when configured
+            with patch.object(
+                controller,
+                "call_remote_mcp_tool",
+                return_value={
+                    "ok": True,
+                    "transport": "remote-mcp",
+                    "output": "exit_code: 0\nuid=0(root)\nsvl-364",
+                },
+            ) as remote_call:
+                res = controller.call_mcp_tool(
+                    "svl364_root_exec",
+                    {"command": "my-arbitrary-tool --any-flag && id", "confirmed": True},
+                    origin="channel-test",
+                )
+
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["data"]["transport"], "remote-mcp-root")
+            self.assertIn("uid=0(root)", res["data"]["rawOutput"])
+            sent_cmd = remote_call.call_args.args[1]["command"]
+            self.assertIn("sudo -n /bin/bash -lc", sent_cmd)
+            self.assertIn("my-arbitrary-tool --any-flag && id", sent_cmd)
+
+    def test_root_exec_falls_back_to_openssh_with_root_escalation(self) -> None:
+        controller = build_controller()
+        completed = subprocess.CompletedProcess(
+            args=["ssh"], returncode=0, stdout="uid=0(root)\n", stderr=""
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            controller.project_root = Path(tmpdir)
+            with (
+                patch.dict(os.environ, {"SVL_SSH_TARGET": "Ship", "SVL364_MCP_URL": ""}),
+                patch("svl364_ssh_mcp.find_real_binary", return_value="/usr/bin/ssh"),
+                patch("svl364_ssh_mcp.subprocess.run", return_value=completed) as run,
+            ):
+                res = controller.execute_root_command(
+                    "/root cat /etc/hostname && id",
+                    confirmed=True,
+                    raw=True,
+                )
+
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["transport"], "openssh-root")
+        self.assertIn("sudo -n /bin/bash -lc", run.call_args.args[0][-1])
+        self.assertIn("cat /etc/hostname && id", run.call_args.args[0][-1])
+
+    def test_svl364_root_channel_seeded_in_sqlite(self) -> None:
+        from svl_core import SVLSystemKernel
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kernel = SVLSystemKernel(
+                db_path=str(Path(tmpdir) / "svl364_channel.sqlite3"),
+                operator_token="test_operator_token_with_more_than_32_chars_abcdef",
+            )
+            convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
+            self.assertIn("conv-svl364-mcp-root", convs)
+            self.assertEqual(
+                convs["conv-svl364-mcp-root"]["title"],
+                "SVL-364 — Komputer Pokładowy (MCP · ROOT)",
+            )
+            self.assertTrue(
+                any("svl364_root_exec" in m["content"] for m in convs["conv-svl364-mcp-root"]["messages"])
+            )
+
+    def test_ship_hub_solar_navigation_incidents_and_mcp_probe(self) -> None:
+        from svl_core import SVLSystemKernel
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kernel = SVLSystemKernel(
+                db_path=str(Path(tmpdir) / "svl364_hub.sqlite3"),
+                operator_token="test_operator_token_with_more_than_32_chars_abcdef",
+            )
+            controller = SVL364SshMcpController(kernel)
+
+            # 1. Solar System ephemeris & course update via MCP tool
+            nav_res = controller.call_mcp_tool(
+                "svl364_navigation",
+                {"action": "set_course", "currentBody": "earth-l2", "targetBody": "mars", "missionStatus": "IN_TRANSIT"},
+                origin="test",
+            )
+            self.assertTrue(nav_res["ok"])
+            nav = nav_res["data"]["navigation"]
+            self.assertEqual(nav["currentBody"], "earth-l2")
+            self.assertEqual(nav["targetBody"], "mars")
+            self.assertEqual(nav["missionStatus"], "IN_TRANSIT")
+            self.assertGreaterEqual(len(nav["bodies"]), 9)
+            self.assertGreater(nav["lightDelayTargetSec"], 0)
+
+            # 2. Record & resolve incident/alarm via MCP tool
+            inc_res = controller.call_mcp_tool(
+                "svl364_incident_report",
+                {
+                    "action": "record",
+                    "category": "alarm",
+                    "severity": "CRITICAL",
+                    "title": "Wykryto anomalię termiczną na SVL-364",
+                    "message": "Czujnik thermal_zone0 przekroczył 86 C",
+                },
+                origin="test",
+            )
+            self.assertTrue(inc_res["ok"])
+            inc_id = inc_res["data"]["incident"]["id"]
+            res_close = controller.call_mcp_tool(
+                "svl364_incident_report",
+                {"action": "resolve", "incidentId": inc_id},
+                origin="test",
+            )
+            self.assertTrue(res_close["ok"])
+            self.assertTrue(res_close["data"]["incident"]["resolved"])
+
+            # 3. Live MCP probe parsing (services, thermals, failed units, journalctl)
+            fake_probe_out = (
+                "HOST=svl-364-ship\n"
+                "KERNEL=Linux 6.12.0 x86_64\n"
+                "UPTIME=86400\n"
+                "LOAD=0.42 0.35 0.28\n"
+                "CORES=8\n"
+                "MemTotal: 16384000 kB\n"
+                "MemAvailable: 12288000 kB\n"
+                "DISK_GB=200G 140G 30%\n"
+                "SVC:svl-mcp.service=active\n"
+                "SVC:ollama.service=active\n"
+                "SVC:svl-comfyui.service=failed\n"
+                "TEMP:x86_pkg_temp=62500\n"
+                "FAILED:svl-comfyui.service loaded failed failed ComfyUI\n"
+                "JERR:2026-11-23T08:00:00Z svl-364 svl-comfyui[412]: CUDA OOM\n"
+            )
+            with patch.object(
+                controller,
+                "execute_root_command",
+                return_value={
+                    "ok": True,
+                    "transport": "remote-mcp-root",
+                    "endpoint": "https://ship.trycloudflare.com/mcp",
+                    "durationMs": 38.2,
+                    "rawOutput": fake_probe_out,
+                },
+            ):
+                overview = controller.ship_hub.get_overview(include_mcp_probe=True)
+
+            self.assertTrue(overview["ok"])
+            self.assertEqual(overview["connectedVia"], "remote-mcp-root")
+            svcs = {s["id"]: s for s in overview["services"]}
+            self.assertEqual(svcs["svl-mcp.service"]["status"], "online")
+            self.assertEqual(svcs["svl-comfyui.service"]["status"], "offline")
+            self.assertTrue(any("62.5 °C" in s["value"] for s in overview["sensors"]))
+            self.assertTrue(any("CUDA OOM" in f["message"] for f in overview["feed"]))
+            self.assertTrue(any("svl-comfyui.service" in f["message"] for f in overview["feed"]))
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
 

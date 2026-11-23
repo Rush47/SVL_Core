@@ -627,13 +627,13 @@ class SVLRealVisionEngine:
             return "SI_Sphere", "SI_Sphere"
         if "jedi" in raw:
             return "JEDI Omni-OS v12", "JEDI_Omni_OS"
-        return "System_SI_1", "System_SI_1"
+        return "Jyn", "Jyn"
 
     def _resolve_conversation_title(self, conversation_id: str) -> str:
         cid = (conversation_id or "conv-rodzina-mitek-wszyscy").strip()
         defaults = {
             "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
-            "conv-system-si-1": "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+            "conv-jyn": "Jyn — Zarządzanie Infrastrukturą (ROOT)",
             "conv-si-sphere": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
         }
         if cid in defaults:
@@ -662,8 +662,8 @@ class SVLRealVisionEngine:
         ollama_host: str = "http://127.0.0.1:11434",
         emit_to_chat: bool = False,
         conversation_id: str = "conv-rodzina-mitek-wszyscy",
-        sender: str = "System_SI_1",
-        agent_id: str = "System_SI_1",
+        sender: str = "Jyn",
+        agent_id: str = "Jyn",
         origin: str = "real-vision-gemini",
         correlation_id: str = "",
     ) -> dict[str, Any]:

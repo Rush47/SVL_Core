@@ -6,8 +6,8 @@
 
 import { normalizeAgentCanonicalName } from '../utils/svlLogic.ts';
 
-export type ConversationAgent = 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS';
-export const CONVERSATION_AGENTS: ConversationAgent[] = ['System_SI_1', 'SI_Sphere'];
+export type ConversationAgent = 'Jyn' | 'SI_Sphere' | 'JEDI_Omni_OS';
+export const CONVERSATION_AGENTS: ConversationAgent[] = ['Jyn', 'SI_Sphere'];
 export const OPERATOR_LABEL = 'Mateusz (Operator)';
 
 export interface DialogueTurn {
@@ -26,7 +26,7 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\
 export function agentOf(turn: DialogueTurn): ConversationAgent | null {
   if (turn.role !== 'assistant') return null;
   const canonical = normalizeAgentCanonicalName(turn.sender);
-  return canonical === 'System_SI_1' || canonical === 'SI_Sphere' || canonical === 'JEDI_Omni_OS'
+  return canonical === 'Jyn' || canonical === 'SI_Sphere' || canonical === 'JEDI_Omni_OS'
     ? canonical
     : null;
 }
@@ -113,7 +113,7 @@ export function parsePredictedSpeaker(continuation: string): ConversationAgent |
   if (!name) return null;
   if (/^(?:mateusz|operator)/.test(name)) return 'operator';
   const normalized = normalizeAgentCanonicalName(name);
-  if (normalized === 'System_SI_1' || normalized === 'SI_Sphere' || normalized === 'JEDI_Omni_OS') {
+  if (normalized === 'Jyn' || normalized === 'SI_Sphere' || normalized === 'JEDI_Omni_OS') {
     return normalized;
   }
   const agent = CONVERSATION_AGENTS.find((a) => name === a.toLowerCase() || name.startsWith(`${a.toLowerCase()} `));
@@ -158,7 +158,7 @@ export function isRepetitive(candidate: string, previous: string[], threshold = 
 export function cleanAgentReply(text: string, speaker: ConversationAgent): string {
   const speakerNames = [
     ...CONVERSATION_AGENTS,
-    'Jyn Mitek (System_SI_1)',
+    'Jyn Mitek',
     'Jyn Mitek',
     'SI_Sphere (SVL-465 · ROOT)',
     'SI_Sphere',
@@ -183,7 +183,7 @@ export function cleanAgentReply(text: string, speaker: ConversationAgent): strin
   out = stripServerVerificationBanners(out);
   const participants = [
     ...CONVERSATION_AGENTS,
-    'Jyn Mitek (System_SI_1)',
+    'Jyn Mitek',
     'Jyn Mitek',
     'SI_Sphere (SVL-465 · ROOT)',
     'SI_Sphere',

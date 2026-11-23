@@ -1,20 +1,57 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { buildTunnelCommand, parseTunnelUrl, restartDelayMs, TunnelManager } from './tunnel.ts';
+import {
+  buildTunnelCommand,
+  detectMeshInterfaces,
+  parseTunnelUrl,
+  resolveAutoTunnelKind,
+  restartDelayMs,
+  TunnelManager,
+} from './tunnel.ts';
 import { parseTunnelKind } from './config.ts';
 
 test('mcp tunnel: commands per provider', () => {
   assert.deepEqual(buildTunnelCommand({ kind: 'cloudflared', port: 3334 })?.args, ['tunnel', '--no-autoupdate', '--url', 'http://127.0.0.1:3334']);
+  assert.deepEqual(
+    buildTunnelCommand({ kind: 'cloudflared', port: 3334, cloudflaredProtocol: 'http2' })?.args,
+    ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', 'http://127.0.0.1:3334'],
+  );
   const named = buildTunnelCommand({ kind: 'cloudflared', port: 3334, cloudflaredToken: 'secret-token' })!;
   assert.ok(!named.args.join(' ').includes('secret-token'), 'token not in argv');
   assert.equal(named.env.TUNNEL_TOKEN, 'secret-token');
   assert.equal(buildTunnelCommand({ kind: 'ngrok', port: 1 })?.bin, 'ngrok');
   assert.deepEqual(buildTunnelCommand({ kind: 'tailscale', port: 3334 })?.args, ['funnel', '3334']);
+  const rev = buildTunnelCommand({ kind: 'ssh-reverse', port: 3334, sshReverseTarget: 'svl@relay.example.com', sshReverseRemotePort: 4444 })!;
+  assert.equal(rev.bin, 'ssh');
+  assert.ok(rev.args.includes('0.0.0.0:4444:127.0.0.1:3334'));
+  assert.equal(rev.args[rev.args.length - 1], 'svl@relay.example.com');
   assert.equal(buildTunnelCommand({ kind: 'none', port: 1 }), null);
   assert.equal(parseTunnelKind(''), 'cloudflared');
+  assert.equal(parseTunnelKind('auto'), 'auto');
+  assert.equal(parseTunnelKind('ssh-reverse'), 'ssh-reverse');
   assert.equal(parseTunnelKind('off'), 'none');
   assert.throws(() => parseTunnelKind('xyz'));
+});
+
+test('mcp tunnel: auto zero-IP resolution and Hamachi-like mesh detection', () => {
+  const mesh = detectMeshInterfaces(3334, {
+    lo: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' }],
+    tailscale0: [{ address: '100.88.12.34', netmask: '255.192.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: false, cidr: '100.88.12.34/10' }],
+    zt12345: [{ address: '10.147.20.5', netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: false, cidr: '10.147.20.5/24' }],
+    wg0: [{ address: '10.8.0.2', netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: false, cidr: '10.8.0.2/24' }],
+    ham0: [{ address: '25.10.20.30', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: false, cidr: '25.10.20.30/8' }],
+  });
+  assert.deepEqual(mesh.map((m) => m.network), ['tailscale', 'zerotier', 'wireguard', 'hamachi']);
+  assert.equal(mesh[0].mcpUrl, 'http://100.88.12.34:3334/mcp');
+
+  assert.equal(resolveAutoTunnelKind({ kind: 'auto', port: 3334 }, (b) => b === 'cloudflared', []), 'cloudflared');
+  assert.equal(resolveAutoTunnelKind({ kind: 'auto', port: 3334 }, (b) => b === 'tailscale', mesh), 'tailscale');
+  assert.equal(resolveAutoTunnelKind({ kind: 'auto', port: 3334 }, (b) => b === 'ngrok', []), 'ngrok');
+  assert.equal(
+    resolveAutoTunnelKind({ kind: 'auto', port: 3334, sshReverseTarget: 'u@relay' }, (b) => b === 'ssh', []),
+    'ssh-reverse',
+  );
 });
 
 test('mcp tunnel: URL parsing and backoff', () => {

@@ -45,7 +45,6 @@ const ENV_SECRET_KEYS = [
   'GEMINI_API_KEY',
   'GOOGLE_API_KEY',
   'OPENAI_API_KEY',
-  'XAI_API_KEY',
 ];
 
 const SENSITIVE_FIELD_RE = /(token|secret|password|passwd|haslo|hasło|apikey|api_key|authorization|private[_-]?key|credential)/i;
@@ -329,7 +328,7 @@ export class SvlFileLogger {
   }
 
   /**
-   * Ostatnie wpisy WARN/ERROR z pliku zbiorczego — podstawa diagnostyki System_SI_1
+   * Ostatnie wpisy WARN/ERROR z pliku zbiorczego — podstawa diagnostyki Jyn
    * (naprawa i poprawa systemu na podstawie prawdziwych zdarzeń, nie zmyślonych).
    */
   public async getRecentIssues(limit = 40): Promise<Array<{ level: string; category: string; message: string; at: string | null }>> {

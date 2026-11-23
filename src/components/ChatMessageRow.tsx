@@ -34,7 +34,7 @@ export const PROVENANCE_STYLE: Record<
   },
 };
 
-/** Usuwa z etykiety modelu powtórzoną na początku nazwę nadawcy (np. „System_SI_1 · …”). */
+/** Usuwa z etykiety modelu powtórzoną na początku nazwę nadawcy (np. „Jyn · …”). */
 function stripSenderPrefix(label: string, names: Array<string | undefined>): string {
   let out = label.trim();
   for (const name of names) {
@@ -86,7 +86,7 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
                 ? 'text-emerald-300'
                 : formattedSender === 'SI_Sphere' || msg.agentId === 'SI_Sphere'
                   ? 'text-violet-300'
-                  : formattedSender === 'System_SI_1' || msg.agentId === 'System_SI_1'
+                  : formattedSender === 'Jyn' || msg.agentId === 'Jyn'
                     ? 'text-cyan-300'
                     : isUser
                       ? 'text-violet-300'
@@ -98,7 +98,21 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
         {modelLabel && (
           <>
             <span aria-hidden="true">·</span>
-            <span className="font-mono text-[11px] text-slate-500 break-all">{modelLabel}</span>
+            <span
+              className={`font-mono text-[10px] px-1.5 py-0.5 rounded border break-all ${
+                /ollama\s*\[.*svl-364/i.test(modelLabel)
+                  ? 'border-violet-500/40 bg-violet-950/35 text-violet-200'
+                  : /ollama/i.test(modelLabel)
+                    ? 'border-cyan-500/35 bg-cyan-950/30 text-cyan-200'
+                    : /fallback/i.test(modelLabel)
+                      ? 'border-orange-500/45 bg-orange-950/35 text-orange-200'
+                      : /gemini/i.test(modelLabel)
+                        ? 'border-amber-500/35 bg-amber-950/25 text-amber-200'
+                        : 'border-slate-700/60 bg-slate-900/50 text-slate-400'
+              }`}
+            >
+              {modelLabel}
+            </span>
           </>
         )}
         <span aria-hidden="true">·</span>
@@ -136,8 +150,8 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
                 ? `Jądro ${msg.sender === 'JEDI Omni-OS v11.5' ? 'JEDI Omni-OS v11.5' : 'JEDI Omni-OS v12'} (ROOT · VM · AI)`
                 : msg.sender === 'SI_Sphere' || msg.agentId === 'SI_Sphere'
                   ? 'Raport węzła SI_Sphere (Rdzeń Floty SVL-465 · ROOT)'
-                  : msg.sender === 'System_SI_1' || msg.agentId === 'System_SI_1'
-                    ? 'Raport węzła System_SI_1 (Infrastruktura · ROOT)'
+                  : msg.sender === 'Jyn' || msg.agentId === 'Jyn'
+                    ? 'Raport węzła Jyn Mitek (Infrastruktura · ROOT)'
                     : isFamilyChannel
                       ? 'Powiadomienie · kanał grupowy'
                       : 'Wiadomość systemowa'}

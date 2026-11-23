@@ -12,14 +12,14 @@ from svl_core import sanitize_message_identity
 
 class MessageIdentityGuardTests(unittest.TestCase):
     def test_canonical_ai_senders_pass(self) -> None:
-        for name in ("System_SI_1", "SI_Sphere", "JEDI Omni-OS v12", "JEDI Omni-OS v11.5", "Claude (MCP)"):
+        for name in ("Jyn", "SI_Sphere", "JEDI Omni-OS v12", "JEDI Omni-OS v11.5", "SVL MCP"):
             sender, reason = sanitize_message_identity("assistant", name)
             self.assertIsNone(reason, name)
             self.assertEqual(sender, name)
 
     def test_legacy_aliases_relabeled(self) -> None:
-        self.assertEqual(sanitize_message_identity("assistant", "system_si_1")[0], "System_SI_1")
-        self.assertEqual(sanitize_message_identity("assistant", "system-si-1")[0], "System_SI_1")
+        self.assertEqual(sanitize_message_identity("assistant", "jyn")[0], "Jyn")
+        self.assertEqual(sanitize_message_identity("assistant", "jyn")[0], "Jyn")
         self.assertEqual(sanitize_message_identity("system", "jedi omni-os")[0], "JEDI Omni-OS v12")
         self.assertEqual(sanitize_message_identity("assistant", "jedi_omni_os")[0], "JEDI Omni-OS v12")
 
@@ -57,7 +57,7 @@ class MessageIdentityGuardTests(unittest.TestCase):
 
     def test_user_message_cannot_masquerade_as_agent(self) -> None:
         # Wiadomość użytkownika udająca aktywnego agenta AI → zamieniona na nadawcę Operatora.
-        self.assertEqual(sanitize_message_identity("user", "System_SI_1")[0], "Mateusz Mitek (Operator)")
+        self.assertEqual(sanitize_message_identity("user", "Jyn")[0], "Mateusz Mitek (Operator)")
         self.assertEqual(sanitize_message_identity("user", "JEDI Omni-OS v12")[0], "Mateusz Mitek (Operator)")
         self.assertEqual(sanitize_message_identity("user", "JEDI Omni-OS v11.5")[0], "Mateusz Mitek (Operator)")
 
@@ -66,7 +66,7 @@ class MessageIdentityGuardTests(unittest.TestCase):
         self.assertIsNone(reason)
         self.assertEqual(sender, "Mateusz Mitek (Operator)")
 
-    def test_decommissioned_onboard_channel_blocked_and_system_si_1_persists_in_sqlite(self) -> None:
+    def test_decommissioned_onboard_channel_blocked_and_jyn_persists_in_sqlite(self) -> None:
         import tempfile
         from svl_core import SVLSystemKernel
 
@@ -90,14 +90,14 @@ class MessageIdentityGuardTests(unittest.TestCase):
             )
             self.assertFalse(blocked.get("ok"), blocked)
             saved = kernel.save_chat_message(
-                "conv-system-si-1",
-                "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-jyn",
+                "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "jedi-omni-os-v11.5-vm",
                 {
                     "id": "asst-si1-1",
                     "role": "assistant",
-                    "sender": "System_SI_1",
-                    "agentId": "System_SI_1",
+                    "sender": "Jyn",
+                    "agentId": "Jyn",
                     "content": "Raport MCP / SSH gotowy.",
                     "timestamp": "16:00",
                 },
@@ -105,49 +105,49 @@ class MessageIdentityGuardTests(unittest.TestCase):
             self.assertTrue(saved.get("ok"), saved)
             rep = kernel.post_maya_report(
                 "Pełny raport SVL_System test",
-                model_label="System_SI_1 · raport SVL_System (wynik serwera)",
+                model_label="Jyn · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
-                conversation_id="conv-system-si-1",
+                conversation_id="conv-jyn",
             )
             self.assertTrue(rep.get("ok"), rep)
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
             self.assertNotIn("conv-svl364-komputer-pokladowy", convs)
-            msgs = convs["conv-system-si-1"]["messages"]
+            msgs = convs["conv-jyn"]["messages"]
             senders = {m["id"]: m["sender"] for m in msgs}
-            self.assertEqual(senders.get("asst-si1-1"), "System_SI_1")
-            self.assertTrue(any(m["sender"] == "System_SI_1" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
+            self.assertEqual(senders.get("asst-si1-1"), "Jyn")
+            self.assertTrue(any(m["sender"] == "Jyn" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
 
-    def test_system_si_1_channel_and_identity(self) -> None:
+    def test_jyn_channel_and_identity(self) -> None:
         import tempfile
         from svl_core import SVLSystemKernel, sanitize_message_identity
 
-        sender, reason = sanitize_message_identity("assistant", "System_SI_1")
+        sender, reason = sanitize_message_identity("assistant", "Jyn")
         self.assertIsNone(reason)
-        self.assertEqual(sender, "System_SI_1")
+        self.assertEqual(sender, "Jyn")
 
-        sender_alias, reason2 = sanitize_message_identity("assistant", "system_si_1")
+        sender_alias, reason2 = sanitize_message_identity("assistant", "jyn")
         self.assertIsNone(reason2)
-        self.assertEqual(sender_alias, "System_SI_1")
+        self.assertEqual(sender_alias, "Jyn")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             kernel = SVLSystemKernel(
-                db_path=str(Path(tmpdir) / "system_si_1_test.sqlite3"),
+                db_path=str(Path(tmpdir) / "jyn_test.sqlite3"),
                 operator_token="test_operator_token_with_more_than_32_chars_abcdef",
             )
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            self.assertIn("conv-system-si-1", convs)
-            self.assertEqual(convs["conv-system-si-1"]["title"], "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)")
+            self.assertIn("conv-jyn", convs)
+            self.assertEqual(convs["conv-jyn"]["title"], "Jyn — Zarządzanie Infrastrukturą (ROOT)")
 
             rep = kernel.post_maya_report(
                 "Raport infrastruktury floty",
-                model_label="System_SI_1 · raport floty",
+                model_label="Jyn · raport floty",
                 message_prefix="msg-si1-report",
-                conversation_id="conv-system-si-1",
+                conversation_id="conv-jyn",
             )
             self.assertTrue(rep.get("ok"), rep)
             convs_after = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            msgs = convs_after["conv-system-si-1"]["messages"]
-            self.assertTrue(any(m["sender"] == "System_SI_1" for m in msgs))
+            msgs = convs_after["conv-jyn"]["messages"]
+            self.assertTrue(any(m["sender"] == "Jyn" for m in msgs))
 
     def test_si_sphere_identity_and_aliases(self) -> None:
         for raw in ("SI_Sphere", "si_sphere", "SI_Sphere (SVL-465 · ROOT)"):

@@ -7,6 +7,7 @@
 @import "@fontsource/inter/600.css";
 @import "@fontsource/inconsolata/400.css";
 @import "@vector-im/compound-web/dist/style.css";
+@import "katex/dist/katex.min.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
@@ -210,4 +211,40 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(var(--svl-accent-rgb, 0, 240, 255), 0.62);
+}
+
+/* Czytelność znaków (w tym podkreśleń `_` w identyfikatorach) w wiadomościach czatu */
+.svl-chat-prose {
+  line-height: 1.68;
+  padding-bottom: 1px;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 0;
+}
+
+/* KaTeX dark-theme styling (Apex-Glass) */
+.svl-math-inline .katex {
+  font-size: 1.02em;
+  color: #e2f1ff;
+}
+
+.svl-math-block .katex-display {
+  margin: 0.25rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+.svl-math-block .katex {
+  font-size: 1.12em;
+  color: #f1f5f9;
+}
+
+.svl-math-inline .katex .frac-line,
+.svl-math-block .katex .frac-line {
+  border-bottom-color: rgba(148, 163, 184, 0.85);
+}
+
+.svl-math-inline .katex .mord.text,
+.svl-math-block .katex .mord.text {
+  font-family: var(--font-sans);
 }

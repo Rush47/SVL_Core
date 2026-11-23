@@ -8,10 +8,10 @@ Defaults:root,jyn_mitek_root !authenticate
 Defaults:root,jyn_mitek_root !requiretty
 Defaults:root,jyn_mitek_root env_keep += "SVL_OPERATOR_TOKEN OLLAMA_HOST JEDI_V12_NATIVE_MODE"
 
-# Konto systemowe ROOT oraz konto najwyższego ROOT dla Jyn Mitek (System_SI_1) i całej floty AI (uid=0)
+# Konto systemowe ROOT oraz konto najwyższego ROOT dla Jyn Mitek i całej floty AI (uid=0)
 root             ALL=(ALL:ALL) NOPASSWD: ALL
 jyn_mitek_root   ALL=(ALL:ALL) NOPASSWD: ALL
 
-# Alias grupy Floty AI (System_SI_1, SI_Sphere / SI_Sphere, JEDI_Omni_OS_v12)
+# Alias grupy Floty AI (Jyn, SI_Sphere / SI_Sphere, JEDI_Omni_OS_v12)
 User_Alias  SVL_AI_FLEET_ROOT = root, jyn_mitek_root
 SVL_AI_FLEET_ROOT ALL=(ALL:ALL) NOPASSWD: ALL

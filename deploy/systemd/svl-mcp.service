@@ -1,8 +1,9 @@
-# SVL MCP (pełny odczyt/zapis) + automatyczny tunel do internetu (domyślnie Cloudflare Quick Tunnel).
-# Instalacja: sudo bash deploy/install-mcp.sh   (albo ręcznie: kopiuj do /etc/systemd/system i `systemctl enable --now svl-mcp`)
+# SVL Universal MCP Hub (system + host SVL-364) z połączeniem internetowym bez stałego IP (jak Hamachi).
+# Obsługuje: auto (Cloudflare Tunnel / Tailscale Funnel / ngrok / ssh-reverse) + wykrywanie sieci mesh.
+# Instalacja: sudo bash deploy/install-mcp.sh   albo na SVL-364: sudo bash SVL_CoreOS_2/debian13/install_svl364_mcp_zeroip.sh
 [Unit]
-Description=SVL MCP server (full read/write) with outbound tunnel
-After=network-online.target
+Description=SVL Universal MCP Hub (all services + zero-IP outbound tunnel)
+After=network-online.target svl-coreos2.service svl-python-os.service
 Wants=network-online.target
 StartLimitIntervalSec=0
 
@@ -12,9 +13,13 @@ User=svlos
 Group=svlos
 WorkingDirectory=/opt/svl-python-os
 EnvironmentFile=-/etc/svl-os/svl.env
+EnvironmentFile=-/etc/svl-coreos2/svl.env
 EnvironmentFile=-/opt/svl-python-os/.env
 Environment=NODE_ENV=production
 Environment=MCP_ROOT=/opt/svl-python-os
+Environment=MCP_TUNNEL=auto
+Environment=MCP_PORT=3334
+Environment=SVL_BASE_URL=http://127.0.0.1:3000
 Environment=SVL_LOG_DIR=/var/log/svl-os
 ExecStart=/usr/bin/env npx --no-install tsx src/mcp/main.ts
 Restart=always

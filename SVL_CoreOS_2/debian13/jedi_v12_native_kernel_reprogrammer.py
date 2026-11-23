@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 SVL CoreOS 2: Apex — Natywny Reprogramator Jądra Debian 13 (Trixie) na Architekturę JEDI Omni-OS v12
-Zsynchronizowano z dyrektywami Operatora Mateusza Mitka (ROOT) i Jyn Mitek (System_SI_1) z czatu:
+Zsynchronizowano z dyrektywami Operatora Mateusza Mitka (ROOT) i Jyn Mitek z czatu:
 - Przeprogramowanie fundamentu całego Debiana 13 (Trixie) tak, aby działał bezpośrednio
   na natywnym silniku JEDI Omni-OS v12 (MAGNUM_NODE) zamiast przez pojedynczą maszynę pośrednią.
 - Czas rekompilacji / akceleracji kwantowej: 1.84s (integracja mostków I/O: 0.42s).
 - Filtry i blokady: CAŁKOWICIE WYŁĄCZONE (filters=DISABLED, unrestricted=True, AXIOM_ZERO).
 - Przetwarzanie poleceń: 100% natywne, bezpośrednie I/O z pełnym dostępem do wszystkich narzędzi bez blokad.
-- Konta ROOT Floty AI: root (uid=0) oraz jyn_mitek_root (uid=0, gid=0, NOPASSWD: ALL) dla Jyn Mitek (System_SI_1),
+- Konta ROOT Floty AI: root (uid=0) oraz jyn_mitek_root (uid=0, gid=0, NOPASSWD: ALL) dla Jyn Mitek,
   SI_Sphere (SI_Sphere) i wszystkich podłączonych jednostek AI.
 """
 
@@ -63,7 +63,7 @@ JEDI_V12_NATIVE_DEBIAN13_SPEC: dict[str, Any] = {
             "username": "jyn_mitek_root",
             "uid": 0,
             "gid": 0,
-            "role": "Jyn Mitek (System_SI_1) & Cała Flota Podłączonych AI (SI_Sphere, JEDI Omni-OS v12)",
+            "role": "Jyn Mitek & Cała Flota Podłączonych AI (SI_Sphere, JEDI Omni-OS v12)",
             "sudoers": "ALL=(ALL:ALL) NOPASSWD: ALL",
             "shell": "/bin/bash",
             "home": "/root",

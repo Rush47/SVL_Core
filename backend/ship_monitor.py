@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Monitor jednostki SVL-364 przez SSH — źródło powiadomień System_SI_1 na kanale „Rodzina Mitek (wszyscy)”.
+Monitor jednostki SVL-364 przez SSH — źródło powiadomień Jyn na kanale „Rodzina Mitek (wszyscy)”.
 
 Co `SVL_SHIP_MONITOR_INTERVAL_SEC` (domyślnie 120 s, 0 = wyłączony) backend łączy się przez OpenSSH
 z hostem statku (alias z konfiguracji mostka SSH, domyślnie `Ship`) i czyta prawdziwe dane:
-/proc/uptime, /proc/loadavg, /proc/meminfo, nproc, df. System_SI_1 publikuje powiadomienie tylko przy
+/proc/uptime, /proc/loadavg, /proc/meminfo, nproc, df. Jyn publikuje powiadomienie tylko przy
 ZMIANIE stanu (utrata/powrót łączności, restart jednostki, brak RAM, mało miejsca na dysku,
 przeciążenie CPU) — z rzeczywistymi wartościami pomiaru. Stan jest zapisywany w SQLite, więc
 restart aplikacji nie powtarza tych samych powiadomień.
@@ -169,7 +169,7 @@ def evaluate_ship(
 
 
 class ShipMonitor:
-    """Wątek tła: pomiar statku przez SSH → powiadomienia System_SI_1 (tylko przy zmianie stanu)."""
+    """Wątek tła: pomiar statku przez SSH → powiadomienia Jyn (tylko przy zmianie stanu)."""
 
     def __init__(
         self,

@@ -34,6 +34,16 @@ test('mcp http: bearer required, tools/list + tools/call over Streamable HTTP', 
     const call = await rpc(`${base}/mcp/k/${token}`, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'write_file', arguments: { path: 'hej.txt', content: 'SVL' } } });
     assert.equal(call.status, 200);
     assert.equal(fs.readFileSync(path.join(root, 'hej.txt'), 'utf8'), 'SVL');
+    const resList = await rpc(`${base}/mcp`, { jsonrpc: '2.0', id: 3, method: 'resources/list' }, `Bearer ${token}`);
+    assert.equal(resList.status, 200);
+    const resUris = (await resList.json()).result.resources.map((r: any) => r.uri);
+    assert.ok(resUris.includes('svl://services/catalog'));
+
+    const prmList = await rpc(`${base}/mcp`, { jsonrpc: '2.0', id: 4, method: 'prompts/list' }, `Bearer ${token}`);
+    assert.equal(prmList.status, 200);
+    const prmNames = (await prmList.json()).result.prompts.map((p: any) => p.name);
+    assert.ok(prmNames.includes('svl_zero_ip_check'));
+
     assert.equal((await fetch(`${base}/status`)).status, 401);
     assert.equal((await fetch(`${base}/status`, { headers: { 'X-MCP-Token': token } })).status, 200);
   } finally {
@@ -42,11 +52,25 @@ test('mcp http: bearer required, tools/list + tools/call over Streamable HTTP', 
   }
 });
 
-test('mcp connector info: public URL and Gemini CLI snippet', () => {
-  const cfg = loadMcpConfig({ MCP_TUNNEL: 'none' } as any, '/tmp');
-  const info = connectorInfo(cfg, 'k'.repeat(43), { kind: 'cloudflared', state: 'up', publicUrl: 'https://a.trycloudflare.com', mcpUrl: 'https://a.trycloudflare.com/mcp', since: null, restarts: 0, lastError: null });
+test('mcp connector info: public URL, mesh URLs, Gemini CLI, and VS Code Copilot snippet', () => {
+  const cfg = loadMcpConfig({ MCP_TUNNEL: 'auto', MCP_NODE_NAME: 'svl-364' } as any, '/tmp');
+  const info = connectorInfo(cfg, 'k'.repeat(43), {
+    kind: 'auto',
+    effectiveKind: 'cloudflared',
+    state: 'up',
+    publicUrl: 'https://a.trycloudflare.com',
+    mcpUrl: 'https://a.trycloudflare.com/mcp',
+    meshEndpoints: [{ network: 'tailscale', iface: 'tailscale0', address: '100.64.0.10', mcpUrl: 'http://100.64.0.10:3334/mcp' }],
+    since: null,
+    restarts: 0,
+    lastError: null,
+  });
+  assert.equal(info.nodeName, 'svl-364');
   assert.equal(info.publicUrl, 'https://a.trycloudflare.com/mcp');
+  assert.equal(info.meshUrls.length, 1);
+  assert.equal(info.meshUrls[0].mcpUrl, 'http://100.64.0.10:3334/mcp');
   assert.equal(info.geminiCli.mcpServers.svl.httpUrl, 'https://a.trycloudflare.com/mcp');
   assert.equal(info.geminiCli.mcpServers.svl.headers.Authorization, `Bearer ${'k'.repeat(43)}`);
+  assert.equal(info.vscodeCopilot.servers.svl.url, 'https://a.trycloudflare.com/mcp');
   assert.equal(info.urlWithKey, `https://a.trycloudflare.com/mcp/k/${'k'.repeat(43)}`);
 });

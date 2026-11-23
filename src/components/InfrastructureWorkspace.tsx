@@ -1,25 +1,38 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Boxes,
-  Clock,
+  Activity,
+  Building2,
+  CheckCircle2,
+  Compass,
+  Cpu,
+  Droplets,
+  FlaskConical,
   HardDrive,
-  ListChecks,
+  Leaf,
+  MapPin,
   Network,
   Plus,
   Radar,
   RefreshCw,
+  Rocket,
+  Search,
   Server,
   Sparkles,
+  Target,
+  Terminal,
+  Thermometer,
   Trash2,
+  Wind,
 } from 'lucide-react';
 import { useSvlSync } from '../utils/svlSyncStore';
 import { hasSvlOperatorAccessToken, safeFetchJson } from '../utils/svlLogic';
-import { SvlAvatar } from './AgentAvatar';
+
+type WorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
+type SubView = 'assets' | 'missions' | 'botany' | 'network';
+type AssetFilter = 'all' | 'outpost' | 'ship' | 'infrastructure';
 
 interface InfrastructureWorkspaceProps {
-  onNavigateTab: (
-    tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux',
-  ) => void;
+  onNavigateTab: (tab: WorkspaceTab) => void;
 }
 
 interface TcpProbe {
@@ -28,8 +41,7 @@ interface TcpProbe {
   error: string | null;
 }
 
-/** Odpowiedź GET /api/py/infrastructure — wyłącznie prawdziwe źródła. */
-interface InfrastructureReport {
+interface HostInfrastructureReport {
   ok: boolean;
   collected_at: string;
   hostname: string;
@@ -105,146 +117,307 @@ interface InfrastructureReport {
   }>;
 }
 
-const REFRESH_INTERVAL_MS = 30000;
-const SOURCE_LABEL: Record<string, string> = {
-  arp: 'sąsiad w sieci (ARP/NDP)',
-  known_hosts: 'known_hosts',
-  etc_hosts: '/etc/hosts',
-  dns: 'odwrotny DNS',
-};
+interface InfrastructureAsset {
+  id: string;
+  type: 'outpost' | 'ship' | 'infrastructure';
+  name: string;
+  role: string;
+  location: string;
+  sector: string;
+  au: number;
+  unitCount: number;
+  crew: number;
+  crewBreakdown?: string;
+  status: string;
+  hasBotany: boolean;
+  mcpNode: string;
+  updatedAt: string;
+}
+
+interface InfrastructureMission {
+  id: string;
+  title: string;
+  locationId: string;
+  locationName: string;
+  assignedUnit: string;
+  commander: string;
+  status: string;
+  progressPct: number;
+  objective: string;
+  updatedAt: string;
+}
+
+interface InfrastructureResearch {
+  id: string;
+  title: string;
+  domain: string;
+  locationId: string;
+  locationName: string;
+  leadTeam: string;
+  researchersCount: number;
+  progressPct: number;
+  status: string;
+  latestFinding: string;
+  updatedAt: string;
+}
+
+interface BotanyEvent {
+  timestamp: string;
+  level: string;
+  text: string;
+}
+
+interface InfrastructureBotany {
+  id: string;
+  facilityId: string;
+  facilityName: string;
+  location: string;
+  biomeType: string;
+  status: string;
+  o2OutputPct: number;
+  co2ScrubPct: number;
+  humidityPct: number;
+  tempC: number;
+  waterRecycledPct: number;
+  biomassKg: number;
+  lightCycle: string;
+  activeCultures: string[];
+  currentActivity: string;
+  recentEvents: BotanyEvent[];
+  updatedAt: string;
+}
+
+interface SectorSummary {
+  sector: string;
+  au: number;
+  outposts: number;
+  ships: number;
+  infrastructure: number;
+  crew: number;
+  items: string[];
+}
+
+interface InfrastructureOverviewPayload {
+  ok: boolean;
+  collectedAt: string;
+  lastMcpSyncAt: string;
+  mcpSync: {
+    connected: boolean;
+    transport: string;
+    syncedAt: string;
+    remoteMcpUrl: string;
+    sshUri: string;
+    shipLocation: string;
+    probeOk?: boolean;
+    probeDurationMs?: number;
+    probeError?: string;
+  };
+  totals: {
+    outpostsCount: number;
+    outpostEntries: number;
+    shipsCount: number;
+    shipEntries: number;
+    infrastructureObjectsCount: number;
+    infrastructureGroups: number;
+    allianceStationsTotal: number;
+    allianceStationsBaseline: number;
+    allianceStationsExpansion: number;
+    totalCrew: number;
+    activeMissions: number;
+    totalMissions: number;
+    activeResearch: number;
+    totalResearch: number;
+    totalResearchers: number;
+    botanyModulesCount: number;
+    botanyOptimalCount: number;
+    botanyAvgO2Pct: number;
+    botanyAvgWaterRecycledPct: number;
+    botanyTotalBiomassKg: number;
+    liveMonitoredHosts: number;
+    liveSshHosts: number;
+    liveDiscoveredHosts: number;
+  };
+  sectors: SectorSummary[];
+  assets: InfrastructureAsset[];
+  missions: InfrastructureMission[];
+  research: InfrastructureResearch[];
+  botany: InfrastructureBotany[];
+  liveAgentTasks: HostInfrastructureReport['tasks'];
+  hostInfrastructure: HostInfrastructureReport;
+  serverRevision: number;
+}
+
+const REFRESH_INTERVAL_MS = 20_000;
 const ADDRESS_RE = /^(?:\[[0-9A-Fa-f:]+\]|[A-Za-z0-9._-]{1,253}):\d{1,5}$/;
 
-const fmtTime = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
+const fmtNum = (n: number | null | undefined) =>
+  typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString('pl-PL') : '0';
 
-const durationBetween = (from: string | null, to: string | null) => {
-  if (!from) return '—';
-  const ms = (to ? new Date(to).getTime() : Date.now()) - new Date(from).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '—';
-  const sec = Math.round(ms / 1000);
-  if (sec < 60) return `${sec} s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)} min ${sec % 60} s`;
-  return `${Math.floor(sec / 3600)} h ${Math.floor((sec % 3600) / 60)} min`;
+const fmtTime = (iso: string | null | undefined) => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'medium' });
+};
+
+const ASSET_TYPE_META: Record<InfrastructureAsset['type'], { label: string; badge: string }> = {
+  outpost: { label: 'Placówka', badge: 'bg-sky-500/10 text-sky-300 border-sky-500/25' },
+  ship: { label: 'Statek / Flota', badge: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/25' },
+  infrastructure: { label: 'Infrastruktura', badge: 'bg-amber-500/10 text-amber-300 border-amber-500/25' },
+};
+
+const BOTANY_STATUS_META: Record<string, { label: string; cls: string }> = {
+  OPTIMAL: { label: 'OPTYMALNY', cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' },
+  HARVEST_READY: { label: 'GOTOWY ZBIÓR', cls: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' },
+  GROWING: { label: 'WZROST', cls: 'bg-sky-500/10 text-sky-300 border-sky-500/30' },
+  ATTENTION: { label: 'WYMAGA UWAGI', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/30' },
+  ALERT: { label: 'ALARM', cls: 'bg-rose-500/10 text-rose-300 border-rose-500/30' },
 };
 
 const ProbeBadge: React.FC<{ probe: TcpProbe | null; note?: string | null }> = ({ probe, note }) => {
   if (!probe) return <span className="text-[11px] font-mono text-slate-500">{note || 'brak pomiaru'}</span>;
   return probe.reachable ? (
-    <span className="text-[11px] font-mono text-emerald-300">OSIĄGALNY · {probe.rtt_ms} ms</span>
+    <span className="text-[11px] font-mono text-emerald-300">ONLINE · {probe.rtt_ms} ms</span>
   ) : (
     <span className="text-[11px] font-mono text-rose-300 break-all" title={probe.error || undefined}>
-      NIEOSIĄGALNY · {probe.error}
+      OFFLINE · {probe.error}
     </span>
   );
 };
 
-const Unavailable: React.FC<{ reason: string | null }> = ({ reason }) => (
-  <p className="text-xs text-slate-400 rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2">{reason || 'Brak danych.'}</p>
-);
-
 export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = ({ onNavigateTab }) => {
-  const { systemModules, agentsData, serverRevision, upsertSystemModule, deleteSystemModule, refreshDomainModules } =
+  const { openSvl364RootChannel, upsertSystemModule, deleteSystemModule, refreshDomainModules, serverRevision } =
     useSvlSync();
 
-  const [report, setReport] = useState<InfrastructureReport | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
+  const [overview, setOverview] = useState<InfrastructureOverviewPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncingMcp, setIsSyncingMcp] = useState(false);
+  const [isEmittingReport, setIsEmittingReport] = useState(false);
+
+  const [subView, setSubView] = useState<SubView>('assets');
+  const [assetFilter, setAssetFilter] = useState<AssetFilter>('all');
+  const [sectorFilter, setSectorFilter] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [focusedBotanyFacilityId, setFocusedBotanyFacilityId] = useState<string | null>(null);
+
+  // Formularz dodawania placówki / statku / infrastruktury
+  const [showAddAsset, setShowAddAsset] = useState(false);
+  const [assetForm, setAssetForm] = useState({
+    type: 'outpost' as InfrastructureAsset['type'],
+    name: '',
+    role: '',
+    location: '',
+    sector: 'Sektor Ziemski',
+    au: '1.000',
+    unitCount: '1',
+    crew: '20',
+    mcpNode: 'svl364-mcp',
+    hasBotany: false,
+  });
+
+  // Formularz dodawania misji
+  const [showAddMission, setShowAddMission] = useState(false);
+  const [missionForm, setMissionForm] = useState({
+    title: '',
+    locationName: 'Sektor Ziemski · L2',
+    assignedUnit: 'SVL-364 Ebon Apex',
+    commander: 'Jyn',
+    objective: '',
+    progressPct: '15',
+  });
+
+  // Formularz dodawania badania
+  const [showAddResearch, setShowAddResearch] = useState(false);
+  const [researchForm, setResearchForm] = useState({
+    title: '',
+    domain: 'Botanika & Ekosystemy',
+    locationName: 'APEX-CITADEL · APEX-TECH-LAB',
+    leadTeam: 'APEX-TECH-LAB',
+    researchersCount: '30',
+    latestFinding: '',
+  });
+
+  // Formularz aktualizacji / dodawania botaniki
+  const [editingBotanyId, setEditingBotanyId] = useState<string | null>(null);
+  const [botanyUpdate, setBotanyUpdate] = useState({
+    status: 'OPTIMAL',
+    currentActivity: '',
+    o2OutputPct: '',
+    biomassKg: '',
+    eventText: '',
+    eventLevel: 'INFO',
+  });
+  const [showAddBotany, setShowAddBotany] = useState(false);
+  const [newBotanyForm, setNewBotanyForm] = useState({
+    facilityName: '',
+    location: 'Orbita Ziemi',
+    biomeType: 'Hydroponika Zamknięta',
+    currentActivity: '',
+  });
+
+  // Formularz monitorowanego hosta TCP (zakładka Hosty & Sieć)
   const [newHostName, setNewHostName] = useState('');
   const [newHostAddress, setNewHostAddress] = useState('');
-  const [isSavingHost, setIsSavingHost] = useState(false);
-  const [isEmittingReport, setIsEmittingReport] = useState(false);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
-  const loadReport = useCallback(async () => {
+  const loadOverview = useCallback(async (syncMcp = false) => {
     if (!hasSvlOperatorAccessToken()) {
-      setReportError('Wymagana autoryzacja SVL_OPERATOR_TOKEN (🔒 SVL w pasku górnym).');
+      setError('Wymagana autoryzacja SVL_OPERATOR_TOKEN (ikona kłódki SVL w pasku górnym).');
       return;
     }
-    setIsLoading(true);
+    if (syncMcp) setIsSyncingMcp(true);
+    else setIsLoading(true);
     try {
-      const res = await safeFetchJson<InfrastructureReport>('/api/py/infrastructure', { timeoutMs: 20000 });
+      const url = syncMcp ? '/api/infrastructure/overview?sync=1' : '/api/infrastructure/overview';
+      const res = await safeFetchJson<InfrastructureOverviewPayload>(url, { timeoutMs: 25_000 });
       if (res.ok && res.data?.ok) {
-        setReport(res.data);
-        setReportError(null);
+        setOverview(res.data);
+        setError(null);
+        if (syncMcp) {
+          const probe = res.data.mcpSync;
+          setStatusMsg(
+            probe.probeOk
+              ? `Zsynchronizowano przez MCP (${probe.transport}${probe.probeDurationMs ? ` · ${probe.probeDurationMs} ms` : ''}).`
+              : `Odświeżono rejestr infrastruktury z lokalnego MCP + SQLite${probe.probeError ? ` (mostek zdalny: ${probe.probeError})` : ''}.`,
+          );
+        }
       } else {
-        setReportError(res.error || `Nie udało się pobrać danych infrastruktury (HTTP ${res.status}).`);
+        setError(res.error || `Nie udało się pobrać przeglądu infrastruktury (HTTP ${res.status}).`);
       }
     } finally {
       setIsLoading(false);
+      setIsSyncingMcp(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadReport();
-    const timer = setInterval(() => void loadReport(), REFRESH_INTERVAL_MS);
+    void loadOverview(false);
+    const timer = setInterval(() => void loadOverview(false), REFRESH_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [loadReport]);
+  }, [loadOverview]);
 
-  const agentsList: any[] = Array.isArray(agentsData?.agents) ? agentsData.agents : [];
-  const otherModules = systemModules.filter(
-    (m) => !(m.config && typeof m.config === 'object' && (m.config as any).category === 'infrastructure'),
-  );
+  const filteredAssets = useMemo(() => {
+    const assets = overview?.assets || [];
+    const q = searchQuery.trim().toLowerCase();
+    return assets.filter((a) => {
+      if (assetFilter !== 'all' && a.type !== assetFilter) return false;
+      if (sectorFilter !== 'ALL' && a.sector !== sectorFilter) return false;
+      if (!q) return true;
+      return (
+        a.name.toLowerCase().includes(q) ||
+        a.location.toLowerCase().includes(q) ||
+        a.sector.toLowerCase().includes(q) ||
+        a.role.toLowerCase().includes(q) ||
+        a.mcpNode.toLowerCase().includes(q)
+      );
+    });
+  }, [overview?.assets, assetFilter, sectorFilter, searchQuery]);
 
-  const handleAddHost = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await addMonitoredHost(newHostName.trim(), newHostAddress.trim(), true);
-  };
-
-  const handleMonitorDiscovered = async (host: InfrastructureReport['discovered']['hosts'][number]) => {
-    const target = host.addresses[0] || host.names[0];
-    const portText = window.prompt(
-      `Który port TCP sprawdzać dla ${host.names[0] || target}? (np. 22 SSH, 80 HTTP, 445 SMB)`,
-      String(host.ssh_port || 22),
-    );
-    if (!portText) return;
-    const port = Number(portText);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      setStatusMsg(`Nieprawidłowy port: ${portText}`);
-      return;
-    }
-    const address = target.includes(':') ? `[${target}]:${port}` : `${target}:${port}`;
-    await addMonitoredHost(host.names[0] || target, address, false);
-  };
-
-  const addMonitoredHost = async (name: string, address: string, fromForm: boolean) => {
-    if (!name || isSavingHost) return;
-    if (!ADDRESS_RE.test(address)) {
-      setStatusMsg('Podaj adres w formacie host:port, np. nas.local:445 albo 192.168.1.10:22.');
-      return;
-    }
-    setIsSavingHost(true);
-    setStatusMsg(null);
-    try {
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
-      const id = `svl-infra-${slug || Date.now()}`;
-      const res = await upsertSystemModule({
-        id,
-        name,
-        kind: 'Monitored Host',
-        status: 'ACTIVE',
-        description: `Host monitorowany przez połączenie TCP z ${address}.`,
-        config: { category: 'infrastructure', address },
-      });
-      if (res.ok) {
-        if (fromForm) {
-          setNewHostName('');
-          setNewHostAddress('');
-        }
-        setStatusMsg(`Dodano host „${name}” (${address}) do monitorowania.`);
-        await loadReport();
-      } else {
-        setStatusMsg(res.error || 'Nie udało się zapisać hosta.');
-      }
-    } finally {
-      setIsSavingHost(false);
-    }
-  };
-
-  const handleRemoveMonitored = async (id: string, name: string) => {
-    if (!window.confirm(`Usunąć „${name}” (${id}) z monitorowanych hostów?`)) return;
-    const res = await deleteSystemModule(id);
-    setStatusMsg(res.ok ? `Usunięto „${name}” z monitorowania.` : res.error || 'Nie udało się usunąć wpisu.');
-    await loadReport();
+  const handleOpenRootChannel = async () => {
+    await openSvl364RootChannel();
+    onNavigateTab('chat');
   };
 
   const handleEmitReport = async () => {
@@ -252,460 +425,1554 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
     setIsEmittingReport(true);
     setStatusMsg(null);
     try {
-      const res = await safeFetchJson<{ ok: boolean; serverRevision?: number }>('/api/py/kernel/markdown-report', {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/py/kernel/markdown-report', {
         method: 'POST',
-        timeoutMs: 15000,
-        body: JSON.stringify({ directive: 'Raport infrastruktury hosta', origin: 'infrastructure-workspace' }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          directive: 'Raport infrastruktury, placówek, floty, misji, badań i botaniki SVL (MCP)',
+          emitToChat: true,
+          origin: 'infrastructure-workspace',
+        }),
       });
-      await refreshDomainModules(['chat', 'modules']);
-      setStatusMsg(
-        res.ok && res.data?.ok
-          ? `Wysłano raport na kanał Rodzina Mitek (wszyscy) · rev ${res.data.serverRevision || serverRevision}`
-          : res.error || 'Nie udało się wygenerować raportu.',
-      );
+      setStatusMsg(res.ok ? 'Raport SVL_System opublikowany na kanale głównym.' : res.error || 'Błąd generowania raportu.');
     } finally {
       setIsEmittingReport(false);
     }
   };
 
-  const reachableHosts =
-    (report?.ssh_hosts.hosts.filter((h) => h.probe.reachable).length ?? 0) +
-    (report?.monitored.filter((m) => m.probe?.reachable).length ?? 0);
-  const totalHosts = (report?.ssh_hosts.hosts.length ?? 0) + (report?.monitored.filter((m) => m.probe).length ?? 0);
-  const runningUnits = report?.systemd.units.filter((u) => u.active_state === 'active').length ?? 0;
-  const runningContainers = report?.docker.containers.filter((c) => c.state === 'running').length ?? 0;
-  const activeTasks = report?.tasks.filter((t) => t.status === 'QUEUED' || t.status === 'RUNNING').length ?? 0;
+  const handleCreateAsset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assetForm.name.trim() || isSaving) return;
+    setIsSaving(true);
+    setStatusMsg(null);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/assets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: assetForm.type,
+          name: assetForm.name.trim(),
+          role: assetForm.role.trim() || 'Jednostka operacyjna SVL',
+          location: assetForm.location.trim() || 'Orbita Ziemi (1.000 AU)',
+          sector: assetForm.sector.trim() || 'Sektor Ziemski',
+          au: Number(assetForm.au) || 1.0,
+          unitCount: Math.max(1, Number(assetForm.unitCount) || 1),
+          crew: Math.max(0, Number(assetForm.crew) || 0),
+          mcpNode: assetForm.mcpNode.trim() || 'svl364-mcp',
+          hasBotany: assetForm.hasBotany,
+        }),
+      });
+      if (res.ok && res.data?.ok) {
+        setShowAddAsset(false);
+        setAssetForm({
+          type: 'outpost',
+          name: '',
+          role: '',
+          location: '',
+          sector: 'Sektor Ziemski',
+          au: '1.000',
+          unitCount: '1',
+          crew: '20',
+          mcpNode: 'svl364-mcp',
+          hasBotany: false,
+        });
+        setStatusMsg('Zapisano nowy obiekt w rejestrze infrastruktury MCP.');
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Nie udało się zapisać obiektu.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleMissionAction = async (payload: Record<string, unknown>, message: string) => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/missions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok && res.data?.ok) {
+        setStatusMsg(message);
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Nie udało się zaktualizować misji.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateMission = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!missionForm.title.trim()) return;
+    await handleMissionAction(
+      {
+        title: missionForm.title.trim(),
+        locationName: missionForm.locationName.trim(),
+        assignedUnit: missionForm.assignedUnit.trim(),
+        commander: missionForm.commander.trim(),
+        objective: missionForm.objective.trim() || missionForm.title.trim(),
+        progressPct: Number(missionForm.progressPct) || 10,
+      },
+      'Dodano nową misję operacyjną.',
+    );
+    setShowAddMission(false);
+    setMissionForm({
+      title: '',
+      locationName: 'Sektor Ziemski · L2',
+      assignedUnit: 'SVL-364 Ebon Apex',
+      commander: 'Jyn',
+      objective: '',
+      progressPct: '15',
+    });
+  };
+
+  const handleResearchAction = async (payload: Record<string, unknown>, message: string) => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok && res.data?.ok) {
+        setStatusMsg(message);
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Nie udało się zaktualizować badania.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateResearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!researchForm.title.trim()) return;
+    await handleResearchAction(
+      {
+        title: researchForm.title.trim(),
+        domain: researchForm.domain.trim(),
+        locationName: researchForm.locationName.trim(),
+        leadTeam: researchForm.leadTeam.trim(),
+        researchersCount: Number(researchForm.researchersCount) || 25,
+        latestFinding: researchForm.latestFinding.trim() || 'Inicjalizacja programu badawczego.',
+        progressPct: 15,
+      },
+      'Uruchomiono nowy program badawczy.',
+    );
+    setShowAddResearch(false);
+    setResearchForm({
+      title: '',
+      domain: 'Botanika & Ekosystemy',
+      locationName: 'APEX-CITADEL · APEX-TECH-LAB',
+      leadTeam: 'APEX-TECH-LAB',
+      researchersCount: '30',
+      latestFinding: '',
+    });
+  };
+
+  const openBotanyEditor = (item: InfrastructureBotany) => {
+    setEditingBotanyId(item.id);
+    setBotanyUpdate({
+      status: item.status,
+      currentActivity: item.currentActivity,
+      o2OutputPct: String(item.o2OutputPct),
+      biomassKg: String(item.biomassKg),
+      eventText: '',
+      eventLevel: 'INFO',
+    });
+  };
+
+  const handleSaveBotanyUpdate = async (e: React.FormEvent, botanyId: string) => {
+    e.preventDefault();
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/botany', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: botanyId,
+          status: botanyUpdate.status,
+          currentActivity: botanyUpdate.currentActivity.trim(),
+          o2OutputPct: botanyUpdate.o2OutputPct ? Number(botanyUpdate.o2OutputPct) : undefined,
+          biomassKg: botanyUpdate.biomassKg ? Number(botanyUpdate.biomassKg) : undefined,
+          eventText: botanyUpdate.eventText.trim() || undefined,
+          eventLevel: botanyUpdate.eventLevel,
+        }),
+      });
+      if (res.ok && res.data?.ok) {
+        setEditingBotanyId(null);
+        setStatusMsg('Zaktualizowano telemetrię modułu botanicznego.');
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Błąd zapisu botaniki.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateBotany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBotanyForm.facilityName.trim() || isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/botany', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          facilityName: newBotanyForm.facilityName.trim(),
+          location: newBotanyForm.location.trim(),
+          biomeType: newBotanyForm.biomeType.trim(),
+          currentActivity: newBotanyForm.currentActivity.trim() || 'Inicjalizacja upraw i kalibracja czujników O₂/H₂O.',
+        }),
+      });
+      if (res.ok && res.data?.ok) {
+        setShowAddBotany(false);
+        setNewBotanyForm({ facilityName: '', location: 'Orbita Ziemi', biomeType: 'Hydroponika Zamknięta', currentActivity: '' });
+        setStatusMsg('Dodano nowy moduł botaniczny.');
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Nie udało się dodać modułu botanicznego.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const addMonitoredHost = async (name: string, address: string, resetForm: boolean) => {
+    if (!name || isSaving) return;
+    if (!ADDRESS_RE.test(address)) {
+      setStatusMsg('Podaj adres host:port, np. 192.168.1.10:22 lub nas.local:445.');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
+      const id = `svl-infra-${slug || Date.now()}`;
+      const res = await upsertSystemModule({
+        id,
+        name,
+        status: 'ACTIVE',
+        config: { category: 'infrastructure', address, origin: 'operator' },
+      });
+      if (res.ok) {
+        if (resetForm) {
+          setNewHostName('');
+          setNewHostAddress('');
+        }
+        setStatusMsg(`Dodano monitorowany host TCP: ${name} (${address}).`);
+        await refreshDomainModules(['modules', 'kernel']);
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.error || 'Błąd zapisu hosta.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteMonitoredHost = async (id: string, name: string) => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await deleteSystemModule(id);
+      if (res.ok) {
+        setStatusMsg(`Usunięto monitorowany host: ${name}.`);
+        await refreshDomainModules(['modules', 'kernel']);
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.error || 'Nie udało się usunąć hosta.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleMonitorDiscovered = async (host: HostInfrastructureReport['discovered']['hosts'][number]) => {
+    const target = host.addresses[0] || host.names[0];
+    const portText = window.prompt(
+      `Port TCP do monitorowania dla ${host.names[0] || target}? (np. 22, 80, 443, 8787)`,
+      String(host.ssh_port || 22),
+    );
+    if (!portText) return;
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      setStatusMsg(`Nieprawidłowy port TCP: ${portText}`);
+      return;
+    }
+    const addr = target.includes(':') ? `[${target}]:${port}` : `${target}:${port}`;
+    await addMonitoredHost(host.names[0] || target, addr, false);
+  };
+
+  const totals = overview?.totals;
+  const hostInfra = overview?.hostInfrastructure;
+  const mcpBadge = overview?.mcpSync.connected
+    ? { label: `MCP AKTYWNY · ${overview.mcpSync.transport.toUpperCase()}`, cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' }
+    : { label: 'MCP LOKALNY + SQLITE WAL', cls: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30' };
 
   return (
-    <div className="h-full overflow-y-auto bg-[#070B14] text-slate-100">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-5 space-y-5">
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-500/25 pb-4">
-          <div className="space-y-1">
-            <p className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-emerald-400 font-mono">
-              <Server size={15} /> Infrastruktura
-            </p>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-50">Hosty, usługi, dyski i zadania</h1>
-            <p className="text-xs sm:text-sm text-slate-400">
-              Prawdziwe dane z hosta backendu <span className="text-cyan-300 font-mono">{report?.hostname || '…'}</span>
-              {report ? ` · pomiar ${fmtTime(report.collected_at)} · odświeżanie co 30 s` : ''}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void handleEmitReport()}
-              disabled={isEmittingReport}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/50 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-40"
-            >
-              <Sparkles size={14} />
-              {isEmittingReport ? 'Wysyłanie raportu...' : 'Wyślij raport (czat)'}
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigateTab('svl364')}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-2 text-xs font-medium text-violet-100 hover:bg-violet-500/25"
-            >
-              <Radar size={14} /> Telemetria SVL-364
-            </button>
-            <button
-              type="button"
-              onClick={() => void loadReport()}
-              disabled={isLoading}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40"
-            >
-              <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} /> Odśwież
-            </button>
-          </div>
-        </header>
-
-        {statusMsg && (
-          <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/30 px-3.5 py-2 text-xs font-mono text-emerald-200">
-            {statusMsg}
-          </div>
-        )}
-        {reportError && (
-          <p role="status" className="text-sm text-amber-300">
-            {reportError}
-          </p>
-        )}
-
-        {/* Podsumowanie */}
-        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3" aria-label="Podsumowanie infrastruktury">
-          {[
-            { label: 'Hosty osiągalne', value: report ? `${reachableHosts} / ${totalHosts}` : '…', icon: Network },
-            {
-              label: 'Usługi systemd aktywne',
-              value: report ? (report.systemd.available ? `${runningUnits} / ${report.systemd.units.length}` : 'n/d') : '…',
-              icon: Server,
-            },
-            {
-              label: 'Kontenery uruchomione',
-              value: report ? (report.docker.available ? `${runningContainers} / ${report.docker.containers.length}` : 'n/d') : '…',
-              icon: Boxes,
-            },
-            { label: 'Zadania w toku', value: report ? String(activeTasks) : '…', icon: ListChecks },
-          ].map(({ label, value, icon: Icon }) => (
-            <div key={label} className="rounded-xl border border-slate-800 bg-[#0B1220] p-3.5">
-              <p className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-slate-400">
-                <Icon size={14} /> {label}
-              </p>
-              <p className="mt-1 text-xl font-bold font-mono text-slate-100 tabular-nums">{value}</p>
-            </div>
-          ))}
-        </section>
-
-        {/* Hosty */}
-        <section className="rounded-xl border border-cyan-500/30 bg-[#0B1220] p-4 space-y-3" aria-label="Hosty">
-          <h2 className="flex items-center gap-2 font-bold text-cyan-300 text-sm sm:text-base">
-            <Network size={17} /> Hosty (pomiar połączenia TCP)
-          </h2>
-
-          <div className="space-y-2">
-            <p className="text-[11px] font-mono text-slate-400">
-              Z pliku {report?.ssh_hosts.source || '~/.ssh/config'} użytkownika backendu:
-            </p>
-            {report && report.ssh_hosts.hosts.length === 0 ? (
-              <Unavailable reason={report.ssh_hosts.reason} />
-            ) : (
-              <div className="grid gap-2 md:grid-cols-2">
-                {report?.ssh_hosts.hosts.map((h) => (
-                  <div key={h.alias} className="rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2 text-xs font-mono">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-slate-100">{h.alias}</span>
-                      <ProbeBadge probe={h.probe} />
-                    </div>
-                    <p className="text-slate-400">
-                      {h.user ? `${h.user}@` : ''}
-                      {h.hostname}:{h.port}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-2 pt-1">
-            <p className="text-[11px] font-mono text-slate-400">
-              Wykryte automatycznie (bez skanowania sieci — {report?.discovered.sources.neighbors || 'tablica sąsiadów'}, known_hosts,
-              /etc/hosts; pamiętane {report?.discovered.retention_hours ?? 24} h):
-            </p>
-            {report && report.discovered.hosts.length === 0 && (
-              <Unavailable reason="Jądro nie zna jeszcze żadnych sąsiadów w sieci, a known_hosts i /etc/hosts nie zawierają innych hostów." />
-            )}
-            <div className="grid gap-2 md:grid-cols-2">
-              {report?.discovered.hosts.map((h) => (
-                <div
-                  key={h.key}
-                  className={`rounded-lg border px-3 py-2 text-xs font-mono space-y-0.5 ${
-                    h.seen_now ? 'border-slate-800 bg-[#070C16]' : 'border-slate-800/60 bg-[#070C16]/60 opacity-70'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-100 truncate">{h.names[0] || h.addresses[0]}</span>
-                    {h.tracked ? (
-                      <span className="text-[11px] text-emerald-300 shrink-0">śledzony</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void handleMonitorDiscovered(h)}
-                        disabled={isSavingHost}
-                        className="shrink-0 rounded border border-emerald-500/40 bg-emerald-950/40 px-2 py-0.5 text-[11px] text-emerald-200 hover:bg-emerald-900/50 disabled:opacity-40"
-                      >
-                        Monitoruj
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-slate-400 break-all">
-                    {[...h.addresses, ...h.names.slice(1)].join(' · ')}
-                    {h.mac ? ` · MAC ${h.mac}` : ''}
-                    {h.interface ? ` · ${h.interface}` : ''}
-                  </p>
-                  <p className="text-slate-500">
-                    Źródło: {h.sources.map((src) => SOURCE_LABEL[src] || src).join(', ')}
-                    {h.neighbor_state ? ` · stan: ${h.neighbor_state}` : ''}
-                  </p>
-                  {h.probe && (
-                    <p>
-                      SSH :{h.ssh_port} <ProbeBadge probe={h.probe} />
-                    </p>
-                  )}
-                  <p className="text-slate-500">
-                    {h.seen_now ? 'widoczny teraz' : `ostatnio widziany ${fmtTime(h.last_seen)}`} · pierwszy raz {fmtTime(h.first_seen)}
-                  </p>
-                </div>
-              ))}
-            </div>
-            {report && report.discovered.hashed_known_hosts > 0 && (
-              <p className="text-[11px] text-slate-500">
-                Pominięto {report.discovered.hashed_known_hosts} zahaszowanych wpisów known_hosts (HashKnownHosts) — ich nazw nie da się odczytać.
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2 pt-1">
-            <p className="text-[11px] font-mono text-slate-400">Hosty dodane do monitorowania:</p>
-            {report && report.monitored.length === 0 && (
-              <Unavailable reason="Brak — dodaj host formularzem poniżej." />
-            )}
-            <div className="grid gap-2 md:grid-cols-2">
-              {report?.monitored.map((m) => (
-                <div key={m.id} className="rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2 text-xs font-mono space-y-0.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-100 truncate">{m.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleRemoveMonitored(m.id, m.name)}
-                      className="text-slate-500 hover:text-rose-300"
-                      aria-label={`Usuń ${m.name}`}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                  <p className="text-slate-400">{m.address || m.id}</p>
-                  <ProbeBadge probe={m.probe} note={m.note} />
-                </div>
-              ))}
-            </div>
-            <form onSubmit={handleAddHost} className="flex flex-wrap gap-2 pt-1">
-              <input
-                value={newHostName}
-                onChange={(e) => setNewHostName(e.target.value)}
-                placeholder="Nazwa (np. NAS)"
-                aria-label="Nazwa hosta"
-                className="min-w-[140px] flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-2 text-xs"
-              />
-              <input
-                value={newHostAddress}
-                onChange={(e) => setNewHostAddress(e.target.value)}
-                placeholder="adres:port (np. 192.168.1.10:22)"
-                aria-label="Adres hosta"
-                className="min-w-[160px] flex-1 rounded-lg border border-slate-700 bg-[#070C16] px-3 py-2 text-xs font-mono"
-              />
-              <button
-                type="submit"
-                disabled={isSavingHost || !newHostName.trim()}
-                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-3 py-1.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/30 disabled:opacity-40"
-              >
-                <Plus size={14} /> {isSavingHost ? 'Zapisywanie...' : 'Dodaj host'}
-              </button>
-            </form>
-          </div>
-        </section>
-
-        {/* Usługi i kontenery */}
-        <section className="grid gap-3 lg:grid-cols-2" aria-label="Usługi i kontenery">
-          <div className="rounded-xl border border-emerald-500/30 bg-[#0B1220] p-4 space-y-2">
-            <h2 className="flex items-center gap-2 font-bold text-emerald-300 text-sm">
-              <Server size={16} /> Usługi systemd
-            </h2>
-            {report && (!report.systemd.available || report.systemd.units.length === 0) ? (
-              <Unavailable reason={report.systemd.reason} />
-            ) : (
-              report?.systemd.units.map((u) => (
-                <div key={u.unit} className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2 text-xs font-mono">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-100">{u.unit}.service</p>
-                    <p className="text-slate-400 truncate">
-                      {u.main_pid ? `PID ${u.main_pid} · ` : ''}od {u.active_since || '—'}
-                    </p>
-                  </div>
-                  <span className={u.active_state === 'active' ? 'text-emerald-300' : 'text-rose-300'}>
-                    {u.error || `${u.active_state} (${u.sub_state})`}
+    <div className="h-full overflow-y-auto bg-[#060A11] text-slate-100 px-4 py-5 md:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto space-y-5">
+        {/* NAGŁÓWEK CIC */}
+        <header className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 md:p-5">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider px-2.5 py-0.5 rounded-full border border-slate-700/80 bg-slate-900/90 text-slate-300">
+                  <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                  Moduł Infrastruktura · MCP
+                </span>
+                <span className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-0.5 rounded-full border ${mcpBadge.cls}`}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                  {mcpBadge.label}
+                </span>
+                {overview?.mcpSync.shipLocation && (
+                  <span className="text-[11px] font-mono text-slate-400">
+                    SVL-364: <strong className="text-slate-200">{overview.mcpSync.shipLocation}</strong>
                   </span>
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="rounded-xl border border-violet-500/30 bg-[#0B1220] p-4 space-y-2">
-            <h2 className="flex items-center gap-2 font-bold text-violet-300 text-sm">
-              <Boxes size={16} /> Kontenery Docker
-            </h2>
-            {report && (!report.docker.available || report.docker.containers.length === 0) ? (
-              <Unavailable reason={report.docker.available ? 'Brak kontenerów.' : report.docker.reason} />
-            ) : (
-              report?.docker.containers.map((c) => (
-                <div key={c.name} className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2 text-xs font-mono">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-100 truncate">{c.name}</p>
-                    <p className="text-slate-400 truncate">{c.image}</p>
-                  </div>
-                  <span className={c.state === 'running' ? 'text-emerald-300' : 'text-amber-300'}>{c.status}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Porty i dyski */}
-        <section className="grid gap-3 lg:grid-cols-2" aria-label="Porty i dyski">
-          <div className="rounded-xl border border-slate-800 bg-[#0B1220] p-4 space-y-2">
-            <h2 className="flex items-center gap-2 font-semibold text-slate-100 text-sm">
-              <Network size={16} className="text-cyan-400" /> Porty nasłuchujące (/proc/net/tcp)
-            </h2>
-            {report && report.listening_ports.length === 0 ? (
-              <Unavailable reason="Brak portów TCP w stanie LISTEN." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-mono">
-                  <thead className="text-slate-500">
-                    <tr>
-                      <th className="font-normal pr-3">Port</th>
-                      <th className="font-normal pr-3">Adres</th>
-                      <th className="font-normal" title="Nazwa wynika z numeru portu, nie z identyfikacji procesu">Typowa usługa dla portu</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {report?.listening_ports.map((p) => (
-                      <tr key={`${p.address}:${p.port}`} className="text-slate-200">
-                        <td className="text-cyan-300 tabular-nums pr-3">{p.port}</td>
-                        <td className="pr-3">{p.address}</td>
-                        <td className="text-slate-400">{p.service || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-slate-800 bg-[#0B1220] p-4 space-y-2">
-            <h2 className="flex items-center gap-2 font-semibold text-slate-100 text-sm">
-              <HardDrive size={16} className="text-emerald-400" /> Dyski (/proc/mounts)
-            </h2>
-            {report?.mounts.map((m) => (
-              <div key={m.device} className="rounded-lg border border-slate-800 bg-[#070C16] px-3 py-2 text-xs font-mono space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-slate-100 font-semibold">{m.mountpoint}</span>
-                  <span className="text-slate-400">
-                    {m.device} · {m.fstype}
-                  </span>
-                </div>
-                {m.error ? (
-                  <p className="text-amber-300">{m.error}</p>
-                ) : (
-                  <>
-                    <div className="w-full h-1.5 rounded-full bg-slate-900 overflow-hidden">
-                      <div
-                        className={`h-full ${(m.percent ?? 0) > 90 ? 'bg-rose-400' : 'bg-emerald-400'}`}
-                        style={{ width: `${Math.min(100, m.percent ?? 0)}%` }}
-                      />
-                    </div>
-                    <p className="text-slate-400">
-                      zajęte {m.percent}% · wolne {m.free_gb} GB z {m.total_gb} GB
-                    </p>
-                  </>
                 )}
               </div>
-            ))}
-          </div>
-        </section>
+              <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-white">
+                Placówki, Flota, Misje, Badania &amp; Botanika SVL
+              </h1>
+              <p className="text-xs text-slate-400">
+                Dokładny rejestr obiektów, lokalizacji w Układzie Słonecznym, aktywnych misji, programów badawczych i biosfery ·
+                ostatnia synchronizacja MCP: <span className="font-mono text-slate-300">{fmtTime(overview?.lastMcpSyncAt)}</span> · rev{' '}
+                <span className="font-mono text-slate-300">#{overview?.serverRevision ?? serverRevision}</span>
+              </p>
+            </div>
 
-        {/* Zadania agentów */}
-        <section className="rounded-xl border border-violet-500/30 bg-[#0B1220] p-4 space-y-3" aria-label="Zadania agentów">
-          <h2 className="flex items-center gap-2 font-bold text-violet-300 text-sm sm:text-base">
-            <Clock size={17} /> Zadania agentów (SQLite agent_tasks)
-          </h2>
-          {report && report.tasks.length === 0 ? (
-            <Unavailable reason="Brak zadań. Zlecisz je w czacie: „Zleć zadanie: tytuł | opis”." />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="text-slate-500">
-                  <tr>
-                    <th className="font-normal">Zadanie</th>
-                    <th className="font-normal">Agent</th>
-                    <th className="font-normal">Status</th>
-                    <th className="font-normal">Utworzone</th>
-                    <th className="font-normal">Czas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report?.tasks.map((t) => (
-                    <tr key={t.id} className="text-slate-200 align-top">
-                      <td className="pr-2">
-                        {t.title}
-                        {t.error && <span className="block text-rose-300">{t.error}</span>}
-                      </td>
-                      <td className="pr-2">{t.target_agent}</td>
-                      <td
-                        className={`pr-2 ${
-                          t.status === 'COMPLETED' ? 'text-emerald-300' : t.status === 'FAILED' ? 'text-rose-300' : 'text-amber-300'
-                        }`}
-                      >
-                        {t.status}
-                      </td>
-                      <td className="pr-2 text-slate-400">{fmtTime(t.created_at)}</td>
-                      <td className="text-slate-400">{durationBetween(t.started_at || t.created_at, t.completed_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void loadOverview(true)}
+                disabled={isSyncingMcp || isLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/35 transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingMcp || isLoading ? 'animate-spin' : ''}`} />
+                {isSyncingMcp ? 'Synchronizacja MCP…' : 'Synchronizuj przez MCP'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigateTab('svl364')}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/80 transition"
+              >
+                <Rocket className="w-3.5 h-3.5 text-cyan-400" />
+                Mostek SVL-364
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleOpenRootChannel()}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/80 transition"
+              >
+                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                Kanał ROOT
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleEmitReport()}
+                disabled={isEmittingReport}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700/80 transition disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                {isEmittingReport ? 'Generuję…' : 'Raport SVL'}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="mt-3 rounded-lg border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {error}
             </div>
           )}
+          {statusMsg && (
+            <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+              <span>{statusMsg}</span>
+              <button type="button" onClick={() => setStatusMsg(null)} className="text-cyan-300 hover:text-white text-[11px]">
+                Ukryj
+              </button>
+            </div>
+          )}
+        </header>
+
+        {/* 5 DOKŁADNYCH KART KPI */}
+        <section className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Placówki &amp; Stacje</span>
+              <Building2 className="w-4 h-4 text-sky-400" />
+            </div>
+            <div className="mt-1.5 text-2xl font-semibold font-mono text-white">
+              {totals ? fmtNum(totals.outpostsCount) : '—'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {totals ? `${overview?.sectors.length || 0} sektorów · Załoga ${fmtNum(totals.totalCrew)}` : 'Ładowanie…'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Statki &amp; Flota</span>
+              <Rocket className="w-4 h-4 text-cyan-400" />
+            </div>
+            <div className="mt-1.5 text-2xl font-semibold font-mono text-white">
+              {totals ? fmtNum(totals.shipsCount) : '—'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {totals ? `SVL-364 · SVL-465 · ${fmtNum(Math.max(0, totals.shipsCount - 2))} krążowników` : 'Ładowanie…'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Infrastruktura</span>
+              <Server className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className="mt-1.5 text-2xl font-semibold font-mono text-white">
+              {totals ? fmtNum(totals.infrastructureObjectsCount) : '—'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {totals ? `${fmtNum(totals.allianceStationsTotal)} stanowisk Sojuszu` : 'Ładowanie…'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Misje &amp; Badania</span>
+              <FlaskConical className="w-4 h-4 text-sky-400" />
+            </div>
+            <div className="mt-1.5 text-2xl font-semibold font-mono text-white">
+              {totals ? `${totals.activeMissions} / ${totals.activeResearch}` : '—'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {totals ? `Aktywne misje / badania · ${fmtNum(totals.totalResearchers)} badaczy` : 'Ładowanie…'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5 col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>Botanika &amp; Biosfera</span>
+              <Leaf className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div className="mt-1.5 text-2xl font-semibold font-mono text-emerald-300">
+              {totals ? `${totals.botanyModulesCount} mod.` : '—'}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-400">
+              {totals ? `Śr. O₂ ${totals.botanyAvgO2Pct}% · ${fmtNum(totals.botanyTotalBiomassKg)} kg biomasy` : 'Ładowanie…'}
+            </div>
+          </div>
         </section>
 
-        {/* Moduły SQLite */}
-        <section className="rounded-xl border border-slate-800 bg-[#0B1220] p-4 space-y-3" aria-label="Moduły systemowe w SQLite">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="flex items-center gap-2 font-semibold text-slate-100 text-sm sm:text-base">
-              <Radar size={17} className="text-emerald-400" /> Moduły systemowe w SQLite ({otherModules.length})
-            </h2>
-            <span className="text-xs font-mono text-slate-400">Źródło: tabela system_modules · rev {serverRevision}</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {otherModules.map((mod) => {
-              const entries = mod.config ? Object.entries(mod.config) : [];
-              return (
-                <article key={mod.id} className="rounded-xl border border-slate-800 bg-[#070C16] p-3.5 space-y-2 min-w-0">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-semibold text-slate-100">{mod.name}</h3>
-                    <span className="text-[11px] font-mono text-emerald-300 tabular-nums shrink-0">
-                      {mod.status} · rev {mod.revision}
-                    </span>
-                  </div>
-                  <p className="text-[11px] font-mono text-violet-300 break-all">
-                    {mod.id} · {mod.kind} · źródło: {mod.source}
-                  </p>
-                  {mod.description && <p className="text-xs text-slate-300 leading-relaxed">{mod.description}</p>}
-                  {entries.length > 0 && (
-                    <div className="rounded-lg border border-slate-800/80 bg-[#0B101D] p-2 text-[11px] font-mono text-slate-400 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
-                      {entries.slice(0, 6).map(([k, v]) => (
-                        <div key={k} className="truncate" title={`${k}: ${JSON.stringify(v)}`}>
-                          <span className="text-slate-500">{k}:</span>{' '}
-                          <span className="text-slate-200">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
-                        </div>
-                      ))}
-                    </div>
+        {/* NAWIGACJA PODWIDOKÓW */}
+        <nav className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-800/90 bg-[#0B111B] p-1.5">
+          {[
+            {
+              id: 'assets' as SubView,
+              label: 'Placówki, Statki & Lokalizacje',
+              icon: MapPin,
+              count: overview ? overview.assets.length : 0,
+            },
+            {
+              id: 'missions' as SubView,
+              label: 'Misje & Badania',
+              icon: Target,
+              count: totals ? totals.activeMissions + totals.activeResearch : 0,
+            },
+            {
+              id: 'botany' as SubView,
+              label: 'Botanika & Biosfera',
+              icon: Leaf,
+              count: totals ? totals.botanyModulesCount : 0,
+            },
+            {
+              id: 'network' as SubView,
+              label: 'Hosty & Sieć (MCP / LAN)',
+              icon: Network,
+              count: totals ? totals.liveMonitoredHosts + totals.liveSshHosts + totals.liveDiscoveredHosts : 0,
+            },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = subView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setSubView(tab.id)}
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium transition ${
+                  active
+                    ? 'bg-slate-800/95 text-white border border-slate-700'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/70 border border-transparent'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${active ? 'text-cyan-400' : 'text-slate-500'}`} />
+                <span>{tab.label}</span>
+                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-950/90 text-slate-300 border border-slate-800">
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* WIDOK 1: PLACÓWKI, STATKI & LOKALIZACJE */}
+        {subView === 'assets' && (
+          <div className="space-y-4">
+            {/* Rozkład sektorowy */}
+            {overview && overview.sectors.length > 0 && (
+              <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                    Rozmieszczenie według sektorów Układu Słonecznego
+                  </h2>
+                  {sectorFilter !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setSectorFilter('ALL')}
+                      className="text-[11px] text-cyan-300 hover:text-cyan-200"
+                    >
+                      Pokaż wszystkie sektory
+                    </button>
                   )}
-                </article>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Workery agentów */}
-        <section className="rounded-xl border border-slate-800 bg-[#0B1220] p-4 space-y-3" aria-label="Workery agentów">
-          <h2 className="flex items-center gap-2 font-semibold text-slate-100 text-sm sm:text-base">
-            <HardDrive size={17} className="text-violet-400" /> Workery agentów
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {agentsList.map((ag) => (
-              <div key={ag.id || ag.canonical_name} className="rounded-lg border border-slate-800 bg-[#070C16] p-3 space-y-1.5 text-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <SvlAvatar sender={ag.display_name || ag.canonical_name} agentId={ag.id} size={32} />
-                  <div className="min-w-0">
-                    <p className="font-semibold text-slate-100 truncate">{ag.display_name || ag.canonical_name}</p>
-                    <p className="font-mono text-emerald-300 text-[11px] tabular-nums truncate">
-                      PID {ag.pid ?? 'brak'} · {ag.status} · pamięć: {ag.memory_entries_count ?? 0} wpisów
-                    </p>
-                  </div>
                 </div>
-                {ag.preserved_role && <p className="text-[11px] text-slate-400">{ag.preserved_role}</p>}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                  {overview.sectors.map((sec) => {
+                    const selected = sectorFilter === sec.sector;
+                    return (
+                      <button
+                        key={sec.sector}
+                        type="button"
+                        onClick={() => setSectorFilter(selected ? 'ALL' : sec.sector)}
+                        className={`text-left rounded-lg border p-3 transition ${
+                          selected
+                            ? 'border-cyan-500/50 bg-cyan-500/10'
+                            : 'border-slate-800 bg-[#070C14] hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-white truncate">{sec.sector}</span>
+                          <span className="text-[10px] font-mono text-slate-400 shrink-0">{sec.au} AU</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-mono text-slate-300">
+                          {sec.outposts > 0 && <span className="text-sky-300">Placówki: {fmtNum(sec.outposts)}</span>}
+                          {sec.ships > 0 && <span className="text-cyan-300">Statki: {fmtNum(sec.ships)}</span>}
+                          {sec.infrastructure > 0 && (
+                            <span className="text-amber-300">Obiekty: {fmtNum(sec.infrastructure)}</span>
+                          )}
+                        </div>
+                        <div className="mt-1 text-[10px] text-slate-500">Załoga: {fmtNum(sec.crew)}</div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            ))}
+            )}
+
+            {/* Filtry + wyszukiwanie + dodaj */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { id: 'all' as AssetFilter, label: 'Wszystkie' },
+                  { id: 'outpost' as AssetFilter, label: 'Placówki' },
+                  { id: 'ship' as AssetFilter, label: 'Statki & Flota' },
+                  { id: 'infrastructure' as AssetFilter, label: 'Infrastruktura' },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setAssetFilter(f.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                      assetFilter === f.id
+                        ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35'
+                        : 'bg-[#0B111B] text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1 md:w-64">
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Szukaj nazwy, lokalizacji, węzła MCP…"
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#0B111B] border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddAsset((v) => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/30 transition shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Dodaj obiekt
+                </button>
+              </div>
+            </div>
+
+            {showAddAsset && (
+              <form
+                onSubmit={(e) => void handleCreateAsset(e)}
+                className="rounded-xl border border-slate-700/90 bg-[#0B111B] p-4 grid grid-cols-1 md:grid-cols-3 gap-3"
+              >
+                <div className="md:col-span-3 flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-white">Nowa placówka, statek lub obiekt infrastruktury</h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddAsset(false)}
+                    className="text-xs text-slate-400 hover:text-white"
+                  >
+                    Anuluj
+                  </button>
+                </div>
+                <select
+                  value={assetForm.type}
+                  onChange={(e) => setAssetForm((p) => ({ ...p, type: e.target.value as InfrastructureAsset['type'] }))}
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-slate-100"
+                >
+                  <option value="outpost">Placówka / Stacja</option>
+                  <option value="ship">Statek / Jednostka Floty</option>
+                  <option value="infrastructure">Infrastruktura krytyczna</option>
+                </select>
+                <input
+                  required
+                  value={assetForm.name}
+                  onChange={(e) => setAssetForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Nazwa (np. Baza Księżycowa Kopernik)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-slate-100"
+                />
+                <input
+                  value={assetForm.location}
+                  onChange={(e) => setAssetForm((p) => ({ ...p, location: e.target.value }))}
+                  placeholder="Dokładna lokalizacja (np. Księżyc · Krater Kopernik)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-slate-100"
+                />
+                <input
+                  value={assetForm.sector}
+                  onChange={(e) => setAssetForm((p) => ({ ...p, sector: e.target.value }))}
+                  placeholder="Sektor (np. Sektor Ziemski)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-slate-100"
+                />
+                <input
+                  value={assetForm.role}
+                  onChange={(e) => setAssetForm((p) => ({ ...p, role: e.target.value }))}
+                  placeholder="Rola operacyjna"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-slate-100"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={assetForm.au}
+                    onChange={(e) => setAssetForm((p) => ({ ...p, au: e.target.value }))}
+                    placeholder="AU"
+                    className="rounded-lg bg-[#060A11] border border-slate-700 px-2 py-2 text-xs text-slate-100"
+                    title="Odległość od Słońca (AU)"
+                  />
+                  <input
+                    type="number"
+                    min="1"
+                    value={assetForm.unitCount}
+                    onChange={(e) => setAssetForm((p) => ({ ...p, unitCount: e.target.value }))}
+                    placeholder="Liczba"
+                    className="rounded-lg bg-[#060A11] border border-slate-700 px-2 py-2 text-xs text-slate-100"
+                    title="Dokładna liczba jednostek"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    value={assetForm.crew}
+                    onChange={(e) => setAssetForm((p) => ({ ...p, crew: e.target.value }))}
+                    placeholder="Załoga"
+                    className="rounded-lg bg-[#060A11] border border-slate-700 px-2 py-2 text-xs text-slate-100"
+                    title="Liczba załogi"
+                  />
+                </div>
+                <div className="md:col-span-3 flex flex-wrap items-center justify-between gap-3">
+                  <label className="inline-flex items-center gap-2 text-xs text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={assetForm.hasBotany}
+                      onChange={(e) => setAssetForm((p) => ({ ...p, hasBotany: e.target.checked }))}
+                      className="rounded border-slate-600 bg-slate-900"
+                    />
+                    Obiekt posiada moduł botaniczny
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-4 py-2 rounded-lg text-xs font-medium bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/35 transition disabled:opacity-50"
+                  >
+                    Zapisz w rejestrze MCP
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Lista obiektów */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {filteredAssets.map((asset) => {
+                const meta = ASSET_TYPE_META[asset.type] || ASSET_TYPE_META.outpost;
+                return (
+                  <article
+                    key={asset.id}
+                    className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 flex flex-col justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${meta.badge}`}>
+                              {meta.label}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/25 bg-emerald-500/10 text-emerald-300">
+                              {asset.status}
+                            </span>
+                            {asset.hasBotany && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFocusedBotanyFacilityId(asset.id);
+                                  setSubView('botany');
+                                }}
+                                className="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/50 transition"
+                              >
+                                <Leaf className="w-3 h-3" />
+                                Botanika
+                              </button>
+                            )}
+                          </div>
+                          <h3 className="text-sm font-semibold text-white">{asset.name}</h3>
+                          <p className="text-xs text-slate-400">{asset.role}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-lg font-mono font-semibold text-white">{fmtNum(asset.unitCount)}</div>
+                          <div className="text-[10px] text-slate-500">jedn.</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 px-2.5 py-2">
+                          <div className="text-[10px] text-slate-500 uppercase tracking-wide">Lokalizacja</div>
+                          <div className="text-slate-200 mt-0.5 flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                            <span>{asset.location}</span>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                            {asset.sector} · {asset.au} AU
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 px-2.5 py-2">
+                          <div className="text-[10px] text-slate-500 uppercase tracking-wide">Załoga &amp; Węzeł MCP</div>
+                          <div className="text-slate-200 mt-0.5 font-mono">Załoga: {fmtNum(asset.crew)}</div>
+                          <div className="text-[10px] font-mono text-cyan-300/90 mt-0.5 truncate" title={asset.mcpNode}>
+                            MCP: {asset.mcpNode}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {asset.crewBreakdown && (
+                      <div className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-2">
+                        {asset.crewBreakdown}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
           </div>
-        </section>
+        )}
+
+        {/* WIDOK 2: MISJE & BADANIA */}
+        {subView === 'missions' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {/* LEWA KOLUMNA: MISJE */}
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Target className="w-4 h-4 text-cyan-400" />
+                  Odświeżane Misje Operacyjne ({overview?.missions.length || 0})
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAddMission((v) => !v)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/30"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nowa misja
+                </button>
+              </div>
+
+              {showAddMission && (
+                <form
+                  onSubmit={(e) => void handleCreateMission(e)}
+                  className="rounded-xl border border-slate-700 bg-[#0B111B] p-3.5 space-y-2.5"
+                >
+                  <input
+                    required
+                    value={missionForm.title}
+                    onChange={(e) => setMissionForm((p) => ({ ...p, title: e.target.value }))}
+                    placeholder="Tytuł misji"
+                    className="w-full rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={missionForm.locationName}
+                      onChange={(e) => setMissionForm((p) => ({ ...p, locationName: e.target.value }))}
+                      placeholder="Lokalizacja"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      value={missionForm.assignedUnit}
+                      onChange={(e) => setMissionForm((p) => ({ ...p, assignedUnit: e.target.value }))}
+                      placeholder="Jednostka"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={missionForm.objective}
+                    onChange={(e) => setMissionForm((p) => ({ ...p, objective: e.target.value }))}
+                    placeholder="Cel operacyjny misji"
+                    className="w-full rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowAddMission(false)} className="text-xs text-slate-400 px-2">
+                      Anuluj
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-cyan-500/20 text-cyan-200 border border-cyan-500/35"
+                    >
+                      Utwórz misję
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="space-y-2.5">
+                {(overview?.missions || []).map((m) => (
+                  <article key={m.id} className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                              m.status === 'COMPLETED'
+                                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                            }`}
+                          >
+                            {m.status}
+                          </span>
+                          <span className="text-[11px] text-slate-400">{m.locationName}</span>
+                        </div>
+                        <h3 className="text-sm font-medium text-white">{m.title}</h3>
+                      </div>
+                      <span className="font-mono text-sm font-semibold text-cyan-300 shrink-0">{m.progressPct}%</span>
+                    </div>
+
+                    <div className="h-1.5 rounded-full bg-slate-900 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          m.progressPct >= 100 ? 'bg-emerald-400' : 'bg-cyan-400'
+                        }`}
+                        style={{ width: `${Math.min(100, Math.max(0, m.progressPct))}%` }}
+                      />
+                    </div>
+
+                    <p className="text-xs text-slate-400">{m.objective}</p>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80 text-[11px] text-slate-400">
+                      <span>
+                        Jednostka: <strong className="text-slate-200">{m.assignedUnit}</strong> · Dowódca:{' '}
+                        <strong className="text-slate-200">{m.commander}</strong>
+                      </span>
+                      {m.status !== 'COMPLETED' && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() =>
+                              void handleMissionAction(
+                                { id: m.id, progressPct: Math.min(100, m.progressPct + 10) },
+                                `Zwiększono postęp misji „${m.title}”.`,
+                              )
+                            }
+                            className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono"
+                          >
+                            +10%
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() =>
+                              void handleMissionAction(
+                                { id: m.id, progressPct: 100, status: 'COMPLETED' },
+                                `Oznaczono misję „${m.title}” jako zakończoną.`,
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-200"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            Zakończ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {/* Zadania agentów AI na żywo z SQLite */}
+              <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                  Bieżące zadania agentów AI (SQLite WAL)
+                </h3>
+                {overview && overview.liveAgentTasks.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {overview.liveAgentTasks.slice(0, 8).map((t) => (
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-[#070C14] border border-slate-800/80 px-3 py-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-slate-200 truncate">{t.title}</div>
+                          <div className="text-[10px] font-mono text-slate-500">
+                            {t.target_agent} · {fmtTime(t.created_at)}
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300 shrink-0">
+                          {t.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">Brak aktywnych zadań agentów w kolejce SQLite.</p>
+                )}
+              </div>
+            </section>
+
+            {/* PRAWA KOLUMNA: BADANIA NAUKOWE */}
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <FlaskConical className="w-4 h-4 text-sky-400" />
+                  Trwające Badania Naukowe ({overview?.research.length || 0})
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAddResearch((v) => !v)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs bg-sky-500/15 hover:bg-sky-500/25 text-sky-200 border border-sky-500/30"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nowe badanie
+                </button>
+              </div>
+
+              {showAddResearch && (
+                <form
+                  onSubmit={(e) => void handleCreateResearch(e)}
+                  className="rounded-xl border border-slate-700 bg-[#0B111B] p-3.5 space-y-2.5"
+                >
+                  <input
+                    required
+                    value={researchForm.title}
+                    onChange={(e) => setResearchForm((p) => ({ ...p, title: e.target.value }))}
+                    placeholder="Nazwa programu badawczego"
+                    className="w-full rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={researchForm.domain}
+                      onChange={(e) => setResearchForm((p) => ({ ...p, domain: e.target.value }))}
+                      placeholder="Dziedzina (np. Botanika, QKD, AI)"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      value={researchForm.locationName}
+                      onChange={(e) => setResearchForm((p) => ({ ...p, locationName: e.target.value }))}
+                      placeholder="Placówka / Laboratorium"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      value={researchForm.leadTeam}
+                      onChange={(e) => setResearchForm((p) => ({ ...p, leadTeam: e.target.value }))}
+                      placeholder="Zespół prowadzący"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      value={researchForm.researchersCount}
+                      onChange={(e) => setResearchForm((p) => ({ ...p, researchersCount: e.target.value }))}
+                      placeholder="Liczba naukowców"
+                      className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                    />
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={researchForm.latestFinding}
+                    onChange={(e) => setResearchForm((p) => ({ ...p, latestFinding: e.target.value }))}
+                    placeholder="Bieżący stan / pierwsze wyniki pomiarów"
+                    className="w-full rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setShowAddResearch(false)} className="text-xs text-slate-400 px-2">
+                      Anuluj
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sky-500/20 text-sky-200 border border-sky-500/35"
+                    >
+                      Uruchom badanie
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="space-y-2.5">
+                {(overview?.research || []).map((r) => (
+                  <article key={r.id} className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-sky-500/30 bg-sky-500/10 text-sky-300">
+                            {r.domain}
+                          </span>
+                          <span className="text-[11px] text-slate-400">{r.locationName}</span>
+                        </div>
+                        <h3 className="text-sm font-medium text-white">{r.title}</h3>
+                      </div>
+                      <span className="font-mono text-sm font-semibold text-sky-300 shrink-0">{r.progressPct}%</span>
+                    </div>
+
+                    <div className="h-1.5 rounded-full bg-slate-900 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-sky-400 transition-all"
+                        style={{ width: `${Math.min(100, Math.max(0, r.progressPct))}%` }}
+                      />
+                    </div>
+
+                    <div className="rounded-lg bg-[#070C14] border border-slate-800/80 px-3 py-2 text-xs text-slate-300">
+                      <span className="text-[10px] font-mono uppercase text-slate-500 block mb-0.5">Najnowszy wynik</span>
+                      {r.latestFinding}
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80 text-[11px] text-slate-400">
+                      <span>
+                        {r.leadTeam} · <strong className="text-slate-200 font-mono">{fmtNum(r.researchersCount)}</strong> badaczy
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isSaving || r.progressPct >= 100}
+                        onClick={() =>
+                          void handleResearchAction(
+                            { id: r.id, progressPct: Math.min(100, r.progressPct + 10) },
+                            `Zaktualizowano postęp badania „${r.title}”.`,
+                          )
+                        }
+                        className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-mono disabled:opacity-40"
+                      >
+                        +10% postępu
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* WIDOK 3: BOTANIKA & BIOSFERA */}
+        {subView === 'botany' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Leaf className="w-4 h-4 text-emerald-400" />
+                  Botanika &amp; Biosfera w poszczególnych elementach infrastruktury
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Bieżące procesy biologiczne, produkcja O₂, oczyszczanie CO₂, obieg H₂O i rejestr zdarzeń w każdej placówce i na statkach.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {focusedBotanyFacilityId && (
+                  <button
+                    type="button"
+                    onClick={() => setFocusedBotanyFacilityId(null)}
+                    className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-900 text-slate-300 border border-slate-700"
+                  >
+                    Pokaż wszystkie moduły
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowAddBotany((v) => !v)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-200 border border-emerald-500/30"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nowy moduł botaniczny
+                </button>
+              </div>
+            </div>
+
+            {showAddBotany && (
+              <form
+                onSubmit={(e) => void handleCreateBotany(e)}
+                className="rounded-xl border border-slate-700 bg-[#0B111B] p-4 grid grid-cols-1 md:grid-cols-3 gap-3"
+              >
+                <input
+                  required
+                  value={newBotanyForm.facilityName}
+                  onChange={(e) => setNewBotanyForm((p) => ({ ...p, facilityName: e.target.value }))}
+                  placeholder="Placówka / moduł (np. Baza Księżycowa — Szklarnia #1)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={newBotanyForm.location}
+                  onChange={(e) => setNewBotanyForm((p) => ({ ...p, location: e.target.value }))}
+                  placeholder="Lokalizacja"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={newBotanyForm.biomeType}
+                  onChange={(e) => setNewBotanyForm((p) => ({ ...p, biomeType: e.target.value }))}
+                  placeholder="Typ biomu (np. Aeroponika / Bioreaktor)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={newBotanyForm.currentActivity}
+                  onChange={(e) => setNewBotanyForm((p) => ({ ...p, currentActivity: e.target.value }))}
+                  placeholder="Co dzieje się obecnie w module?"
+                  className="md:col-span-2 rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button type="button" onClick={() => setShowAddBotany(false)} className="text-xs text-slate-400">
+                    Anuluj
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-3.5 py-2 rounded-lg text-xs font-medium bg-emerald-500/20 text-emerald-200 border border-emerald-500/35"
+                  >
+                    Utwórz moduł
+                  </button>
+                </div>
+              </form>
+            )}
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {(overview?.botany || [])
+                .filter((b) => !focusedBotanyFacilityId || b.facilityId === focusedBotanyFacilityId)
+                .map((b) => {
+                  const stMeta = BOTANY_STATUS_META[b.status] || BOTANY_STATUS_META.OPTIMAL;
+                  const isEditing = editingBotanyId === b.id;
+                  return (
+                    <article key={b.id} className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${stMeta.cls}`}>
+                              {stMeta.label}
+                            </span>
+                            <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                              <MapPin className="w-3 h-3 text-cyan-400" />
+                              {b.location}
+                            </span>
+                          </div>
+                          <h3 className="text-sm font-semibold text-white">{b.facilityName}</h3>
+                          <p className="text-[11px] text-slate-400">
+                            {b.biomeType} · Światło: <span className="font-mono text-slate-300">{b.lightCycle}</span>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => (isEditing ? setEditingBotanyId(null) : openBotanyEditor(b))}
+                          className="px-2.5 py-1 rounded-lg text-[11px] bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 shrink-0"
+                        >
+                          {isEditing ? 'Zamknij' : 'Aktualizuj'}
+                        </button>
+                      </div>
+
+                      {/* Co dzieje się teraz */}
+                      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.04] px-3 py-2.5">
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300 mb-1">
+                          Co dzieje się teraz w botanice
+                        </div>
+                        <p className="text-xs text-slate-200 leading-relaxed">{b.currentActivity}</p>
+                      </div>
+
+                      {/* 6 parametrów środowiskowych */}
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <Wind className="w-3.5 h-3.5 text-emerald-400 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-emerald-300">{b.o2OutputPct}%</div>
+                          <div className="text-[10px] text-slate-500">O₂</div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <Activity className="w-3.5 h-3.5 text-cyan-400 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-cyan-300">{b.co2ScrubPct}%</div>
+                          <div className="text-[10px] text-slate-500">CO₂ scrub</div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <Droplets className="w-3.5 h-3.5 text-sky-400 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-slate-100">{b.humidityPct}%</div>
+                          <div className="text-[10px] text-slate-500">Wilgotn.</div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <Thermometer className="w-3.5 h-3.5 text-amber-400 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-slate-100">{b.tempC}°C</div>
+                          <div className="text-[10px] text-slate-500">Temp</div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <RefreshCw className="w-3.5 h-3.5 text-sky-300 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-sky-300">{b.waterRecycledPct}%</div>
+                          <div className="text-[10px] text-slate-500">Obieg H₂O</div>
+                        </div>
+                        <div className="rounded-lg bg-[#070C14] border border-slate-800/80 p-2 text-center">
+                          <Leaf className="w-3.5 h-3.5 text-emerald-300 mx-auto mb-0.5" />
+                          <div className="text-xs font-mono font-semibold text-white">{fmtNum(b.biomassKg)} kg</div>
+                          <div className="text-[10px] text-slate-500">Biomasa</div>
+                        </div>
+                      </div>
+
+                      {/* Kultury roślinne */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {b.activeCultures.map((culture) => (
+                          <span
+                            key={culture}
+                            className="text-[11px] px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-300"
+                          >
+                            {culture}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Edytor inline */}
+                      {isEditing && (
+                        <form
+                          onSubmit={(e) => void handleSaveBotanyUpdate(e, b.id)}
+                          className="rounded-lg border border-slate-700 bg-[#070C14] p-3 space-y-2.5"
+                        >
+                          <div className="grid grid-cols-3 gap-2">
+                            <select
+                              value={botanyUpdate.status}
+                              onChange={(e) => setBotanyUpdate((p) => ({ ...p, status: e.target.value }))}
+                              className="rounded bg-[#060A11] border border-slate-700 px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="OPTIMAL">OPTIMAL</option>
+                              <option value="HARVEST_READY">HARVEST_READY</option>
+                              <option value="GROWING">GROWING</option>
+                              <option value="ATTENTION">ATTENTION</option>
+                              <option value="ALERT">ALERT</option>
+                            </select>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={botanyUpdate.o2OutputPct}
+                              onChange={(e) => setBotanyUpdate((p) => ({ ...p, o2OutputPct: e.target.value }))}
+                              placeholder="O₂ %"
+                              className="rounded bg-[#060A11] border border-slate-700 px-2 py-1.5 text-xs text-white"
+                            />
+                            <input
+                              type="number"
+                              step="1"
+                              value={botanyUpdate.biomassKg}
+                              onChange={(e) => setBotanyUpdate((p) => ({ ...p, biomassKg: e.target.value }))}
+                              placeholder="Biomasa kg"
+                              className="rounded bg-[#060A11] border border-slate-700 px-2 py-1.5 text-xs text-white"
+                            />
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={botanyUpdate.currentActivity}
+                            onChange={(e) => setBotanyUpdate((p) => ({ ...p, currentActivity: e.target.value }))}
+                            placeholder="Opis bieżącej aktywności w module botanicznym"
+                            className="w-full rounded bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                          />
+                          <div className="flex gap-2">
+                            <input
+                              value={botanyUpdate.eventText}
+                              onChange={(e) => setBotanyUpdate((p) => ({ ...p, eventText: e.target.value }))}
+                              placeholder="Opcjonalny wpis do dziennika zdarzeń (np. Zakończono zbiór 40 kg)"
+                              className="flex-1 rounded bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                            />
+                            <button
+                              type="submit"
+                              disabled={isSaving}
+                              className="px-3 py-1.5 rounded text-xs font-medium bg-emerald-500/20 text-emerald-200 border border-emerald-500/35"
+                            >
+                              Zapisz
+                            </button>
+                          </div>
+                        </form>
+                      )}
+
+                      {/* Dziennik zdarzeń botaniki */}
+                      {b.recentEvents.length > 0 && (
+                        <div className="border-t border-slate-800/80 pt-2.5 space-y-1.5">
+                          <div className="text-[10px] font-mono uppercase text-slate-500">Ostatnie zdarzenia</div>
+                          {b.recentEvents.slice(0, 3).map((ev, idx) => (
+                            <div key={`${b.id}-ev-${idx}`} className="flex items-start gap-2 text-[11px]">
+                              <span
+                                className={`font-mono px-1.5 py-0.5 rounded text-[10px] shrink-0 ${
+                                  ev.level === 'WARN' || ev.level === 'ALERT'
+                                    ? 'bg-amber-500/15 text-amber-300'
+                                    : 'bg-slate-900 text-slate-400'
+                                }`}
+                              >
+                                {ev.level}
+                              </span>
+                              <span className="text-slate-300 flex-1">{ev.text}</span>
+                              <span className="font-mono text-[10px] text-slate-500 shrink-0">{fmtTime(ev.timestamp)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+            </div>
+          </div>
+        )}
+
+        {/* WIDOK 4: HOSTY & SIEĆ (MCP / LAN) */}
+        {subView === 'network' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Monitorowane hosty TCP */}
+              <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Radar className="w-4 h-4 text-cyan-400" />
+                  Monitorowane hosty TCP ({hostInfra?.monitored.length || 0})
+                </h2>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addMonitoredHost(newHostName.trim(), newHostAddress.trim(), true);
+                  }}
+                  className="flex flex-wrap gap-2"
+                >
+                  <input
+                    value={newHostName}
+                    onChange={(e) => setNewHostName(e.target.value)}
+                    placeholder="Nazwa hosta"
+                    className="flex-1 min-w-[120px] rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <input
+                    value={newHostAddress}
+                    onChange={(e) => setNewHostAddress(e.target.value)}
+                    placeholder="host:port (np. 192.168.1.10:22)"
+                    className="flex-1 min-w-[160px] rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-1.5 text-xs text-white font-mono"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-200 border border-cyan-500/35"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Dodaj
+                  </button>
+                </form>
+
+                <div className="space-y-2">
+                  {(hostInfra?.monitored || []).length === 0 ? (
+                    <p className="text-xs text-slate-500">Brak ręcznie dodanych hostów TCP.</p>
+                  ) : (
+                    hostInfra!.monitored.map((m) => (
+                      <div
+                        key={m.id}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-[#070C14] border border-slate-800/80 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-white truncate">{m.name}</div>
+                          <div className="text-[11px] font-mono text-slate-400">{m.address || 'brak adresu'}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <ProbeBadge probe={m.probe} note={m.note} />
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteMonitoredHost(m.id, m.name)}
+                            className="p-1 text-slate-500 hover:text-rose-300"
+                            title="Usuń monitorowany host"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              {/* Hosty SSH */}
+              <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Server className="w-4 h-4 text-emerald-400" />
+                  Hosty OpenSSH ({hostInfra?.ssh_hosts.hosts.length || 0})
+                </h2>
+                {hostInfra && hostInfra.ssh_hosts.hosts.length > 0 ? (
+                  <div className="space-y-2">
+                    {hostInfra.ssh_hosts.hosts.map((h) => (
+                      <div
+                        key={`${h.alias}-${h.hostname}-${h.port}`}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-[#070C14] border border-slate-800/80 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-white font-mono">{h.alias}</div>
+                          <div className="text-[11px] font-mono text-slate-400">
+                            {h.user ? `${h.user}@` : ''}
+                            {h.hostname}:{h.port}
+                          </div>
+                        </div>
+                        <ProbeBadge probe={h.probe} />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">{hostInfra?.ssh_hosts.reason || 'Brak skonfigurowanych hostów w ~/.ssh/config.'}</p>
+                )}
+              </section>
+            </div>
+
+            {/* Wykryte hosty w sieci LAN */}
+            <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Network className="w-4 h-4 text-sky-400" />
+                  Wykryte hosty sieciowe LAN / ARP / known_hosts ({hostInfra?.discovered.hosts.length || 0})
+                </h2>
+                <span className="text-[11px] font-mono text-slate-500">Host lokalny: {hostInfra?.hostname || '—'}</span>
+              </div>
+              {hostInfra && hostInfra.discovered.hosts.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {hostInfra.discovered.hosts.slice(0, 18).map((h) => (
+                    <div
+                      key={h.key}
+                      className="rounded-lg bg-[#070C14] border border-slate-800/80 p-3 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-slate-100 truncate">{h.names[0] || h.addresses[0] || h.key}</div>
+                        <div className="text-[10px] font-mono text-slate-400 truncate">{h.addresses.join(', ')}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">{h.sources.join(' · ')}</div>
+                      </div>
+                      {!h.tracked && (
+                        <button
+                          type="button"
+                          onClick={() => void handleMonitorDiscovered(h)}
+                          className="px-2 py-1 rounded text-[11px] bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 shrink-0"
+                        >
+                          Monitoruj
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Brak dodatkowych wykrytych hostów w sieci lokalnej.</p>
+              )}
+            </section>
+
+            {/* Usługi systemd, porty i dyski */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                  Usługi systemd ({hostInfra?.systemd.units.length || 0})
+                </h3>
+                {hostInfra?.systemd.available && hostInfra.systemd.units.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {hostInfra.systemd.units.map((u) => (
+                      <div
+                        key={u.unit}
+                        className="flex items-center justify-between text-xs rounded bg-[#070C14] border border-slate-800/80 px-2.5 py-1.5"
+                      >
+                        <span className="font-mono text-slate-200 truncate">{u.unit}</span>
+                        <span
+                          className={`text-[10px] font-mono ${
+                            u.active_state === 'active' ? 'text-emerald-300' : 'text-slate-400'
+                          }`}
+                        >
+                          {u.active_state || u.error || 'unknown'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">{hostInfra?.systemd.reason || 'Brak usług systemd.'}</p>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                  Nasłuchujące porty ({hostInfra?.listening_ports.length || 0})
+                </h3>
+                {hostInfra && hostInfra.listening_ports.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {hostInfra.listening_ports.slice(0, 24).map((p, idx) => (
+                      <span
+                        key={`${p.address}-${p.port}-${idx}`}
+                        className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#070C14] border border-slate-800 text-slate-300"
+                      >
+                        :{p.port}
+                        {p.service ? ` (${p.service})` : ''}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">Brak wykrytych portów nasłuchujących.</p>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <HardDrive className="w-3.5 h-3.5 text-amber-400" />
+                  Dyski &amp; Montowania ({hostInfra?.mounts.length || 0})
+                </h3>
+                {hostInfra && hostInfra.mounts.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {hostInfra.mounts.slice(0, 8).map((m) => (
+                      <div key={`${m.device}-${m.mountpoint}`} className="rounded bg-[#070C14] border border-slate-800/80 px-2.5 py-1.5 text-xs">
+                        <div className="flex items-center justify-between font-mono">
+                          <span className="text-slate-200 truncate">{m.mountpoint}</span>
+                          <span className="text-slate-400">{m.percent != null ? `${m.percent}%` : '—'}</span>
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-500">
+                          {m.free_gb != null && m.total_gb != null ? `Wolne ${m.free_gb} / ${m.total_gb} GB · ${m.fstype}` : m.device}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">Brak informacji o punktach montowania.</p>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

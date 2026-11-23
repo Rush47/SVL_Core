@@ -1,9 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Cpu, Satellite, Sparkles, Zap, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
+import { Cpu, Satellite, Sparkles, Image as ImageIcon, RefreshCw, CheckCircle2, XCircle, DownloadCloud } from 'lucide-react';
 import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } from '../utils/svlLogic';
 
-interface OllamaModel { name: string; size: number | null; parameterSize: string | null; vision: boolean }
-interface ShipTunnel { enabled: boolean; status: string; target: string; localUrl: string; description: string; error: string | null }
+interface OllamaModel { name: string; size: number | null; parameterSize: string | null; vision: boolean; endpointId?: string; endpointLabel?: string }
+interface OllamaEndpointInfo {
+  id: 'local' | 'ship' | 'secondary';
+  label: string;
+  source: string;
+  host: string;
+  enabled: boolean;
+  explicit: boolean;
+  reachable: boolean;
+  version: string | null;
+  models: OllamaModel[];
+  loadedModels: string[];
+  error: string | null;
+}
+interface ShipTunnel { enabled: boolean; status: string; target: string; shipPort?: number; localUrl: string; description: string; error: string | null }
 interface EnginesState {
   ok: boolean;
   checkedAt: string;
@@ -14,6 +27,8 @@ interface EnginesState {
       reachable: boolean;
       busy: boolean;
       shipTunnel: ShipTunnel;
+      endpoints?: OllamaEndpointInfo[];
+      explicitFallbackToGemini?: boolean;
       models: OllamaModel[];
       loadedModels: string[];
       visionModels: string[];
@@ -25,7 +40,6 @@ interface EnginesState {
       diskFreeGb: number | null;
       error: string | null;
     };
-    grok: { configured: boolean; model: string; timeoutMs: number; paid: boolean };
     gemini: { configured: boolean; models: string[]; modelCount: number; forcedModel: string | null };
     image: { engine: string; available: boolean | null; detail: string | null };
     antigravity?: {
@@ -51,6 +65,14 @@ export const AiEnginesCard: React.FC = () => {
   const [pulling, setPulling] = useState(false);
   const [pullingVision, setPullingVision] = useState(false);
   const [visionPullMsg, setVisionPullMsg] = useState<string | null>(null);
+  const [tunnelTarget, setTunnelTarget] = useState('Ship');
+  const [tunnelLocalPort, setTunnelLocalPort] = useState('11435');
+  const [tunnelShipPort, setTunnelShipPort] = useState('11434');
+  const [shipDirectUrl, setShipDirectUrl] = useState('');
+  const [tunnelSaving, setTunnelSaving] = useState(false);
+  const [tunnelMsg, setTunnelMsg] = useState<string | null>(null);
+  const [creatingApex, setCreatingApex] = useState(false);
+  const [apexMsg, setApexMsg] = useState<string | null>(null);
 
   const refreshShip = useCallback(async () => {
     const r = await safeFetchJson<any>('/api/ship/ollama/models', { timeoutMs: 10000 });
@@ -81,6 +103,48 @@ export const AiEnginesCard: React.FC = () => {
     setPullingVision(false);
   };
 
+  const applyShipTunnel = async (enabled: boolean) => {
+    setTunnelSaving(true);
+    setTunnelMsg(null);
+    const res = await safeFetchJson<any>('/api/svl364/ollama-tunnel', {
+      method: 'POST',
+      timeoutMs: 12000,
+      body: JSON.stringify({
+        enabled,
+        target: tunnelTarget.trim() || 'Ship',
+        shipPort: Number(tunnelShipPort) || 11434,
+        localPort: Number(tunnelLocalPort) || 11435,
+        ...(shipDirectUrl.trim() ? { shipUrl: shipDirectUrl.trim() } : { shipUrl: '' }),
+      }),
+    });
+    if (res.ok && res.data?.ok) {
+      setTunnelMsg(res.data.note || (enabled ? 'Tunel SSH Ollamy włączony.' : 'Tunel SSH Ollamy wyłączony.'));
+      await refresh();
+      await refreshShip();
+    } else {
+      setTunnelMsg(res.data?.error || res.error || 'Nie udało się zmienić konfiguracji tunelu SSH.');
+    }
+    setTunnelSaving(false);
+  };
+
+  const buildApexUncensored = async () => {
+    setCreatingApex(true);
+    setApexMsg('Budowanie svl364-apex-uncensored:latest na aktywnym węźle Ollama…');
+    const res = await safeFetchJson<any>('/api/ollama/create-apex', {
+      method: 'POST',
+      timeoutMs: 125000,
+      body: JSON.stringify({ target: 'auto' }),
+    });
+    if (res.ok && res.data?.ok) {
+      setApexMsg(`Zbudowano ${res.data.model} (baza: ${res.data.baseModel}) na ${res.data.endpointLabel} (${res.data.host}).`);
+      await refresh();
+      await refreshShip();
+    } else {
+      setApexMsg(res.data?.error || res.error || 'Nie udało się zbudować svl364-apex-uncensored:latest.');
+    }
+    setCreatingApex(false);
+  };
+
   const refresh = useCallback(async () => {
     if (!hasSvlOperatorAccessToken()) {
       setError('Odblokuj dostęp przyciskiem 🔒 SVL, aby zobaczyć silniki AI.');
@@ -107,6 +171,8 @@ export const AiEnginesCard: React.FC = () => {
 
   const e = state?.engines;
   const ship = e?.ollama.shipTunnel;
+  const endpoints = e?.ollama.endpoints || [];
+  const hasApexInstalled = Boolean(e?.ollama.models.some((m) => m.name === 'svl364-apex-uncensored:latest'));
 
   return (
     <div className="p-5 rounded-xl bg-[#111520] border border-slate-800 space-y-3">
@@ -122,40 +188,151 @@ export const AiEnginesCard: React.FC = () => {
       {error && <p className="text-xs text-amber-300">{error}</p>}
 
       {e && (
-        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-          {/* Ollama (lokalna lub ze statku SVL-364) */}
+        <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+          {/* Ollama (lokalna + druga Ollama ze statku SVL-364 przez SSH/URL) */}
           <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
               {ship?.enabled ? <Satellite className="w-3.5 h-3.5 text-violet-400" /> : <Cpu className="w-3.5 h-3.5 text-cyan-400" />}
               Ollama — {e.ollama.source}
               <span className="ml-auto"><Dot ok={e.ollama.reachable} /></span>
             </div>
-            <div className="text-[11px] text-slate-500 font-mono break-all">{e.ollama.host || '—'}</div>
+            <div className="text-[10px] rounded px-2 py-0.5 border border-cyan-500/30 bg-cyan-950/20 text-cyan-200">
+              {e.ollama.explicitFallbackToGemini
+                ? '⚠️ Jawne modele Ollama: fallback do Gemini włączony (env)'
+                : '🔒 STRICT OLLAMA: wybrany model Ollama nie podmienia się na Gemini'}
+            </div>
+
+            {/* Lista wszystkich węzłów Ollama (Lokalna + SVL-364 SSH) */}
+            {endpoints.length > 0 ? (
+              <div className="space-y-1">
+                {endpoints.map((ep) => (
+                  <div
+                    key={`${ep.id}-${ep.host}`}
+                    className={`rounded border px-2 py-1 text-[10px] ${
+                      ep.reachable
+                        ? 'border-emerald-600/35 bg-emerald-950/15 text-emerald-200'
+                        : 'border-slate-800 bg-slate-900/40 text-slate-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 font-semibold">
+                      <Dot ok={ep.reachable} />
+                      <span>{ep.label}</span>
+                      <span className="ml-auto font-mono text-[9px] text-slate-400">
+                        {ep.reachable ? `v${ep.version || '?'} · ${ep.models.length} mod.` : 'offline'}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[9px] text-slate-500 break-all">{ep.host}</div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[11px] text-slate-500 font-mono break-all">{e.ollama.host || '—'}</div>
+            )}
+
             {ship?.enabled && (
               <div className={`text-[11px] rounded px-2 py-1 border ${ship.status === 'up' ? 'border-emerald-600/40 bg-emerald-950/20 text-emerald-300' : 'border-amber-600/40 bg-amber-950/20 text-amber-300'}`}>
-                🛰️ Tunel SSH ({ship.target}): <strong>{ship.status.toUpperCase()}</strong>
+                🛰️ Tunel SSH ({ship.target}): <strong>{ship.status.toUpperCase()}</strong> ({ship.localUrl})
                 {ship.error ? ` — ${ship.error}` : ''}
               </div>
             )}
+
             <div className="text-[11px] text-slate-400">
-              Dostępne modele: <span className="text-slate-200 font-semibold">{e.ollama.models.length}</span>
+              Dostępne modele (łącznie): <span className="text-slate-200 font-semibold">{e.ollama.models.length}</span>
               {e.ollama.busy ? ' · zajęta (generuje)' : ''}
             </div>
             <ul className="max-h-40 overflow-y-auto space-y-0.5">
-              {e.ollama.models.length === 0 && <li className="text-[11px] text-slate-500">Brak pobranych modeli (lub Ollama nieosiągalna).</li>}
+              {e.ollama.models.length === 0 && <li className="text-[11px] text-slate-500">Brak pobranych modeli (lub żaden węzeł Ollama nieosiągalny).</li>}
               {e.ollama.models.map((m) => (
-                <li key={m.name} className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                <li key={`${m.endpointId || 'local'}:${m.name}`} className="text-[11px] text-slate-300 flex items-center gap-1.5">
                   <span className={`w-1.5 h-1.5 rounded-full ${e.ollama.loadedModels.includes(m.name) ? 'bg-emerald-400' : 'bg-slate-600'}`} title={e.ollama.loadedModels.includes(m.name) ? 'Załadowany do pamięci' : 'Na dysku'} />
                   <span className="font-mono truncate">{m.name}</span>
+                  {m.endpointId && (
+                    <span className={`text-[9px] px-1 rounded ${m.endpointId === 'ship' ? 'bg-violet-950/70 text-violet-300' : 'bg-slate-800 text-slate-400'}`}>
+                      {m.endpointId === 'ship' ? 'SVL-364' : 'Lokalna'}
+                    </span>
+                  )}
                   {m.parameterSize && <span className="text-slate-500">· {m.parameterSize}</span>}
                   {m.vision && <span className="text-violet-400">· vision</span>}
                   <span className="ml-auto text-slate-600">{fmtSize(m.size)}</span>
                 </li>
               ))}
             </ul>
-            <div className="text-[10px] text-slate-500">
-              Preferowany: <span className="font-mono text-slate-300">{e.ollama.preferredModel}</span>
+            <div className="text-[10px] text-slate-500 flex items-center justify-between gap-1">
+              <span>Preferowany: <span className="font-mono text-slate-300">{e.ollama.preferredModel}</span></span>
+              {!hasApexInstalled && e.ollama.models.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void buildApexUncensored()}
+                  disabled={creatingApex}
+                  className="rounded border border-cyan-500/40 bg-cyan-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-200 hover:bg-cyan-600/35 disabled:opacity-50"
+                >
+                  {creatingApex ? 'Buduję…' : 'Zbuduj Apex'}
+                </button>
+              )}
             </div>
+            {apexMsg && <div className="text-[10px] text-cyan-300">{apexMsg}</div>}
+
+            {/* Konfigurator drugiej Ollamy (Tunel SSH SVL-364 / URL) */}
+            <div className="rounded border border-slate-800 bg-slate-950/40 p-2 space-y-1.5">
+              <div className="text-[10px] font-semibold text-slate-300 flex items-center justify-between">
+                <span>🛰️ Druga Ollama (SVL-364 SSH / Zdalna)</span>
+                <span className="text-[9px] text-slate-500">port 11435 = brak kolizji z 11434</span>
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                <input
+                  type="text"
+                  value={tunnelTarget}
+                  onChange={(ev) => setTunnelTarget(ev.target.value)}
+                  placeholder="Alias SSH (Ship)"
+                  className="rounded border border-slate-700 bg-[#0b0e16] px-1.5 py-0.5 text-[10px] text-slate-200 font-mono"
+                />
+                <input
+                  type="number"
+                  value={tunnelLocalPort}
+                  onChange={(ev) => setTunnelLocalPort(ev.target.value)}
+                  placeholder="Port lok. 11435"
+                  title="Lokalny port tunelu (11435 pozwala na pracę równolegle z lokalną Ollamą na 11434)"
+                  className="rounded border border-slate-700 bg-[#0b0e16] px-1.5 py-0.5 text-[10px] text-slate-200 font-mono"
+                />
+                <input
+                  type="number"
+                  value={tunnelShipPort}
+                  onChange={(ev) => setTunnelShipPort(ev.target.value)}
+                  placeholder="Port statku 11434"
+                  title="Port Ollamy na statku SVL-364"
+                  className="rounded border border-slate-700 bg-[#0b0e16] px-1.5 py-0.5 text-[10px] text-slate-200 font-mono"
+                />
+              </div>
+              <input
+                type="text"
+                value={shipDirectUrl}
+                onChange={(ev) => setShipDirectUrl(ev.target.value)}
+                placeholder="Opcjonalny bezpośredni URL (np. http://10.0.0.5:11434)"
+                className="w-full rounded border border-slate-700 bg-[#0b0e16] px-1.5 py-0.5 text-[10px] text-slate-200 font-mono"
+              />
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void applyShipTunnel(true)}
+                  disabled={tunnelSaving}
+                  className="rounded border border-violet-500/50 bg-violet-600/25 px-2 py-0.5 text-[10px] font-semibold text-violet-100 hover:bg-violet-600/40 disabled:opacity-50"
+                >
+                  {tunnelSaving ? 'Zapisuję…' : 'Połącz tunel SSH'}
+                </button>
+                {ship?.enabled && (
+                  <button
+                    type="button"
+                    onClick={() => void applyShipTunnel(false)}
+                    disabled={tunnelSaving}
+                    className="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 text-[10px] text-slate-300 hover:bg-slate-700/60 disabled:opacity-50"
+                  >
+                    Wyłącz tunel
+                  </button>
+                )}
+              </div>
+              {tunnelMsg && <div className="text-[10px] text-violet-300">{tunnelMsg}</div>}
+            </div>
+
             <div className="rounded border border-violet-500/30 bg-violet-950/15 px-2.5 py-1.5 space-y-1">
               <div className="flex items-center justify-between text-[11px] text-violet-200 font-semibold">
                 <span>👁️ Llama 3.2 Vision ({e.ollama.visionModel || 'llama3.2-vision:11b'})</span>
@@ -225,24 +402,6 @@ export const AiEnginesCard: React.FC = () => {
             })()}
           </div>
 
-          {/* Grok (xAI) — główny płatny silnik */}
-          <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-              <Zap className="w-3.5 h-3.5 text-emerald-400" /> Grok (xAI)
-              <span className="ml-auto"><Dot ok={Boolean(e.grok?.configured)} /></span>
-            </div>
-            <div className="text-[11px] text-slate-400">
-              {e.grok?.configured
-                ? <>Główny silnik · model <span className="font-mono text-slate-200">{e.grok.model}</span></>
-                : 'Brak klucza XAI_API_KEY — używana darmowa Ollama'}
-            </div>
-            {e.grok?.configured && (
-              <div className="text-[10px] text-slate-500">
-                Płatne API · timeout {Math.round((e.grok.timeoutMs || 60000) / 1000)} s · przy błędzie zapas: Ollama
-              </div>
-            )}
-          </div>
-
           {/* Gemini */}
           <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
@@ -275,7 +434,7 @@ export const AiEnginesCard: React.FC = () => {
           </div>
           {/* Antigravity (tryb bez płatnego klucza) */}
           {e.antigravity && (
-            <div className="rounded-lg border border-cyan-800/60 bg-[#0d1017] p-3 space-y-2 lg:col-span-2 xl:col-span-4">
+            <div className="rounded-lg border border-cyan-800/60 bg-[#0d1017] p-3 space-y-2 lg:col-span-2 xl:col-span-3">
               <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-200">
                 <Sparkles className="w-3.5 h-3.5 text-cyan-400" /> Antigravity · Tryb bez płatnego klucza (Interactions API + Ollama)
                 <span className="ml-auto">

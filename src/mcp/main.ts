@@ -1,6 +1,6 @@
 // Samodzielny serwer MCP SVL (pełny odczyt/zapis) + automatyczny tunel do internetu.
 //   npm run mcp          → Streamable HTTP na 127.0.0.1:MCP_PORT (/mcp) + tunel (MCP_TUNNEL)
-//   npm run mcp:stdio    → transport stdio (lokalne klienty: Claude Desktop, Gemini CLI „command”)
+//   npm run mcp:stdio    → transport stdio (lokalne klienty MCP, np. Gemini CLI „command”)
 // Token: MCP_TOKEN albo wygenerowany i zapisany w data/svl_mcp_token.secret (0600). Nigdy nie trafia do logów.
 
 import 'dotenv/config';
@@ -18,15 +18,39 @@ import { SvlFileLogger, scrubSensitiveText } from '../server/fileLogger.ts';
 export function connectorInfo(cfg: McpConfig, token: string, tunnel: TunnelStatus | null) {
   const localUrl = `http://${cfg.host === '0.0.0.0' ? '127.0.0.1' : cfg.host}:${cfg.port}/mcp`;
   const mcpUrl = tunnel?.mcpUrl || null;
-  const url = mcpUrl || localUrl;
+  const meshUrls = (tunnel?.meshEndpoints || []).map((m) => ({
+    network: m.network,
+    iface: m.iface,
+    address: m.address,
+    mcpUrl: m.mcpUrl,
+    urlWithKey: cfg.allowUrlToken ? `${m.mcpUrl}/k/${token}` : null,
+  }));
+  const url = mcpUrl || meshUrls[0]?.mcpUrl || localUrl;
   return {
     updatedAt: new Date().toISOString(),
+    nodeName: cfg.nodeName,
+    tunnelKind: tunnel?.effectiveKind || tunnel?.kind || cfg.tunnel,
+    tunnelState: tunnel?.state || 'off',
     localUrl,
     publicUrl: mcpUrl,
+    meshUrls,
     urlWithKey: cfg.allowUrlToken ? `${url}/k/${token}` : null,
     authorizationHeader: `Bearer ${token}`,
     geminiCli: { mcpServers: { svl: { httpUrl: url, headers: { Authorization: `Bearer ${token}` }, timeout: 600000 } } },
-    claudeCode: `claude mcp add --transport http svl ${url} --header "Authorization: Bearer ${token}"`,
+    vscodeCopilot: {
+      servers: {
+        svl: {
+          type: 'http',
+          url,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    genericStreamableHttp: {
+      url,
+      transport: 'streamable-http',
+      headers: { Authorization: `Bearer ${token}` },
+    },
   };
 }
 
@@ -45,7 +69,7 @@ export function createMcpHttpApp(cfg: McpConfig, token: string, ctx: ToolContext
 
   // Bez autoryzacji i bez szczegółów — tylko do watchdoga tunelu / monitoringu.
   app.get('/healthz', (_req, res) => {
-    res.json({ ok: true, service: 'svl-mcp' });
+    res.json({ ok: true, service: 'svl-mcp', version: '2.0.0' });
   });
 
   const authorized = (req: Request) =>
@@ -56,7 +80,19 @@ export function createMcpHttpApp(cfg: McpConfig, token: string, ctx: ToolContext
       res.status(401).json({ ok: false, error: 'Wymagany token: Authorization: Bearer <MCP_TOKEN>.' });
       return;
     }
-    res.json({ ok: true, root: cfg.root, readOnly: cfg.readOnly, allowShell: cfg.allowShell, tools: visibleTools(ctx).map((t) => t.name), status: ctx.getStatus?.() });
+    const tools = visibleTools(ctx).map((t) => t.name);
+    res.json({
+      ok: true,
+      service: 'svl-universal-mcp',
+      version: '2.0.0',
+      nodeName: cfg.nodeName,
+      root: cfg.root,
+      readOnly: cfg.readOnly,
+      allowShell: cfg.allowShell,
+      toolsCount: tools.length,
+      tools,
+      status: ctx.getStatus?.(),
+    });
   });
 
   const handle = async (req: Request, res: Response) => {
@@ -79,7 +115,7 @@ export function createMcpHttpApp(cfg: McpConfig, token: string, ctx: ToolContext
       if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
     }
   };
-  // Klienci OAuth (np. Claude.ai) szukają metadanych — jawne 404 = „bez OAuth, użyj tokenu”.
+  // Klienci OAuth szukają metadanych — jawne 404 = „bez OAuth, użyj tokenu”.
   app.get('/.well-known/{*any}', (_req, res) => {
     res.status(404).json({ error: 'OAuth nieobsługiwany — użyj Authorization: Bearer <MCP_TOKEN> albo /mcp/k/<MCP_TOKEN>.' });
   });
@@ -102,12 +138,15 @@ async function main(): Promise<void> {
   let tunnel: TunnelManager | null = null;
   const ctx: ToolContext = {
     root: cfg.root,
+    nodeName: cfg.nodeName,
     readOnly: cfg.readOnly,
     allowShell: cfg.allowShell,
     shellTimeoutMs: cfg.shellTimeoutMs,
     maxReadBytes: cfg.maxReadBytes,
     svlBaseUrl: cfg.svlBaseUrl,
     svlOperatorToken: cfg.svlOperatorToken,
+    ollamaHost: cfg.ollamaHost,
+    comfyuiHost: cfg.comfyuiHost,
     logDir: cfg.logDir,
     getStatus: () => ({ tunnel: tunnel ? { ...tunnel.status } : { kind: 'none', state: stdio ? 'stdio' : 'off' } }),
   };
@@ -116,26 +155,45 @@ async function main(): Promise<void> {
   if (stdio) {
     const server = createFullMcpServer(ctx);
     await server.connect(new StdioServerTransport());
-    log('INFO', `MCP (stdio) gotowy, root=${cfg.root}, readOnly=${cfg.readOnly}, shell=${cfg.allowShell}`);
+    log('INFO', `Universal MCP (stdio) gotowy, node=${cfg.nodeName}, root=${cfg.root}, tools=${visibleTools(ctx).length}, readOnly=${cfg.readOnly}, shell=${cfg.allowShell}`);
     return;
   }
 
   const persist = () => {
     const status = tunnel ? { ...tunnel.status } : null;
-    writeSecretJson(cfg.stateFile, { ...(status || { kind: 'none', state: 'off' }), localUrl: `http://${cfg.host}:${cfg.port}/mcp`, updatedAt: new Date().toISOString() }, 0o644);
+    writeSecretJson(
+      cfg.stateFile,
+      {
+        ...(status || { kind: 'none', state: 'off' }),
+        nodeName: cfg.nodeName,
+        localUrl: `http://${cfg.host}:${cfg.port}/mcp`,
+        toolsCount: visibleTools(ctx).length,
+        updatedAt: new Date().toISOString(),
+      },
+      0o644,
+    );
     writeSecretJson(cfg.connectorFile, connectorInfo(cfg, token, status), 0o600);
   };
 
   const app = createMcpHttpApp(cfg, token, ctx, log);
   const httpServer = app.listen(cfg.port, cfg.host, () => {
-    log('INFO', `MCP (pełny R/W) nasłuchuje na http://${cfg.host}:${cfg.port}/mcp · root=${cfg.root} · readOnly=${cfg.readOnly} · shell=${cfg.allowShell}`);
+    log('INFO', `Universal MCP Hub (${cfg.nodeName}) nasłuchuje na http://${cfg.host}:${cfg.port}/mcp · narzędzia=${visibleTools(ctx).length} · root=${cfg.root} · readOnly=${cfg.readOnly} · shell=${cfg.allowShell}`);
     log('INFO', `Token MCP: ${source === 'env' ? 'z MCP_TOKEN (.env)' : `w pliku ${cfg.tokenFile} (0600)`}. Dane konektora: ${cfg.connectorFile}`);
     tunnel = new TunnelManager(
-      { kind: cfg.tunnel, port: cfg.port, bin: cfg.tunnelBin, cloudflaredToken: cfg.cloudflaredTunnelToken, publicUrl: cfg.publicUrlOverride },
+      {
+        kind: cfg.tunnel,
+        port: cfg.port,
+        bin: cfg.tunnelBin,
+        cloudflaredToken: cfg.cloudflaredTunnelToken,
+        cloudflaredProtocol: cfg.cloudflaredProtocol,
+        sshReverseTarget: cfg.sshReverseTarget,
+        sshReverseRemotePort: cfg.sshReverseRemotePort,
+        publicUrl: cfg.publicUrlOverride,
+      },
       {
         onUrl: (s) => {
           persist();
-          log('INFO', `Tunel ${s.kind} aktywny: ${s.mcpUrl} (adres zapisany w ${cfg.stateFile})`);
+          log('INFO', `Tunel ${s.effectiveKind || s.kind} aktywny: ${s.mcpUrl} (adres zapisany w ${cfg.stateFile})`);
         },
         onLog: (level, message) => {
           log(level, message);

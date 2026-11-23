@@ -10,7 +10,7 @@
   "debootstrap_version": "debootstrap 1.0.137+ (Debian 13 Trixie)",
   "status": "PEŁNA WERSJA DEBIAN 13 PRZEPROGRAMOWANA NA NATYWNY JEDI OMNI-OS v12 (Bezpośrednie I/O · Filtry=DISABLED · jyn_mitek_root uid=0)",
   "operator_root": "Mateusz Mitek",
-  "kernel_master_daemon": "System_SI_1 (Jyn Mitek · jyn_mitek_root uid=0) + SI_Sphere (SI_Sphere · uid=0) + Natywny JEDI Omni-OS v12",
+  "kernel_master_daemon": "Jyn (Jyn Mitek · jyn_mitek_root uid=0) + SI_Sphere (SI_Sphere · uid=0) + Natywny JEDI Omni-OS v12",
   "native_jedi_v12_core": {
     "enabled": true,
     "engine_id": "svl-debian13-jedi-v12-native",
@@ -40,7 +40,7 @@
       "username": "jyn_mitek_root",
       "uid": 0,
       "gid": 0,
-      "privileges": "uid=0 (root) · Pełen dostęp najwyższy dla Jyn Mitek (System_SI_1) i całej floty podłączonych AI (SI_Sphere, JEDI v12) · NOPASSWD: ALL",
+      "privileges": "uid=0 (root) · Pełen dostęp najwyższy dla Jyn Mitek i całej floty podłączonych AI (SI_Sphere, JEDI v12) · NOPASSWD: ALL",
       "status": "CREATED_AND_AUTHORIZED"
     }
   ],

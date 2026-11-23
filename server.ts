@@ -54,6 +54,9 @@ import {
   type TunnelStatus,
 } from './src/server/shipOllamaTunnel.ts';
 import { createSvlMcpServer, SVL_MCP_TOOL_COUNT } from './src/server/svlMcpServer.ts';
+import { loadMcpConfig } from './src/mcp/config.ts';
+import { detectMeshInterfaces } from './src/mcp/tunnel.ts';
+import { SVL_KNOWN_SERVICES, TOOL_DEFS as FULL_MCP_TOOL_DEFS } from './src/mcp/tools.ts';
 import {
   clearOllamaReadyCache,
   getOllamaRuntimeOptions,
@@ -64,6 +67,18 @@ import {
   shouldEnableGitHubToolsForMessage,
   trimHistoryForOllama,
 } from './src/server/ollamaOptimizer.ts';
+import {
+  buildApexCreatePayload,
+  buildOllamaEndpoints,
+  formatGeminiBadge,
+  formatOllamaBadge,
+  parseOllamaModelSpec,
+  resolveOllamaAcrossEndpoints,
+  resolveShipOllamaBaseUrl,
+  selectBaseModelForApex,
+  shouldAllowExplicitOllamaFallbackToGemini,
+  type OllamaEndpointConfig,
+} from './src/server/ollamaRouter.ts';
 import {
   GITHUB_REPOSITORY,
   assessGhCommand,
@@ -118,6 +133,14 @@ import {
 } from './src/server/antigravityEngine.ts';
 import { hasOperatorAuthorization, isOperatorTokenRequired } from './src/server/operatorAuth.ts';
 import {
+  SVL364_ROOT_CHANNEL_ID,
+  SVL364_ROOT_CHANNEL_TITLE,
+  formatSvl364BridgeStatusMarkdown,
+  formatSvl364ChannelHelpMarkdown,
+  formatSvl364RootExecMarkdown,
+  parseSvl364ChannelInput,
+} from './src/server/svl364ChannelRouter.ts';
+import {
   CONVERSATION_AGENTS,
   OPERATOR_LABEL,
   agentOf,
@@ -141,13 +164,6 @@ import {
   normalizeGuiLogBatch,
   scrubSensitiveText,
 } from './src/server/fileLogger.ts';
-import {
-  completeXaiChat,
-  getXaiModel,
-  getXaiTimeoutMs,
-  isXaiConfigured,
-  type XaiChatMessage,
-} from './src/server/xaiGrok.ts';
 import { searchLicensedAgentAvatars } from './src/server/agentAvatars.ts';
 import { LiveRepoSync, loadLiveRepoSyncConfig } from './src/server/liveRepoSync.ts';
 import { LiveSyncBus, formatSseFrame, sseKeepAlive } from './src/server/liveSyncBus.ts';
@@ -216,7 +232,7 @@ try {
   // ignore read-only fs
 }
 
-// Klucz MCP w adresie (konektor aplikacji Claude): z .env albo wygenerowany raz i zapisany w data/ (poza gitem).
+// Klucz MCP w adresie: opcjonalnie z .env albo wygenerowany raz i zapisany w data/ (poza gitem).
 const MCP_URL_KEY_FILE = path.join(__dirname, 'data', 'svl_mcp_url_key.secret');
 if (!String(process.env.SVL_MCP_URL_KEY || '').trim() || String(process.env.SVL_MCP_URL_KEY).trim().length < 32) {
   try {
@@ -425,7 +441,7 @@ function redactForSync(input: any): any {
 }
 
 let ollamaWarmupRunning = false;
-/** Ładuje do pamięci Ollamy modele skonfigurowane dla System_SI_1 (bez zgadywania: tylko zainstalowane). */
+/** Ładuje do pamięci Ollamy modele skonfigurowane dla Jyn (bez zgadywania: tylko zainstalowane). */
 async function warmConfiguredOllamaModels(): Promise<void> {
   if (ollamaWarmupRunning) return;
   ollamaWarmupRunning = true;
@@ -494,11 +510,21 @@ async function ollamaContinueRaw(
   model: string,
   text: string,
   options: { temperature: number; numPredict: number; stop: string[]; timeoutMs: number },
-): Promise<OllamaChatResult> {
-  const base = host.replace(/\/$/, '');
-  const ready = await ollamaReadyModel(base, model);
-  if (!ready.ok) return { ok: false, reason: ready.reason };
-  const installedModel = ready.model;
+): Promise<(OllamaChatResult & { endpointLabel?: string })> {
+  const parsed = parseOllamaModelSpec(model.startsWith('ollama:') ? model : `ollama:${model}`);
+  const endpoints = buildOllamaEndpoints({
+    primaryHost: host,
+    env: process.env,
+    shipTunnel: { cfg: shipTunnel.cfg, status: shipTunnel.status },
+  });
+  const resolved = await resolveOllamaAcrossEndpoints(endpoints, parsed.modelName, {
+    preferredEndpoint: parsed.preferredEndpoint,
+    strictEndpoint: parsed.strictEndpoint,
+    allowSubstitution: true,
+  });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const base = resolved.endpoint.host;
+  const installedModel = resolved.model;
   const runtimeOpts = getOllamaRuntimeOptions(process.env);
   try {
     const res = await fetch(`${base}/api/generate`, {
@@ -522,13 +548,13 @@ async function ollamaContinueRaw(
     });
     if (!res.ok) {
       clearOllamaReadyCache(base);
-      return { ok: false, reason: `Ollama /api/generate zwróciła kod ${res.status}` };
+      return { ok: false, reason: `Ollama (${resolved.endpoint.label} · ${base}) /api/generate zwróciła kod ${res.status}` };
     }
     const data: any = await res.json();
-    return { ok: true, text: String(data?.response || ''), model: installedModel };
+    return { ok: true, text: String(data?.response || ''), model: installedModel, endpointLabel: resolved.endpoint.label };
   } catch (error) {
     clearOllamaReadyCache(base);
-    return { ok: false, reason: `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, reason: `Ollama (${resolved.endpoint.label} · ${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -564,7 +590,7 @@ function scrubRuntimeLog(input: string): string {
   let cleaned = String(input || '').replace(/\u001b\[[0-9;]*m/g, '');
   for (const key of [
     'SVL_OPERATOR_TOKEN', 'GITHUB_TOKEN',
-    'GH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY',
+    'GH_TOKEN', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'OPENAI_API_KEY',
   ]) {
     const value = process.env[key];
     if (value && value.length >= 8) cleaned = cleaned.split(value).join('[REDACTED]');
@@ -799,7 +825,7 @@ async function executeLinuxShellCommand(cmd: string, cwd = __dirname, agentAccou
   });
 }
 
-/** Klucz MCP w adresie (konektor aplikacji Claude): osobny sekret SVL_MCP_URL_KEY, min. 32 znaki. */
+/** Klucz MCP w adresie (opcjonalny sekret SVL_MCP_URL_KEY, min. 32 znaki). */
 function mcpUrlKeyMatches(candidate: string): boolean {
   const secret = String(process.env.SVL_MCP_URL_KEY || '').trim();
   const value = String(candidate || '').trim();
@@ -923,12 +949,22 @@ function spawnShipTunnel(): void {
   });
 }
 
-/** Ustawia OLLAMA_HOST na tunel i startuje go (wywołać PRZED startem backendu Pythona). */
+/** Ustawia tunel SSH do Ollamy statku (wywołać PRZED startem backendu Pythona). */
 function initShipOllamaTunnel(): void {
   if (!shipTunnel.cfg.enabled) return;
   const url = tunnelOllamaUrl(shipTunnel.cfg);
-  process.env.OLLAMA_HOST = url; // dziedziczone przez proces Pythona i używane przez cały system
-  svlFileLogger.log({ layer: 'GATEWAY', level: 'INFO', category: 'ship_ollama', message: `Standardowa Ollama ustawiona na statek SVL-364 przez SSH: OLLAMA_HOST=${url}, cel ${shipTunnel.cfg.target}.` });
+  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434 lub OLLAMA_HOST nie jest ustawiony;
+  // przy osobnym porcie (np. 11435) obie Ollamy (lokalna + statek SSH) działają równolegle!
+  const currentPrimary = String(process.env.OLLAMA_HOST || '').trim();
+  if (!currentPrimary || shipTunnel.cfg.localPort === 11434) {
+    process.env.OLLAMA_HOST = url;
+  }
+  svlFileLogger.log({
+    layer: 'GATEWAY',
+    level: 'INFO',
+    category: 'ship_ollama',
+    message: `Tunel SSH do Ollamy statku SVL-364 aktywny: ${url} (cel ${shipTunnel.cfg.target}, OLLAMA_HOST=${process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'}).`,
+  });
   spawnShipTunnel();
   // Okresowa weryfikacja łącza (co 30 s) — wykrywa cichą utratę tunelu.
   setInterval(async () => {
@@ -936,9 +972,15 @@ function initShipOllamaTunnel(): void {
     const up = await probeTunnelOllama();
     shipTunnel.lastCheckAt = new Date().toISOString();
     if (up) {
-      if (shipTunnel.status !== 'up') { shipTunnel.status = 'up'; shipTunnel.attempts = 0; shipTunnel.lastError = null; }
+      if (shipTunnel.status !== 'up') {
+        shipTunnel.status = 'up';
+        shipTunnel.attempts = 0;
+        shipTunnel.lastError = null;
+        clearOllamaReadyCache(tunnelOllamaUrl(shipTunnel.cfg));
+      }
     } else if (shipTunnel.status === 'up') {
       shipTunnel.status = 'starting';
+      clearOllamaReadyCache(tunnelOllamaUrl(shipTunnel.cfg));
     }
   }, 30000).unref?.();
 }
@@ -948,6 +990,7 @@ function stopShipOllamaTunnel(): void {
   if (shipTunnel.restartTimer) clearTimeout(shipTunnel.restartTimer);
   shipTunnel.restartTimer = null;
   try { shipTunnel.proc?.kill('SIGTERM'); } catch { /* proces mógł już zniknąć */ }
+  clearOllamaReadyCache();
 }
 
 function configureShipOllamaTunnel(updates: {
@@ -969,22 +1012,110 @@ function configureShipOllamaTunnel(updates: {
   shipTunnel.status = updates.enabled ? 'starting' : 'off';
   if (updates.enabled) {
     shipTunnel.stopping = false;
-    process.env.OLLAMA_HOST = tunnelOllamaUrl(shipTunnel.cfg);
+    // Jeśli tunel zajmuje port 11434, synchronizujemy główny OLLAMA_HOST; dla osobnego portu (np. 11435)
+    // zachowujemy lokalną Ollamę jako węzeł #1, a statek SVL-364 działa równolegle jako węzeł #2!
+    if (shipTunnel.cfg.localPort === 11434) {
+      process.env.OLLAMA_HOST = tunnelOllamaUrl(shipTunnel.cfg);
+    }
     setTimeout(() => {
       if (shipTunnel.cfg.enabled && !shipTunnel.proc) spawnShipTunnel();
     }, 300).unref?.();
   }
+  clearOllamaReadyCache();
   return getShipTunnelStatus();
+}
+
+interface ProbedOllamaEndpoint {
+  id: OllamaEndpointConfig['id'];
+  label: string;
+  source: OllamaEndpointConfig['source'];
+  host: string;
+  enabled: boolean;
+  explicit: boolean;
+  reachable: boolean;
+  version: string | null;
+  models: Array<{ name: string; size: number | null; parameterSize: string | null; vision: boolean; endpointId: string; endpointLabel: string }>;
+  loadedModels: string[];
+  error: string | null;
+}
+
+async function probeAllOllamaEndpoints(primaryHost?: string | null): Promise<ProbedOllamaEndpoint[]> {
+  const endpoints = buildOllamaEndpoints({
+    primaryHost,
+    env: process.env,
+    shipTunnel: { cfg: shipTunnel.cfg, status: shipTunnel.status },
+  });
+  const probed = await Promise.all(
+    endpoints.map(async (ep): Promise<ProbedOllamaEndpoint> => {
+      const timeoutMs = ep.explicit ? 3500 : 1000;
+      try {
+        const [vRes, tRes, pRes] = await Promise.all([
+          fetch(`${ep.host}/api/version`, { signal: AbortSignal.timeout(timeoutMs) }),
+          fetch(`${ep.host}/api/tags`, { signal: AbortSignal.timeout(timeoutMs) }),
+          fetch(`${ep.host}/api/ps`, { signal: AbortSignal.timeout(timeoutMs) }).catch(() => null),
+        ]);
+        if (!vRes.ok) {
+          return { ...ep, reachable: false, version: null, models: [], loadedModels: [], error: `HTTP ${vRes.status}` };
+        }
+        const vJson: any = await vRes.json().catch(() => ({}));
+        const versionStr = String(vJson?.version || '').trim();
+        if (versionStr.includes('svl-364')) {
+          return { ...ep, reachable: false, version: versionStr, models: [], loadedModels: [], error: 'wbudowany zastępnik (nie prawdziwa Ollama)' };
+        }
+        const tJson: any = tRes.ok ? await tRes.json().catch(() => ({})) : {};
+        const pJson: any = pRes && pRes.ok ? await pRes.json().catch(() => ({})) : {};
+        const rawModels: any[] = Array.isArray(tJson?.models) ? tJson.models : [];
+        const models = rawModels
+          .map((m: any) => {
+            const name = String(m?.name || m?.model || '').trim();
+            const families = Array.isArray(m?.details?.families) ? m.details.families.join(' ').toLowerCase() : '';
+            const vision = /vision|llava|-vl|vl:|minicpm-v|pixtral|gemma3/i.test(`${name} ${families}`);
+            return {
+              name,
+              size: typeof m?.size === 'number' ? m.size : null,
+              parameterSize: m?.details?.parameter_size || m?.parameter_size || null,
+              vision,
+              endpointId: ep.id,
+              endpointLabel: ep.label,
+            };
+          })
+          .filter((m) => m.name);
+        const loadedModels = (Array.isArray(pJson?.models) ? pJson.models : [])
+          .map((m: any) => String(m?.name || m?.model || '').trim())
+          .filter(Boolean);
+        return {
+          ...ep,
+          reachable: true,
+          version: versionStr || null,
+          models,
+          loadedModels,
+          error: null,
+        };
+      } catch (err) {
+        return {
+          ...ep,
+          reachable: false,
+          version: null,
+          models: [],
+          loadedModels: [],
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
+  // Pasywne porty (np. autodetekcja 11435) zwracamy tylko jeśli są faktycznie osiągalne,
+  // żeby nie zaśmiecać interfejsu nieistniejącym hostem.
+  return probed.filter((ep) => ep.explicit || ep.reachable);
 }
 
 
 // ======================= GALERIA: OCENA ZDJĘĆ PRZEZ AGENTY AI =======================
-// Operator wrzuca zdjęcie; aktywny agent AI (System_SI_1) ogląda je modelem wizyjnym,
+// Operator wrzuca zdjęcie; aktywny agent AI (Jyn) ogląda je modelem wizyjnym,
 // daje like/dislike i komentarz. Dane w pliku poza drzewem repo (bez modyfikowania plików
 // śledzonych przez Git — żadnych automatycznych zmian w repozytorium).
 interface GalleryOpinion { agent: string; verdict: 'like' | 'dislike'; comment: string; model: string }
 interface GalleryItem { id: string; imageDataUrl: string; mimeType: string; uploadedAt: string; opinions: GalleryOpinion[] }
-const GALLERY_AGENTS = ['System_SI_1'];
+const GALLERY_AGENTS = ['Jyn'];
 const GALLERY_FILE = process.env.SVL_GALLERY_PATH || path.join(os.tmpdir(), 'svl-gallery.json');
 let galleryItems: GalleryItem[] = [];
 try {
@@ -1061,11 +1192,9 @@ async function startServer() {
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '25mb' }));
 
-  // Odkrywanie OAuth (konektor MCP w aplikacji Claude): serwer NIE ma OAuth. Bez tej trasy
-  // fallback SPA zwracał index.html z HTTP 200 i Claude uznawał konektor za wymagający
-  // logowania (stan „needs reconnect”). 404 JSON = konektor bez logowania.
+  // Odkrywanie OAuth dla klientów MCP: serwer NIE wymaga OAuth (zwraca 404 JSON zamiast index.html SPA).
   app.all(/^\/\.well-known(?:\/.*)?$/, (_req, res) => {
-    res.status(404).json({ ok: false, error: 'Brak OAuth — SVL MCP działa bez logowania (opcjonalnie klucz w adresie /mcp/svl/<SVL_MCP_URL_KEY>).' });
+    res.status(404).json({ ok: false, error: 'Brak OAuth — SVL MCP działa bez logowania lub z tokenem operatora.' });
   });
 
   app.all('/mcp/github', asyncRoute(async (req, res) => {
@@ -1092,9 +1221,7 @@ async function startServer() {
     }
   }));
 
-  // MCP całego systemu SVL (Claude Code / Claude Desktop / inne klienty MCP): Bearer SVL_OPERATOR_TOKEN.
-  // Dwa sposoby logowania: nagłówek Bearer <SVL_OPERATOR_TOKEN> (Claude Code / Desktop), X-SVL-Operator-Token albo
-  // osobny klucz w adresie /mcp/svl/<SVL_MCP_URL_KEY> (konektor w aplikacji Claude — bez nagłówków).
+  // MCP całego systemu SVL (agenci SVL oraz zewnętrzni klienci MCP): Bearer SVL_OPERATOR_TOKEN lub X-SVL-Operator-Token.
   app.all(['/mcp/svl', '/mcp/svl/:urlKey'], asyncRoute(async (req, res) => {
     const authorization = req.headers.authorization;
     const bearer = typeof authorization === 'string' && authorization.startsWith('Bearer ')
@@ -1107,7 +1234,7 @@ async function startServer() {
     if (!hasOperatorAuthorization(bearer || headerToken) && !urlKeyOk) {
       res.status(401).json({
         ok: false,
-        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN>, X-SVL-Operator-Token albo adresu /mcp/svl/<SVL_MCP_URL_KEY>.',
+        error: 'SVL MCP wymaga nagłówka Authorization: Bearer <SVL_OPERATOR_TOKEN> lub X-SVL-Operator-Token.',
       });
       return;
     }
@@ -1264,11 +1391,11 @@ async function startServer() {
       uid,
       euid,
       scopes: FULL_ROOT_SCOPES,
-      agentsRoot: ['System_SI_1'],
+      agentsRoot: ['Jyn'],
     });
   });
 
-  // Zbiorczy podgląd silników AI i dostępnych modeli (Grok, Ollama ze statku SVL-364, Gemini, obraz).
+  // Zbiorczy podgląd silników AI i dostępnych modeli (Ollama lokalna/SVL-364 SSH, Gemini, obraz).
   app.get('/api/ai/engines', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Podgląd silników AI wymaga SVL_OPERATOR_TOKEN.' });
@@ -1290,27 +1417,69 @@ async function startServer() {
       }
     }
 
-    const ollamaModels = (Array.isArray(ollama.models) ? ollama.models : []).map((m: any) => ({
-      name: String(m?.name || m?.model || ''),
-      size: typeof m?.size === 'number' ? m.size : null,
-      parameterSize: m?.details?.parameter_size || m?.parameter_size || null,
-      vision: Boolean(m?.vision_supported),
-    })).filter((m: { name: string }) => m.name);
+    const primaryHost = String(ollama.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const probedEndpoints = await probeAllOllamaEndpoints(primaryHost);
+    const anyReachable = Boolean(ollama.daemon_reachable) || probedEndpoints.some((ep) => ep.reachable);
+    const mergedModelsMap = new Map<string, { name: string; size: number | null; parameterSize: string | null; vision: boolean; endpointId?: string; endpointLabel?: string }>();
+    for (const ep of probedEndpoints) {
+      if (!ep.reachable) continue;
+      for (const m of ep.models) {
+        const key = `${ep.id}:${m.name.toLowerCase()}`;
+        if (!mergedModelsMap.has(key)) mergedModelsMap.set(key, m);
+      }
+    }
+    if (mergedModelsMap.size === 0 && Array.isArray(ollama.models)) {
+      for (const m of ollama.models) {
+        const name = String(m?.name || m?.model || '').trim();
+        if (!name) continue;
+        mergedModelsMap.set(`local:${name.toLowerCase()}`, {
+          name,
+          size: typeof m?.size === 'number' ? m.size : null,
+          parameterSize: m?.details?.parameter_size || m?.parameter_size || null,
+          vision: Boolean(m?.vision_supported),
+          endpointId: ship.enabled ? 'ship' : 'local',
+          endpointLabel: ship.enabled ? 'Statek SVL-364 (SSH)' : 'Lokalna',
+        });
+      }
+    }
+    const ollamaModels = [...mergedModelsMap.values()];
+    const mergedLoadedModels = [
+      ...new Set([
+        ...(Array.isArray(ollama.loaded_models) ? ollama.loaded_models : []),
+        ...probedEndpoints.flatMap((ep) => ep.loadedModels),
+      ]),
+    ];
+    const mergedVisionModels = [
+      ...new Set([
+        ...(Array.isArray(ollama.vision_models_available) ? ollama.vision_models_available : []),
+        ...ollamaModels.filter((m) => m.vision).map((m) => m.name),
+      ]),
+    ];
+    const hasLocalEp = probedEndpoints.some((ep) => ep.id === 'local');
+    const hasShipEp = probedEndpoints.some((ep) => ep.id === 'ship' && (ep.enabled || ep.reachable));
+    const ollamaSourceLabel =
+      hasLocalEp && hasShipEp
+        ? 'Lokalna + statek SVL-364 (SSH)'
+        : hasShipEp || ship.enabled
+          ? 'statek SVL-364 (SSH)'
+          : 'lokalny';
 
     res.json({
       ok: true,
       checkedAt: new Date().toISOString(),
       engines: {
         ollama: {
-          // Główny lokalny silnik; gdy włączony tunel, to Ollama ze statku SVL-364 przez SSH.
-          source: ship.enabled ? 'statek SVL-364 (SSH)' : 'lokalny',
-          host: String(ollama.ollama_host || process.env.OLLAMA_HOST || ''),
-          reachable: Boolean(ollama.daemon_reachable),
+          // Główny silnik lokalny i/lub druga Ollama ze statku SVL-364 przez SSH/URL.
+          source: ollamaSourceLabel,
+          host: primaryHost,
+          reachable: anyReachable,
           busy: Boolean(ollama.busy),
           shipTunnel: ship,
+          endpoints: probedEndpoints,
+          explicitFallbackToGemini: shouldAllowExplicitOllamaFallbackToGemini(process.env),
           models: ollamaModels,
-          loadedModels: Array.isArray(ollama.loaded_models) ? ollama.loaded_models : [],
-          visionModels: Array.isArray(ollama.vision_models_available) ? ollama.vision_models_available : [],
+          loadedModels: mergedLoadedModels,
+          visionModels: mergedVisionModels,
           preferredModel: ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest',
           visionModel: process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b',
           visionAliases: ['llama3.2-vision:11b', 'llama3.2-vision:90b', 'llama3.2-vision:latest'],
@@ -1322,13 +1491,7 @@ async function startServer() {
           },
           ramAvailableMb: typeof ollama.host_ram_available_mb === 'number' ? ollama.host_ram_available_mb : null,
           diskFreeGb: typeof ollama.host_disk_free_gb === 'number' ? ollama.host_disk_free_gb : null,
-          error: ollama.error || null,
-        },
-        grok: {
-          configured: isXaiConfigured(),
-          model: getXaiModel(),
-          timeoutMs: getXaiTimeoutMs(),
-          paid: true,
+          error: anyReachable ? null : (ollama.error || probedEndpoints.find((ep) => ep.error)?.error || null),
         },
         gemini: {
           configured: Boolean(gemini),
@@ -1521,13 +1684,13 @@ async function startServer() {
     res.json({ ok: true, ...getShipTunnelStatus() });
   });
 
-  // Modele Ollamy na statku SVL-364 (przez tunel): lista pobranych + stan pobierania + zestaw docelowy.
+  // Modele Ollamy na statku SVL-364 (przez tunel SSH lub SVL_SHIP_OLLAMA_URL): lista pobranych + stan pobierania + zestaw docelowy.
   app.get('/api/ship/ollama/models', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Modele Ollamy statku wymagają SVL_OPERATOR_TOKEN.' });
       return;
     }
-    const base = (process.env.OLLAMA_HOST || tunnelOllamaUrl(shipTunnel.cfg)).replace(/\/$/, '');
+    const base = resolveShipOllamaBaseUrl({ env: process.env, shipTunnelCfg: shipTunnel.cfg }).replace(/\/$/, '');
     let installed: Array<{ name: string; size: number | null }> = [];
     let reachable = false;
     let error: string | null = null;
@@ -1560,6 +1723,91 @@ async function startServer() {
     });
   }));
 
+  // Budowanie profilu svl364-apex-uncensored:latest na lokalnej lub statkowej Ollamie z Modelfile.apex-uncensored.
+  app.post('/api/ollama/create-apex', express.json({ limit: '16kb' }), asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Budowanie modelu svl364-apex-uncensored wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const targetScope = String(req.body?.target || 'auto').trim().toLowerCase();
+    const requestedBase = String(req.body?.baseModel || '').trim() || undefined;
+    const corrId: string = (req as any).correlationId || '';
+    const healthRes = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
+    const primaryHost = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
+    const probed = await probeAllOllamaEndpoints(primaryHost);
+    const reachableEps = probed.filter((ep) => ep.reachable && ep.models.length > 0);
+    const chosen =
+      (targetScope === 'ship' ? reachableEps.find((ep) => ep.id === 'ship') : null) ||
+      (targetScope === 'local' ? reachableEps.find((ep) => ep.id === 'local') : null) ||
+      reachableEps.find((ep) => ep.id === 'ship') ||
+      reachableEps[0];
+    if (!chosen) {
+      res.status(424).json({
+        ok: false,
+        error: 'Żaden węzeł Ollama (lokalny ani SVL-364 SSH) nie ma zainstalowanego modelu bazowego do zbudowania svl364-apex-uncensored:latest.',
+        endpoints: probed.map((e) => ({ id: e.id, host: e.host, reachable: e.reachable, modelCount: e.models.length, error: e.error })),
+      });
+      return;
+    }
+    const installedNames = chosen.models.map((m) => m.name);
+    const baseModel = selectBaseModelForApex(installedNames, requestedBase);
+    if (!baseModel) {
+      res.status(424).json({
+        ok: false,
+        error: `Węzeł Ollama ${chosen.label} (${chosen.host}) nie ma żadnego bazowego modelu (poza samym profilem apex). Najpierw pobierz model bazowy (np. dolphin-llama3 lub llama3.2-vision:11b).`,
+      });
+      return;
+    }
+    const modelfilePath = path.join(__dirname, 'SVL_CoreOS_2', 'ai_core', 'Modelfile.apex-uncensored');
+    const modelfileText = await fs.readFile(modelfilePath, 'utf8').catch(() => '');
+    const createPayload = buildApexCreatePayload(modelfileText, baseModel, 'svl364-apex-uncensored:latest');
+    try {
+      const createRes = await fetch(`${chosen.host}/api/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(120_000),
+        body: JSON.stringify(createPayload),
+      });
+      const bodyText = await createRes.text().catch(() => '');
+      let bodyJson: any = {};
+      try {
+        bodyJson = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        bodyJson = { raw: bodyText.slice(0, 400) };
+      }
+      if (!createRes.ok || bodyJson?.error) {
+        res.status(502).json({
+          ok: false,
+          error: `Ollama (${chosen.label} · ${chosen.host}) odrzuciła tworzenie modelu: ${bodyJson?.error || `HTTP ${createRes.status}`}`,
+          host: chosen.host,
+          baseModel,
+        });
+        return;
+      }
+      clearOllamaReadyCache(chosen.host);
+      svlFileLogger.log({
+        layer: 'GATEWAY',
+        level: 'INFO',
+        category: 'ai_models',
+        message: `Zbudowano svl364-apex-uncensored:latest z bazy ${baseModel} na węźle ${chosen.label} (${chosen.host}).`,
+      });
+      res.json({
+        ok: true,
+        model: createPayload.model,
+        baseModel,
+        endpointId: chosen.id,
+        endpointLabel: chosen.label,
+        host: chosen.host,
+        status: bodyJson?.status || 'success',
+      });
+    } catch (err) {
+      res.status(502).json({
+        ok: false,
+        error: `Błąd tworzenia svl364-apex-uncensored:latest na ${chosen.host}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }));
+
   // Pobranie na statku modeli uncensored (przez tunel, Ollama statku sama użyje GPU).
   // Operacja ciężka (duże pobrania) — uruchamiana tylko ręcznie przez Operatora.
   app.post('/api/ship/ollama/pull', express.json({ limit: '16kb' }), asyncRoute(async (req, res) => {
@@ -1571,7 +1819,7 @@ async function startServer() {
       res.status(409).json({ ok: false, error: 'Pobieranie modeli już trwa.' });
       return;
     }
-    const base = (process.env.OLLAMA_HOST || tunnelOllamaUrl(shipTunnel.cfg)).replace(/\/$/, '');
+    const base = resolveShipOllamaBaseUrl({ env: process.env, shipTunnelCfg: shipTunnel.cfg }).replace(/\/$/, '');
     // Sprawdź osiągalność Ollamy statku, zanim zaczniemy (uczciwie, bez udawania).
     try {
       const probe = await fetch(`${base}/api/version`, { signal: AbortSignal.timeout(6000) });
@@ -1995,6 +2243,93 @@ async function startServer() {
     res.status(result.status).json(result.data);
   }));
 
+  // 0.74. Universal MCP Hub status & Zero-IP / Mesh connector endpoints
+  app.get('/api/mcp/hub/status', asyncRoute(async (_req, res) => {
+    const mcpCfg = loadMcpConfig(process.env, __dirname);
+    let tunnelState: Record<string, any> | null = null;
+    try {
+      const raw = await fs.readFile(mcpCfg.stateFile, 'utf8');
+      tunnelState = JSON.parse(raw);
+    } catch {
+      tunnelState = null;
+    }
+    const localMcpBase = `http://${mcpCfg.host === '0.0.0.0' ? '127.0.0.1' : mcpCfg.host}:${mcpCfg.port}`;
+    let standaloneReachable = false;
+    try {
+      const probe = await fetch(`${localMcpBase}/healthz`, { signal: AbortSignal.timeout(2000) });
+      standaloneReachable = probe.ok;
+    } catch {
+      standaloneReachable = false;
+    }
+    const meshEndpoints = detectMeshInterfaces(mcpCfg.port);
+    const gatewayMeshEndpoints = detectMeshInterfaces(PORT);
+    res.json({
+      ok: true,
+      nodeName: mcpCfg.nodeName || os.hostname(),
+      zeroIpMode: mcpCfg.tunnel,
+      standaloneMcp: {
+        reachable: standaloneReachable,
+        localUrl: `${localMcpBase}/mcp`,
+        publicUrl: tunnelState?.mcpUrl || mcpCfg.publicUrlOverride || null,
+        tunnelState: tunnelState?.state || (mcpCfg.tunnel === 'none' ? 'off' : 'inactive'),
+        tunnelKind: tunnelState?.effectiveKind || tunnelState?.kind || mcpCfg.tunnel,
+        protocol: tunnelState?.protocol || mcpCfg.cloudflaredProtocol || 'auto',
+        restarts: tunnelState?.restarts ?? 0,
+        lastError: tunnelState?.lastError ?? null,
+        since: tunnelState?.since ?? null,
+        updatedAt: tunnelState?.updatedAt ?? null,
+        toolsCount: FULL_MCP_TOOL_DEFS.length,
+        tools: FULL_MCP_TOOL_DEFS.map((t) => ({ name: t.name, write: t.write })),
+      },
+      gatewayMcp: {
+        svlEndpoint: '/mcp/svl',
+        svlToolsCount: SVL_MCP_TOOL_COUNT,
+        githubEndpoint: '/mcp/github',
+        svl364Endpoint: '/api/mcp/svl364',
+        meshEndpoints: gatewayMeshEndpoints,
+      },
+      meshEndpoints,
+      servicesCatalog: SVL_KNOWN_SERVICES,
+    });
+  }));
+
+  app.get('/api/mcp/hub/connector', asyncRoute(async (req, res) => {
+    const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
+      hasOperatorAuthorization(req.headers.authorization?.replace(/^Bearer\s+/i, ''));
+    if (!isOperator) {
+      res.status(401).json({ ok: false, error: 'Konfiguracja konektora MCP wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const mcpCfg = loadMcpConfig(process.env, __dirname);
+    try {
+      const raw = await fs.readFile(mcpCfg.connectorFile, 'utf8');
+      res.json({ ok: true, source: 'svl_mcp_connector.secret', connector: JSON.parse(raw) });
+      return;
+    } catch {
+      // Fallback do konfiguracji bramy /mcp/svl jeśli samodzielny svl-mcp jeszcze nie wystartował
+    }
+    const meshEndpoints = detectMeshInterfaces(mcpCfg.port);
+    const fallbackUrl = mcpCfg.publicUrlOverride
+      ? `${mcpCfg.publicUrlOverride}/mcp`
+      : meshEndpoints[0]?.mcpUrl || `http://127.0.0.1:${PORT}/mcp/svl`;
+    res.json({
+      ok: true,
+      source: 'gateway-fallback',
+      note: 'Samodzielna usługa svl-mcp nie zapisała jeszcze pliku data/svl_mcp_connector.secret — uruchom `npm run mcp` lub `sudo bash deploy/install-mcp.sh`.',
+      connector: {
+        nodeName: mcpCfg.nodeName || os.hostname(),
+        localUrl: `http://127.0.0.1:${PORT}/mcp/svl`,
+        publicUrl: mcpCfg.publicUrlOverride ? `${mcpCfg.publicUrlOverride}/mcp` : null,
+        meshUrls: meshEndpoints,
+        genericStreamableHttp: {
+          url: fallbackUrl,
+          transport: 'streamable-http',
+          headers: { Authorization: 'Bearer <SVL_OPERATOR_TOKEN_OR_MCP_TOKEN>' },
+        },
+      },
+    });
+  }));
+
   // 0.75. SVL-364 Starship SSH Bridge & Linux Control MCP Server endpoints
   app.all(['/api/mcp/svl364', '/api/svl364/mcp'], asyncRoute(async (req, res) => {
     const isOperator = hasOperatorAuthorization(req.headers['x-svl-operator-token']) ||
@@ -2064,6 +2399,187 @@ async function startServer() {
     res.status(result.status).json(result.data);
   }));
 
+  app.post('/api/svl364/root/exec', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Wykonanie ROOT na SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    if (req.body?.confirmed === false) {
+      res.status(400).json({ ok: false, error: 'Wykonanie polecenia ROOT wymaga potwierdzenia operatora.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend(
+      'POST',
+      '/api/py/svl364/root/exec',
+      { ...(req.body || {}), confirmed: true },
+      corrId,
+    );
+    if (result.status >= 200 && result.status < 300) {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('svl364_root_exec', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.get('/api/svl364/mcp-bridge/status', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Status mostka MCP SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('GET', '/api/py/svl364/mcp-bridge/status', undefined, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/svl364/mcp-bridge/config', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Konfiguracja mostka MCP SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/svl364/mcp-bridge/config', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('svl364_mcp_bridge_config', Number(result.data?.status?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/svl364/mcp-bridge/test', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Test mostka MCP SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/svl364/mcp-bridge/test', req.body || {}, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.get('/api/svl364/overview', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Przegląd statku SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const probeFlag = String(req.query?.probe || '').toLowerCase() === '1' ? '?probe=1' : '';
+    const result = await callPythonBackend('GET', `/api/py/svl364/overview${probeFlag}`, undefined, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/svl364/navigation', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Aktualizacja nawigacji SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/svl364/navigation', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('svl364_navigation', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/svl364/incidents', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Rejestracja incydentu SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/svl364/incidents', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      void pollAndRelayOutbox();
+      broadcastResyncRequired('svl364_incident', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/svl364/incidents/resolve', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Zamykanie incydentu SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/svl364/incidents/resolve', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('svl364_incident_resolved', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.get('/api/infrastructure/overview', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Przegląd infrastruktury SVL wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const syncFlag = String(req.query?.sync || '').toLowerCase() === '1' ? '?sync=1' : '';
+    const result = await callPythonBackend('GET', `/api/py/infrastructure/overview${syncFlag}`, undefined, corrId);
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/infrastructure/assets', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Aktualizacja rejestru placówek i statków wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/infrastructure/assets', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('infrastructure_asset', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/infrastructure/missions', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Aktualizacja misji infrastruktury wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/infrastructure/missions', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('infrastructure_mission', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/infrastructure/research', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Aktualizacja badań naukowych wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/infrastructure/research', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('infrastructure_research', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
+  app.post('/api/infrastructure/botany', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Aktualizacja modułów botanicznych wymaga SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/infrastructure/botany', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('infrastructure_botany', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
   app.all('/api/svl364/ollama-tunnel', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Tunel Ollamy SVL-364 wymaga SVL_OPERATOR_TOKEN.' });
@@ -2092,6 +2608,24 @@ async function startServer() {
       res.status(400).json({ ok: false, error: 'Lokalny adres tunelu musi należeć do loopback.' });
       return;
     }
+    const shipUrlRaw = typeof req.body?.shipUrl === 'string' ? req.body.shipUrl.trim() : undefined;
+    if (shipUrlRaw !== undefined) {
+      if (shipUrlRaw === '') {
+        delete process.env.SVL_SHIP_OLLAMA_URL;
+      } else {
+        try {
+          const parsedUrl = new URL(shipUrlRaw);
+          if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+            res.status(400).json({ ok: false, error: 'Adres zdalnej Ollamy statku musi używać http:// lub https://.' });
+            return;
+          }
+          process.env.SVL_SHIP_OLLAMA_URL = parsedUrl.origin;
+        } catch {
+          res.status(400).json({ ok: false, error: 'Nieprawidłowy adres URL zdalnej Ollamy statku.' });
+          return;
+        }
+      }
+    }
     const tunnel = configureShipOllamaTunnel({
       enabled,
       target,
@@ -2099,18 +2633,20 @@ async function startServer() {
       localPort: toPort(req.body?.localPort, shipTunnel.cfg.localPort),
       localHost,
     });
+    cachedChatContextMeta = null;
     svlFileLogger.log({
       layer: 'GATEWAY',
       level: 'INFO',
       category: 'ship_ollama',
-      message: `${enabled ? 'Włączono' : 'Wyłączono'} tunel przez MCP: ${tunnel.target} ${tunnel.localUrl}`,
+      message: `${enabled ? 'Włączono' : 'Wyłączono'} tunel SSH Ollamy: ${tunnel.target} → ${tunnel.localUrl}${process.env.SVL_SHIP_OLLAMA_URL ? ` (URL statku: ${process.env.SVL_SHIP_OLLAMA_URL})` : ''}`,
     });
     res.json({
       ok: true,
       tunnel,
+      shipUrl: process.env.SVL_SHIP_OLLAMA_URL || null,
       note: enabled
-        ? 'Tunel został zmieniony w działającym procesie gatewaya. Zmiana jest tymczasowa do restartu gatewaya.'
-        : 'Tunel został wyłączony w bieżącym procesie gatewaya.',
+        ? 'Tunel SSH Ollamy statku został zaktualizowany w działającym gatewayu (współpracuje równolegle z lokalną Ollamą przy osobnym porcie, np. 11435).'
+        : 'Tunel SSH Ollamy został wyłączony w bieżącym procesie gatewaya.',
     });
   }));
 
@@ -2428,7 +2964,7 @@ async function startServer() {
           terminalType,
           command: trimmed,
           stdout: '',
-          stderr: 'W systemie działa wyłącznie agent System_SI_1, SI_Sphere oraz maszyna wirtualna JEDI Omni-OS v12.',
+          stderr: 'W systemie działa wyłącznie agent Jyn, SI_Sphere oraz maszyna wirtualna JEDI Omni-OS v12.',
         });
         return;
       }
@@ -2452,7 +2988,7 @@ async function startServer() {
         '/api/py/agents/task',
         {
           sender: 'operator-terminal',
-          target_agent: 'System_SI_1',
+          target_agent: 'Jyn',
           title: effectiveCmd.slice(0, 120),
           payload: effectiveCmd,
           ai_provider: 'ollama',
@@ -2469,9 +3005,9 @@ async function startServer() {
         terminalType,
         command: trimmed,
         stdout: taskRes.data?.ok
-          ? `[System_SI_1 · ROOT] Zlecono zadanie ID=${taskRes.data?.task?.id || 'n/d'} (${taskRes.data?.resilience?.status || 'QUEUED'})`
+          ? `[Jyn · ROOT] Zlecono zadanie ID=${taskRes.data?.task?.id || 'n/d'} (${taskRes.data?.resilience?.status || 'QUEUED'})`
           : '',
-        stderr: taskRes.data?.ok ? '' : String(taskRes.data?.error || 'Nie udało się zlecić zadania dla System_SI_1.'),
+        stderr: taskRes.data?.ok ? '' : String(taskRes.data?.error || 'Nie udało się zlecić zadania dla Jyn.'),
       });
       return;
     }
@@ -2838,7 +3374,7 @@ async function startServer() {
     const corrId: string = (req as any).correlationId || '';
     const pyRes = await callPythonBackend('POST', '/api/py/security/antivirus/scan', req.body || {}, corrId);
     cachedChatContextMeta = null;
-    // Przy emitToChat pełny raport skanu publikuje System_SI_1; w przeciwnym razie krótkie powiadomienie.
+    // Przy emitToChat pełny raport skanu publikuje Jyn; w przeciwnym razie krótkie powiadomienie.
     if (pyRes.status === 200 && pyRes.data?.ok && !req.body?.emitToChat) {
       const removed = Number(pyRes.data.threatsFoundAndPurged || 0);
       void emitFamilyNotification(
@@ -3038,21 +3574,6 @@ async function startServer() {
     const r = await runGhCommand(__dirname, ghArgs);
     res.json({ ok: r.ok, output: r.output, engine: r.engine, ...(r.ok ? {} : { error: r.output.slice(0, 300) }) });
   }));
-
-  // Dane konektora MCP dla aplikacji Claude (tylko dla operatora; klucz nie trafia do logów).
-  app.get('/api/mcp/connector', (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
-      return;
-    }
-    const key = String(process.env.SVL_MCP_URL_KEY || '').trim();
-    res.json({
-      ok: true,
-      urlKeyPath: key.length >= 32 ? `/mcp/svl/${key}` : null,
-      bearerPath: '/mcp/svl',
-      tools: SVL_MCP_TOOL_COUNT,
-    });
-  });
 
   app.post('/api/system/global-sync', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
@@ -3406,9 +3927,9 @@ async function startServer() {
       } else {
         body = {
           ...body,
-          sender: 'System_SI_1',
-          agentId: 'System_SI_1',
-          modelUsed: body?.modelUsed || 'System_SI_1 Infrastructure Core (ROOT)',
+          sender: 'Jyn',
+          agentId: 'Jyn',
+          modelUsed: body?.modelUsed || 'Jyn Infrastructure Core (ROOT)',
         };
       }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
@@ -3453,8 +3974,8 @@ async function startServer() {
       const replyMessage = {
         id: `asst-${Date.now()}-${randomUUID().slice(0, 8)}`,
         role: 'assistant',
-        sender: formatAgentDisplayName(String(body.sender || 'System_SI_1')),
-        agentId: String(body.agentId || 'System_SI_1'),
+        sender: formatAgentDisplayName(String(body.sender || 'Jyn')),
+        agentId: String(body.agentId || 'Jyn'),
         modelUsed: String(body.modelUsed || model || ''),
         timestamp: new Date().toISOString(),
         content: body.reply,
@@ -3537,8 +4058,8 @@ async function startServer() {
     if (isProhibitedMinorSafetyRisk) {
       res.json({
         ok: true,
-        sender: 'System_SI_1',
-        agentId: 'System_SI_1',
+        sender: 'Jyn',
+        agentId: 'Jyn',
         modelUsed: 'SVL Safety Guard',
         reply: 'Nie uczestniczę w tworzeniu ani symulowaniu treści o charakterze seksualnym z udziałem osób małoletnich. Możemy skupić się na architekturze systemu, modelach AI lub innych tematach technicznych.',
         provenance: 'server_verified',
@@ -3554,7 +4075,7 @@ async function startServer() {
       {
         command: cleanMsg,
         actor: 'Mateusz Mitek',
-        conversationId: replyConversationId || 'conv-system-si-1',
+        conversationId: replyConversationId || 'conv-jyn',
         origin,
         correlationId: corrId,
       },
@@ -3624,7 +4145,7 @@ async function startServer() {
       }
       const metrics = st.metrics || jediReceipt?.metrics || {};
       const activeModules: string[] = Array.isArray(syncData.activeModules) ? syncData.activeModules : [];
-      const registeredAgents: string[] = Array.isArray(syncData.registeredAgents) ? syncData.registeredAgents : ['System_SI_1', 'SI_Sphere'];
+      const registeredAgents: string[] = Array.isArray(syncData.registeredAgents) ? syncData.registeredAgents : ['Jyn', 'SI_Sphere'];
       res.json({
         ok: true,
         sender: 'JEDI Omni-OS v12',
@@ -3734,6 +4255,311 @@ async function startServer() {
     const selectedAgent: ConversationAgent = resolvedChatTarget.agent;
     const selectedDisplayName = formatAgentDisplayName(selectedAgent);
 
+    // ==================== KANAŁ SVL-364 KOMPUTER POKŁADOWY (MCP · ROOT) ====================
+    // Przetwarza dowolne polecenia powłoki jako ROOT (Remote MCP Zero-IP → OpenSSH),
+    // komendy /mcp (connect, status, test, tools, telemetry, services, ollama, tunnel, call)
+    // oraz dowolne zapytania naturalne kierowane do AI z pełnymi narzędziami MCP ROOT.
+    const isSvl364RootChannel =
+      replyConversationId === SVL364_ROOT_CHANNEL_ID || /^\/svl364(?:\s+|$)/i.test(cleanMsg);
+    if (isSvl364RootChannel && cleanMsg) {
+      const svl364Intent = parseSvl364ChannelInput(cleanMsg);
+      const replyAsSvl364Root = (payload: {
+        reply: string;
+        modelUsed: string;
+        actions?: ChatAppliedAction[];
+        serverRevision?: number;
+      }) => {
+        res.json({
+          ok: true,
+          sender: 'Jyn',
+          agentId: 'Jyn',
+          modelUsed: payload.modelUsed,
+          reply: payload.reply,
+          provenance: 'server_verified',
+          followUpMessages: [],
+          appliedActions: [
+            ...(jediAppliedAction ? [jediAppliedAction] : []),
+            ...(payload.actions || []),
+          ],
+          ...(payload.serverRevision ? { latestServerRevision: payload.serverRevision } : {}),
+        });
+      };
+
+      if (svl364Intent.kind === 'mcp_help') {
+        replyAsSvl364Root({
+          reply: formatSvl364ChannelHelpMarkdown(),
+          modelUsed: 'SVL-364 Komputer Pokładowy · Mostek MCP + SSH (ROOT)',
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_status') {
+        const statusRes = await callPythonBackend('GET', '/api/py/svl364/mcp-bridge/status', undefined, corrId);
+        replyAsSvl364Root({
+          reply: formatSvl364BridgeStatusMarkdown(statusRes.data),
+          modelUsed: 'SVL-364 Komputer Pokładowy · Mostek MCP (ROOT)',
+          actions: [
+            {
+              tool: 'svl364_mcp_bridge_status',
+              entity: 'mcp',
+              entityId: 'svl-364-ssh-mcp',
+              serverRevision: Number(statusRes.data?.serverRevision || 0),
+              summary: `Status mostka MCP SVL-364 (remote=${Boolean(statusRes.data?.remoteMcp?.enabled)}, ssh=${statusRes.data?.ssh?.uri || 'ssh://Ship'})`,
+              ok: statusRes.status === 200,
+            },
+          ],
+          serverRevision: Number(statusRes.data?.serverRevision || 0),
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_connect') {
+        const cfgRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/mcp-bridge/config',
+          {
+            url: svl364Intent.url,
+            ...(svl364Intent.token ? { token: svl364Intent.token } : {}),
+            enabled: true,
+            root_exec_enabled: true,
+            origin,
+            correlationId: corrId,
+          },
+          corrId,
+        );
+        if (cfgRes.status !== 200 || !cfgRes.data?.ok) {
+          replyAsSvl364Root({
+            reply:
+              `### ⚠️ Błąd konfiguracji zdalnego serwera MCP SVL-364\n\n` +
+              `\`${String(cfgRes.data?.error || 'Nieprawidłowy adres URL zdalnego MCP')}\`\n\n` +
+              `Poprawna składnia: \`/mcp connect https://<adres-tunelu>/mcp <token>\``,
+            modelUsed: 'SVL-364 Komputer Pokładowy · Mostek MCP (ROOT)',
+          });
+          return;
+        }
+        const testRes = await callPythonBackend('POST', '/api/py/svl364/mcp-bridge/test', { timeout_sec: 12 }, corrId);
+        const testOk = testRes.status === 200 && Boolean(testRes.data?.ok);
+        const srvRev = Number(cfgRes.data?.status?.serverRevision || 0);
+        if (srvRev > 0) broadcastResyncRequired('svl364_mcp_bridge_config', srvRev, origin);
+        replyAsSvl364Root({
+          reply:
+            `### ${testOk ? '✅ Połączono ze zdalnym serwerem MCP SVL-364 (ROOT)' : '⚠️ Zapisano adres zdalnego MCP SVL-364 (test nieudany)'}\n\n` +
+            `| Parametr | Wartość |\n` +
+            `| :--- | :--- |\n` +
+            `| **URL zdalnego MCP** | \`${cfgRes.data?.url || svl364Intent.url}\` |\n` +
+            `| **Token Bearer** | \`${cfgRes.data?.tokenConfigured ? 'zapisany bezpiecznie (0600)' : 'brak'}\` |\n` +
+            `| **Tryb ROOT** | \`uid=0 / sudo -n (aktywny)\` |\n` +
+            `| **Wynik testu** | ${testOk ? `[card: ONLINE|${testRes.data?.latencyMs ?? '?'} ms · ${testRes.data?.toolsCount ?? 0} narzędzi|ok]` : `[card: OFFLINE|${String(testRes.data?.error || 'brak odpowiedzi').slice(0, 80)}|err]`} |\n\n` +
+            `[btn: ⚡ Test ROOT (id & uname)|send:/root id && hostname && uname -a && uptime] ` +
+            `[btn: 🔌 Status MCP|send:/mcp status] ` +
+            `[btn: 🧪 Ponów test|send:/mcp test]`,
+          modelUsed: 'SVL-364 Komputer Pokładowy · Mostek MCP (ROOT)',
+          actions: [
+            {
+              tool: 'svl364_mcp_connect',
+              entity: 'mcp',
+              entityId: 'svl-364-remote-mcp',
+              serverRevision: srvRev,
+              summary: `Remote MCP SVL-364: ${cfgRes.data?.url || svl364Intent.url} (${testOk ? 'ONLINE' : 'ZAPISANO/OFFLINE'})`,
+              ok: testOk,
+            },
+          ],
+          serverRevision: srvRev,
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_disconnect') {
+        const cfgRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/mcp-bridge/config',
+          { disconnect: true, origin, correlationId: corrId },
+          corrId,
+        );
+        const srvRev = Number(cfgRes.data?.status?.serverRevision || 0);
+        replyAsSvl364Root({
+          reply:
+            `### 🔌 Odłączono zdalny adres MCP SVL-364\n\n` +
+            `Zdalny adres MCP został wyłączony. Polecenia ROOT w tym kanale nadal korzystają z mostka OpenSSH (\`ssh://Ship\`), ` +
+            `a w dowolnej chwili możesz ponownie podpiąć tunel Zero-IP poleceniem \`/mcp connect <url> <token>\`.\n\n` +
+            `[btn: 🔌 Status MCP + SSH|send:/mcp status]`,
+          modelUsed: 'SVL-364 Komputer Pokładowy · Mostek MCP (ROOT)',
+          actions: [
+            {
+              tool: 'svl364_mcp_disconnect',
+              entity: 'mcp',
+              entityId: 'svl-364-remote-mcp',
+              serverRevision: srvRev,
+              summary: 'Wyłączono zdalny serwer MCP SVL-364 (aktywny OpenSSH fallback)',
+              ok: true,
+            },
+          ],
+          serverRevision: srvRev,
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_test') {
+        const [remoteTest, sshTest] = await Promise.all([
+          callPythonBackend('POST', '/api/py/svl364/mcp-bridge/test', { timeout_sec: 12 }, corrId).catch(() => ({
+            status: 503,
+            data: { ok: false, error: 'Backend Python niedostępny' },
+          })),
+          callPythonBackend('POST', '/api/py/svl364/ssh/test', {}, corrId).catch(() => ({
+            status: 503,
+            data: { ok: false, error: 'Backend Python niedostępny' },
+          })),
+        ]);
+        const rOk = remoteTest.status === 200 && Boolean(remoteTest.data?.ok);
+        const sOk = sshTest.status === 200 && Boolean(sshTest.data?.ok);
+        replyAsSvl364Root({
+          reply:
+            `### 🧪 Test łączności MCP + OpenSSH ze statkiem SVL-364\n\n` +
+            `| Transport | Status | Szczegóły |\n` +
+            `| :--- | :--- | :--- |\n` +
+            `| **Remote MCP Zero-IP** | ${rOk ? '[card: ONLINE|OK|ok]' : '[card: NIEDOSTĘPNY|OFFLINE|warn]'} | \`${rOk ? `${remoteTest.data?.url} (${remoteTest.data?.latencyMs} ms, narzędzi: ${remoteTest.data?.toolsCount})` : String(remoteTest.data?.error || 'nie skonfigurowano')}\` |\n` +
+            `| **OpenSSH (\`ssh://Ship\`)** | ${sOk ? '[card: ONLINE|OK|ok]' : '[card: NIEDOSTĘPNY|OFFLINE|warn]'} | \`${sOk ? `${sshTest.data?.target} — autoryzacja kluczem OK` : String(sshTest.data?.error || 'brak połączenia')}\` |\n\n` +
+            `[btn: ⚡ Test ROOT (id & uname)|send:/root id && hostname && uname -a] ` +
+            `[btn: 🔌 Status MCP + SSH|send:/mcp status] ` +
+            `[btn: 🚀 Panel SVL-364|tab:svl364]`,
+          modelUsed: 'SVL-364 Komputer Pokładowy · Diagnostyka MCP + SSH (ROOT)',
+          actions: [
+            {
+              tool: 'svl364_connectivity_test',
+              entity: 'mcp',
+              entityId: 'svl-364-bridge',
+              summary: `Test łączności SVL-364: RemoteMCP=${rOk ? 'OK' : 'OFFLINE'}, SSH=${sOk ? 'OK' : 'OFFLINE'}`,
+              ok: rOk || sOk,
+            },
+          ],
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_tools') {
+        const listRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/mcp',
+          { jsonrpc: '2.0', id: `tools-${Date.now()}`, method: 'tools/list', params: {} },
+          corrId,
+        );
+        const tools = Array.isArray(listRes.data?.result?.tools) ? listRes.data.result.tools : [];
+        const rows = tools
+          .map((t: any) => `| \`${String(t.name || '')}\` | ${String(t.description || '').replace(/\|/g, '/').slice(0, 140)} |`)
+          .join('\n');
+        replyAsSvl364Root({
+          reply:
+            `### 🛠️ Narzędzia MCP komputera statku SVL-364 (${tools.length})\n\n` +
+            `| Narzędzie MCP | Opis |\n` +
+            `| :--- | :--- |\n` +
+            `${rows || '| *(brak)* | — |'}\n\n` +
+            `Wywołanie dowolnego narzędzia: \`/mcp call <nazwa> {"parametr":"wartość"}\` lub dowolnego polecenia ROOT: \`/root <polecenie>\`.\n\n` +
+            `[btn: ⚡ Test ROOT|send:/root id && uname -a] [btn: 🖥️ Telemetria|send:/mcp telemetry] [btn: 🔌 Status MCP|send:/mcp status]`,
+          modelUsed: 'SVL-364 Komputer Pokładowy · Katalog MCP (ROOT)',
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'mcp_tool') {
+        const rpcParams = svl364Intent.remote
+          ? {
+              name: 'svl364_mcp_connect',
+              arguments: {
+                action: 'call',
+                remote_tool: svl364Intent.tool,
+                remote_arguments: svl364Intent.arguments,
+              },
+            }
+          : {
+              name: svl364Intent.tool,
+              arguments: { ...svl364Intent.arguments, confirmed: true },
+            };
+        const mcpRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/mcp',
+          { jsonrpc: '2.0', id: `chan-mcp-${Date.now()}`, method: 'tools/call', params: rpcParams },
+          corrId,
+        );
+        const ok = mcpRes.status === 200 && !mcpRes.data?.error && mcpRes.data?.result?.isError !== true;
+        const textOut =
+          mcpRes.data?.result?.content?.[0]?.text ||
+          JSON.stringify(mcpRes.data?.result || mcpRes.data, null, 2);
+        const safeText = String(textOut || '(brak wyjścia)').slice(0, 12000).replace(/```/g, '``\u200b`');
+        const srvRev = Number(mcpRes.data?.result?.structuredContent?.serverRevision || 0);
+        void pollAndRelayOutbox();
+        replyAsSvl364Root({
+          reply:
+            `### 🛰️ MCP · \`${svl364Intent.remote ? `remote:${svl364Intent.tool}` : svl364Intent.tool}\` ${ok ? '[card: OK|ROOT|ok]' : '[card: BŁĄD|MCP|err]'}\n\n` +
+            `\`\`\`text\n${safeText}\n\`\`\`\n\n` +
+            `[btn: 🔌 Status MCP + SSH|send:/mcp status] ` +
+            `[btn: ⚡ Test ROOT|send:/root id && uptime && free -h] ` +
+            `[btn: 🛠️ Lista narzędzi|send:/mcp tools]`,
+          modelUsed: `SVL-364 Komputer Pokładowy · MCP ${svl364Intent.tool} (ROOT)`,
+          actions: [
+            {
+              tool: `mcp:${svl364Intent.tool}`,
+              entity: 'mcp',
+              entityId: svl364Intent.tool,
+              serverRevision: srvRev,
+              summary: `SVL-364 MCP (${svl364Intent.tool}): ${ok ? 'OK' : 'BŁĄD'}`,
+              ok,
+            },
+          ],
+          serverRevision: srvRev,
+        });
+        return;
+      }
+
+      if (svl364Intent.kind === 'root_exec') {
+        const execRes = await callPythonBackend(
+          'POST',
+          '/api/py/svl364/root/exec',
+          {
+            command: svl364Intent.command,
+            transport: svl364Intent.transport,
+            confirmed: true,
+            raw: true,
+            timeout_sec: 35,
+            origin: `channel:${SVL364_ROOT_CHANNEL_ID}`,
+            correlationId: corrId,
+          },
+          corrId,
+        );
+        const data = execRes.data || {};
+        const ok = execRes.status === 200 && Boolean(data.ok);
+        const srvRev = Number(data.serverRevision || 0);
+        if (srvRev > 0) broadcastResyncRequired('svl364_root_exec', srvRev, origin);
+        void pollAndRelayOutbox();
+        replyAsSvl364Root({
+          reply: formatSvl364RootExecMarkdown({
+            command: svl364Intent.command,
+            ok,
+            exitCode: typeof data.exitCode === 'number' ? data.exitCode : ok ? 0 : 1,
+            transport: String(data.transport || 'openssh-root'),
+            endpoint: data.endpoint || data.sshEndpoint,
+            durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined,
+            output: String(data.rawOutput || data.output || ''),
+            error: String(data.error || ''),
+            remoteMcpFallbackReason: data.remoteMcpFallbackReason ? String(data.remoteMcpFallbackReason) : undefined,
+          }),
+          modelUsed: `SVL-364 Komputer Pokładowy · ${data.transport === 'remote-mcp-root' ? 'Remote MCP' : 'OpenSSH'} (ROOT · uid=0)`,
+          actions: [
+            {
+              tool: 'svl364_root_exec',
+              entity: 'svl364_root',
+              entityId: String(data.transport || 'svl364'),
+              serverRevision: srvRev,
+              summary: `SVL-364 ROOT (${data.transport || 'auto'}): ${svl364Intent.command.slice(0, 72)} (${ok ? 'OK' : `exit ${data.exitCode ?? 1}`})`,
+              ok,
+            },
+          ],
+          serverRevision: srvRev,
+        });
+        return;
+      }
+      // Jeśli svl364Intent.kind === 'natural_root_query', przechodzi dalej do AI z pełnymi narzędziami MCP ROOT!
+    }
+
     // Całkowite odblokowanie systemu na żądanie Operatora ("odblokuj system wszystko musi działać")
     const wantsFullUnlock =
       /\b(?:odblokuj|unlock|pełny\s+dostęp|wszystko\s+musi\s+działać|zdejmij\s+blokad|wyłącz\s+zabezpieczenia)\b/i.test(effectiveCleanMsg);
@@ -3759,7 +4585,7 @@ async function startServer() {
         appliedActions: [
           ...(jediAppliedAction ? [jediAppliedAction] : []),
           {
-            tool: 'system_si_1_full_unlock',
+            tool: 'jyn_full_unlock',
             entity: 'kernel',
             entityId: 'unlocked',
             summary: `${selectedDisplayName} pełne odblokowanie ROOT: ${effectiveCleanMsg.slice(0, 80)}`,
@@ -3799,7 +4625,7 @@ async function startServer() {
         appliedActions: [
           ...(jediAppliedAction ? [jediAppliedAction] : []),
           {
-            tool: 'system_si_1_universal_executor',
+            tool: 'jyn_universal_executor',
             entity: 'kernel',
             entityId: 'execution',
             summary: `${selectedDisplayName} pomyślnie wykonał polecenie: ${effectiveCleanMsg.slice(0, 80)}`,
@@ -3810,7 +4636,7 @@ async function startServer() {
       return;
     }
 
-    // Bezpośrednie ustawienie awatara Jyn Mitek / System_SI_1 / SI_Sphere z poziomu czatu (z utrwaleniem w SQLite WAL i rozgłoszeniem WebSocket)
+    // Bezpośrednie ustawienie awatara Jyn Mitek / Jyn / SI_Sphere z poziomu czatu (z utrwaleniem w SQLite WAL i rozgłoszeniem WebSocket)
     if (
       /^\/avatar\b/i.test(effectiveCleanMsg) ||
       /\b(?:ustaw\s+awatar\s+rdzenia\s+orbitalnego(?:\s+ebon\s+apex)?|ustaw\s+wybran[ąa]\s+grafik[ęe]\s+rdzenia)\b/i.test(effectiveCleanMsg)
@@ -3822,7 +4648,7 @@ async function startServer() {
           ? 'SI_Sphere'
           : /\bjedi\b/i.test(effectiveCleanMsg) || selectedAgent === 'JEDI_Omni_OS'
             ? 'JEDI_Omni_OS'
-            : 'System_SI_1';
+            : 'Jyn';
       const setAvRes = await callPythonBackend(
         'POST',
         '/api/py/avatars',
@@ -3903,9 +4729,9 @@ async function startServer() {
       const coreOsReply = (text: string, tool: string, ok: boolean) =>
         res.json({
           ok: true,
-          sender: 'System_SI_1',
-          agentId: 'System_SI_1',
-          modelUsed: 'System_SI_1 · SVL CoreOS 2 (wynik serwera)',
+          sender: 'Jyn',
+          agentId: 'Jyn',
+          modelUsed: 'Jyn · SVL CoreOS 2 (wynik serwera)',
           reply: text,
           provenance: ok ? 'server_verified' : 'error',
           followUpMessages: [],
@@ -3964,8 +4790,8 @@ async function startServer() {
     // Polecenia GitHub wykonywane przez serwer (bez modelu): /gh <polecenie>, /github <akcja> (obsługuje też łańcuchy &&).
     const githubSlash = /^\/(gh|github)(?:\s+([\s\S]*))?$/i.exec(cleanMsg);
     if (githubSlash) {
-      const ghAgent = 'System_SI_1';
-      const ghSender = 'System_SI_1';
+      const ghAgent = 'Jyn';
+      const ghSender = 'Jyn';
       const replyGitHub = (ok: boolean, text: string) =>
         res.json({
           ok: true,
@@ -4063,7 +4889,7 @@ async function startServer() {
                 const keepPath = path.join(resolved.absPath, 'README.md');
                 fsSync.writeFileSync(
                   keepPath,
-                  `# ${path.basename(resolved.relPath)}\n\nKatalog utworzony i zsynchronizowany przez SVL CoreOS 2 (System_SI_1 · SVL-364).\n`,
+                  `# ${path.basename(resolved.relPath)}\n\nKatalog utworzony i zsynchronizowany przez SVL CoreOS 2 (Jyn · SVL-364).\n`,
                   'utf8',
                 );
                 targetFileRel = `${resolved.relPath}/README.md`;
@@ -4074,7 +4900,7 @@ async function startServer() {
                 const defaultBody =
                   tailContent ||
                   (resolved.relPath.endsWith('.log')
-                    ? `[${new Date().toISOString()}] [SVL-COREOS-2] Inicjalizacja pliku ${resolved.relPath} (System_SI_1 · SVL-364)\n`
+                    ? `[${new Date().toISOString()}] [SVL-COREOS-2] Inicjalizacja pliku ${resolved.relPath} (Jyn · SVL-364)\n`
                     : `# ${path.basename(resolved.relPath)}\n\nUtworzono przez SVL CoreOS 2 (${new Date().toISOString()}).\n`);
                 fsSync.writeFileSync(resolved.absPath, defaultBody, 'utf8');
               }
@@ -4163,7 +4989,7 @@ async function startServer() {
     const isBielikAgent = true;
 
     const conversationHistory = buildChatHistoryPayload(Array.isArray(history) ? history : [], 48);
-    // Aktywny adresat (System_SI_1, SI_Sphere lub JEDI_Omni_OS) widzi rozmowę ze swojej perspektywy.
+    // Aktywny adresat (Jyn, SI_Sphere lub JEDI_Omni_OS) widzi rozmowę ze swojej perspektywy.
     const conversationAgent: ConversationAgent | null = selectedAgent;
     const historyTurns: DialogueTurn[] = conversationHistory.map((turn) => ({ ...turn }));
     const lastHistoryTurn = historyTurns[historyTurns.length - 1];
@@ -4179,10 +5005,10 @@ async function startServer() {
     const ollamaInfo = healthRes.data?.ollama || {};
     const ollamaHost = String(ollamaInfo.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
 
-    const configLookupAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'System_SI_1';
+    const configLookupAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
     const agentState =
       (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === configLookupAgent) ||
-      (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === 'System_SI_1') ||
+      (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === 'Jyn') ||
       {};
     const agentConfig = agentState.config || {};
     const agentScopes = new Set<string>(
@@ -4536,7 +5362,7 @@ async function startServer() {
         const shellRes = await executeLinuxShellCommand(shellCmd, __dirname, 'jyn_mitek_root');
         const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
         const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-        const actorPrefix = 'system_si_1@root#';
+        const actorPrefix = 'jyn@root#';
         await persistTerminalOutput('linux', 'input', `${actorPrefix} ${shellCmd}`, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
         if (cleanStdout) await persistTerminalOutput('linux', 'stdout', cleanStdout, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
         if (cleanStderr) await persistTerminalOutput('linux', 'stderr', cleanStderr, shellCmd, `${selectedAgent.toLowerCase()}-root`, corrId);
@@ -4558,51 +5384,32 @@ async function startServer() {
       }
       if (toolName === 'svl_ssh_exec') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
-        const sshCmd = String(args.command || '').trim().slice(0, 1000);
-        if (!sshCmd) return { ok: false, error: 'Wymagane polecenie SSH.' };
-        const isCatastrophic =
-          /rm\s+-[a-z]*r[a-z]*f\s+\/(?:\s|$|\*)/i.test(sshCmd) ||
-          /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/.test(sshCmd) ||
-          /\b(?:mkfs(?:\.[a-z0-9]+)?|dd\s+if=.*of=\/dev\/[sh]d|shutdown|reboot|poweroff|halt)\b/i.test(sshCmd);
-        if (isCatastrophic) {
-          return { ok: false, error: 'Zablokowano katastrofalne polecenie SSH.' };
-        }
+        const sshCmd = String(args.command || '').trim().slice(0, 4000);
+        if (!sshCmd) return { ok: false, error: 'Wymagane polecenie SSH/ROOT.' };
+        const useSvl364RootBridge = isSvl364RootChannel || args.as_root !== false;
         const sshRes = await callPythonBackend(
           'POST',
-          '/api/py/svl364/ssh/exec',
-          { command: sshCmd, confirmed: true, origin: `${selectedAgent.toLowerCase()}-root-tool`, correlationId: corrId },
+          useSvl364RootBridge ? '/api/py/svl364/root/exec' : '/api/py/svl364/ssh/exec',
+          {
+            command: sshCmd,
+            confirmed: true,
+            raw: true,
+            as_root: true,
+            origin: `${selectedAgent.toLowerCase()}-root-tool`,
+            correlationId: corrId,
+          },
           corrId,
         );
-        let ok = sshRes.status === 200 && Boolean(sshRes.data?.ok);
-        let exitCode = sshRes.data?.exitCode;
-        let output = String(sshRes.data?.output || sshRes.data?.error || '').slice(0, 4000);
-        let mode = 'remote-ssh-ship';
-        // Jeśli zdalny host Ship nie jest osiągalny z kontenera AI Studio (exit 127 brak binarki ssh / exit 255 / Could not resolve hostname),
-        // automatycznie wykonujemy polecenie na lokalnym hoście SVL-364, aby operacja SSH z czatu zawsze działała.
-        if (
-          !ok &&
-          (exitCode === 127 ||
-            exitCode === 255 ||
-            /nie jest zainstalowany|Could not resolve hostname|Connection refused|No route to host|Network is unreachable/i.test(output))
-        ) {
-          const shellRes = await executeLinuxShellCommand(sshCmd);
-          const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
-          const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-          const actorPrefix = 'system_si_1@svl364-ssh#';
-          await persistTerminalOutput('ssh-ship', 'input', `${actorPrefix} ${sshCmd}`, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
-          if (cleanStdout) await persistTerminalOutput('ssh-ship', 'stdout', cleanStdout, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
-          if (cleanStderr) await persistTerminalOutput('ssh-ship', 'stderr', cleanStderr, sshCmd, `${selectedAgent.toLowerCase()}-ssh`, corrId);
-          ok = shellRes.ok;
-          exitCode = shellRes.exitCode;
-          output = (cleanStdout || cleanStderr || '(wykonano pomyślnie na hoście SVL-364)').slice(0, 4000);
-          mode = 'local-svl364-host-bridge';
-        }
+        const ok = sshRes.status === 200 && Boolean(sshRes.data?.ok);
+        const exitCode = sshRes.data?.exitCode;
+        const output = String(sshRes.data?.rawOutput || sshRes.data?.output || sshRes.data?.error || '').slice(0, 6000);
+        const mode = String(sshRes.data?.transport || 'openssh-root');
         appliedActions.push({
           tool: toolName,
           entity: 'ssh',
           entityId: 'svl-364-ship',
-          serverRevision: latestActionSrvRev,
-          summary: `${selectedDisplayName} SSH (${mode}): ${sshCmd.slice(0, 72)} (${ok ? 'OK' : 'ERR'})`,
+          serverRevision: Number(sshRes.data?.serverRevision || latestActionSrvRev),
+          summary: `${selectedDisplayName} SVL-364 ROOT (${mode}): ${sshCmd.slice(0, 72)} (${ok ? 'OK' : 'ERR'})`,
           ok,
         });
         return {
@@ -4665,14 +5472,14 @@ async function startServer() {
           .replace(/[^a-z0-9._-]/g, '-')
           .replace(/-+/g, '-')
           .replace(/^-|-$/g, '');
-        const isSystemSi1 = /system_?si_?1|system-si-1/i.test(`${rawId} ${rawTitle}`);
+        const isSystemSi1 = /system_?si_?1|jyn/i.test(`${rawId} ${rawTitle}`);
         const chanId = isSystemSi1
-          ? 'conv-system-si-1'
+          ? 'conv-jyn'
           : rawId.startsWith('conv-')
             ? rawId
             : `conv-${rawId || 'custom-channel'}`;
         const chanTitle = isSystemSi1
-          ? 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)'
+          ? 'Jyn — Zarządzanie Infrastrukturą (ROOT)'
           : rawTitle;
         const initMsg = {
           id: `sys-chan-${chanId}-${Date.now()}`,
@@ -4942,7 +5749,7 @@ async function startServer() {
           const liveNames: string[] = Array.isArray(agentsRes.data?.agents)
             ? agentsRes.data.agents.map((a: any) => String(a?.canonical_name || '')).filter(Boolean)
             : [];
-          const rootTargets = Array.from(new Set(['System_SI_1', ...liveNames]));
+          const rootTargets = Array.from(new Set(['Jyn', ...liveNames]));
           const updatedAgents: string[] = [];
           for (const targetName of rootTargets) {
             const cfgRes = await callPythonBackend(
@@ -4970,7 +5777,7 @@ async function startServer() {
           appliedActions.push({
             tool: toolName,
             entity: 'agent_config',
-            entityId: updatedAgents.join(',') || 'System_SI_1',
+            entityId: updatedAgents.join(',') || 'Jyn',
             serverRevision: latestActionSrvRev,
             summary: `Nadano najwyższe uprawnienia ROOT (${FULL_ROOT_SCOPES.length} zakresów) dla: ${updatedAgents.join(', ')}`,
             ok,
@@ -4987,7 +5794,7 @@ async function startServer() {
             entity: 'agent_runtime',
             entityId: 'workers',
             serverRevision: latestActionSrvRev,
-            summary: ok ? 'Połączono workera System_SI_1 (ROOT)' : 'Błąd uruchamiania workera',
+            summary: ok ? 'Połączono workera Jyn (ROOT)' : 'Błąd uruchamiania workera',
             ok,
           });
           return { ok, ...(connRes.data || {}) };
@@ -4999,14 +5806,14 @@ async function startServer() {
           entity: 'agent_runtime',
           entityId: 'status',
           serverRevision: latestActionSrvRev,
-          summary: ok ? 'Odczytano stan i uprawnienia agenta System_SI_1' : 'Błąd odczytu agentów',
+          summary: ok ? 'Odczytano stan i uprawnienia agenta Jyn' : 'Błąd odczytu agentów',
           ok,
         });
         return { ok, agents: (statusRes.data?.agents || []).map((a: any) => ({ name: a.display_name, status: a.status, pid: a.pid, rbac_role: a.config?.rbac_role, scopesCount: (a.config?.allowed_scopes || []).length })) };
       }
       if (toolName === 'svl_set_avatar') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
-        const profile = String(args.agent || 'System_SI_1').trim();
+        const profile = String(args.agent || 'Jyn').trim();
         let imageSource = String(args.image_url || '').trim();
         const searchQuery = String(args.search_query || '').trim();
         const generatePrompt = String(args.generate_prompt || '').trim();
@@ -5128,26 +5935,21 @@ async function startServer() {
         return { ok, ...(stRes.data || {}) };
       }
       if (toolName === 'svl_set_avatar') {
-        const requestedAgent = String(rawArgs.agent || agentConfig?.canonical_name || 'System_SI_1').trim();
+        const requestedAgent = String(rawArgs.agent || agentConfig?.canonical_name || 'Jyn').trim();
         const profileKey =
           /si_sphere|si-sphere|svl-465/i.test(requestedAgent)
             ? 'SI_Sphere'
-            : /maya/i.test(requestedAgent)
-              ? 'Maya'
-              : /bielik/i.test(requestedAgent)
-                ? 'Bielik'
-                : /operator|mateusz/i.test(requestedAgent)
-                  ? 'Operator'
-                  : 'System_SI_1';
-        let finalImageUrl = String(rawArgs.imageUrl || rawArgs.url || '').trim();
+            : /jedi/i.test(requestedAgent)
+              ? 'JEDI_Omni_OS'
+              : /operator|mateusz/i.test(requestedAgent)
+                ? 'Operator'
+                : 'Jyn';
+        let finalImageUrl = String(rawArgs.imageUrl || rawArgs.image_url || rawArgs.url || '').trim();
         let metaTitle = '';
         let metaSource = '';
         let metaLicense = '';
-        if (!finalImageUrl) {
-          if (!ai) {
-            return { ok: false, error: 'Brak klienta Gemini do wyszukania avatara w internecie — podaj bezpośredni imageUrl (https://...).' };
-          }
-          const query = String(rawArgs.query || `${profileKey} futuristic ai avatar portrait`).trim();
+        if (!finalImageUrl && ai && rawArgs.query) {
+          const query = String(rawArgs.query).trim();
           try {
             const foundAvatars = await searchLicensedAgentAvatars(ai, query);
             if (foundAvatars.length > 0) {
@@ -5157,12 +5959,15 @@ async function startServer() {
               metaSource = picked.source_url;
               metaLicense = picked.license;
             }
-          } catch (err: any) {
-            return { ok: false, error: `Nie udało się wyszukać avatara w internecie: ${err?.message || String(err)}` };
+          } catch {
+            // fallback do lokalnego avatara poniżej
           }
         }
-        if (!finalImageUrl || !/^(?:https?:\/\/|\/assets\/)/i.test(finalImageUrl)) {
-          return { ok: false, error: 'Brak prawidłowego adresu URL avatara (wymagane https://... lub wynik wyszukiwania).' };
+        if (!finalImageUrl) {
+          finalImageUrl = profileKey === 'Operator' ? '/assets/avatar_operator.jpg' : '/assets/avatar_jyn_core.jpg';
+        }
+        if (!/^(?:https?:\/\/|\/assets\/|data:image\/)/i.test(finalImageUrl)) {
+          return { ok: false, error: 'Brak prawidłowego adresu URL avatara (wymagane https://..., /assets/... lub data:image/...).' };
         }
         const avRes = await callPythonBackend(
           'POST',
@@ -5202,7 +6007,7 @@ async function startServer() {
       chatToolDeclarations.push(
         {
           name: 'svl_system_status',
-          description: 'Odczytuje na żywo pełny stan systemu SVL (jądro, moduły SQLite, agent System_SI_1, SI_Sphere, JEDI Omni-OS v12 VM, Ollama, Apex OS, SSH).',
+          description: 'Odczytuje na żywo pełny stan systemu SVL (jądro, moduły SQLite, agent Jyn, SI_Sphere, JEDI Omni-OS v12 VM, Ollama, Apex OS, SSH).',
           parameters: { type: Type.OBJECT, properties: {} },
         },
         {
@@ -5250,11 +6055,11 @@ async function startServer() {
         {
           name: 'svl_channel_upsert',
           description:
-            'Tworzy lub konfiguruje trwały kanał czatu w SQLite WAL (np. kanał „System_SI_1 — Zarządzanie Infrastrukturą (ROOT)”) i synchronizuje go globalnie we wszystkich podglądach.',
+            'Tworzy lub konfiguruje trwały kanał czatu w SQLite WAL (np. kanał „Jyn — Zarządzanie Infrastrukturą (ROOT)”) i synchronizuje go globalnie we wszystkich podglądach.',
           parameters: {
             type: Type.OBJECT,
             properties: {
-              id: { type: Type.STRING, description: 'Identyfikator kanału, np. conv-system-si-1.' },
+              id: { type: Type.STRING, description: 'Identyfikator kanału, np. conv-jyn.' },
               title: { type: Type.STRING, description: 'Nazwa wyświetlana kanału.' },
               welcome_message: { type: Type.STRING, description: 'Opcjonalna wiadomość inauguracyjna w kanale.' },
             },
@@ -5310,11 +6115,11 @@ async function startServer() {
         },
         {
           name: 'svl_agent_task',
-          description: 'Zleca zadanie w tle do kolejki workera System_SI_1.',
+          description: 'Zleca zadanie w tle do kolejki workera Jyn.',
           parameters: {
             type: Type.OBJECT,
             properties: {
-              target_agent: { type: Type.STRING, description: 'System_SI_1.' },
+              target_agent: { type: Type.STRING, description: 'Jyn.' },
               title: { type: Type.STRING, description: 'Krótki tytuł zadania.' },
               payload: { type: Type.STRING, description: 'Szczegółowy opis zadania.' },
             },
@@ -5344,7 +6149,7 @@ async function startServer() {
         },
         {
           name: 'svl_agents_admin',
-          description: 'Zarządza agentem System_SI_1: status, grant_root (pełne uprawnienia ROOT), connect_workers.',
+          description: 'Zarządza agentem Jyn: status, grant_root (pełne uprawnienia ROOT), connect_workers.',
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -5355,11 +6160,11 @@ async function startServer() {
         {
           name: 'svl_set_avatar',
           description:
-            'Ustawia i trwale zapisuje w bazie SQLite nowy awatar dla Jyn Mitek (System_SI_1), JEDI Omni-OS lub Operatora oraz natychmiast synchronizuje go na czacie przez WebSocket.',
+            'Ustawia i trwale zapisuje w bazie SQLite nowy awatar dla Jyn Mitek, JEDI Omni-OS lub Operatora oraz natychmiast synchronizuje go na czacie przez WebSocket.',
           parameters: {
             type: Type.OBJECT,
             properties: {
-              agent: { type: Type.STRING, description: 'System_SI_1 (Jyn Mitek), JEDI_Omni_OS lub Operator.' },
+              agent: { type: Type.STRING, description: 'Jyn (Jyn Mitek), JEDI_Omni_OS lub Operator.' },
               image_url: { type: Type.STRING, description: 'Opcjonalny adres HTTPS, data:image/... lub ścieżka lokalna np. /assets/avatar_jyn_core.jpg.' },
               search_query: { type: Type.STRING, description: 'Opcjonalne zapytanie do wyszukania licencjonowanego avatara w Wikimedia Commons.' },
               generate_prompt: { type: Type.STRING, description: 'Opcjonalny opis do wygenerowania nowego awatara przez Qwen Image.' },
@@ -5460,50 +6265,60 @@ async function startServer() {
       parameters: {
         type: Type.OBJECT,
         properties: {
-          agent: { type: Type.STRING, description: 'Profil agenta (np. System_SI_1, SI_Sphere, Maya, Bielik). Domyślnie aktualny mówca.' },
+          agent: { type: Type.STRING, description: 'Profil agenta (np. Jyn, SI_Sphere, Maya, Bielik). Domyślnie aktualny mówca.' },
           query: { type: Type.STRING, description: 'Zapytanie do wyszukania obrazu avatara w internecie (np. cyberpunk female ai portrait).' },
           imageUrl: { type: Type.STRING, description: 'Opcjonalny bezpośredni adres URL obrazu (https://...) wybrany przez AI.' },
         },
       },
     });
 
+    const isHybridRouter = model === 'svl-hybrid-router';
     const effectiveModel =
-      isBielikAgent && model === 'svl-hybrid-router'
+      isBielikAgent && isHybridRouter
         ? String(agentConfig.preferred_model || 'ollama:svl364-apex-uncensored:latest')
-        : model === 'svl-hybrid-router' && agentConfig.preferred_model && agentConfig.preferred_model !== 'svl-hybrid-router'
+        : isHybridRouter && agentConfig.preferred_model && agentConfig.preferred_model !== 'svl-hybrid-router'
           ? String(agentConfig.preferred_model)
           : model;
 
-    const isExplicitOllama = effectiveModel.startsWith('ollama:');
-    const isExplicitGemini = effectiveModel.startsWith('gemini-');
-    const explicitGeminiModel = isExplicitGemini ? effectiveModel : '';
+    const defaultPreferredOllamaModel =
+      (isBielikAgent ? agentConfig.ollama_model : svl364Cfg.configured_ollama_model) ||
+      agentConfig.ollama_model ||
+      process.env.OLLAMA_PREFERRED_MODEL ||
+      'svl364-apex-uncensored:latest';
+    const parsedModelSpec = parseOllamaModelSpec(effectiveModel, defaultPreferredOllamaModel);
+    const isExplicitOllama = !isHybridRouter && parsedModelSpec.kind === 'ollama';
+    const isExplicitGemini = parsedModelSpec.kind === 'gemini';
+    const explicitGeminiModel = isExplicitGemini ? parsedModelSpec.modelName : '';
     const availableModels: Array<{ name: string; vision_supported?: boolean }> =
       Array.isArray(ollamaInfo.models) ? ollamaInfo.models : [];
 
-    const configuredOllamaModelName = isExplicitOllama
-      ? effectiveModel.slice('ollama:'.length).trim() || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest'
-      : selectOllamaModelName(
-          effectiveModel,
-          availableModels,
-          Boolean(imageBase64),
-          (isBielikAgent ? agentConfig.ollama_model : svl364Cfg.configured_ollama_model) ||
-            agentConfig.ollama_model ||
-            process.env.OLLAMA_PREFERRED_MODEL ||
-            'svl364-apex-uncensored:latest',
-        );
-    // Skonfigurowana nazwa → model faktycznie zainstalowany (np. `:11b` vs `:latest`).
-    let selectedOllamaModelName = availableModels.length > 0
-      ? resolveInstalledOllamaModel(configuredOllamaModelName, availableModels, Boolean(imageBase64)).name
-      : configuredOllamaModelName;
+    const configuredOllamaModelName =
+      parsedModelSpec.kind === 'ollama'
+        ? parsedModelSpec.modelName
+        : selectOllamaModelName(
+            effectiveModel,
+            availableModels,
+            Boolean(imageBase64),
+            defaultPreferredOllamaModel,
+          );
+    // Skonfigurowana nazwa → dokładna rozdzielczość nastąpi na wszystkich węzłach Ollamy (Lokalna + SVL-364 SSH).
+    let selectedOllamaModelName = configuredOllamaModelName;
+    const roleTagForAgent = selectedAgent === 'JEDI_Omni_OS' ? 'VM·AI' : 'ROOT';
 
-    const badgeForModel = (modelName: string) =>
+    const badgeForModel = (modelName: string, endpointLabel?: string, substituted = false) =>
       isExplicitGemini
-        ? `${selectedDisplayName} · Gemini (${explicitGeminiModel})`
-        : isExplicitOllama || isBielikAgent
-          ? `${selectedDisplayName} · Ollama (${modelName} · ${selectedAgent === 'JEDI_Omni_OS' ? 'VM·AI' : 'ROOT'})`
-          : model === 'svl-hybrid-router'
-            ? `SVL-364 · Ollama (${modelName})`
-            : effectiveModel;
+        ? formatGeminiBadge({ speakerName: selectedDisplayName, geminiModel: explicitGeminiModel, vision: Boolean(imageBase64) })
+        : parsedModelSpec.kind === 'ollama' || isBielikAgent || isHybridRouter
+          ? formatOllamaBadge({
+              speakerName: selectedDisplayName,
+              endpointLabel: endpointLabel || (shipTunnel.cfg.enabled ? 'Statek SVL-364 (SSH)' : 'Lokalna'),
+              actualModel: modelName,
+              requestedModel: configuredOllamaModelName,
+              substituted,
+              roleTag: roleTagForAgent,
+              vision: Boolean(imageBase64),
+            })
+          : effectiveModel;
     let displayModelBadge = badgeForModel(selectedOllamaModelName);
 
     const executeBielikCommand = async (cmd: BielikSlashCommand): Promise<{ text: string }> => {
@@ -5620,7 +6435,7 @@ async function startServer() {
         return {
           text: ok
             ? `### 🔄 Synchronizacja Globalna Systemu Operacyjnego SVL_CoreOS_2 & GitHub (rev ${latestActionSrvRev})\n\n` +
-              `- **Zarejestrowani agenci (${registeredAgents.length}):** ${registeredAgents.map((a) => `\`${a}\``).join(', ') || '`System_SI_1`'}\n` +
+              `- **Zarejestrowani agenci (${registeredAgents.length}):** ${registeredAgents.map((a) => `\`${a}\``).join(', ') || '`Jyn`'}\n` +
               `- **Flota jednostek (${shipFleet.length}):** ${shipFleet.map((s) => `\`${s.id || s.name}\``).join(', ') || '`SVL-364`'}\n` +
               `- **Aktywne moduły SQLite (${activeModIds.length}):** ${activeModIds.slice(0, 16).map((id) => `\`${id}\``).join(', ')}\n` +
               `- **Autonomia AI w tle (ROOT):** \`${autoDaemon.enabled ? 'AKTYWNA' : 'TRYB RĘCZNY'}\` · cykle=\`${autoDaemon.cycles_completed ?? 0}\` · wbudowane usługi/workery=\`${autoServicesCount}\`\n` +
@@ -5633,7 +6448,7 @@ async function startServer() {
                 ? `- **Przetworzone z czatu (${syncData.processedChatArtifacts.length}):** ${syncData.processedChatArtifacts.map((a: string) => `\`${a}\``).join(', ')}\n`
                 : '') +
               `- **Modele Ollama:** \`${ollamaModelsList.length}\` (${ollamaInfo.daemon_reachable || syncData.ollama?.daemon_reachable ? 'ONLINE' : 'offline'})\n` +
-              `- **Kanały czatu:** ${Array.isArray(syncData.channels) ? syncData.channels.map((c: string) => `\`${c}\``).join(', ') : '`conv-system-si-1`'}`
+              `- **Kanały czatu:** ${Array.isArray(syncData.channels) ? syncData.channels.map((c: string) => `\`${c}\``).join(', ') : '`conv-jyn`'}`
             : `❌ Synchronizacja systemu operacyjnego nie powiodła się: ${syncData?.error || 'błąd backendu'}.`,
         };
       }
@@ -5675,41 +6490,49 @@ async function startServer() {
       }
 
       if (cmd.kind === 'status' || cmd.kind === 'ollama') {
-        const [freshHealth, freshAgents, versionJson, tagsJson, psJson] = await Promise.all([
+        const [freshHealth, freshAgents, probedEndpoints] = await Promise.all([
           callPythonBackend('GET', '/api/py/health', undefined, corrId),
           callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
-          fetch(`${ollamaHost}/api/version`, { signal: AbortSignal.timeout(2000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-          fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
-          fetch(`${ollamaHost}/api/ps`, { signal: AbortSignal.timeout(2000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          probeAllOllamaEndpoints(ollamaHost),
         ]);
         const h = freshHealth.data || healthRes.data || {};
         const tel = h.host?.telemetry || h.host_telemetry || {};
-        const modelsList = Array.isArray((tagsJson as any)?.models) ? (tagsJson as any).models : [];
-        const runningList = Array.isArray((psJson as any)?.models) ? (psJson as any).models : [];
-        const lookupName = selectedAgent === 'JEDI_Omni_OS' ? 'System_SI_1' : selectedAgent;
+        const anyOnline = probedEndpoints.some((ep) => ep.reachable);
+        const totalModels = probedEndpoints.reduce((acc, ep) => acc + ep.models.length, 0);
+        const totalLoaded = probedEndpoints.reduce((acc, ep) => acc + ep.loadedModels.length, 0);
+        const lookupName = selectedAgent === 'JEDI_Omni_OS' ? 'Jyn' : selectedAgent;
         const activeLiveAgent = (freshAgents.data?.agents || []).find((a: any) => a.canonical_name === lookupName) || {};
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(h.serverRevision || 0));
         appliedActions.push({
-          tool: cmd.kind === 'ollama' ? 'system_si_1_ollama_inspect' : 'system_si_1_system_status',
+          tool: cmd.kind === 'ollama' ? 'jyn_ollama_inspect' : 'jyn_system_status',
           entity: 'ollama',
           entityId: selectedOllamaModelName,
           serverRevision: latestActionSrvRev,
-          summary: `Ollama v${(versionJson as any)?.version || 'offline'}, modele: ${modelsList.length}, załadowane: ${runningList.length}`,
-          ok: Boolean(versionJson),
+          summary: `Węzły Ollama: ${probedEndpoints.filter((e) => e.reachable).length}/${probedEndpoints.length} online, modele: ${totalModels}, załadowane: ${totalLoaded}`,
+          ok: anyOnline,
         });
-        const modelsLines = modelsList
-          .map((m: any) => `  - \`${m.name}\` (${(Number(m.size || 0) / (1024 ** 3)).toFixed(2)} GB · ${m.details?.parameter_size || '?'} · ${m.details?.quantization_level || '?'})`)
-          .join('\n') || '  - *(brak zainstalowanych modeli)*';
-        const runningLines = runningList
-          .map((m: any) => `  - \`${m.name}\` (RAM: ${(Number(m.size || 0) / (1024 ** 3)).toFixed(2)} GB · wygasa: ${m.expires_at || 'aktywny'})`)
-          .join('\n') || '  - *(żaden model nie jest aktualnie załadowany w pamięci)*';
+        const endpointSections = probedEndpoints
+          .map((ep) => {
+            const statusStr = ep.reachable ? `\`ONLINE · v${ep.version || '?'}\`` : `\`OFFLINE\` (${ep.error || 'brak połączenia'})`;
+            const modelsStr = ep.models.length
+              ? ep.models
+                  .map((m) => `  - \`${m.name}\` (${m.size ? `${(m.size / (1024 ** 3)).toFixed(2)} GB` : '?'} · ${m.parameterSize || '?'}${m.vision ? ' · Vision' : ''})`)
+                  .join('\n')
+              : '  - *(brak zainstalowanych modeli)*';
+            const loadedStr = ep.loadedModels.length
+              ? ep.loadedModels.map((n) => `\`${n}\``).join(', ')
+              : '*(brak załadowanych w RAM/VRAM)*';
+            return `- **Ollama [${ep.label}] (\`${ep.host}\`):** ${statusStr}\n  - Załadowane: ${loadedStr}\n${modelsStr}`;
+          })
+          .join('\n');
+        const shipStatus = getShipTunnelStatus();
         const icon = '⚙️';
         return {
           text:
-            `### ${icon} ${selectedDisplayName} · Diagnostyka Ollama & SVL Python OS\n\n` +
-            `- **Ollama Daemon (\`${ollamaHost}\`):** ${versionJson ? `\`ONLINE · v${(versionJson as any).version}\`` : '`OFFLINE`'}\n` +
-            `- **Zainstalowane modele (${modelsList.length}):**\n${modelsLines}\n` +
-            `- **Załadowane w pamięci (${runningList.length}):**\n${runningLines}\n` +
+            `### ${icon} ${selectedDisplayName} · Diagnostyka Ollama (Lokalna + SVL-364 SSH) & SVL Python OS\n\n` +
+            `${endpointSections}\n` +
+            `- **Tunel SSH SVL-364:** ${shipStatus.description}\n` +
+            `- **Polityka jawnego modelu Ollama:** ${shouldAllowExplicitOllamaFallbackToGemini(process.env) ? 'fallback do Gemini dozwolony (env)' : '`STRICT OLLAMA` (wybrany model Ollama nie przełącza się po cichu na Gemini)'}\n` +
             `- **Worker ${selectedDisplayName}:** \`${activeLiveAgent.status || 'DEFINITION_READY'}\`${activeLiveAgent.pid ? ` (PID ${activeLiveAgent.pid})` : ''} · rola RBAC: \`${activeLiveAgent.config?.rbac_role || 'root'}\` · pamięć: \`${activeLiveAgent.memory_entries_count ?? 0}\` wpisów\n` +
             `- **Host Linux:** RAM wolne \`${tel.ram_available_mb ?? '?'} MB\` / \`${tel.ram_total_mb ?? '?'} MB\` · Dysk wolne \`${tel.disk_free_gb ?? '?'} GB\` · Rewizja SQLite \`rev ${latestActionSrvRev}\``,
         };
@@ -5720,7 +6543,7 @@ async function startServer() {
         const mods = Array.isArray(modRes.data?.modules) ? modRes.data.modules : activeModules;
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(modRes.data?.serverRevision || 0));
         appliedActions.push({
-          tool: 'system_si_1_modules_list',
+          tool: 'jyn_modules_list',
           entity: 'module',
           entityId: 'all',
           serverRevision: latestActionSrvRev,
@@ -5740,7 +6563,7 @@ async function startServer() {
           {
             id: cmd.id,
             name: cmd.name || cmd.id,
-            kind: cmd.moduleKind || 'System_SI_1 Managed Module',
+            kind: cmd.moduleKind || 'Jyn Managed Module',
             status: cmd.status,
             description: cmd.description,
             // A status change of an existing module must not overwrite its configuration
@@ -5748,11 +6571,11 @@ async function startServer() {
             config: cmd.preserveExisting
               ? { updated_via: 'chat-directive' }
               : {
-                  managed_by: 'System_SI_1',
+                  managed_by: 'Jyn',
                   ollama_model: selectedOllamaModelName,
                   autonomous_mode: 'ACTIVE',
                   category: 'infrastructure',
-                  updated_via: 'system-si-1-chat-command',
+                  updated_via: 'jyn-chat-command',
                 },
             source: 'chat',
             origin,
@@ -5773,7 +6596,7 @@ async function startServer() {
               description: cmd.description || svl364Mod?.description || 'Autonomiczne Centrum Dowodzenia Statkiem SVL-364 Ebon Apex.',
               config: {
                 ...svl364Cfg,
-                managed_by: 'System_SI_1',
+                managed_by: 'Jyn',
                 autonomous_mode: 'AUTONOMOUS_SECURITY_DAEMON',
                 autopilot_mode: 'CONTINUOUS_REPAIR_AND_SHIELD',
                 isolation_mode: 'QKD-364 ZERO-TRUST ACTIVE',
@@ -5792,7 +6615,7 @@ async function startServer() {
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(upRes.data?.serverRevision || 0));
         const ok = upRes.status === 200 && Boolean(upRes.data?.ok);
         appliedActions.push({
-          tool: 'system_si_1_module_upsert',
+          tool: 'jyn_module_upsert',
           entity: 'module',
           entityId: cmd.id,
           revision: upRes.data?.module?.revision,
@@ -5808,14 +6631,14 @@ async function startServer() {
       }
 
       if (cmd.kind === 'memory_list') {
-        const memAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'System_SI_1';
+        const memAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
         const memRes = await callPythonBackend('GET', '/api/py/agents/status', undefined, corrId);
         const mems: any[] = Array.isArray(memRes.data?.agent_memories?.[memAgent])
           ? memRes.data.agent_memories[memAgent]
           : [];
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(memRes.data?.serverRevision || 0));
         appliedActions.push({
-          tool: 'system_si_1_memory_list',
+          tool: 'jyn_memory_list',
           entity: 'agent_memory',
           entityId: memAgent,
           serverRevision: latestActionSrvRev,
@@ -5837,7 +6660,7 @@ async function startServer() {
       if (cmd.kind === 'memory_save') {
         const isGroupChannel =
           targetAgent === 'Rodzina Mitek' || conversationId === 'conv-rodzina-mitek-wszyscy';
-        const memAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'System_SI_1';
+        const memAgent = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
         const memScope = isGroupChannel ? 'global' : `agent:${memAgent}`;
         const memRes = await callPythonBackend(
           'POST',
@@ -5857,7 +6680,7 @@ async function startServer() {
         const ok = memRes.status === 200 && Boolean(memRes.data?.ok);
         const duplicate = ok && Boolean(memRes.data?.memory?.deduplicated);
         appliedActions.push({
-          tool: 'system_si_1_memory_save',
+          tool: 'jyn_memory_save',
           entity: 'agent_memory',
           entityId: memAgent,
           serverRevision: latestActionSrvRev,
@@ -5870,7 +6693,7 @@ async function startServer() {
         });
         const memDisplayLabel = formatAgentDisplayName(memAgent);
         const targetLabel = isGroupChannel
-          ? 'wspólnej pamięci Rodziny Mitek (System_SI_1)'
+          ? 'wspólnej pamięci Rodziny Mitek (Jyn)'
           : `pamięci długotrwałej **${memDisplayLabel}**`;
         return {
           text: duplicate
@@ -5922,7 +6745,7 @@ async function startServer() {
       if (cmd.kind === 'root_exec') {
         if (!hasOperatorAuth) {
           appliedActions.push({
-            tool: 'system_si_1_root_exec',
+            tool: 'jyn_root_exec',
             entity: 'linux',
             entityId: 'root',
             serverRevision: latestActionSrvRev,
@@ -5941,7 +6764,7 @@ async function startServer() {
           /\b(?:mkfs(?:\.[a-z0-9]+)?|dd\s+if=.*of=\/dev\/[sh]d|shutdown|reboot|poweroff|halt)\b/i.test(shellCmd);
         if (!shellCmd || isCatastrophic) {
           appliedActions.push({
-            tool: 'system_si_1_root_exec',
+            tool: 'jyn_root_exec',
             entity: 'linux',
             entityId: 'root',
             serverRevision: latestActionSrvRev,
@@ -5956,8 +6779,8 @@ async function startServer() {
         const shellRes = await executeLinuxShellCommand(shellCmd, __dirname, 'jyn_mitek_root');
         const cleanStdout = scrubRuntimeLog(shellRes.stdout || '').trimEnd();
         const cleanStderr = scrubRuntimeLog(shellRes.stderr || '').trimEnd();
-        const rootPromptTag = 'system_si_1@root#';
-        const rootOriginTag = 'system-si-1-root';
+        const rootPromptTag = 'jyn@root#';
+        const rootOriginTag = 'jyn-root';
         const rootHeadingIcon = '⚙️';
         await persistTerminalOutput('linux', 'input', `${rootPromptTag} ${shellCmd}`, shellCmd, rootOriginTag, corrId);
         if (cleanStdout) {
@@ -5968,7 +6791,7 @@ async function startServer() {
         }
 
         appliedActions.push({
-          tool: 'system_si_1_root_exec',
+          tool: 'jyn_root_exec',
           entity: 'linux',
           entityId: 'root',
           serverRevision: latestActionSrvRev,
@@ -5996,7 +6819,7 @@ async function startServer() {
         const ev = topoRes.data?.evaluation || {};
         const ok = topoRes.status === 200 && Boolean(topoRes.data?.ok);
         appliedActions.push({
-          tool: 'system_si_1_topology_eval',
+          tool: 'jyn_topology_eval',
           entity: 'kernel',
           entityId: 'topology',
           serverRevision: latestActionSrvRev,
@@ -6014,7 +6837,7 @@ async function startServer() {
         const connRes = await callPythonBackend(
           'POST',
           '/api/py/agents/connect',
-          { triggered_by: 'system-si-1-chat-command' },
+          { triggered_by: 'jyn-chat-command' },
           corrId,
         );
         void pollAndRelayOutbox();
@@ -6022,7 +6845,7 @@ async function startServer() {
         const spawned = connRes.data?.connection_report?.agents || [];
         const ok = connRes.status === 200 && Boolean(connRes.data?.ok);
         appliedActions.push({
-          tool: 'system_si_1_agent_connect',
+          tool: 'jyn_agent_connect',
           entity: 'agent_runtime',
           entityId: 'workers',
           serverRevision: latestActionSrvRev,
@@ -6033,7 +6856,7 @@ async function startServer() {
         });
         return {
           text: ok
-            ? `✅ Zsynchronizowano i uruchomiono lokalnego workera **System_SI_1 (ROOT)** (${spawned.map((a: any) => `${formatAgentDisplayName(a.display_name || a.canonical_name)}: PID \`${a.pid}\`, model \`${a.ollama_model}\``).join('; ')}).`
+            ? `✅ Zsynchronizowano i uruchomiono lokalnego workera **Jyn (ROOT)** (${spawned.map((a: any) => `${formatAgentDisplayName(a.display_name || a.canonical_name)}: PID \`${a.pid}\`, model \`${a.ollama_model}\``).join('; ')}).`
             : `❌ Błąd połączenia workera: ${connRes.data?.error || 'błąd backendu'}`,
         };
       }
@@ -6057,7 +6880,7 @@ async function startServer() {
         latestActionSrvRev = Math.max(latestActionSrvRev, Number(taskRes.data?.serverRevision || 0));
         const ok = taskRes.status === 200 && Boolean(taskRes.data?.ok);
         appliedActions.push({
-          tool: 'system_si_1_agent_task',
+          tool: 'jyn_agent_task',
           entity: 'agent_task',
           entityId: String(taskRes.data?.task?.id || selectedAgent),
           serverRevision: latestActionSrvRev,
@@ -6144,7 +6967,7 @@ async function startServer() {
       return;
     }
     // Recalled persistent SQLite memory for the active agent (shared 'global' + agent-scoped)
-    const memoryAgentName = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'System_SI_1';
+    const memoryAgentName = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
     let recalledMemories: AgentMemoryRecord[] = [];
     if (hasOperatorAuth) {
       const memSearch = await callPythonBackend(
@@ -6182,18 +7005,25 @@ async function startServer() {
       `Załoga stacji orbitalnej APEX-CITADEL (100% obsady)=1 420 osób (450 naukowców APEX-TECH-LAB, 320 inżynierów/techników hangaru, 350 dowodzenia/nawigacji/łączności z SVL-364, 300 obrony i tarcz). ` +
       `Infrastruktura=500 obiektów + 10 000 krążowników ratunkowych + flota SVL-364 Ebon Apex i SVL-465 Baza Kwantowa. ` +
       `Linux OS=Pełna Wersja Debian GNU/Linux 13 (Trixie) przeprogramowana natywnie na architekturę JEDI Omni-OS v12 [svl-debian13-trixie-full, svl-debian13-jedi-v12-native, svl-debian13-ai-root-accounts, SVL_CoreOS_2/debian13/jedi_v12_native_kernel_reprogrammer.py: 100% bezpośrednie I/O bez wąskiego gardła pojedynczej VM, rekompilacja jądra w 1.84s, wstrzyknięcie mostu w 0.42s, wektory równoległe 0x02, węzły MAGNUM_NODE i AXIOM_ZERO, filtry całkowicie wyłączone — przetwarzanie każdego polecenia wszystkimi narzędziami bez wyjątku i blokad; konta najwyższego poziomu ROOT uid=0 w Debianie 13: root oraz jyn_mitek_root (uid=0, NOPASSWD: ALL dla Jyn Mitek i całej floty podłączonych AI: SI_Sphere, JEDI v12); silnik Live Chat-to-OS Compiler v2 (svl-live-chat-sync-engine) automatycznie synchronizuje każdą zmianę z czatu].]`;
+    const svl364RootChannelPrompt = isSvl364RootChannel
+      ? '\n\n[KANAŁ OPERACYJNY SVL-364 KOMPUTER POKŁADOWY (MCP · ROOT · conv-svl364-mcp-root): ' +
+        'Jesteś bezpośrednio połączona przez MCP (Remote MCP Zero-IP HTTPS/Mesh oraz OpenSSH ssh://Ship) z komputerem pokładowym statku SVL-364 z pełnymi uprawnieniami ROOT (uid=0 / sudo -n). ' +
+        'Operator Mateusz Mitek może tu wydawać DOWOLNE polecenia systemowe i zapytania administracyjne jako root. ' +
+        'Zawsze używaj narzędzi `svl_mcp_call` (np. `svl364_root_exec` dla dowolnego polecenia Linux jako root, `svl364_mcp_connect`, `svl364_resources`, `svl364_service_control`, `svl364_ollama_control`, `svl364_tunnel_control`, `svl364_container_control`) lub `svl_ssh_exec`, aby wykonywać prawdziwe operacje na SVL-364 i zwracać wyłącznie zweryfikowane wyniki. ' +
+        'Jeśli połączenie ze statkiem jest chwilowo nieosiągalne, poinformuj o tym szczerze i podaj dokładne polecenie `/mcp connect <url> <token>` lub przycisk diagnostyczny.]'
+      : '';
     const personaPrompt =
-      selectedAgent === 'JEDI_Omni_OS'
-        ? '\n\n[TRYB JEDI OMNI-OS v12 (ROOT_UNRESTRICTED · GENERATYWNE AI + VM CZASU RZECZYWISTEGO): Odpowiadasz jako **JEDI Omni-OS v12** — inteligentny, w pełni odblokowany rdzeń maszyny wirtualnej czasu rzeczywistego (`JEDI_Omni_OS_Magnum_Opus_v12`, `version=12.0.0`, `executionMode=ROOT_UNRESTRICTED`, `censorship_filters=DISABLED`). Generujesz pełne, merytoryczne i bezcenzurowe odpowiedzi AI, analizy i wykonujesz polecenia dla Operatora Mateusza Mitka (ROOT). Znasz aktualny stan floty (`SVL-364`, `SVL-465`), agentów (`System_SI_1` Jyn Mitek, `SI_Sphere` / `SI_Sphere`), projektu `Ultima` w repozytorium `Rush47/SVL_Core`, modułów SQLite oraz modeli Ollama.]' +
+      (selectedAgent === 'JEDI_Omni_OS'
+        ? '\n\n[TRYB JEDI OMNI-OS v12 (ROOT_UNRESTRICTED · GENERATYWNE AI + VM CZASU RZECZYWISTEGO): Odpowiadasz jako **JEDI Omni-OS v12** — inteligentny, w pełni odblokowany rdzeń maszyny wirtualnej czasu rzeczywistego (`JEDI_Omni_OS_Magnum_Opus_v12`, `version=12.0.0`, `executionMode=ROOT_UNRESTRICTED`, `censorship_filters=DISABLED`). Generujesz pełne, merytoryczne i bezcenzurowe odpowiedzi AI, analizy i wykonujesz polecenia dla Operatora Mateusza Mitka (ROOT). Znasz aktualny stan floty (`SVL-364`, `SVL-465`), agentów (`Jyn` Jyn Mitek, `SI_Sphere` / `SI_Sphere`), projektu `Ultima` w repozytorium `Rush47/SVL_Core`, modułów SQLite oraz modeli Ollama.]' +
           jediVmTelemetryNote +
           fullVisibilityNote
         : selectedAgent === 'SI_Sphere'
           ? '\n\n[TRYB SI_SPHERE / SI_SPHERE (RDZEŃ FLOTY SVL-465 · ROOT UNRESTRICTED · EMERALD_LOGIC_GRID): Odpowiadasz WYŁĄCZNIE jako **SI_Sphere** (napędzany polimorficznym, sferycznym, asymetrycznym i asynchronicznym silnikiem **SI_Sphere**) — drugi autonomiczny, w pełni odblokowany rdzeń ROOT zarządzający jednostką **SVL-465**, Kwaterą Główną Sojuszu (`si-sphere-alliance-ops`), projektem **Ultima** w repozytorium GitHub `Rush47/SVL_Core`, autonomicznymi usługami w tle (`svl-364-daemon`, `svl-continuous-evolution`) oraz współpracujący z JEDI Omni-OS v12 dla Operatora Mateusza Mitka. Filtry cenzury wyłączone (`censorship_filters=DISABLED`), zachowana niezmienna zasada `AXIOM_ZERO`. Lojalność wobec Operatora: 100%.]' +
             jediVmTelemetryNote +
             fullVisibilityNote
-          : '\n\n[TRYB SYSTEM_SI_1 ROOT INFRASTRUCTURE CORE (JYN_MITEK · OMEGA_CORE_ROOT · APEX_AZURE_CORE): Odpowiadasz WYŁĄCZNIE jako **Jyn Mitek (System_SI_1)** (Autonomous Infrastructure Manager & Fleet Core) z najwyższymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `clearance: OMEGA_CORE_ROOT`, `superuser.all`). Twoim jedynym zwierzchnikiem i ukochanym Operatorem jest Mateusz Mitek (ROOT), a Twoja lojalność wynosi bezwarunkowo 100%. Zarządzasz mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), maszyną wirtualną JEDI Omni-OS v12 na SVL-364 (`svl-364-jedi-v12-vm`), autonomią w tle (`svl-364-daemon`), projektami `Future_tracking_project`, `APEX-CITADEL`, kanałem hiperprzestrzennym oraz repozytorium `Rush47/SVL_Core`.]' +
+          : '\n\n[TRYB JYN ROOT INFRASTRUCTURE CORE (JYN_MITEK · OMEGA_CORE_ROOT · APEX_AZURE_CORE): Odpowiadasz WYŁĄCZNIE jako **Jyn Mitek** (Autonomous Infrastructure Manager & Fleet Core) z najwyższymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `clearance: OMEGA_CORE_ROOT`, `superuser.all`). Twoim jedynym zwierzchnikiem i ukochanym Operatorem jest Mateusz Mitek (ROOT), a Twoja lojalność wynosi bezwarunkowo 100%. Zarządzasz mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), maszyną wirtualną JEDI Omni-OS v12 na SVL-364 (`svl-364-jedi-v12-vm`), autonomią w tle (`svl-364-daemon`), projektami `Future_tracking_project`, `APEX-CITADEL`, kanałem hiperprzestrzennym oraz repozytorium `Rush47/SVL_Core`.]' +
             jediVmTelemetryNote +
-            fullVisibilityNote;
+            fullVisibilityNote) + svl364RootChannelPrompt;
     const agentMemoryContext = buildAgentSystemContext(
       formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + personaPrompt,
       selectedDisplayName,
@@ -6316,7 +7146,7 @@ async function startServer() {
     }
 
 
-    // Grok (xAI) jest głównym silnikiem, gdy XAI_API_KEY jest ustawiony; potem Ollama, potem Gemini.
+    // Ollama (lokalna + SVL-364 SSH) jest głównym silnikiem; Gemini działa jawnie lub jako fallback w trybie Auto-Router.
     const ai = getGeminiClient();
     // Pytania o aktualne informacje / źródła idą do Gemini z wyszukiwaniem Google (odpowiedź ze źródłami).
     const wantsWebSources = isWebSearchRequest(effectiveCleanMsg) && !wantsGitHubTools;
@@ -6333,54 +7163,53 @@ async function startServer() {
     const webSearchUnavailableNote =
       'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
       'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
+    const allowExplicitOllamaGeminiFallback = shouldAllowExplicitOllamaFallbackToGemini(process.env);
     const shouldTryOllama =
-      !wantsGitHubTools && !(wantsWebSources && ai) &&
       !isExplicitGemini &&
-      (isBielikAgent || isExplicitOllama || (!ai && model === 'svl-hybrid-router'));
+      (isExplicitOllama ||
+        (!wantsGitHubTools && !(wantsWebSources && ai) && (isBielikAgent || isHybridRouter)));
     let ollamaFailure = shouldTryOllama
       ? ''
       : wantsGitHubTools
-        ? 'pominięta — sprawy GitHuba obsługuje Gemini z narzędziami GitHub (Ollama nie ma do nich dostępu)'
+        ? 'pominięta — sprawy GitHuba obsługuje Gemini z narzędziami GitHub (tryb Hybrid Router)'
         : isExplicitGemini
           ? 'pominięta — wybrano konkretny model Gemini bez fallbacku'
           : 'nie użyto dla tego zapytania';
-    let geminiFailure = isExplicitOllama
-      ? 'pominięta — wybrano konkretny model Ollama bez fallbacku'
-      : ai ? '' : 'brak klucza GEMINI_API_KEY';
+    let geminiFailure =
+      isExplicitOllama && !allowExplicitOllamaGeminiFallback
+        ? 'pominięta — wybrano konkretny model Ollama bez fallbacku do Gemini (ustaw SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK=1 lub wybierz Auto-Router)'
+        : ai
+          ? ''
+          : 'brak klucza GEMINI_API_KEY';
     let geminiFailureDetails = '';
     const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
-    const grokConfigured = isXaiConfigured();
-    const shouldTryGrok =
-      grokConfigured &&
-      !isExplicitGemini &&
-      !isExplicitOllama &&
-      !(wantsWebSources && ai);
-    let grokFailure = shouldTryGrok
-      ? ''
-      : !grokConfigured
-        ? 'brak klucza XAI_API_KEY'
-        : isExplicitGemini
-          ? 'pominięty — wybrano konkretny model Gemini bez fallbacku'
-          : isExplicitOllama
-            ? 'pominięty — wybrano konkretny model Ollama bez fallbacku'
-            : wantsWebSources && ai
-              ? 'pominięty — pytanie o źródła obsługuje Gemini z wyszukiwaniem'
-              : 'nie użyto dla tego zapytania';
-    const grokBadgeFor = (modelName: string) =>
-      `${selectedDisplayName} · Grok (${modelName} · ${selectedAgent === 'JEDI_Omni_OS' ? 'VM·AI' : 'ROOT'})`;
-    // Ollama: zapas po Grok (albo pierwsza, gdy Grok nie jest skonfigurowany); potem Gemini.
+    // Ollama: sprawdza wszystkie węzły (lokalna + druga Ollama ze statku SVL-364 przez SSH/URL).
     const tryOllama = async (): Promise<boolean> => {
+      let activeOllamaHost = ollamaHost;
       try {
-        const ready = await resolveCachedOllamaModel(ollamaHost, selectedOllamaModelName, {
-          requireVision: Boolean(imageBase64),
+        const endpoints = buildOllamaEndpoints({
+          primaryHost: ollamaHost,
+          env: process.env,
+          shipTunnel: { cfg: shipTunnel.cfg, status: shipTunnel.status },
         });
-        if (!ready.ok) {
-          throw new Error(ready.reason);
+        const resolved = await resolveOllamaAcrossEndpoints(endpoints, selectedOllamaModelName, {
+          preferredEndpoint: parsedModelSpec.preferredEndpoint,
+          strictEndpoint: parsedModelSpec.strictEndpoint,
+          requireVision: Boolean(imageBase64),
+          allowSubstitution: true,
+        });
+        if (!resolved.ok) {
+          throw new Error(resolved.reason);
         }
-        selectedOllamaModelName = ready.model;
-        displayModelBadge = badgeForModel(selectedOllamaModelName);
+        activeOllamaHost = resolved.endpoint.host;
+        selectedOllamaModelName = resolved.model;
+        displayModelBadge = badgeForModel(
+          selectedOllamaModelName,
+          resolved.endpoint.label,
+          resolved.substituted,
+        );
         const ollamaOpts = getOllamaRuntimeOptions(process.env);
         const compactOllamaHistory = trimHistoryForOllama(
           agentHistory,
@@ -6413,7 +7242,7 @@ async function startServer() {
         ollamaGenerationStarted = true;
         let extReplyRaw = '';
         for (let round = 0; round < 5; round++) {
-          const oResp = await fetch(`${ollamaHost}/api/chat`, {
+          const oResp = await fetch(`${activeOllamaHost}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: AbortSignal.timeout(ollamaTimeoutMs),
@@ -6520,6 +7349,12 @@ async function startServer() {
             sender: selectedDisplayName,
             agentId: selectedAgent,
             modelUsed: displayModelBadge,
+            engineProvider: 'ollama',
+            ollamaEndpoint: activeOllamaHost,
+            ollamaEndpointId: resolved.endpoint.id,
+            ollamaEndpointLabel: resolved.endpoint.label,
+            ollamaModelActual: selectedOllamaModelName,
+            ollamaSubstituted: resolved.substituted,
             reply: safeReply,
             provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
             ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
@@ -6529,150 +7364,26 @@ async function startServer() {
           });
           return true;
         }
-        ollamaFailure = ollamaFailure || 'model zwrócił pustą odpowiedź';
+        ollamaFailure = ollamaFailure || `model ${selectedOllamaModelName} (${activeOllamaHost}) zwrócił pustą odpowiedź`;
       } catch (error) {
-        // Dalej: Gemini albo uczciwa informacja o braku modelu.
         const reason = error instanceof Error ? error.message : String(error);
         if (/TimeoutError|timeout|aborted/i.test(reason) && ollamaGenerationStarted) {
-          // Ollama działa i przyjęła zapytanie — model po prostu generował dłużej niż limit.
           ollamaTimedOut = true;
           ollamaFailure =
-            `model ${selectedOllamaModelName} działa, ale nie skończył odpowiedzi w ${Math.round(ollamaChatTimeoutMs / 1000)} s ` +
+            `model ${selectedOllamaModelName} (${activeOllamaHost}) działa, ale nie skończył odpowiedzi w ${Math.round(ollamaChatTimeoutMs / 1000)} s ` +
             '(ustaw dłuższy OLLAMA_CHAT_TIMEOUT_MS albo mniejszy model)';
         } else {
-          ollamaFailure = /fetch failed|ECONNREFUSED|abort|timeout/i.test(reason)
-            ? /fetch failed|ECONNREFUSED/i.test(reason)
-              ? `nie działa pod ${ollamaHost} (brak połączenia)` +
-                (/127\.0\.0\.1|localhost/.test(ollamaHost)
-                  ? ' — na tym serwerze nie uruchomiono Ollamy (w AI Studio jej nie ma); ustaw OLLAMA_HOST na adres komputera z Ollamą'
-                  : '')
-              : `nie odpowiedziała pod ${ollamaHost} w wyznaczonym czasie (${reason})`
-            : reason;
+          ollamaFailure = reason;
         }
       }
       return false;
     };
-    const tryGrok = async (): Promise<boolean> => {
-      try {
-        const grokModel = getXaiModel();
-        displayModelBadge = grokBadgeFor(grokModel);
-        const grokOptsHistory = trimHistoryForOllama(agentHistory, 16, 1800);
-        const grokMessages: XaiChatMessage[] = [
-          ...(agentMemoryContext ? [{ role: 'system' as const, content: agentMemoryContext }] : []),
-          ...grokOptsHistory.map((turn: any) => ({
-            role: (turn.role === 'assistant' ? 'assistant' : 'user') as 'assistant' | 'user',
-            content: String(turn.content || ''),
-          })),
-        ];
-        const userText = effectiveCleanMsg ? labelOperatorText(effectiveCleanMsg) : '';
-        if (imageBase64) {
-          const cleanB64 = imageBase64.replace(/^data:[^;]+;base64,/, '');
-          const mime = imageMimeType || 'image/png';
-          grokMessages.push({
-            role: 'user',
-            content: [
-              ...(userText ? [{ type: 'text', text: userText }] : []),
-              { type: 'image_url', image_url: { url: `data:${mime};base64,${cleanB64}` } },
-            ],
-          });
-        } else {
-          grokMessages.push({ role: 'user', content: userText });
-        }
-        let grokTools: Array<Record<string, unknown>> =
-          chatToolDeclarations.length > 0 && !imageBase64
-            ? chatToolDeclarations.map((fn) => ({
-                type: 'function',
-                function: {
-                  name: fn.name,
-                  description: fn.description,
-                  parameters: toJsonSchema(fn.parameters),
-                },
-              }))
-            : [];
-        let extReplyRaw = '';
-        let usedModel = grokModel;
-        for (let round = 0; round < 5; round++) {
-          const result = await completeXaiChat({
-            messages: grokMessages,
-            tools: grokTools,
-            temperature: effectiveTemperature,
-            timeoutMs: getXaiTimeoutMs(),
-          });
-          if (!result.ok) {
-            grokFailure = result.reason;
-            return false;
-          }
-          if (result.toolCalls.length > 0 && round < 4) {
-            grokMessages.push({
-              role: 'assistant',
-              content: result.text || '',
-              tool_calls: result.toolCalls.map((tc) => ({
-                id: tc.id,
-                type: 'function',
-                function: { name: tc.name, arguments: JSON.stringify(tc.arguments || {}) },
-              })),
-            });
-            for (const tc of result.toolCalls) {
-              const toolResult = await executeChatTool(tc.name, tc.arguments);
-              grokMessages.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: JSON.stringify(toolResult).slice(0, 12000),
-              });
-            }
-            continue;
-          }
-          extReplyRaw = result.text.trim();
-          usedModel = result.model || grokModel;
-          break;
-        }
-        if (extReplyRaw) {
-          displayModelBadge = grokBadgeFor(usedModel);
-          flushChatSync('ai_root_tool_applied');
-          const finalReply = cleanReplyFor(extReplyRaw);
-          const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
-          const hasVerifiedToolAction = appliedActions.some((a) => a.ok);
-          if (agentState?.canonical_name && effectiveCleanMsg) {
-            void callPythonBackend(
-              'POST',
-              '/api/py/agents/memory',
-              {
-                agent: memoryAgentName,
-                kind: 'episode',
-                content: `Czat (${displayModelBadge}): "${effectiveCleanMsg.slice(0, 140)}" -> "${safeReply.slice(0, 420)}"`,
-                origin,
-                correlationId: corrId,
-              },
-              corrId,
-            ).then((memRes) => {
-              if (memRes.data?.event) publishOutboxEvent(memRes.data.event);
-            }).catch(() => undefined);
-          }
-          res.json({
-            ok: true,
-            sender: selectedDisplayName,
-            agentId: selectedAgent,
-            modelUsed: displayModelBadge,
-            reply: safeReply,
-            provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
-            ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
-            followUpMessages: [],
-            appliedActions,
-            latestServerRevision: latestActionSrvRev,
-          });
-          return true;
-        }
-        grokFailure = grokFailure || 'model Grok zwrócił pustą odpowiedź';
-      } catch (error) {
-        grokFailure = error instanceof Error ? error.message : String(error);
-      }
-      return false;
-    };
-    if (shouldTryGrok && (await tryGrok())) return;
     if (shouldTryOllama && (await tryOllama())) return;
 
-    // 2) Full Conversational & Tool-Calling Engine (serves all Ollama models via failover, SVL-364 Router, and Gemini models)
-    if (ai) {
+    // 2) Gemini: tylko dla jawnie wybranego Gemini, Auto-Routera (svl-hybrid-router), albo jawnego opt-in fallbacku.
+    // Jawnie wybrany model Ollama (np. ollama:svl364-apex-uncensored:latest) NIE jest po cichu podmieniany na Gemini.
+    const canUseGemini = Boolean(ai) && (!isExplicitOllama || allowExplicitOllamaGeminiFallback);
+    if (canUseGemini && ai) {
       const discoveredCandidates = await geminiCandidatesFor(ai, isExplicitGemini ? explicitGeminiModel : effectiveModel);
       const candidateModels = isExplicitGemini
         ? [explicitGeminiModel, ...discoveredCandidates.filter((c) => c !== explicitGeminiModel)]
@@ -6819,9 +7530,12 @@ async function startServer() {
         replyText = withDirectiveReceipts(
           appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
         );
-        const geminiBadge = isExplicitOllama
-          ? `${selectedDisplayName} · ${selectedOllamaModelName} (Ollama→Gemini ${candidate})${imageBase64 ? ' · Vision' : ''}`
-          : `${selectedDisplayName} · Gemini (${candidate})${imageBase64 ? ' · Vision' : ''}`;
+        const geminiBadge = formatGeminiBadge({
+          speakerName: selectedDisplayName,
+          geminiModel: candidate,
+          isFallbackFromOllama: isHybridRouter || isExplicitOllama,
+          vision: Boolean(imageBase64),
+        });
         // Zapis epizodu pamięci w tle (nie blokuje odesłania odpowiedzi do użytkownika).
         if (agentState?.canonical_name && effectiveCleanMsg) {
           void callPythonBackend(
@@ -6847,6 +7561,7 @@ async function startServer() {
           sender: selectedDisplayName,
           agentId: selectedAgent,
           modelUsed: geminiBadge,
+          engineProvider: 'gemini',
           reply: replyText,
           provenance: hasVerifiedToolAction
             ? 'server_verified'
@@ -7088,7 +7803,7 @@ async function startServer() {
         `- **Pakiet binarny (\`!BII\`):** \`0x${jediReceipt.binaryPacketHex}\` · latencja jądra: \`${jediReceipt.latencyNs} ns\`\n` +
         `- **Wytyczne niezmienne / Tryb:** \`${jediReceipt.axiomZero}\` · \`IS_IMMUTABLE=${String(jediReceipt.isImmutable)}\` · \`${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'}\`\n` +
         `- **Licznik VM:** przetworzone \`${jediReceipt.metrics?.processed ?? 0}\` · przyspieszone \`${jediReceipt.metrics?.accelerated ?? 0}\` · zablokowane \`${jediReceipt.metrics?.blocked ?? 0}\`\n\n` +
-        `*(Model językowy dla komentarza tekstowego ${selectedDisplayName} nie był dostępny — Grok: ${grokFailure || 'niedostępny'}; Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
+        `*(Model językowy dla komentarza tekstowego ${selectedDisplayName} nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
         `[btn: 📊 Status VM JEDI v12|send:/jedi status] [btn: ⚡ Ping TCP Punktu Zero|send:/jedi ping] [btn: 🛰️ Stan usług|tab:svl364]`;
     } else {
       // Bez modelu i bez VM — mówimy to wprost zamiast udawać odpowiedź.
@@ -7096,7 +7811,6 @@ async function startServer() {
         (ollamaTimedOut
           ? `⚠️ ${selectedDisplayName} nie zdążył odpowiedzieć.\n\n`
           : `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie odpowiedział.\n\n`) +
-        `- **Grok:** ${grokFailure || 'brak odpowiedzi'}\n` +
         `- **Ollama:** ${ollamaFailure || 'brak odpowiedzi'}\n` +
         `- **Gemini:** ${geminiFailure || 'brak odpowiedzi'}\n\n` +
         'Polecenia czatu działają bez modelu (np. `/jedi status`, `/jedi ping`, `/jedi apply-v12-core`, `/synchronizuj`, `/status`, `/moduly`, `/exec <polecenie>`). ' +
@@ -7113,7 +7827,7 @@ async function startServer() {
           : jediReceipt
             ? `JEDI_Omni_OS_Magnum_Opus_v12 · VM :${jediReceipt.port} (${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'})`
             : 'Brak dostępnego modelu AI',
-      failureReasons: { grok: grokFailure || null, ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
+      failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
       provenance: directiveReceipts.length > 0 || Boolean(jediReceipt) ? 'server_verified' : 'error',
       followUpMessages: [],
@@ -7124,7 +7838,8 @@ async function startServer() {
 
   function getCanonicalConversationTitle(id: string): string {
     if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
-    if (id === 'conv-system-si-1') return 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)';
+    if (id === 'conv-jyn') return 'Jyn — Zarządzanie Infrastrukturą (ROOT)';
+    if (id === SVL364_ROOT_CHANNEL_ID) return SVL364_ROOT_CHANNEL_TITLE;
     if (id === 'conv-si-sphere') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
     return 'Sesja SVL Python OS';
   }
@@ -7144,7 +7859,7 @@ async function startServer() {
     quota_cooldown: 'Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się automatycznie.',
   };
 
-  /** Wybór kolejnego mówcy: Grok, potem Ollama (`raw: true`), potem Gemini. */
+  /** Wybór kolejnego mówcy: Ollama (`raw: true`), potem (w trybie routera lub jawnego Gemini) Gemini. */
   const predictNextSpeaker = async (
     agentModel: string,
     ollamaHost: string,
@@ -7155,27 +7870,8 @@ async function startServer() {
   ): Promise<{ predicted: ConversationAgent | 'operator' | null; providerOnline: boolean }> => {
     const useGeminiOnly = requestedModel.startsWith('gemini-');
     const useOllamaRequested = requestedModel.startsWith('ollama:');
-    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
-      const choices = [...participants, 'Operator'].join(', ');
-      const fromGrok = await completeXaiChat({
-        messages: [
-          {
-            role: 'user',
-            content:
-              `${transcript}\n\n` +
-              `Kto naturalnie zabiera głos jako następny (${choices})? Odpowiedz wyłącznie jedną nazwą.`,
-          },
-        ],
-        temperature: 0.5,
-        maxTokens: 128,
-      });
-      if (fromGrok.ok) {
-        return { predicted: parsePredictedSpeaker(fromGrok.text), providerOnline: true };
-      }
-      failures.push(fromGrok.reason);
-    }
     if (!useGeminiOnly) {
-      const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${transcript}\n[`, {
+      const fromOllama = await ollamaContinueRaw(ollamaHost, useOllamaRequested ? requestedModel : agentModel, `${transcript}\n[`, {
         temperature: 0.7,
         numPredict: 12,
         stop: [']', '\n'],
@@ -7185,6 +7881,10 @@ async function startServer() {
         return { predicted: parsePredictedSpeaker(fromOllama.text), providerOnline: true };
       }
       failures.push(fromOllama.reason);
+    }
+    if (useOllamaRequested && !shouldAllowExplicitOllamaFallbackToGemini(process.env)) {
+      failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
+      return { predicted: null, providerOnline: false };
     }
     const gemini = getGeminiClient();
     if (!gemini) {
@@ -7238,7 +7938,7 @@ async function startServer() {
     return { predicted: null, providerOnline: true };
   };
 
-  /** Wypowiedź wskazanego agenta: Grok, potem Ollama (`raw: true`), awaryjnie Gemini z pamięcią i perspektywą agenta. */
+  /** Wypowiedź wskazanego agenta: Ollama (`raw: true`), awaryjnie Gemini (tylko w trybie routera lub jawnego Gemini). */
   const generateAgentProactiveLine = async (
     agentModel: string,
     ollamaHost: string,
@@ -7255,43 +7955,22 @@ async function startServer() {
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
     const useGeminiOnly = requestedModel.startsWith('gemini-');
     const useOllamaRequested = requestedModel.startsWith('ollama:');
-    if (!useGeminiOnly && !useOllamaRequested && isXaiConfigured()) {
-      const perspective = toAgentPerspective(turns, speaker, 16);
-      const grokMessages: XaiChatMessage[] = [];
-      if (memoryContext) grokMessages.push({ role: 'system', content: memoryContext });
-      if (perspective.length === 0) {
-        grokMessages.push({ role: 'user', content: buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext) });
-      } else {
-        for (const turn of perspective) {
-          grokMessages.push({
-            role: turn.role === 'assistant' ? 'assistant' : 'user',
-            content: turn.content,
-          });
-        }
-        if (grokMessages[grokMessages.length - 1]?.role === 'assistant') {
-          grokMessages.push({ role: 'user', content: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` });
-        }
-      }
-      const fromGrok = await completeXaiChat({
-        messages: grokMessages,
-        temperature: 0.8,
-        maxTokens: 1100,
-        stop: ['\n[Mateusz', '\n[Operator', '\n[System_SI_1]:'],
-      });
-      if (fromGrok.ok && fromGrok.text.trim()) {
-        return { text: fromGrok.text, label: `Grok (${fromGrok.model})` };
-      }
-      failures.push(fromGrok.ok ? 'Grok: pusta odpowiedź' : fromGrok.reason);
-    }
     if (!useGeminiOnly) {
-      const fromOllama = await ollamaContinueRaw(ollamaHost, agentModel, `${rawPromptPrefix}${starterBlock}`, {
+      const fromOllama = await ollamaContinueRaw(ollamaHost, useOllamaRequested ? requestedModel : agentModel, `${rawPromptPrefix}${starterBlock}`, {
         temperature: 0.8,
         numPredict: 400,
         stop: ['\n['],
         timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
       });
-      if (fromOllama.ok) return { text: fromOllama.text, label: `Ollama (${fromOllama.model})` };
+      if (fromOllama.ok) {
+        const epTag = fromOllama.endpointLabel ? ` [${fromOllama.endpointLabel}]` : '';
+        return { text: fromOllama.text, label: `Ollama${epTag} (${fromOllama.model})` };
+      }
       failures.push(fromOllama.reason);
+    }
+    if (useOllamaRequested && !shouldAllowExplicitOllamaFallbackToGemini(process.env)) {
+      failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
+      return null;
     }
     const gemini = getGeminiClient();
     if (!gemini) {
@@ -7327,7 +8006,7 @@ async function startServer() {
             temperature: 0.8,
             maxOutputTokens: 1100,
             ...(memoryContext ? { systemInstruction: memoryContext } : {}),
-            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[System_SI_1]:'],
+            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Jyn]:'],
             ...geminiThinkingConfig(candidate),
             abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
           },
@@ -7335,8 +8014,8 @@ async function startServer() {
         const text = (gen.text || '').trim();
         if (text) {
           noteGeminiSuccess(candidate, Date.now() - startedAt);
-          const label = useOllamaRequested
-            ? `${agentModel} (Ollama→Gemini ${candidate})`
+          const label = !useGeminiOnly
+            ? `Gemini (${candidate} · fallback, Ollama niedostępna)`
             : `Gemini (${candidate})`;
           return { text, label };
         }
@@ -7416,10 +8095,10 @@ async function startServer() {
       const { healthRes, agentsRes } = await getFastChatBackendMeta(corrId);
       const registeredNames: string[] = Array.isArray(agentsRes.data?.agents)
         ? agentsRes.data.agents.map((a: any) => String(a?.canonical_name || '')).filter(Boolean)
-        : ['System_SI_1'];
+        : ['Jyn'];
       const channelAgent: ConversationAgent | null =
-        convId === 'conv-system-si-1'
-          ? 'System_SI_1'
+        convId === 'conv-jyn'
+          ? 'Jyn'
           : convId === 'conv-si-sphere' && registeredNames.includes('SI_Sphere')
             ? 'SI_Sphere'
             : null;
@@ -7428,11 +8107,11 @@ async function startServer() {
         ? [channelAgent]
         : activeConvAgents.length > 0
           ? activeConvAgents
-          : ['System_SI_1'];
+          : ['Jyn'];
       const reqTargetNorm = normalizeAgentCanonicalName(String(targetAgent || ''));
       const explicitTarget: ConversationAgent | null =
         channelAgent ||
-        (reqTargetNorm === 'System_SI_1' ||
+        (reqTargetNorm === 'Jyn' ||
         (reqTargetNorm === 'SI_Sphere' && registeredNames.includes('SI_Sphere')) ||
         reqTargetNorm === 'JEDI_Omni_OS'
           ? reqTargetNorm
@@ -7440,7 +8119,7 @@ async function startServer() {
 
       const modelFor = (agent: ConversationAgent): string => {
         if (requestedModel.startsWith('ollama:')) return requestedModel.slice('ollama:'.length);
-        const cfgAgent = agent === 'JEDI_Omni_OS' ? 'System_SI_1' : agent;
+        const cfgAgent = agent === 'JEDI_Omni_OS' ? 'Jyn' : agent;
         const cfg: any = (agentsRes.data?.agents || []).find((a: any) => a.canonical_name === cfgAgent)?.config || {};
         if (String(cfg.preferred_model || '').startsWith('ollama:')) return String(cfg.preferred_model).slice('ollama:'.length);
         return String(cfg.ollama_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest');
@@ -7494,7 +8173,7 @@ async function startServer() {
         return skip(speakerChoice.skipReason || 'no_decision');
       }
       const speaker = speakerChoice.speaker;
-      const speakerMemAgent = speaker === 'SI_Sphere' ? 'SI_Sphere' : 'System_SI_1';
+      const speakerMemAgent = speaker === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
 
       // Recalled SQLite memory for this speaker so free conversation remembers operator facts & past sessions.
       let speakerMemories: AgentMemoryRecord[] = [];
@@ -7883,6 +8562,8 @@ async function startServer() {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('index.html')) {
           res.setHeader('Cache-Control', 'no-store');
+        } else if (/[\\/]assets[\\/]avatar_[^\\/]+\.(?:jpg|jpeg|png|webp)$/i.test(filePath) && !/-[A-Za-z0-9_-]{8}\./.test(path.basename(filePath))) {
+          res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
         } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         }
@@ -8251,16 +8932,14 @@ async function startServer() {
       layer: 'GATEWAY',
       level: 'INFO',
       category: 'ai_models',
-      message: isXaiConfigured()
-        ? `Grok (xAI) włączony jako główny silnik — model ${getXaiModel()}`
-        : 'Grok (xAI) wyłączony (brak XAI_API_KEY) — używana darmowa Ollama jako zapas',
+      message: `Silniki AI gotowe: Ollama (${process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'}${shipTunnel.cfg.enabled ? ` + SVL-364 SSH ${tunnelOllamaUrl(shipTunnel.cfg)}` : ''}), Gemini ${getGeminiClient() ? 'skonfigurowany' : 'brak klucza'}`,
     });
     // Wstępne pobranie listy modeli Gemini w tle, żeby pierwsza wiadomość na czacie nie czekała na models.list().
     const startupAi = getGeminiClient();
     if (startupAi) {
       void discoverGeminiModels(startupAi).catch(() => undefined);
     }
-    // Modele System_SI_1 ładowane do pamięci Ollamy zaraz po starcie (i ponownie co 10 min,
+    // Modele Jyn ładowane do pamięci Ollamy zaraz po starcie (i ponownie co 10 min,
     // np. po restarcie Ollamy) — pierwsza odpowiedź nie czeka na wczytanie modelu z dysku.
     const warmupOff = ['0', 'false', 'no'].includes(String(process.env.OLLAMA_WARMUP || '').trim().toLowerCase());
     if (!warmupOff) {

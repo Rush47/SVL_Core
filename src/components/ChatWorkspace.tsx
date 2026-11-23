@@ -81,6 +81,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     setActiveConvId,
     setTargetAgent,
     openFamilyChannel,
+    openSvl364RootChannel,
     openAgentChannel,
     createConversation,
     deleteConversation,
@@ -111,9 +112,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
   const [geminiModels, setGeminiModels] = useState<string[]>(['gemini-flash-lite-latest']);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
+  const [engineOllamaModels, setEngineOllamaModels] = useState<Array<{ name: string; parameterSize?: string | null; vision?: boolean; endpointId?: string; endpointLabel?: string }>>([]);
+  const [engineOllamaReachable, setEngineOllamaReachable] = useState<boolean>(false);
   const [isSending, setIsSending] = useState(false);
   const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
-  const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('System_SI_1');
+  const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Jyn');
   const [jediVmStatus, setJediVmStatus] = useState<any>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingSvlReport, setIsGeneratingSvlReport] = useState(false);
@@ -146,7 +149,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     let cancelled = false;
     void safeFetchJson<{
       ok: boolean;
-      engines?: { gemini?: { configured?: boolean; models?: string[] } };
+      engines?: {
+        gemini?: { configured?: boolean; models?: string[] };
+        ollama?: {
+          reachable?: boolean;
+          models?: Array<{ name: string; parameterSize?: string | null; vision?: boolean; endpointId?: string; endpointLabel?: string }>;
+        };
+      };
     }>('/api/ai/engines', { timeoutMs: 12000 }).then((result) => {
       if (cancelled || !result.data?.ok) return;
       const gemini = result.data.engines?.gemini;
@@ -158,11 +167,18 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           ? gemini.models![0]
           : current);
       }
+      const ol = result.data.engines?.ollama;
+      if (ol) {
+        setEngineOllamaReachable(Boolean(ol.reachable));
+        if (Array.isArray(ol.models)) {
+          setEngineOllamaModels(ol.models);
+        }
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [serverRevision]);
 
   useEffect(() => {
     if (!isSending) {
@@ -257,6 +273,81 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const prevDuplexActiveRef = useRef<boolean>(duplexActive);
 
   const activeConv = conversations.find((c) => c.id === activeConvId) || conversations[0];
+  const isSvl364RootChannelActive = activeConv?.id === 'conv-svl364-mcp-root';
+  const [svl364McpPanelOpen, setSvl364McpPanelOpen] = useState(false);
+  const [svl364McpUrl, setSvl364McpUrl] = useState('');
+  const [svl364McpToken, setSvl364McpToken] = useState('');
+  const [svl364McpSaving, setSvl364McpSaving] = useState(false);
+  const [svl364BridgeStatus, setSvl364BridgeStatus] = useState<any>(null);
+
+  const loadSvl364BridgeStatus = useCallback(async () => {
+    if (!hasSvlOperatorAccessToken()) return;
+    const res = await safeFetchJson<any>('/api/svl364/mcp-bridge/status', { timeoutMs: 8000 });
+    if (res.ok && res.data) {
+      setSvl364BridgeStatus(res.data);
+      if (res.data?.remoteMcp?.url && !svl364McpUrl) {
+        setSvl364McpUrl(String(res.data.remoteMcp.url));
+      }
+    }
+  }, [svl364McpUrl]);
+
+  useEffect(() => {
+    if (isSvl364RootChannelActive) {
+      void loadSvl364BridgeStatus();
+    }
+  }, [isSvl364RootChannelActive, serverRevision, loadSvl364BridgeStatus]);
+
+  const handleSaveSvl364McpBridge = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hasSvlOperatorAccessToken()) {
+      setChatActionError('Odblokuj dostęp przyciskiem 🔒 SVL w górnym pasku, aby skonfigurować MCP SVL-364.');
+      return;
+    }
+    const cleanUrl = svl364McpUrl.trim();
+    if (!cleanUrl) {
+      setChatActionError('Podaj adres URL zdalnego serwera MCP na SVL-364 (np. https://xxx.trycloudflare.com/mcp).');
+      return;
+    }
+    setSvl364McpSaving(true);
+    setChatActionError(null);
+    try {
+      const cfgRes = await safeFetchJson<any>('/api/svl364/mcp-bridge/config', {
+        method: 'POST',
+        timeoutMs: 12000,
+        body: JSON.stringify({
+          url: cleanUrl,
+          ...(svl364McpToken.trim() ? { token: svl364McpToken.trim() } : {}),
+          enabled: true,
+          root_exec_enabled: true,
+        }),
+      });
+      if (!cfgRes.ok || !cfgRes.data?.ok) {
+        setChatActionError(cfgRes.data?.error || cfgRes.error || 'Nie udało się zapisać adresu MCP SVL-364.');
+        return;
+      }
+      const testRes = await safeFetchJson<any>('/api/svl364/mcp-bridge/test', {
+        method: 'POST',
+        timeoutMs: 15000,
+        body: JSON.stringify({ timeout_sec: 12 }),
+      });
+      setSvl364McpToken('');
+      await loadSvl364BridgeStatus();
+      if (testRes.ok && testRes.data?.ok) {
+        showNotice(
+          `Połączono ze zdalnym MCP SVL-364 (${testRes.data.latencyMs ?? '?'} ms · narzędzi: ${testRes.data.toolsCount ?? 0}).`,
+          'ok',
+        );
+        setSvl364McpPanelOpen(false);
+      } else {
+        showNotice(
+          `Zapisano adres MCP SVL-364 (test: ${testRes.data?.error || testRes.error || 'offline — działa fallback OpenSSH'}).`,
+          'info',
+        );
+      }
+    } finally {
+      setSvl364McpSaving(false);
+    }
+  };
 
   // Ile wiadomości każdego kanału Operator już widział — nowe powiadomienia na innym kanale
   // dostają znacznik na liście kanałów.
@@ -390,9 +481,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     try {
       const chosenTarget =
         agentOverride ||
-        (targetAgent === 'System_SI_1' || targetAgent === 'SI_Sphere' || targetAgent === 'JEDI_Omni_OS'
+        (targetAgent === 'Jyn' || targetAgent === 'SI_Sphere' || targetAgent === 'JEDI_Omni_OS'
           ? targetAgent
-          : 'System_SI_1');
+          : 'Jyn');
       const recentMsgs = (activeConv.messages || []).slice(-12);
       const lastMsg = recentMsgs[recentMsgs.length - 1];
       const historyPayload = recentMsgs.map((m) => ({
@@ -547,8 +638,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     };
   }, [duplexActive, duplexStatus, duplexTick, activeConv?.id, activeConv?.messages.length, isSending, isProactiveLoading, selectedModel]);
 
-  const ollamaReachable = Boolean(healthData?.ollama?.daemon_reachable);
-  const ollamaModels: any[] = healthData?.ollama?.models || [];
+  const ollamaReachable = Boolean(healthData?.ollama?.daemon_reachable) || engineOllamaReachable;
+  const ollamaModels: any[] = engineOllamaModels.length > 0 ? engineOllamaModels : (healthData?.ollama?.models || []);
   const selectedModelSupportsVision =
     selectedModel === 'svl-hybrid-router' ||
     selectedModel.includes('llama3.2-vision') ||
@@ -767,7 +858,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const targetConvId = overrideConvId || targetConvObj.id;
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
-        targetConvId === 'conv-system-si-1' ||
+        targetConvId === 'conv-jyn' ||
+        targetConvId === 'conv-svl364-mcp-root' ||
         targetConvId === 'conv-si-sphere';
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
@@ -795,9 +887,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         targetAgent,
         hasSlashCommand: isSlashCmd,
       });
+      const isSvl364RootConv = targetConvId === 'conv-svl364-mcp-root';
       const isJediVmTarget =
-        targetAgent === 'JEDI_Omni_OS' || resolvedTarget.agent === 'JEDI_Omni_OS';
+        !isSvl364RootConv &&
+        (targetAgent === 'JEDI_Omni_OS' || resolvedTarget.agent === 'JEDI_Omni_OS');
       const isSi2Channel =
+        !isSvl364RootConv &&
         !isJediVmTarget &&
         (targetConvId === 'conv-si-sphere' ||
           resolvedTarget.agent === 'SI_Sphere' ||
@@ -805,8 +900,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const isSystemSi1Channel =
         !isJediVmTarget &&
         !isSi2Channel &&
-        (targetConvId === 'conv-system-si-1' || targetAgent === 'System_SI_1');
+        (isSvl364RootConv || targetConvId === 'conv-jyn' || targetAgent === 'Jyn');
       const isFamilyDuplex =
+        !isSvl364RootConv &&
         !isJediVmTarget &&
         !isSi2Channel &&
         !isSystemSi1Channel &&
@@ -815,26 +911,30 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           targetAgent === 'Rodzina Mitek' ||
           duplexActive);
 
-      const effectiveTargetAgent = isJediVmTarget
-        ? 'JEDI_Omni_OS'
-        : isSi2Channel
-          ? 'SI_Sphere'
-          : isSystemSi1Channel
-            ? 'System_SI_1'
-            : isFamilyDuplex
-              ? 'Rodzina Mitek'
-              : targetAgent;
-      setPendingReplyAgent(
-        isJediVmTarget
-          ? 'JEDI Omni-OS v11.5 (AI + VM)'
+      const effectiveTargetAgent = isSvl364RootConv
+        ? 'Jyn'
+        : isJediVmTarget
+          ? 'JEDI_Omni_OS'
           : isSi2Channel
-            ? 'SI_Sphere (SVL-465 · ROOT)'
-            : 'Jyn Mitek (System_SI_1)',
+            ? 'SI_Sphere'
+            : isSystemSi1Channel
+              ? 'Jyn'
+              : isFamilyDuplex
+                ? 'Rodzina Mitek'
+                : targetAgent;
+      setPendingReplyAgent(
+        isSvl364RootConv
+          ? 'SVL-364 Komputer Pokładowy (MCP · ROOT)'
+          : isJediVmTarget
+            ? 'JEDI Omni-OS v11.5 (AI + VM)'
+            : isSi2Channel
+              ? 'SI_Sphere (SVL-465 · ROOT)'
+              : 'Jyn Mitek',
       );
 
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
-        // Musi pokrywać budżety silników (Grok 60 s, Ollama 75 s, Gemini do 150 s) plus zapas na przełączenie.
+        // Musi pokrywać budżety silników (Ollama 75 s, Gemini do 150 s) plus zapas na przełączenie.
         timeoutMs: 210000,
         body: JSON.stringify({
           message: fullPrompt,
@@ -883,8 +983,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const replyMsg: ChatMessage = {
         id: serverMsg.id || createUniqueId('asst'),
         role: 'assistant',
-        sender: formatAgentDisplayName(data.sender || 'System_SI_1'),
-        agentId: data.agentId || 'System_SI_1',
+        sender: formatAgentDisplayName(data.sender || 'Jyn'),
+        agentId: data.agentId || 'Jyn',
         modelUsed: data.modelUsed || selectedModel,
         timestamp: serverMsg.timestamp || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: data.reply || 'Brak odpowiedzi z serwera.',
@@ -1005,8 +1105,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   };
 
   /**
-   * Obsługa przycisków z wiadomości (pisanych przez System_SI_1, JEDI Omni-OS v11.5 lub serwer):
-   * `send:` wysyła wiadomość do VM/AI, `ask:System_SI_1` oddaje głos AI, `text:` wstawia tekst
+   * Obsługa przycisków z wiadomości (pisanych przez Jyn, JEDI Omni-OS v11.5 lub serwer):
+   * `send:` wysyła wiadomość do VM/AI, `ask:Jyn` oddaje głos AI, `text:` wstawia tekst
    * do pola, `tab:`/`nav:` otwiera zakładkę, `action:` uruchamia akcję systemu.
    */
   const handleInteractiveAction = async (actionValue: string, label?: string) => {
@@ -1225,6 +1325,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             <Users className="w-4 h-4 shrink-0" />
             Rodzina Mitek (wszyscy)
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              openSvl364RootChannel();
+              setMobileSidebarOpen(false);
+            }}
+            className={`w-full min-h-[40px] px-3 py-2 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors whitespace-nowrap ${
+              activeConv?.id === 'conv-svl364-mcp-root'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'bg-amber-500/15 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200'
+            }`}
+          >
+            <Terminal className="w-4 h-4 shrink-0" />
+            SVL-364 (MCP · ROOT)
+          </button>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1349,7 +1464,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
-            const isSystemSi1Chan = conv.id === 'conv-system-si-1';
+            const isSystemSi1Chan = conv.id === 'conv-jyn';
+            const isSvl364RootChan = conv.id === 'conv-svl364-mcp-root';
             const isSi2Chan = conv.id === 'conv-si-sphere';
             return (
               <div
@@ -1358,11 +1474,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   isActive
                     ? isFamilyChan
                       ? 'bg-emerald-600/20 text-slate-100 border border-emerald-500/40'
-                      : isSi2Chan
-                        ? 'bg-violet-600/20 text-slate-100 border border-violet-500/40'
-                        : isSystemSi1Chan
-                          ? 'bg-cyan-600/20 text-slate-100 border border-cyan-500/40'
-                          : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
+                      : isSvl364RootChan
+                        ? 'bg-amber-600/20 text-slate-100 border border-amber-500/45'
+                        : isSi2Chan
+                          ? 'bg-violet-600/20 text-slate-100 border border-violet-500/40'
+                          : isSystemSi1Chan
+                            ? 'bg-cyan-600/20 text-slate-100 border border-cyan-500/40'
+                            : 'bg-violet-600/15 text-slate-100 border border-violet-500/30'
                     : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 border border-transparent'
                 }`}
               >
@@ -1374,8 +1492,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                       setTargetAgent('Rodzina Mitek');
                     } else if (isSi2Chan) {
                       setTargetAgent('SI_Sphere');
-                    } else if (isSystemSi1Chan) {
-                      setTargetAgent('System_SI_1');
+                    } else if (isSystemSi1Chan || isSvl364RootChan) {
+                      setTargetAgent('Jyn');
                     }
                     setMobileSidebarOpen(false);
                   }}
@@ -1384,6 +1502,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   <div className="font-medium truncate flex items-center gap-1.5">
                     {isFamilyChan && <Users className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                     {isSystemSi1Chan && <Shield className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                    {isSvl364RootChan && <Terminal className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
                     {isSi2Chan && <Cpu className="w-3.5 h-3.5 text-violet-400 shrink-0" />}
                     <span className="truncate">{conv.title}</span>
                     {unseenNotifications > 0 && (
@@ -1410,7 +1529,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </button>
                 {conversations.length > 1 &&
                   !isFamilyChan &&
-                  conv.id !== 'conv-system-si-1' &&
+                  conv.id !== 'conv-jyn' &&
+                  conv.id !== 'conv-svl364-mcp-root' &&
                   conv.id !== 'conv-si-sphere' && (
                   <button
                     type="button"
@@ -1513,9 +1633,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 const val = e.target.value as TargetAgentSelection;
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
-                } else if (val === 'System_SI_1') {
-                  setActiveConvId('conv-system-si-1');
-                  setTargetAgent('System_SI_1');
+                } else if (val === 'Jyn') {
+                  setActiveConvId('conv-jyn');
+                  setTargetAgent('Jyn');
                 } else if (val === 'SI_Sphere') {
                   openAgentChannel('SI_Sphere');
                 } else {
@@ -1524,89 +1644,93 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               }}
               className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[235px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-100 font-medium focus:outline-none focus:border-violet-500 truncate"
             >
-              <option value="System_SI_1">Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)</option>
+              <option value="Jyn">Jyn Mitek (Infrastruktura · ROOT)</option>
               {(hasSi2Agent || targetAgent === 'SI_Sphere') && (
                 <option value="SI_Sphere">SI_Sphere (Rdzeń Floty SVL-465 · ROOT)</option>
               )}
               <option value="JEDI_Omni_OS">JEDI Omni-OS v12 (AI + VM · ROOT)</option>
               <option value="Rodzina Mitek">Rodzina Mitek (wszyscy)</option>
-              <option value="Auto">Auto-Router (JEDI VM -&gt; System_SI_1)</option>
+              <option value="Auto">Auto-Router (JEDI VM -&gt; Jyn)</option>
             </select>
 
             <label htmlFor="openwebui-model-select" className="sr-only">
               Silnik AI
             </label>
             {(() => {
-              const hasVision11b = ollamaModels.some((m: any) =>
-                String(m?.name || '').startsWith('llama3.2-vision:11b') ||
-                String(m?.name || '') === 'llama3.2-vision:latest',
-              );
-              const hasVision90b = ollamaModels.some((m: any) =>
-                String(m?.name || '').startsWith('llama3.2-vision:90b'),
-              );
-              const visionExactName =
-                ollamaModels.find((m: any) =>
-                  String(m?.name || '').startsWith('llama3.2-vision:11b') ||
-                  String(m?.name || '') === 'llama3.2-vision:latest',
-                )?.name || 'llama3.2-vision:11b';
-              const hasApexUncensored = ollamaModels.some(
-                (m: any) => String(m?.name || '') === 'svl364-apex-uncensored:latest',
-              );
-              const hasDolphin8b = ollamaModels.some(
-                (m: any) => String(m?.name || '') === 'dolphin-llama3:8b-v2.9-q2_K',
-              );
-              const isPullingVision = Boolean(
-                pullState?.active && String(pullState?.model || '').includes('llama3.2-vision'),
-              );
+              const shipInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) === 'ship');
+              const localInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) !== 'ship');
+              const installedNames = new Set(ollamaModels.map((m: any) => String(m?.name || '').toLowerCase()));
+              const statusSuffix = (name: string) => {
+                const match = ollamaModels.find((m: any) => String(m?.name || '').toLowerCase() === name.toLowerCase());
+                if (match) {
+                  const ep = (match.endpointId || match.endpoint_id) === 'ship' ? 'SVL-364 SSH' : 'Lokalna';
+                  return `● ${ep}`;
+                }
+                return '○ niezainstalowany';
+              };
+              const presetModels: Array<{ value: string; label: string }> = [
+                { value: 'svl364-apex-uncensored:latest', label: 'SVL CoreOS 2 · Apex-Uncensored (SVL-364)' },
+                { value: 'dolphin-llama3:8b-v2.9-q2_K', label: 'dolphin-llama3:8b (Uncensored)' },
+                { value: 'dolphin-mixtral:8x22b', label: 'dolphin-mixtral:8x22b (SVL-364 GPU · Uncensored)' },
+                { value: 'dolphin-llama3:70b', label: 'dolphin-llama3:70b (SVL-364 GPU · Uncensored)' },
+                { value: 'deepseek-r1:7b', label: 'deepseek-r1:7b (Reasoning)' },
+                { value: 'qwen2.5:7b', label: 'qwen2.5:7b (Multilingual)' },
+                { value: 'llama3.2-vision:11b', label: 'llama3.2-vision:11b (Vision)' },
+                { value: 'llama3.2-vision:90b', label: 'llama3.2-vision:90b (Vision GPU)' },
+                { value: 'llama3:8b', label: 'llama3:8b' },
+                { value: 'mistral:7b', label: 'mistral:7b' },
+                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Coder)' },
+              ];
               return (
                 <select
                   id="openwebui-model-select"
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
-                  className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[245px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
+                  className="min-w-0 basis-[125px] sm:basis-auto min-h-[38px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
+                  <optgroup label="Auto-Router (Ollama Lokalna + SVL-364 SSH → awaryjnie Gemini)">
+                    <option value="svl-hybrid-router">
+                      Auto-Router SVL (Ollama → Gemini fallback)
+                    </option>
+                  </optgroup>
+                  {shipInstalled.length > 0 && (
+                    <optgroup label={`🛰️ Ollama · Statek SVL-364 SSH (${shipInstalled.length} online)`}>
+                      {shipInstalled.map((m: any) => (
+                        <option key={`ship:${m.name}`} value={`ollama:ship:${m.name}`}>
+                          🛰️ SVL-364: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {localInstalled.length > 0 && (
+                    <optgroup label={`💻 Ollama · Lokalna (${localInstalled.length} online)`}>
+                      {localInstalled.map((m: any) => (
+                        <option key={`local:${m.name}`} value={`ollama:local:${m.name}`}>
+                          💻 Lokalna: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label={`Ollama · Ścisły wybór (bez podmiany na Gemini · ${ollamaReachable ? 'online' : 'offline'})`}>
+                    {presetModels.map((p) => (
+                      <option key={p.value} value={`ollama:${p.value}`}>
+                        {p.label} ({statusSuffix(p.value)})
+                      </option>
+                    ))}
+                    {ollamaModels
+                      .filter((m: any) => !presetModels.some((p) => p.value.toLowerCase() === String(m?.name || '').toLowerCase()) && installedNames.has(String(m?.name || '').toLowerCase()))
+                      .map((m: any) => (
+                        <option key={`extra:${m.endpointId || 'local'}:${m.name}`} value={`ollama:${m.name}`}>
+                          Ollama: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
+                        </option>
+                      ))}
+                  </optgroup>
                   <optgroup label={`Gemini${geminiConfigured ? ' · serwer AI Studio' : ' · brak GEMINI_API_KEY'}`}>
                     {geminiModels.map((name) => (
                       <option key={name} value={name}>
                         Gemini: {name}{geminiConfigured ? '' : ' (brak klucza)'}
                       </option>
                     ))}
-                  </optgroup>
-                  <optgroup label="Ollama & Lokalny AI (W pełni odcenzurowane / Root)">
-                    <option value="ollama:svl364-apex-uncensored:latest">SVL CoreOS 2 · Apex-Uncensored (SVL-364 Ship · Domyślny)</option>
-                    <option value="ollama:dolphin-llama3:8b-v2.9-q2_K">Ollama: dolphin-llama3:8b (Lokalny · 100% Uncensored)</option>
-                    <option value="ollama:deepseek-r1:7b">Ollama: deepseek-r1:7b (DeepSeek Reasoning · Uncensored)</option>
-                    <option value="ollama:qwen2.5:7b">Ollama: qwen2.5:7b (Qwen 2.5 7B · Lokalny Multilingual)</option>
-                    <option value="ollama:llama3:8b">Ollama: llama3:8b (Llama 3 8B · Open Local)</option>
-                    <option value="ollama:mistral:7b">Ollama: mistral:7b (Mistral 7B Instruct · Uncensored)</option>
-                    <option value="ollama:gemma2:9b">Ollama: gemma2:9b (Gemma 2 9B · Google Open)</option>
-                    <option value="ollama:phi3:3.8b">Ollama: phi3:3.8b (Phi-3 3.8B · Compact Local)</option>
-                    <option value="ollama:codellama:7b">Ollama: codellama:7b (Code Llama 7B · Developer)</option>
-                    <option value="ollama:llama3:70b">Ollama: llama3:70b (Llama 3 70B · Massive GPU)</option>
-                    <option value="ollama:qwen2.5-coder:7b">Ollama: qwen2.5-coder:7b (Qwen 2.5 Coder 7B)</option>
-                    <option value="ollama:llama3.2-vision:11b">Ollama: llama3.2-vision:11b (Vision 11B Multimodal)</option>
-                    <option value="ollama:llama3.2-vision:90b">Ollama: llama3.2-vision:90b (Vision 90B GPU)</option>
-                    {ollamaModels
-                      .filter(
-                        (m: any) =>
-                          m.name !== 'svl364-apex-uncensored:latest' &&
-                          m.name !== 'dolphin-llama3:8b-v2.9-q2_K' &&
-                          m.name !== 'deepseek-r1:7b' &&
-                          m.name !== 'qwen2.5:7b' &&
-                          m.name !== 'llama3:8b' &&
-                          m.name !== 'mistral:7b' &&
-                          m.name !== 'gemma2:9b' &&
-                          m.name !== 'phi3:3.8b' &&
-                          m.name !== 'codellama:7b' &&
-                          m.name !== 'llama3:70b' &&
-                          m.name !== 'qwen2.5-coder:7b' &&
-                          !String(m?.name || '').startsWith('llama3.2-vision'),
-                      )
-                      .map((m: any) => (
-                        <option key={m.name} value={`ollama:${m.name}`}>
-                          Ollama: {m.name} ({m.parameter_size || 'LLM'})
-                        </option>
-                      ))}
                   </optgroup>
                 </select>
               );
@@ -1972,6 +2096,80 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         )}
 
+        {isSvl364RootChannelActive && (
+          <div className="shrink-0 border-b border-amber-500/30 bg-gradient-to-r from-[#14110A] via-[#111520] to-[#0D141D] px-3 py-2 md:px-5 space-y-2">
+            <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/45 bg-amber-500/15 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-200">
+                  <Terminal className="h-3.5 w-3.5" aria-hidden="true" />
+                  SVL-364 · MCP · ROOT (uid=0)
+                </span>
+                <span className="font-mono text-[11px] text-slate-300">
+                  {svl364BridgeStatus?.remoteMcp?.enabled
+                    ? `Remote MCP: ${svl364BridgeStatus.remoteMcp.url}`
+                    : `Mostek: ${svl364BridgeStatus?.ssh?.uri || 'ssh://Ship'} (gotowy na Remote MCP Zero-IP)`}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { label: 'Status MCP', cmd: '/mcp status' },
+                  { label: 'Test ROOT', cmd: '/root id && hostname && uname -a && uptime' },
+                  { label: 'Telemetria', cmd: '/mcp telemetry' },
+                  { label: 'Usługi', cmd: '/mcp services' },
+                  { label: 'Tunel Zero-IP', cmd: '/mcp tunnel' },
+                ].map((chip) => (
+                  <button
+                    key={chip.cmd}
+                    type="button"
+                    disabled={isSending}
+                    onClick={() => void handleSendMessage(chip.cmd, 'conv-svl364-mcp-root')}
+                    className="rounded border border-amber-500/30 bg-amber-950/30 hover:bg-amber-900/45 px-2 py-0.5 font-mono text-[11px] text-amber-100 transition-colors disabled:opacity-40 cursor-pointer"
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSvl364McpPanelOpen((v) => !v)}
+                  className="rounded border border-cyan-500/45 bg-cyan-500/15 hover:bg-cyan-500/25 px-2 py-0.5 font-mono text-[11px] font-semibold text-cyan-200 transition-colors cursor-pointer"
+                >
+                  {svl364McpPanelOpen ? 'Ukryj konfigurację' : 'Połącz MCP SVL-364'}
+                </button>
+              </div>
+            </div>
+            {svl364McpPanelOpen && (
+              <form
+                onSubmit={handleSaveSvl364McpBridge}
+                className="mx-auto flex max-w-6xl flex-wrap items-center gap-2 rounded-lg border border-cyan-500/30 bg-[#0B0F18] px-3 py-2 text-xs"
+              >
+                <input
+                  type="url"
+                  value={svl364McpUrl}
+                  onChange={(e) => setSvl364McpUrl(e.target.value)}
+                  placeholder="https://<tunel-cloudflare-lub-tailscale>/mcp"
+                  aria-label="Adres URL zdalnego serwera MCP na SVL-364"
+                  className="flex-1 min-w-[220px] rounded border border-slate-700 bg-[#070A10] px-2.5 py-1.5 font-mono text-xs text-slate-100 placeholder:text-slate-500"
+                />
+                <input
+                  type="password"
+                  value={svl364McpToken}
+                  onChange={(e) => setSvl364McpToken(e.target.value)}
+                  placeholder={svl364BridgeStatus?.remoteMcp?.tokenConfigured ? 'Token zapisany (wpisz nowy, aby zmienić)' : 'Bearer token MCP (z SVL-364)'}
+                  aria-label="Bearer token zdalnego serwera MCP SVL-364"
+                  className="w-60 rounded border border-slate-700 bg-[#070A10] px-2.5 py-1.5 font-mono text-xs text-slate-100 placeholder:text-slate-500"
+                />
+                <button
+                  type="submit"
+                  disabled={svl364McpSaving}
+                  className="rounded bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 px-3 py-1.5 font-semibold text-white cursor-pointer"
+                >
+                  {svl364McpSaving ? 'Łączenie...' : 'Zapisz i testuj MCP'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+
         {duplexActive && duplexStatus && (
           <div role="status" aria-live="polite" className="shrink-0 border-b border-violet-500/20 bg-[#0B0D13]/95 px-3 py-2 md:px-5">
             <div
@@ -2231,20 +2429,24 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               ref={composerRef}
               onEmptyChange={handleInputEmptyChange}
               compactPlaceholder={
-                targetAgent === 'JEDI_Omni_OS'
-                  ? 'Prompt / polecenie dla JEDI Omni-OS...'
-                  : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
-                    ? 'Polecenie dla SI_Sphere...'
-                    : 'Wpisz polecenie lub wiadomość...'
+                isSvl364RootChannelActive
+                  ? 'Dowolne polecenie ROOT na SVL-364 lub /mcp...'
+                  : targetAgent === 'JEDI_Omni_OS'
+                    ? 'Prompt / polecenie dla JEDI Omni-OS...'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                      ? 'Polecenie dla SI_Sphere...'
+                      : 'Wpisz polecenie lub wiadomość...'
               }
               placeholder={
-                targetAgent === 'JEDI_Omni_OS'
-                  ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
-                  : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
-                    ? 'Wydaj polecenie dla SI_Sphere (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
-                    : activeConv?.id === 'conv-system-si-1' || targetAgent === 'System_SI_1'
-                      ? 'Wydaj polecenie dla Jyn Mitek (System_SI_1) przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
-                      : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn Mitek i SI_Sphere...'
+                isSvl364RootChannelActive
+                  ? 'Wpisz DOWOLNE polecenie Linux jako ROOT (np. uname -a, /root systemctl status svl-mcp), /mcp connect <url> <token> lub dowolne pytanie do SVL-364...'
+                  : targetAgent === 'JEDI_Omni_OS'
+                    ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                      ? 'Wydaj polecenie dla SI_Sphere (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
+                      : activeConv?.id === 'conv-jyn' || targetAgent === 'Jyn'
+                        ? 'Wydaj polecenie dla Jyn Mitek przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
+                        : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn Mitek i SI_Sphere...'
               }
               ariaLabel="Wiadomość czatu Open WebUI"
               className="flex-1 min-w-0 min-h-[44px] px-3 md:px-4 py-2.5 rounded-lg bg-[#0B0D13] border border-slate-700/80 text-[13px] sm:text-sm leading-snug text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-violet-500"

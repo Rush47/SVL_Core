@@ -88,7 +88,7 @@ class TestJediOmniOsVm(unittest.TestCase):
                         "POST",
                         "/api/py/jedi/process",
                         {},
-                        {"command": "/jedi status", "actor": "Mateusz Mitek", "conversationId": "conv-system-si-1"},
+                        {"command": "/jedi status", "actor": "Mateusz Mitek", "conversationId": "conv-jyn"},
                     )
                 )
                 self.assertEqual(proc_code, 200, proc_body)

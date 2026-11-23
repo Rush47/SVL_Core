@@ -1,4 +1,4 @@
-// Galeria: agent AI System_SI_1 ogląda zdjęcie Operatora i wydaje werdykt
+// Galeria: agent AI Jyn ogląda zdjęcie Operatora i wydaje werdykt
 // (like/dislike) oraz komentarz. Ten moduł zawiera czyste, testowalne funkcje:
 // budowę promptu i parsowanie odpowiedzi modelu. Samo wywołanie modelu robi serwer.
 
@@ -13,7 +13,7 @@ export interface GalleryAgentOpinion {
 
 /** Persona agenta do promptu galerii. */
 export function galleryPromptForAgent(agentDisplayName: string): string {
-  const label = String(agentDisplayName || 'System_SI_1').trim() || 'System_SI_1';
+  const label = String(agentDisplayName || 'Jyn').trim() || 'Jyn';
   const persona = `Jesteś ${label} — główny autonomiczny agent ROOT systemu SVL-364 Ebon Apex. Piszesz rzeczowo, technicznie i konkretnie.`;
   return (
     `${persona}\n` +

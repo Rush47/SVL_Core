@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GitHubPanel } from './GitHubPanel';
-import { McpConnectorCard } from './McpConnectorCard';
 import {
   Copy,
   Check,
@@ -1025,7 +1024,6 @@ export const LinuxDeployDashboard: React.FC = () => {
         {/* Card 3: GitHub Rush47/SVL_Core — token, synchronizacja obustronna */}
         <div className="space-y-6">
           <GitHubPanel onSelectRepoFile={(fp) => setSelectedFilePath(fp)} />
-          <McpConnectorCard />
         </div>
       </div>
 
@@ -1128,7 +1126,7 @@ export const LinuxDeployDashboard: React.FC = () => {
           </h2>
           <div className="space-y-3 text-xs text-slate-300 leading-relaxed">
             <p>
-              Natywny serwer Ollama (<code className="text-emerald-300">127.0.0.1:11434</code>, model <code className="text-amber-300">llama3.2-vision:11b</code> dla agenta <code className="text-cyan-300">System_SI_1</code>) współpracuje z mostkiem <code className="text-violet-300">backend/ollama_daemon.py</code> i udostępnia komendę <code className="text-emerald-300">ollama</code> w systemie.
+              Natywny serwer Ollama (<code className="text-emerald-300">127.0.0.1:11434</code>, model <code className="text-amber-300">llama3.2-vision:11b</code> dla agenta <code className="text-cyan-300">Jyn</code>) współpracuje z mostkiem <code className="text-violet-300">backend/ollama_daemon.py</code> i udostępnia komendę <code className="text-emerald-300">ollama</code> w systemie.
             </p>
             <ol className="list-decimal list-inside space-y-2 text-slate-300 font-mono text-[11px] bg-[#0B0D13] p-3.5 rounded-lg border border-slate-800">
               <li>

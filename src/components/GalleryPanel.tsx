@@ -5,7 +5,7 @@ import { safeFetchJson, getSvlOperatorAccessToken, hasSvlOperatorAccessToken } f
 interface Opinion { agent: string; verdict: 'like' | 'dislike'; comment: string; model: string }
 interface GalleryItem { id: string; imageDataUrl: string; uploadedAt: string; opinions: Opinion[] }
 
-const AGENT_AVATAR: Record<string, string> = { System_SI_1: 'SI' };
+const AGENT_AVATAR: Record<string, string> = { Jyn: 'SI' };
 const timeOf = (iso: string) => (/^\d{4}-\d{2}-\d{2}T/.test(iso) ? new Date(iso).toLocaleString('pl-PL') : iso);
 
 export const GalleryPanel: React.FC = () => {
@@ -91,7 +91,7 @@ export const GalleryPanel: React.FC = () => {
       </div>
 
       <p className="text-[11px] text-slate-500">
-        Po wrzuceniu agent AI (System_SI_1) ogląda zdjęcie modelem wizyjnym, daje 👍/👎 i komentuje.
+        Po wrzuceniu agent AI (Jyn) ogląda zdjęcie modelem wizyjnym, daje 👍/👎 i komentuje.
       </p>
       {error && <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">{error}</div>}
 

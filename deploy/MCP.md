@@ -1,111 +1,63 @@
-# SVL MCP — pełny odczyt/zapis z dostępem z internetu (bez stałego IP i domeny)
+# SVL Universal MCP Hub — wszystkie usługi systemu i hosta SVL-364 bez stałego IP (jak Hamachi)
 
-Samodzielny serwer MCP (`src/mcp/`), niezależny od bramy `server.ts`. Działa jako osobny proces
-(`npm run mcp` albo usługa `svl-mcp`) i sam wystawia się do internetu tunelem wychodzącym —
-router, przekierowanie portów, stałe IP ani własna domena nie są potrzebne.
+Zmodernizowany serwer MCP (`src/mcp/` + `/mcp/svl` + `/api/mcp/svl364`) służy jako **centralny punkt sterowania wszystkim** — na hoście systemu oraz na hoście **SVL-364** — działając przez internet bez stałego IP, bez przekierowania portów i bez zmian w routerze. Wszystkie dotychczas skonfigurowane usługi (`svl-coreos2`, `svl-python-os`, `svl-gateway`, `svl-sentinel`, `ollama`, `svl-ship-ollama-tunnel`, `svl-comfyui`, `ssh`, `docker`) pozostają nienaruszone i są w pełni dostępne przez MCP.
 
-## Narzędzia
+## Jak działa połączenie bez stałego IP (Zero-IP / Mesh)
 
-| Narzędzie | Opis | Zapis |
+`MCP_TUNNEL="auto"` automatycznie dobiera najlepszy działający transport i wykrywa sieci overlay/mesh:
+
+| Tryb `MCP_TUNNEL` | Konto | Adres | Charakterystyka |
+|---|---|---|---|
+| `auto` (zalecany) | auto | HTTPS + Mesh IP | Kolejność: nazwany Cloudflare → Tailscale Funnel → Cloudflare Quick Tunnel → ngrok → `ssh-reverse`. Dodatkowo wykrywa interfejsy mesh (Tailscale `100.64.0.0/10`, ZeroTier `zt*`, WireGuard `wg*`, Hamachi `25.x`). |
+| `cloudflared` | nie (Quick) / Cloudflare (Named) | `https://<losowe>.trycloudflare.com/mcp` lub stała domena | Działa za każdym NAT/CGNAT; jeśli UDP 7844 jest zablokowany, watchdog automatycznie przełącza na `--protocol http2` (TCP 443). |
+| `tailscale` | Tailscale (darmowe) | stały `https://<host>.<tailnet>.ts.net/mcp` + `http://100.x.y.z:3334/mcp` | Najbliższy odpowiednik nowoczesnego Hamachi: szyfrowana sieć mesh WireGuard + publiczny HTTPS Funnel bez stałego IP. |
+| `ngrok` | ngrok (darmowe) | darmowa stała domena (`MCP_PUBLIC_URL`) | Wymaga `ngrok config add-authtoken …`. |
+| `ssh-reverse` | własny serwer relay | `MCP_PUBLIC_URL` przez `MCP_SSH_REVERSE_TARGET` | Tunel zwrotny `ssh -NT -R` z automatycznym keepalive i ponownym łączeniem. |
+| `none` | – | tylko lokalnie (`127.0.0.1:3334`) | Nadal raportuje wykryte lokalne adresy mesh. |
+
+## Narzędzia Universal MCP Hub (`src/mcp/tools.ts` — 27 narzędzi + Resources + Prompts)
+
+| Grupa | Narzędzia | Opis |
 |---|---|---|
-| `read_file` | czyta plik (UTF-8/base64, offset/limit linii) | – |
-| `list_dir` | lista plików (rekurencyjnie do `depth`) | – |
-| `search` | szukanie tekstu/regex w plikach lub nazwach (`glob`) | – |
-| `stat` | metadane pliku | – |
-| `write_file` | tworzy/nadpisuje/dopisuje plik | ✔ |
-| `edit_file` | zamiana dokładnego fragmentu (`old_string` → `new_string`) | ✔ |
-| `make_dir`, `move_path`, `delete_path` | katalogi, przenoszenie/kopiowanie, usuwanie | ✔ |
-| `run_command` | polecenie bash z limitem czasu | ✔ |
-| `svl_chat` | polecenie do AI SVL (`/api/chat`: Grok → Ollama → Gemini) jako Bielik/Maya | ✔ |
-| `svl_logs` | końcówka logów SVL (`system`, `gateway`, `python`, `gui`) | – |
-| `mcp_info` | stan serwera i tunelu | – |
+| Pliki i kod (`MCP_ROOT`) | `read_file`, `list_dir`, `search`, `stat`, `write_file`, `edit_file`, `make_dir`, `move_path`, `delete_path` | Pełny odczyt/zapis w `MCP_ROOT` z ochroną przed wyjściem poza katalog i ucieczką przez symlinki |
+| Powłoka i lokalne API | `run_command`, `svl_http_local` | Polecenia bash z limitem czasu oraz kontrolowane żądania HTTP do lokalnych usług (`127.0.0.1` / `localhost`) |
+| Usługi systemu | `svl_status`, `svl_services_status`, `svl_service_control` | Status i sterowanie wszystkimi usługami (`svl-coreos2`, `svl-python-os`, `svl-gateway`, `svl-sentinel`, `svl-mcp`, `svl-comfyui`, `svl-ship-ollama-tunnel`, `ollama`, `tailscaled`, `cloudflared`, `docker`, `ssh`) |
+| AI, czat i pamięć | `svl_chat`, `svl_conversation`, `svl_memory_search`, `svl_memory_add` | Czat przez JEDI Omni-OS v12 / Dual-Ollama / Gemini (`Jyn`, `SI_Sphere`, `JEDI_Omni_OS`) i pamięć 128D + SQLite |
+| Dual-Ollama i ComfyUI | `svl_ollama`, `svl_comfyui` | Router Dual-Ollama (lokalna + SVL-364), lista/pobieranie modeli, tunel SSH Ollamy oraz status/kolejka ComfyUI |
+| Host SVL-364 (SSH + MCP) | `svl_ship_telemetry`, `svl_ship_ssh`, `svl_ship_manage` | Telemetria, mostek SSH oraz pełne narzędzia SVL-364 (`svl364_resources`, `svl364_service_control`, `svl364_ollama_control`, `svl364_file_control`, `svl364_network_control`, `svl364_update_control`, `svl364_tunnel_control`, `svl364_container_control`, `svl364_comfyui_control`, `svl364_emit_system_report`) |
+| Terminale, GitHub, bezpieczeństwo, logi | `svl_terminal`, `svl_github`, `svl_security_report`, `svl_logs`, `mcp_info` | Wszystkie terminale SVL, synchronizacja i `gh` dla `Rush47/SVL_Core`, antywirus SVL-365, raporty, logi i stan tunelu |
 
-Operacje plikowe są zamknięte w `MCP_ROOT` (blokada `../`, ścieżek bezwzględnych spoza katalogu
-i ucieczki przez dowiązania symboliczne). **`run_command` ma pełne prawa użytkownika usługi i może
-wyjść poza `MCP_ROOT`** — wyłącz go przez `MCP_ALLOW_SHELL=0`, jeśli nie jest potrzebny.
-`MCP_READ_ONLY=1` ukrywa i blokuje wszystkie narzędzia zapisu (także powłokę i `svl_chat`).
+Dodatkowo serwer udostępnia **MCP Resources** (`svl://mcp/info`, `svl://services/catalog`, `svl://system/status`, `svl://ship/telemetry`, `svl://logs/system`) oraz **MCP Prompts** (`svl_full_audit`, `svl_ship_diagnostics`, `svl_zero_ip_check`).
 
 ## Bezpieczeństwo
 
-- Każde żądanie `/mcp` wymaga tokenu: `Authorization: Bearer <MCP_TOKEN>` (albo `X-MCP-Token`).
-  Dla klientów, które nie umieją wysłać nagłówka: `/mcp/k/<MCP_TOKEN>` (wyłączysz przez `MCP_ALLOW_URL_TOKEN=0`).
-- Brak `MCP_TOKEN` w `.env` → token generuje się przy pierwszym starcie i trafia do
-  `data/svl_mcp_token.secret` (prawa 0600). Token nie jest nigdy zapisywany w logach (`fileLogger` go maskuje).
-- Porównanie tokenu w stałym czasie. `/healthz` jest publiczne, ale nie zdradza niczego poza `ok`.
-- Serwer nasłuchuje tylko na `127.0.0.1` — z zewnątrz dostępny wyłącznie przez tunel.
-- Pełny zapis + powłoka wystawione do internetu = pełna kontrola nad maszyną dla każdego, kto zna
-  token. Nie udostępniaj pliku `data/svl_mcp_connector.secret`; w razie wycieku zmień token
-  (usuń plik `data/svl_mcp_token.secret` albo ustaw nowy `MCP_TOKEN`) i zrestartuj usługę.
+- Każde żądanie `/mcp` wymaga tokenu: `Authorization: Bearer <MCP_TOKEN>` (lub `X-MCP-Token`), a dla klientów bez nagłówków `/mcp/k/<MCP_TOKEN>` (`MCP_ALLOW_URL_TOKEN=0` wyłącza wariant URL).
+- Brak `MCP_TOKEN` w `.env` → token generuje się automatycznie do `data/svl_mcp_token.secret` (`0600`) i jest maskowany w logach.
+- `MCP_READ_ONLY=1` ukrywa i blokuje wszystkie narzędzia modyfikujące. `MCP_ALLOW_SHELL=0` wyłącza `run_command` i modyfikacje usług systemd.
+- Serwer nasłuchuje wyłącznie na `127.0.0.1:3334` — ruch z internetu przechodzi wyłącznie przez szyfrowany tunel wychodzący.
 
-## Tunel (adres z internetu)
+## Instalacja na hoście systemu oraz na hoście SVL-364
 
-`MCP_TUNNEL`:
-
-| Wartość | Konto | Adres | Uwagi |
-|---|---|---|---|
-| `cloudflared` (domyślnie) | nie | `https://<losowe-słowa>.trycloudflare.com` | **zmienia się po każdym restarcie tunelu** |
-| `cloudflared` + `MCP_CLOUDFLARED_TOKEN` + `MCP_PUBLIC_URL` | Cloudflare (darmowe) + domena w Cloudflare | stały | nazwany tunel (`cloudflared tunnel create`, token z panelu Zero Trust) |
-| `tailscale` | Tailscale (darmowe) | stały `https://<host>.<tailnet>.ts.net` | Tailscale Funnel; włącz Funnel w ACL, `tailscale up` wcześniej |
-| `ngrok` | ngrok (darmowe) | darmowa stała domena (`MCP_PUBLIC_URL`) | wcześniej `ngrok config add-authtoken …` |
-| `none` | – | tylko lokalnie | |
-
-Tunel startuje dopiero, gdy jest sieć (sprawdzenie DNS co 10 s), po zerwaniu restartuje się
-z backoffem (2 s → 60 s), a watchdog co minutę sprawdza publiczny `/healthz` i po 3 porażkach
-restartuje tunel. `cloudflared` jest uznawany za gotowy dopiero po „Registered tunnel connection”
-(wymaga wyjścia na port **7844** TCP lub UDP do Cloudflare).
-
-**Gdzie jest adres i token**
-
-- `data/svl_mcp_tunnel.json` — bieżący stan i publiczny adres (`mcpUrl`), bez tokenu.
-- `data/svl_mcp_connector.secret` (0600) — gotowe dane: adres, nagłówek, adres z kluczem,
-  wpis dla Gemini CLI i polecenie dla Claude Code. Aktualizuje się przy każdej zmianie adresu.
-- `journalctl -u svl-mcp -f` / `logi/backend_gateway.txt` (kategoria `mcp_full`) — adres tunelu (bez tokenu).
-- `GET <adres>/status` z nagłówkiem Bearer — stan serwera i tunelu; narzędzie `mcp_info` z poziomu klienta.
-
-## Instalacja (Debian, start przy uruchomieniu)
-
+### 1. Host systemu (`/opt/svl-python-os`)
 ```bash
-sudo bash deploy/install-mcp.sh /opt/svl-python-os svlos   # cloudflared + usługa svl-mcp
-sudo cat /opt/svl-python-os/data/svl_mcp_connector.secret
+sudo bash deploy/install-mcp.sh /opt/svl-python-os svlos
+# Opcjonalnie również z Tailscale (sieć mesh jak Hamachi + stały HTTPS):
+sudo SVL_INSTALL_TAILSCALE=1 bash deploy/install-mcp.sh /opt/svl-python-os svlos
+sudo svl-mcp-info
 ```
 
-Usługa startuje po `network-online.target`, `Restart=always`. Ręcznie: `npm run mcp`
-(HTTP + tunel) albo `npm run mcp:stdio` (lokalny klient uruchamiający serwer jako proces).
-
-## Podłączanie klientów
-
-Adres = `mcpUrl` z `data/svl_mcp_tunnel.json` (np. `https://abc-def.trycloudflare.com/mcp`).
-
-**Gemini CLI** — `~/.gemini/settings.json` (Streamable HTTP to `httpUrl`, nie `url`):
-
-```json
-{
-  "mcpServers": {
-    "svl": {
-      "httpUrl": "https://abc-def.trycloudflare.com/mcp",
-      "headers": { "Authorization": "Bearer $SVL_MCP_TOKEN" },
-      "timeout": 600000
-    }
-  }
-}
+### 2. Host SVL-364 (bez reinstalacji i bez przerywania istniejących usług)
+```bash
+sudo bash SVL_CoreOS_2/debian13/install_svl364_mcp_zeroip.sh
+# Z siecią mesh Tailscale (stały adres jak Hamachi):
+sudo SVL_INSTALL_TAILSCALE=1 bash SVL_CoreOS_2/debian13/install_svl364_mcp_zeroip.sh
+sudo svl-mcp-info
 ```
 
-albo `gemini mcp add --scope user --transport http --header "Authorization: Bearer $SVL_MCP_TOKEN" svl https://abc-def.trycloudflare.com/mcp`.
+Pełny instalator `SVL_CoreOS_2/debian13/install_coreos2_svl364.sh` również domyślnie instaluje i uruchamia `svl-mcp.service` (`SVL_INSTALL_MCP=1`).
 
-**Gemini API / Google AI Studio (Interactions API)** — narzędzie `mcp_server` (tylko Streamable HTTP, nazwa bez `-`):
+## Podgląd na żywo i konfiguracja klientów
 
-```python
-client.interactions.create(model="…", input="…", tools=[{
-    "type": "mcp_server", "name": "svl",
-    "url": "https://abc-def.trycloudflare.com/mcp",
-    "headers": {"Authorization": "Bearer <MCP_TOKEN>"},
-}])
-```
-
-**Claude Code**: `claude mcp add --transport http svl https://…/mcp --header "Authorization: Bearer <MCP_TOKEN>"`.
-
-**Klienci bez nagłówków** (np. konektory w aplikacjach webowych): adres `https://…/mcp/k/<MCP_TOKEN>`.
-Serwer nie ma OAuth — klient wymagający OAuth się nie połączy.
-
-Przy domyślnym quick tunnelu adres zmienia się po restarcie — wtedy zaktualizuj go w kliencie
-albo przejdź na stały adres (nazwany tunel Cloudflare / Tailscale Funnel / domena ngrok).
+- W interfejsie webowym SVL: zakładka **SVL-364 → Mostek SSH i serwer MCP** (odczytuje `GET /api/mcp/hub/status` i `GET /api/mcp/hub/connector`).
+- Z terminala hosta: `sudo svl-mcp-info` albo `cat data/svl_mcp_tunnel.json`.
+- Gotowe sekcje JSON w `data/svl_mcp_connector.secret`: `geminiCli`, `vscodeCopilot`, `genericStreamableHttp`, `meshUrls`, `urlWithKey`.

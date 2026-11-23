@@ -19,10 +19,10 @@ export interface CanonicalAgentMeta {
 
 export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
   {
-    id: 'system_si_1',
-    canonicalName: 'System_SI_1',
-    displayName: 'Jyn Mitek (System_SI_1)',
-    slug: 'system-si-1',
+    id: 'jyn',
+    canonicalName: 'Jyn',
+    displayName: 'Jyn Mitek',
+    slug: 'jyn',
     preservedRole:
       'Agent zarządzania infrastrukturą SVL-364, serwerami SSH/OpenSSH i MCP (ROOT) z przetwarzaniem poleceń w maszynie wirtualnej JEDI Omni-OS v12.',
     sourceProfile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest',
@@ -39,7 +39,7 @@ export const DYNAMIC_AGENT_TEMPLATES: CanonicalAgentMeta[] = [
     displayName: 'SI_Sphere (SVL-465 · ROOT)',
     slug: 'si-sphere',
     preservedRole:
-      'Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, współpracujący z Jyn Mitek (System_SI_1) oraz JEDI Omni-OS v12.',
+      'Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, współpracujący z Jyn Mitek oraz JEDI Omni-OS v12.',
     sourceProfile: 'jedi-vm:v12 + ollama:svl364-apex-uncensored:latest',
     accentHex: '#A855F7',
     borderClass: 'border-violet-500/40',
@@ -69,19 +69,13 @@ export function formatAgentDisplayName(rawName?: string | null): string {
   if (!clean) return 'SVL System Kernel';
   const low = clean.toLowerCase();
   if (
-    low === 'system_si_1' ||
-    low === 'system-si-1' ||
-    low === 'systemsi1' ||
-    low === 'system si 1' ||
-    low === 'system_si' ||
-    low === 'system-si' ||
-    low === 'system si' ||
+    low === 'jyn' ||
     low === 'jyn_mitek' ||
     low === 'jyn-mitek' ||
     low === 'jyn mitek' ||
     /^jyn(?:\s+mitek)?\b/.test(low)
   ) {
-    return 'Jyn Mitek (System_SI_1)';
+    return 'Jyn Mitek';
   }
   if (
     low === 'si_sphere' ||
@@ -262,7 +256,7 @@ export function enforceFactualExecutionGuard(
   };
 }
 
-/** Pełny, najwyższy zestaw uprawnień ROOT wspólny dla Operatora Mateusza Mitka i System_SI_1. */
+/** Pełny, najwyższy zestaw uprawnień ROOT wspólny dla Operatora Mateusza Mitka i Jyn. */
 export const FULL_ROOT_SCOPES: readonly string[] = [
   'chat',
   'chat.commands',
@@ -381,7 +375,7 @@ export type ResolvedChatButtonAction =
   | { kind: 'tab'; tab: WorkspaceTabKey }
   | { kind: 'invalid_tab'; rawTab: string }
   | { kind: 'send'; text: string }
-  | { kind: 'ask'; agent?: 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS' }
+  | { kind: 'ask'; agent?: 'Jyn' | 'SI_Sphere' | 'JEDI_Omni_OS' }
   | { kind: 'text'; text: string }
   | { kind: 'copy'; text: string }
   | { kind: 'sync' }
@@ -426,7 +420,7 @@ export function resolveChatInteractiveButtonAction(
     return {
       kind: 'ask',
       agent:
-        canonical === 'System_SI_1' || canonical === 'SI_Sphere' || canonical === 'JEDI_Omni_OS'
+        canonical === 'Jyn' || canonical === 'SI_Sphere' || canonical === 'JEDI_Omni_OS'
           ? canonical
           : undefined,
     };
@@ -496,19 +490,19 @@ export function normalizeAgentCanonicalName(
   const clean = String(rawName || '').trim().toLowerCase();
   if (!clean) return null;
   if (
-    clean === 'system_si_1' ||
-    clean === 'system-si-1' ||
-    clean === 'systemsi1' ||
-    clean === 'system si 1' ||
+    clean === 'jyn' ||
+    clean === 'jyn' ||
+    clean === 'jyn' ||
+    clean === 'jyn' ||
     clean === 'system_si' ||
     clean === 'system-si' ||
     clean === 'system si' ||
-    clean === 'conv-system-si-1' ||
+    clean === 'conv-jyn' ||
     clean === 'jyn mitek' ||
-    clean === 'jyn mitek (system_si_1)' ||
-    /^jyn(?:\s+mitek)?(?:\s*\(system_si_1\))?$/.test(clean)
+    clean === 'jyn mitek (jyn)' ||
+    /^jyn(?:\s+mitek)?(?:\s*\(jyn\))?$/.test(clean)
   ) {
-    return 'System_SI_1';
+    return 'Jyn';
   }
   if (
     clean === 'si_sphere' ||
@@ -548,7 +542,7 @@ const SI2_DIRECT_ADDRESS_RE =
   /(?:^|[\s,(])@(?:si2|si_sphere|si-sphere)(?=$|[\s,.:;!?])|^\s*(?:si_sphere|si-sphere|system_si_2|system-si-2)\b[,:\s]?/iu;
 
 export interface ChatTargetResolution {
-  agent: 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS';
+  agent: 'Jyn' | 'SI_Sphere' | 'JEDI_Omni_OS';
   mentionsJedi: boolean;
   explicit: boolean;
 }
@@ -556,7 +550,7 @@ export interface ChatTargetResolution {
 /**
  * Deterministyczny wybór adresata wiadomości (wspólny dla klienta i serwera).
  * Wszystkie polecenia czatu przechodzą przez maszynę wirtualną JEDI Omni-OS v12
- * i aktywnego agenta (System_SI_1, SI_Sphere lub JEDI_Omni_OS).
+ * i aktywnego agenta (Jyn, SI_Sphere lub JEDI_Omni_OS).
  */
 export function resolveChatTargetAgent(params: {
   message: string;
@@ -576,13 +570,18 @@ export function resolveChatTargetAgent(params: {
   if (mentionsJedi || normTarget === 'JEDI_Omni_OS') {
     return { agent: 'JEDI_Omni_OS', mentionsJedi, explicit: true };
   }
-  if (normTarget === 'SI_Sphere' || (convId === 'conv-si-sphere' && normTarget !== 'System_SI_1')) {
+  if (normTarget === 'SI_Sphere' || (convId === 'conv-si-sphere' && normTarget !== 'Jyn')) {
     return { agent: 'SI_Sphere', mentionsJedi: false, explicit: true };
   }
-  if (convId === 'conv-system-si-1' || normTarget === 'System_SI_1' || params.hasSlashCommand) {
-    return { agent: 'System_SI_1', mentionsJedi: false, explicit: true };
+  if (
+    convId === 'conv-jyn' ||
+    convId === 'conv-svl364-mcp-root' ||
+    normTarget === 'Jyn' ||
+    params.hasSlashCommand
+  ) {
+    return { agent: 'Jyn', mentionsJedi: false, explicit: true };
   }
-  return { agent: 'System_SI_1', mentionsJedi: false, explicit: false };
+  return { agent: 'Jyn', mentionsJedi: false, explicit: false };
 }
 
 export type BielikSlashCommand =
@@ -698,7 +697,7 @@ export function parseBielikChatCommand(rawMessage: string): BielikSlashCommand |
     const validStatus: 'ACTIVE' | 'CONFIGURED' | 'STANDBY' =
       rawStatus === 'CONFIGURED' || rawStatus === 'STANDBY' ? rawStatus : 'ACTIVE';
     const hasExplicitStatus = ['ACTIVE', 'CONFIGURED', 'STANDBY'].includes(rawStatus);
-    const desc = (hasExplicitStatus ? tokens.slice(2) : tokens.slice(1)).join(' ').trim() || `Moduł skonfigurowany przez System_SI_1 (${id})`;
+    const desc = (hasExplicitStatus ? tokens.slice(2) : tokens.slice(1)).join(' ').trim() || `Moduł skonfigurowany przez Jyn (${id})`;
     return { kind: 'module_upsert', id, status: validStatus, name: id, description: desc };
   }
   if (cmd === '/pamiec' || cmd === '/memory' || cmd === '/zapamietaj') {
@@ -762,7 +761,7 @@ const SSH_NATURAL_LANGUAGE_STARTERS = new Set([
   'nadaj', 'połącz', 'polacz', 'zresetuj', 'raport', 'telemetria',
   'diagnostyka', 'pomoc', 'wykonaj', 'zrób', 'zrob', 'aktywuj', 'odblokuj',
   'zablokuj', 'przełącz', 'przelacz', 'skieruj', 'leć', 'lec', 'kurs',
-  'tarcze', 'reaktor', 'statek', 'system_si_1', 'jedi', 'check', 'show', 'report',
+  'tarcze', 'reaktor', 'statek', 'jyn', 'jedi', 'check', 'show', 'report',
 ]);
 
 export function parseSshShipTerminalInput(rawInput: string): SshShipParsedCommand {
@@ -816,7 +815,7 @@ export function parseSshShipTerminalInput(rawInput: string): SshShipParsedComman
     synthesizedCmd = 'id && free -m && uname -srm';
   } else if (/ollama|model|vision/.test(low)) {
     synthesizedCmd = 'id && ollama --version && ollama list';
-  } else if (/baz|sqlite|moduł|modul|notatk|prac|system_si_1|jedi/.test(low)) {
+  } else if (/baz|sqlite|moduł|modul|notatk|prac|jyn|jedi/.test(low)) {
     synthesizedCmd = 'id && sqlite3 data/svl_os.sqlite3 "SELECT id, status, revision FROM system_modules ORDER BY revision DESC LIMIT 10;"';
   }
 
@@ -1081,7 +1080,7 @@ export interface SvlSyncEvent<TPayload = Record<string, any>> {
   payload: TPayload;
 }
 
-export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS';
+export type TargetAgentSelection = 'Auto' | 'Rodzina Mitek' | 'Jyn' | 'SI_Sphere' | 'JEDI_Omni_OS';
 
 export interface WorkspaceUiState {
   active_conversation_id?: string | null;
@@ -1093,7 +1092,7 @@ export interface WorkspaceUiState {
   revisions?: Record<string, number>;
 }
 
-export type AvatarProfileKey = 'System_SI_1' | 'SI_Sphere' | 'JEDI_Omni_OS' | 'Operator';
+export type AvatarProfileKey = 'Jyn' | 'SI_Sphere' | 'JEDI_Omni_OS' | 'Operator';
 
 export type SvlAvatarMap = Partial<Record<AvatarProfileKey, string>>;
 
@@ -1153,7 +1152,8 @@ export function mergeConversationThreads(
   for (const lt of localThreads) {
     if (seenIds.has(lt.id) || deletedConversationIds.has(lt.id)) continue;
     const isCanonical =
-      lt.id === 'conv-system-si-1' ||
+      lt.id === 'conv-jyn' ||
+      lt.id === 'conv-svl364-mcp-root' ||
       lt.id === 'conv-rodzina-mitek-wszyscy';
     const hasPending = (lt.messages || []).some((m) => pendingMessageIds.has(m.id));
     if (isCanonical || hasPending || pendingConversationIds.has(lt.id)) {
@@ -1168,15 +1168,18 @@ export function mergeConversationThreads(
   );
   if (hasAnyCanonical) {
     const mandatoryCanonicalIds = [
-      'conv-system-si-1',
+      'conv-jyn',
+      'conv-svl364-mcp-root',
       'conv-rodzina-mitek-wszyscy',
     ];
     for (const cid of mandatoryCanonicalIds) {
       if (!merged.some((c) => c.id === cid)) {
         const canonicalTitle =
-          cid === 'conv-system-si-1'
-            ? 'System_SI_1 — Zarządzanie Infrastrukturą (ROOT)'
-            : 'Rodzina Mitek (wszyscy)';
+          cid === 'conv-jyn'
+            ? 'Jyn — Zarządzanie Infrastrukturą (ROOT)'
+            : cid === 'conv-svl364-mcp-root'
+              ? 'SVL-364 — Komputer Pokładowy (MCP · ROOT)'
+              : 'Rodzina Mitek (wszyscy)';
         merged.push({
           id: cid,
           title: canonicalTitle,
@@ -1535,20 +1538,20 @@ export function resolveAvatarProfileKey(
     return 'SI_Sphere';
   }
   if (
-    rawAgent.includes('system_si_1') ||
-    rawAgent.includes('system-si-1') ||
+    rawAgent.includes('jyn') ||
+    rawAgent.includes('jyn') ||
     rawAgent === 'system_si' ||
     rawAgent === 'jyn_mitek' ||
     rawAgent === 'jyn-mitek' ||
     rawAgent === 'jyn' ||
-    rawSender.includes('system_si_1') ||
-    rawSender.includes('system-si-1') ||
+    rawSender.includes('jyn') ||
+    rawSender.includes('jyn') ||
     rawSender.includes('system si') ||
     rawSender.includes('jyn_mitek') ||
     rawSender.includes('jyn mitek') ||
     rawSender.includes('jyn')
   ) {
-    return 'System_SI_1';
+    return 'Jyn';
   }
   if (
     rawAgent === 'jedi_omni_os' ||
@@ -1641,7 +1644,7 @@ export function summarizeAutonomousDaemon(raw: any): AutonomousDaemonSummary {
   const continuousMission =
     typeof data.continuous_mission === 'string' && data.continuous_mission.trim()
       ? data.continuous_mission.trim()
-      : 'Misja ciągła System_SI_1 + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465.';
+      : 'Misja ciągła Jyn + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465.';
   const rawServices = Array.isArray(data.services) ? data.services : [];
   const services: AutonomousServiceEntry[] = rawServices
     .filter((s: any) => s && typeof s === 'object' && typeof s.id === 'string')

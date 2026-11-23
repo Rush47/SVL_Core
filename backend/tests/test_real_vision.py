@@ -140,7 +140,7 @@ class TestSVLRealVisionSuite(unittest.TestCase):
                 duration_ms=412.5,
                 ollama_error=failed["error"],
                 emit_to_chat=True,
-                conversation_id="conv-system-si-1",
+                conversation_id="conv-jyn",
             )
             self.assertTrue(saved["ok"])
             self.assertTrue(saved["fallbackUsed"])
@@ -152,10 +152,10 @@ class TestSVLRealVisionSuite(unittest.TestCase):
             self.assertEqual(mods["svl-real-vision"]["config"]["last_test_status"], "PASSED")
             self.assertEqual(mods["svl-real-vision"]["config"]["active_provider"], "gemini")
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            self.assertIn("conv-system-si-1", convs)
-            self.assertEqual(convs["conv-system-si-1"]["title"], "System_SI_1 — Zarządzanie Infrastrukturą (ROOT)")
+            self.assertIn("conv-jyn", convs)
+            self.assertEqual(convs["conv-jyn"]["title"], "Jyn — Zarządzanie Infrastrukturą (ROOT)")
             self.assertTrue(
-                any("niebiesko-cyjanową siatkę telemetryczną" in m["content"] for m in convs["conv-system-si-1"]["messages"])
+                any("niebiesko-cyjanową siatkę telemetryczną" in m["content"] for m in convs["conv-jyn"]["messages"])
             )
 
     def test_antivirus_scanner_purges_rogue_modules_and_virus_chat_payloads(self) -> None:

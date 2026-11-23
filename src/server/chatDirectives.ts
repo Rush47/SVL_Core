@@ -58,7 +58,7 @@ const SIMPLE_RULES: Array<[RegExp, () => BielikSlashCommand]> = [
   [re(`${B}(?:sprawd(?:ź|z)|poka(?:ż|z))\\s+(?:status|stan)\\s+ollam\\p{L}*`), () => ({ kind: 'ollama' })],
   [re(`${B}(?:sprawd(?:ź|z)|poka(?:ż|z))\\s+(?:status|stan|telemetri\\p{L}*)\\s+(?:systemu|j(?:ą|a)dra|svl)${E}`), () => ({ kind: 'status' })],
   [re(`${B}(?:(?:poka(?:ż|z)|wy(?:ś|s)wietl|wypisz)\\s+(?:wszystkie\\s+)?|lista\\s+)modu(?:ł|l)(?:y|(?:ó|o)w)${E}`), () => ({ kind: 'modules_list' })],
-  [re(`${B}(?:pod(?:ł|l)(?:ą|a)cz|po(?:ł|l)(?:ą|a)cz|uruchom|zsynchronizuj|synchronizuj)\\s+(?:lokaln\\p{L}+\\s+)?(?:worker\\p{L}*|agent(?:a|ów|ow|y)?|system_si_1)${E}`), () => ({ kind: 'agent_connect' })],
+  [re(`${B}(?:pod(?:ł|l)(?:ą|a)cz|po(?:ł|l)(?:ą|a)cz|uruchom|zsynchronizuj|synchronizuj)\\s+(?:lokaln\\p{L}+\\s+)?(?:worker\\p{L}*|agent(?:a|ów|ow|y)?|jyn)${E}`), () => ({ kind: 'agent_connect' })],
   [re(`${B}(?:oblicz|policz|wyznacz)\\s+topologi\\p{L}*`), () => ({ kind: 'topology', xStart: '-inf', xEnd: 'inf' })],
 ];
 

@@ -12,10 +12,13 @@ import {
   ListChecks,
   Loader2,
   Play,
+  Send,
   ShieldAlert,
+  Sigma,
   Sparkles,
   Square,
   Terminal,
+  WrapText,
   XCircle,
 } from 'lucide-react';
 import { ChatInteractiveButton } from './ChatInteractiveButton';
@@ -25,26 +28,33 @@ import {
   parseChatInteractiveToken,
 } from '../utils/svlLogic';
 import {
+  parseActionCardToken,
   parseAlertToken,
   parseBadgeToken,
   parseBarsToken,
+  parseCheckboxToken,
   parseChecklistToken,
   parseChipsToken,
   parseConfirmToken,
   parseDiffToken,
   parseFormToken,
   parseGaugeToken,
+  parseHighlightToken,
   parseJsonToken,
+  parseKbdToken,
   parseKpiToken,
   parseStepToken,
   parseTabsToken,
   parseTerminalToken,
   parseTimelineToken,
   parseToggleToken,
+  renderChecklistActionTemplate,
   renderFormTemplate,
   type InteractiveTone,
+  type ParsedActionCardToken,
   type ParsedAlertToken,
   type ParsedBarsToken,
+  type ParsedCheckboxToken,
   type ParsedChecklistToken,
   type ParsedChipsToken,
   type ParsedConfirmToken,
@@ -59,6 +69,12 @@ import {
   type ParsedTimelineToken,
   type ParsedToggleToken,
 } from '../utils/chatInteractiveTokens';
+import {
+  tokenizeInlineMarkdown,
+  type HighlightTone,
+  type InlineMarkdownNode,
+} from '../utils/chatMarkdownInline';
+import { renderMathToHtml } from '../utils/chatMath';
 
 const InteractiveCodeBlock: React.FC<{
   code: string;
@@ -66,6 +82,7 @@ const InteractiveCodeBlock: React.FC<{
   onAction?: (actionValue: string, label?: string) => void | Promise<void>;
 }> = ({ code, language, onAction }) => {
   const [copied, setCopied] = useState(false);
+  const [wrapLines, setWrapLines] = useState(false);
   const cleanCode = code.replace(/^\n+|\n+$/g, '');
   const cleanLang = (language || '').toLowerCase().trim();
   const lineCount = cleanCode ? cleanCode.split('\n').length : 0;
@@ -91,6 +108,20 @@ const InteractiveCodeBlock: React.FC<{
           <span className="text-[10px] text-slate-500 tabular-nums">{lineCount} l.</span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setWrapLines((prev) => !prev)}
+            aria-pressed={wrapLines}
+            className={`min-h-[26px] flex items-center gap-1 px-2 py-0.5 rounded transition-colors ${
+              wrapLines
+                ? 'bg-cyan-500/20 border border-cyan-400/40 text-cyan-200'
+                : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-cyan-200'
+            }`}
+            title={wrapLines ? 'Wyłącz zawijanie długich linii' : 'Włącz zawijanie długich linii'}
+          >
+            <WrapText className="w-3 h-3" aria-hidden="true" />
+            <span className="hidden sm:inline">Zawijaj</span>
+          </button>
           {onAction && (
             <button
               type="button"
@@ -123,7 +154,7 @@ const InteractiveCodeBlock: React.FC<{
         </div>
       </div>
       <div className="p-2.5 sm:p-3 overflow-x-auto overflow-y-auto text-slate-200 leading-relaxed max-h-96 max-w-full">
-        <pre className="whitespace-pre">{cleanCode}</pre>
+        <pre className={wrapLines ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'}>{cleanCode}</pre>
       </div>
     </div>
   );
@@ -294,47 +325,439 @@ const InteractiveAlertBanner: React.FC<{
   );
 };
 
+const HIGHLIGHT_TONE_CLASS: Record<HighlightTone, string> = {
+  amber: 'bg-amber-400/20 text-amber-100 border-amber-400/45 shadow-[0_0_12px_-5px_rgba(251,191,36,0.55)]',
+  cyan: 'bg-cyan-400/18 text-cyan-100 border-cyan-400/45 shadow-[0_0_12px_-5px_rgba(34,211,238,0.55)]',
+  emerald: 'bg-emerald-400/18 text-emerald-100 border-emerald-400/45 shadow-[0_0_12px_-5px_rgba(52,211,153,0.55)]',
+  rose: 'bg-rose-400/20 text-rose-100 border-rose-400/45 shadow-[0_0_12px_-5px_rgba(251,113,133,0.55)]',
+  violet: 'bg-violet-400/20 text-violet-100 border-violet-400/45 shadow-[0_0_12px_-5px_rgba(167,139,250,0.55)]',
+};
+
+const InteractiveHighlightSpan: React.FC<{ text: string; tone?: HighlightTone }> = ({
+  text,
+  tone = 'amber',
+}) => (
+  <mark
+    data-highlight-tone={tone}
+    className={`inline rounded-md border px-1.5 py-[1px] font-medium not-italic ${HIGHLIGHT_TONE_CLASS[tone]}`}
+  >
+    {text}
+  </mark>
+);
+
+const InteractiveKbdBadge: React.FC<{ keys: string }> = ({ keys }) => {
+  const parts =
+    keys.trim() === '+'
+      ? ['+']
+      : keys
+          .split(/\s*\+\s*/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+  return (
+    <span className="inline-flex items-center gap-0.5 align-middle mx-0.5" data-kbd-group="true">
+      {parts.map((part, idx) => (
+        <React.Fragment key={`${part}-${idx}`}>
+          {idx > 0 && <span className="text-[10px] text-slate-500 font-mono">+</span>}
+          <kbd className="inline-flex items-center justify-center min-w-[20px] rounded-md border border-slate-600/90 bg-gradient-to-b from-slate-800 to-slate-900 px-1.5 py-[1px] font-mono text-[11px] font-semibold text-slate-100 shadow-[inset_0_-1px_0_rgba(15,23,42,0.9),0_1px_2px_rgba(0,0,0,0.45)]">
+            {part}
+          </kbd>
+        </React.Fragment>
+      ))}
+    </span>
+  );
+};
+
+const InteractiveMathInline: React.FC<{ tex: string }> = ({ tex }) => {
+  const rendered = useMemo(() => renderMathToHtml(tex, false), [tex]);
+  if (!rendered.html) {
+    return (
+      <code className="px-1.5 py-0.5 rounded bg-[#070A10] border border-cyan-500/25 font-mono text-[12px] text-cyan-200">
+        {tex}
+      </code>
+    );
+  }
+  return (
+    <span
+      className="svl-math-inline inline-block align-baseline px-0.5 text-slate-100"
+      data-math-inline="true"
+      title={tex}
+      dangerouslySetInnerHTML={{ __html: rendered.html }}
+    />
+  );
+};
+
+const InteractiveMathBlock: React.FC<{
+  tex: string;
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>;
+}> = ({ tex, onAction }) => {
+  const [copied, setCopied] = useState(false);
+  const cleanTex = tex.trim();
+  const rendered = useMemo(() => renderMathToHtml(cleanTex, true), [cleanTex]);
+
+  const handleCopy = () => {
+    try {
+      void navigator.clipboard.writeText(cleanTex);
+    } catch {
+      // clipboard unavailable
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <div
+      className="my-2.5 w-full max-w-full rounded-xl border border-cyan-500/25 bg-gradient-to-b from-[#0A1324] to-[#060B16] overflow-hidden shadow-md"
+      data-math-block="true"
+    >
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#0D1628] border-b border-slate-800/80 text-[11px] text-slate-400">
+        <span className="inline-flex items-center gap-1.5 font-mono font-semibold uppercase tracking-wider text-cyan-300">
+          <Sigma className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+          <span>Wzór · LaTeX</span>
+        </span>
+        <div className="flex items-center gap-1.5">
+          {onAction && (
+            <button
+              type="button"
+              onClick={() => void onAction(`text:$$\n${cleanTex}\n$$`, 'Wstawiono wzór do czatu')}
+              className="min-h-[24px] px-2 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-cyan-200 transition-colors font-mono text-[10px]"
+              title="Wstaw wzór do pola czatu"
+            >
+              Wstaw
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="min-h-[24px] inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors font-mono text-[10px]"
+            title="Skopiuj kod LaTeX"
+          >
+            {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+            <span>{copied ? 'Skopiowano!' : 'LaTeX'}</span>
+          </button>
+        </div>
+      </div>
+      <div className="svl-math-block px-4 py-3 overflow-x-auto text-center text-slate-100">
+        {rendered.html ? (
+          <div dangerouslySetInnerHTML={{ __html: rendered.html }} />
+        ) : (
+          <pre className="font-mono text-xs text-rose-300 whitespace-pre-wrap text-left">{cleanTex}</pre>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const InteractiveActionCheckbox: React.FC<{
+  checkbox: ParsedCheckboxToken;
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>;
+  block?: boolean;
+}> = ({ checkbox, onAction, block = false }) => {
+  const [checked, setChecked] = useState(checkbox.checked);
+  const [statusNote, setStatusNote] = useState<string | null>(null);
+  const nextAction = checked ? checkbox.offAction : checkbox.onAction;
+  const unsafe = Boolean(nextAction && isUnsafeChatInteractiveAction(nextAction));
+
+  const handleToggle = () => {
+    const nextState = !checked;
+    setChecked(nextState);
+    const act = nextState ? checkbox.onAction : checkbox.offAction;
+    if (act && onAction && !isUnsafeChatInteractiveAction(act)) {
+      void onAction(act, `${checkbox.label}: ${nextState ? 'zaznaczono' : 'odznaczono'}`);
+      setStatusNote(nextState ? 'Akcja wysłana ✓' : 'Odznaczono ✓');
+      setTimeout(() => setStatusNote(null), 1800);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      disabled={unsafe}
+      onClick={handleToggle}
+      data-action-checkbox="true"
+      className={`${
+        block ? 'my-1.5 flex w-full justify-between' : 'my-0.5 mr-2 inline-flex align-middle'
+      } items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-medium transition-all duration-150 ${
+        unsafe
+          ? 'border-rose-500/30 bg-rose-950/20 text-rose-300/70 cursor-not-allowed opacity-65'
+          : checked
+            ? 'border-emerald-400/45 bg-emerald-500/15 text-emerald-100 hover:bg-emerald-500/20 cursor-pointer'
+            : 'border-slate-700/80 bg-[#0B1221] text-slate-200 hover:border-cyan-400/50 hover:bg-cyan-950/25 cursor-pointer'
+      }`}
+      title={unsafe ? 'Akcja zablokowana ze względów bezpieczeństwa' : `Kliknij, aby przełączyć i wywołać akcję`}
+    >
+      <span className="inline-flex items-center gap-2 min-w-0">
+        {checked ? (
+          <CheckSquare className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
+        ) : (
+          <Square className="w-4 h-4 text-cyan-400 shrink-0" aria-hidden="true" />
+        )}
+        <span className={checked ? 'text-emerald-100' : 'text-slate-100'}>{checkbox.label}</span>
+      </span>
+      {statusNote && (
+        <span className="font-mono text-[10px] text-emerald-300 shrink-0">{statusNote}</span>
+      )}
+    </button>
+  );
+};
+
+const InteractiveActionCard: React.FC<{
+  card: ParsedActionCardToken;
+  keyPrefix: string;
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>;
+}> = ({ card, keyPrefix, onAction }) => {
+  const accentBar =
+    card.tone === 'ok'
+      ? 'from-emerald-400/70 to-teal-400/30'
+      : card.tone === 'warn'
+        ? 'from-amber-400/70 to-orange-400/30'
+        : card.tone === 'err'
+          ? 'from-rose-400/70 to-red-400/30'
+          : 'from-cyan-400/70 to-violet-400/30';
+
+  return (
+    <div
+      className={`my-2 rounded-xl border overflow-hidden shadow-md transition-colors ${TONE_SURFACE[card.tone]}`}
+      data-action-card="true"
+    >
+      <div className={`h-0.5 w-full bg-gradient-to-r ${accentBar}`} />
+      <div className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <div className="text-xs font-semibold text-white tracking-tight">{card.title}</div>
+          {card.description && (
+            <div className="text-xs text-slate-300/95 leading-relaxed">
+              {renderFormattedLine(card.description, `${keyPrefix}-ac-desc`, onAction)}
+            </div>
+          )}
+        </div>
+        <div className="shrink-0">
+          <ChatInteractiveButton
+            label={card.ctaLabel}
+            action={card.action}
+            onAction={onAction}
+            disabled={isUnsafeChatInteractiveAction(card.action)}
+            inGroup
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const InteractiveChecklistCard: React.FC<{
   checklist: ParsedChecklistToken;
   keyPrefix: string;
   onAction?: (actionValue: string, label?: string) => void | Promise<void>;
 }> = ({ checklist, keyPrefix, onAction }) => {
   const [checkedMap, setCheckedMap] = useState<boolean[]>(() => checklist.items.map((i) => i.checked));
+  const [submitted, setSubmitted] = useState(false);
   const doneCount = checkedMap.filter(Boolean).length;
+  const totalCount = checklist.items.length;
+  const percent = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  const checkedTexts = checklist.items.filter((_, idx) => checkedMap[idx]).map((i) => i.text);
+  const uncheckedTexts = checklist.items.filter((_, idx) => !checkedMap[idx]).map((i) => i.text);
+
+  const hasCustomSubmit = Boolean(checklist.submitLabel && checklist.submitAction);
+  const effectiveSubmitLabel = checklist.submitLabel || `Wyślij zaznaczone (${doneCount})`;
+  const effectiveSubmitAction = checklist.submitAction
+    ? renderChecklistActionTemplate(checklist.submitAction, checkedTexts, uncheckedTexts)
+    : `send:Wykonaj zaznaczone punkty z „${checklist.title}”: ${checkedTexts.join('; ')}`;
+  const submitUnsafe = isUnsafeChatInteractiveAction(effectiveSubmitAction);
+  const submitDisabled = submitUnsafe || (!hasCustomSubmit && doneCount === 0);
+
+  const handleBulkSubmit = () => {
+    if (!onAction || submitDisabled) return;
+    setSubmitted(true);
+    void onAction(effectiveSubmitAction, effectiveSubmitLabel);
+    setTimeout(() => setSubmitted(false), 2000);
+  };
+
   return (
-    <div className="my-2 rounded-xl border border-cyan-500/25 bg-[#09101D] p-3 text-xs space-y-2">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-1.5">
-        <span className="inline-flex items-center gap-1.5 font-semibold text-cyan-200">
-          <ListChecks className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
-          <span>{checklist.title}</span>
-        </span>
-        <span className="font-mono text-[10px] text-slate-400 tabular-nums">
-          {doneCount}/{checklist.items.length} ukończone
-        </span>
+    <div
+      className="my-2 rounded-xl border border-cyan-500/30 bg-gradient-to-b from-[#0A1222] to-[#070D19] p-3 text-xs space-y-2.5 shadow-sm"
+      data-interactive-checklist="true"
+    >
+      <div className="space-y-1.5 border-b border-slate-800/80 pb-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-cyan-200">
+            <ListChecks className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" />
+            <span>{checklist.title}</span>
+          </span>
+          <span className="font-mono text-[10px] text-slate-400 tabular-nums">
+            {doneCount}/{totalCount} ukończone ({percent}%)
+          </span>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-slate-800/90 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-300"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
       </div>
-      <div className="space-y-1">
+
+      <div className="space-y-1.5">
         {checklist.items.map((item, idx) => {
           const isDone = Boolean(checkedMap[idx]);
           return (
-            <div key={`${keyPrefix}-cli-${idx}`} className="flex items-start gap-2">
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={isDone}
-                onClick={() =>
-                  setCheckedMap((prev) => prev.map((v, i) => (i === idx ? !v : v)))
-                }
-                className="mt-0.5 text-cyan-400 hover:text-cyan-300 transition-colors shrink-0"
-              >
-                {isDone ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
-              </button>
-              <span className={`leading-relaxed ${isDone ? 'line-through text-slate-500' : 'text-slate-200'}`}>
-                {renderFormattedLine(item.text, `${keyPrefix}-clt-${idx}`, onAction)}
-              </span>
+            <div
+              key={`${keyPrefix}-cli-${idx}`}
+              className={`flex items-start justify-between gap-2 rounded-lg px-2 py-1.5 transition-colors ${
+                isDone ? 'bg-emerald-950/20' : 'hover:bg-slate-800/40'
+              }`}
+            >
+              <div className="flex items-start gap-2 min-w-0 flex-1">
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={isDone}
+                  onClick={() =>
+                    setCheckedMap((prev) => prev.map((v, i) => (i === idx ? !v : v)))
+                  }
+                  className="mt-0.5 text-cyan-400 hover:text-cyan-300 transition-colors shrink-0 cursor-pointer"
+                >
+                  {isDone ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
+                </button>
+                <span className={`leading-relaxed break-words ${isDone ? 'line-through text-slate-400' : 'text-slate-100'}`}>
+                  {renderFormattedLine(item.text, `${keyPrefix}-clt-${idx}`, onAction)}
+                </span>
+              </div>
+              {item.action && onAction && (
+                <div className="shrink-0">
+                  <ChatInteractiveButton
+                    label="Uruchom"
+                    action={item.action}
+                    onAction={onAction}
+                    disabled={isUnsafeChatInteractiveAction(item.action)}
+                    compact
+                    inGroup
+                  />
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {onAction && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-800/70">
+          <button
+            type="button"
+            onClick={() =>
+              setCheckedMap((prev) => {
+                const allDone = prev.every(Boolean);
+                return prev.map(() => !allDone);
+              })
+            }
+            className="text-[11px] font-mono text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer"
+          >
+            {doneCount === totalCount ? 'Odznacz wszystko' : 'Zaznacz wszystko'}
+          </button>
+          <button
+            type="button"
+            disabled={submitDisabled}
+            onClick={handleBulkSubmit}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/40 bg-cyan-500/20 hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition-all cursor-pointer"
+          >
+            {submitted ? (
+              <Check className="w-3.5 h-3.5 text-emerald-300" aria-hidden="true" />
+            ) : (
+              <Send className="w-3 h-3 text-cyan-300" aria-hidden="true" />
+            )}
+            <span>{submitted ? 'Wysłano ✓' : effectiveSubmitLabel}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const InteractiveMarkdownChecklistGroup: React.FC<{
+  items: Array<{ initialChecked: boolean; text: string }>;
+  keyPrefix: string;
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>;
+}> = ({ items, keyPrefix, onAction }) => {
+  const [checkedMap, setCheckedMap] = useState<boolean[]>(() => items.map((i) => i.initialChecked));
+  const [sent, setSent] = useState(false);
+  const doneCount = checkedMap.filter(Boolean).length;
+  const totalCount = items.length;
+  const percent = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  const handleSendChecked = () => {
+    if (!onAction || doneCount === 0) return;
+    const selected = items.filter((_, idx) => checkedMap[idx]).map((i) => i.text);
+    setSent(true);
+    void onAction(`send:Wykonaj zaznaczone punkty: ${selected.join('; ')}`, 'Wykonaj zaznaczone');
+    setTimeout(() => setSent(false), 2000);
+  };
+
+  return (
+    <div
+      className="my-2 rounded-xl border border-slate-700/75 bg-[#080F1D]/90 p-2.5 text-xs space-y-2"
+      data-markdown-checklist="true"
+    >
+      {totalCount > 1 && (
+        <div className="space-y-1 pb-1.5 border-b border-slate-800/80">
+          <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-400">
+            <span className="inline-flex items-center gap-1 text-cyan-300 font-semibold uppercase tracking-wider">
+              <ListChecks className="w-3 h-3" aria-hidden="true" />
+              <span>Lista zadań</span>
+            </span>
+            <span className="tabular-nums">
+              {doneCount}/{totalCount} ({percent}%)
+            </span>
+          </div>
+          <div className="h-1 w-full rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-300"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-1">
+        {items.map((item, idx) => {
+          const checked = Boolean(checkedMap[idx]);
+          return (
+            <div
+              key={`${keyPrefix}-mdchk-${idx}`}
+              className={`flex items-start gap-2 rounded-lg px-1.5 py-1 transition-colors ${
+                checked ? 'bg-emerald-950/15' : 'hover:bg-slate-800/35'
+              }`}
+            >
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={checked}
+                onClick={() => setCheckedMap((prev) => prev.map((v, i) => (i === idx ? !v : v)))}
+                className="mt-0.5 text-cyan-400 hover:text-cyan-300 transition-colors shrink-0 cursor-pointer"
+                title={checked ? 'Odznacz punkt' : 'Zaznacz jako wykonane'}
+              >
+                {checked ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
+              </button>
+              <div className={`flex-1 min-w-0 leading-relaxed ${checked ? 'line-through text-slate-400' : 'text-slate-100'}`}>
+                {renderFormattedLine(item.text, `${keyPrefix}-mdchkt-${idx}`, onAction)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {onAction && (
+        <div className="flex items-center justify-end pt-1 border-t border-slate-800/70">
+          <button
+            type="button"
+            disabled={doneCount === 0}
+            onClick={handleSendChecked}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-40 disabled:cursor-not-allowed px-2.5 py-1 text-[11px] font-medium text-cyan-100 transition-all cursor-pointer"
+          >
+            {sent ? <Check className="w-3 h-3 text-emerald-300" /> : <Send className="w-3 h-3 text-cyan-300" />}
+            <span>{sent ? 'Wysłano do AI ✓' : `Wyślij zaznaczone (${doneCount})`}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -358,7 +781,7 @@ const InteractiveTabsBlock: React.FC<{
               role="tab"
               aria-selected={active}
               onClick={() => setActiveIdx(idx)}
-              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                 active
                   ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
@@ -399,14 +822,14 @@ const InteractiveConfirmCard: React.FC<{
                 void onAction(confirm.confirmAction, confirm.confirmLabel);
               }
             }}
-            className="rounded-md bg-amber-500/90 hover:bg-amber-400 disabled:opacity-40 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition-colors"
+            className="rounded-lg bg-amber-500/90 hover:bg-amber-400 disabled:opacity-40 px-3 py-1.5 text-[11px] font-semibold text-slate-950 transition-colors cursor-pointer"
           >
             {confirm.confirmLabel}
           </button>
           <button
             type="button"
             onClick={() => setState('cancelled')}
-            className="rounded-md border border-slate-700 bg-slate-800/80 hover:bg-slate-700 px-3 py-1.5 text-[11px] font-medium text-slate-300 transition-colors"
+            className="rounded-lg border border-slate-700 bg-slate-800/80 hover:bg-slate-700 px-3 py-1.5 text-[11px] font-medium text-slate-300 transition-colors cursor-pointer"
           >
             {confirm.cancelLabel}
           </button>
@@ -423,30 +846,43 @@ const InteractiveConfirmCard: React.FC<{
 const InteractiveChipsBar: React.FC<{
   chips: ParsedChipsToken;
   onAction?: (actionValue: string, label?: string) => void | Promise<void>;
-}> = ({ chips, onAction }) => (
-  <div className="my-2 flex flex-wrap items-center gap-1.5 text-xs">
-    <span className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 mr-1">
-      <Sparkles className="w-3 h-3 text-cyan-400" aria-hidden="true" />
-      <span>{chips.label}:</span>
-    </span>
-    {chips.options.map((opt, idx) => {
-      const unsafe = isUnsafeChatInteractiveAction(opt.action);
-      return (
-        <button
-          key={`${opt.label}-${idx}`}
-          type="button"
-          disabled={unsafe}
-          onClick={() => {
-            if (!unsafe && onAction) void onAction(opt.action, opt.label);
-          }}
-          className="rounded-full border border-cyan-500/30 bg-cyan-950/30 hover:bg-cyan-500/20 disabled:opacity-40 px-2.5 py-1 text-[11px] font-medium text-cyan-200 transition-colors"
-        >
-          {opt.label}
-        </button>
-      );
-    })}
-  </div>
-);
+}> = ({ chips, onAction }) => {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  return (
+    <div className="my-2 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 mr-1">
+        <Sparkles className="w-3 h-3 text-cyan-400" aria-hidden="true" />
+        <span>{chips.label}:</span>
+      </span>
+      {chips.options.map((opt, idx) => {
+        const unsafe = isUnsafeChatInteractiveAction(opt.action);
+        const picked = activeIdx === idx;
+        return (
+          <button
+            key={`${opt.label}-${idx}`}
+            type="button"
+            disabled={unsafe}
+            onClick={() => {
+              if (!unsafe && onAction) {
+                setActiveIdx(idx);
+                void onAction(opt.action, opt.label);
+                setTimeout(() => setActiveIdx((cur) => (cur === idx ? null : cur)), 1600);
+              }
+            }}
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all duration-150 disabled:opacity-40 cursor-pointer ${
+              picked
+                ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-100'
+                : 'border-cyan-500/35 bg-cyan-950/35 hover:bg-cyan-500/20 hover:border-cyan-300/60 text-cyan-100'
+            }`}
+          >
+            {picked && <Check className="w-3 h-3 text-emerald-300" aria-hidden="true" />}
+            <span>{opt.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const InteractiveTimelineCard: React.FC<{ timeline: ParsedTimelineToken }> = ({ timeline }) => (
   <div className="my-2 rounded-xl border border-slate-700/80 bg-[#080E1A] p-3 text-xs">
@@ -857,164 +1293,187 @@ const InteractiveMarkdownTable: React.FC<{
   );
 };
 
-const InteractiveChecklistItem: React.FC<{
-  initialChecked: boolean;
-  text: string;
-  keyPrefix: string;
-  onAction?: (actionValue: string, label?: string) => void | Promise<void>;
-}> = ({ initialChecked, text, keyPrefix, onAction }) => {
-  const [checked, setChecked] = useState(initialChecked);
-  return (
-    <div className="flex items-start gap-2 my-1 pl-1">
-      <button
-        type="button"
-        role="checkbox"
-        aria-checked={checked}
-        onClick={() => setChecked((prev) => !prev)}
-        className="mt-0.5 text-cyan-400 hover:text-cyan-300 transition-colors shrink-0"
-        title={checked ? 'Odznacz punkt' : 'Zaznacz jako wykonane'}
+const BUTTON_ONLY_LINE_RE =
+  /^(?:\[(?:btn|button|action|przycisk):[^\]\n]+\]\s*)+$/i;
+
+function extractButtonsFromLine(
+  line: string,
+): Array<{ label: string; action: string }> | null {
+  const trimmed = line.trim();
+  if (!trimmed || !BUTTON_ONLY_LINE_RE.test(trimmed)) return null;
+  const rawTokens = trimmed.match(/\[(?:btn|button|action|przycisk):[^\]\n]+\]/gi);
+  if (!rawTokens || rawTokens.length === 0) return null;
+  const parsed = rawTokens
+    .map((raw) => parseChatInteractiveToken(raw))
+    .filter((b): b is { label: string; action: string } => b !== null);
+  return parsed.length === rawTokens.length ? parsed : null;
+}
+
+function renderInlineToken(
+  raw: string,
+  key: string,
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>,
+): React.ReactNode {
+  const button = parseChatInteractiveToken(raw);
+  if (button) {
+    return (
+      <ChatInteractiveButton
+        key={key}
+        label={button.label}
+        action={button.action}
+        onAction={onAction}
+        disabled={isUnsafeChatInteractiveAction(button.action)}
+      />
+    );
+  }
+  const highlight = parseHighlightToken(raw);
+  if (highlight) {
+    return <InteractiveHighlightSpan key={key} text={highlight.text} tone={highlight.tone} />;
+  }
+  const kbd = parseKbdToken(raw);
+  if (kbd) {
+    return <InteractiveKbdBadge key={key} keys={kbd.keys} />;
+  }
+  const checkbox = parseCheckboxToken(raw);
+  if (checkbox) {
+    return <InteractiveActionCheckbox key={key} checkbox={checkbox} onAction={onAction} />;
+  }
+  const badge = parseBadgeToken(raw);
+  if (badge) {
+    return (
+      <span
+        key={key}
+        className={`inline-flex items-center rounded-full border px-2 py-0.5 mr-1 text-[10px] font-mono font-semibold uppercase tracking-wider align-middle ${TONE_BADGE[badge.tone]}`}
       >
-        {checked ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
-      </button>
-      <div className={`flex-1 min-w-0 leading-relaxed ${checked ? 'line-through text-slate-400' : ''}`}>
-        {renderFormattedLine(text, keyPrefix, onAction)}
+        {badge.text}
+      </span>
+    );
+  }
+  const inlineKpi = parseKpiToken(raw);
+  if (inlineKpi) {
+    return <InteractiveKpiTile key={key} kpi={inlineKpi} />;
+  }
+  const card = parseCardToken(raw);
+  if (card) {
+    return (
+      <span
+        key={key}
+        className={`inline-flex flex-col max-w-full mr-2 my-1 px-2.5 py-1.5 rounded-lg border align-middle break-words ${CARD_TONE_CLASS[card.tone]}`}
+      >
+        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono leading-tight">
+          {card.label}
+        </span>
+        <span className="text-xs font-semibold font-mono leading-snug tabular-nums break-words">
+          {card.value}
+        </span>
+      </span>
+    );
+  }
+  const progress = parseProgressToken(raw);
+  if (progress) {
+    return (
+      <div
+        key={key}
+        className="my-1.5 w-full max-w-full rounded-lg border border-cyan-500/25 bg-[#070B12] px-3 py-2"
+      >
+        <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums mb-1">
+          <span className="text-slate-200 truncate">{progress.label}</span>
+          <span className="text-cyan-300 font-semibold shrink-0">{progress.percent}%</span>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all"
+            style={{ width: `${progress.percent}%` }}
+          />
+        </div>
       </div>
-    </div>
-  );
-};
+    );
+  }
+  return <React.Fragment key={key}>{raw}</React.Fragment>;
+}
+
+function renderInlineNodes(
+  nodes: InlineMarkdownNode[],
+  keyPrefix: string,
+  onAction?: (actionValue: string, label?: string) => void | Promise<void>,
+): React.ReactNode {
+  return nodes.map((node, i) => {
+    const key = `${keyPrefix}-${i}`;
+    switch (node.type) {
+      case 'text':
+        return <React.Fragment key={key}>{node.text}</React.Fragment>;
+      case 'token':
+        return renderInlineToken(node.raw, key, onAction);
+      case 'code':
+        return (
+          <code
+            key={key}
+            className="px-1.5 py-0.5 rounded bg-[#070A10] border border-cyan-500/25 font-mono text-[12px] text-cyan-200 break-words"
+          >
+            {node.code}
+          </code>
+        );
+      case 'math':
+        return <InteractiveMathInline key={key} tex={node.tex} />;
+      case 'bold':
+        return (
+          <strong key={key} className="font-semibold text-white">
+            {renderInlineNodes(node.children, `${key}-b`, onAction)}
+          </strong>
+        );
+      case 'italic':
+        return (
+          <em key={key} className="italic text-slate-300">
+            {renderInlineNodes(node.children, `${key}-i`, onAction)}
+          </em>
+        );
+      case 'strike':
+        return (
+          <del key={key} className="text-slate-400">
+            {renderInlineNodes(node.children, `${key}-s`, onAction)}
+          </del>
+        );
+      case 'highlight':
+        return <InteractiveHighlightSpan key={key} text={node.text} tone={node.tone} />;
+      case 'kbd':
+        return <InteractiveKbdBadge key={key} keys={node.keys} />;
+      case 'sup':
+        return (
+          <sup key={key} className="text-[0.72em] leading-none text-cyan-200/90 align-super">
+            {node.text}
+          </sup>
+        );
+      case 'sub':
+        return (
+          <sub key={key} className="text-[0.72em] leading-none text-cyan-200/90 align-sub">
+            {node.text}
+          </sub>
+        );
+      case 'link':
+        return (
+          <a
+            key={key}
+            href={node.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200 break-all"
+          >
+            {node.label}
+          </a>
+        );
+      default:
+        return null;
+    }
+  });
+}
 
 export function renderFormattedLine(
   line: string,
   keyPrefix: string,
   onAction?: (actionValue: string, label?: string) => void | Promise<void>,
 ): React.ReactNode {
-  // Najpierw wydzielamy tokeny interaktywne — `_` lub `*` w etykiecie/akcji nie może ich rozbić formatowaniem.
-  const tokens = line
-    .split(/(\[(?:btn|button|action|przycisk|card|metric|karta|progress|postep|postęp|badge|znacznik|kpi|metrics|metryka):[^\]\n]+\])/gi)
-    .flatMap((part) =>
-      parseChatInteractiveToken(part) || parseCardToken(part) || parseProgressToken(part) || parseBadgeToken(part) || parseKpiToken(part)
-        ? [part]
-        : part.split(/(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`|\*[^*\n]+\*|_[^_\n]+_|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g),
-    );
-  return tokens.map((tok, i) => {
-    const button = parseChatInteractiveToken(tok);
-    if (button) {
-      return (
-        <ChatInteractiveButton
-          key={`${keyPrefix}-${i}`}
-          label={button.label}
-          action={button.action}
-          onAction={onAction}
-          disabled={isUnsafeChatInteractiveAction(button.action)}
-        />
-      );
-    }
-    const badge = parseBadgeToken(tok);
-    if (badge) {
-      return (
-        <span
-          key={`${keyPrefix}-${i}`}
-          className={`inline-flex items-center rounded-full border px-2 py-0.5 mr-1 text-[10px] font-mono font-semibold uppercase tracking-wider align-middle ${TONE_BADGE[badge.tone]}`}
-        >
-          {badge.text}
-        </span>
-      );
-    }
-    const inlineKpi = parseKpiToken(tok);
-    if (inlineKpi) {
-      return <InteractiveKpiTile key={`${keyPrefix}-${i}`} kpi={inlineKpi} />;
-    }
-    const card = parseCardToken(tok);
-    if (card) {
-      return (
-        <span
-          key={`${keyPrefix}-${i}`}
-          className={`inline-flex flex-col max-w-full mr-2 my-1 px-2.5 py-1.5 rounded-lg border align-middle break-words ${CARD_TONE_CLASS[card.tone]}`}
-        >
-          <span className="text-[10px] uppercase tracking-wider text-slate-400 font-mono leading-tight">
-            {card.label}
-          </span>
-          <span className="text-xs font-semibold font-mono leading-snug tabular-nums break-words">
-            {card.value}
-          </span>
-        </span>
-      );
-    }
-    const progress = parseProgressToken(tok);
-    if (progress) {
-      return (
-        <div
-          key={`${keyPrefix}-${i}`}
-          className="my-1.5 w-full max-w-full rounded-lg border border-cyan-500/25 bg-[#070B12] px-3 py-2"
-        >
-          <div className="flex items-center justify-between gap-2 text-[11px] font-mono tabular-nums mb-1">
-            <span className="text-slate-200 truncate">{progress.label}</span>
-            <span className="text-cyan-300 font-semibold shrink-0">{progress.percent}%</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all"
-              style={{ width: `${progress.percent}%` }}
-            />
-          </div>
-        </div>
-      );
-    }
-    if (tok.startsWith('**') && tok.endsWith('**') && tok.length > 4) {
-      return (
-        <strong key={`${keyPrefix}-${i}`} className="font-semibold text-white">
-          {tok.slice(2, -2)}
-        </strong>
-      );
-    }
-    if (tok.startsWith('*') && tok.endsWith('*') && tok.length > 2) {
-      return (
-        <em key={`${keyPrefix}-${i}`} className="italic text-slate-300">
-          {tok.slice(1, -1)}
-        </em>
-      );
-    }
-    if (tok.startsWith('_') && tok.endsWith('_') && tok.length > 2) {
-      return (
-        <em key={`${keyPrefix}-${i}`} className="italic text-slate-300">
-          {tok.slice(1, -1)}
-        </em>
-      );
-    }
-    if (tok.startsWith('~~') && tok.endsWith('~~') && tok.length > 4) {
-      return (
-        <del key={`${keyPrefix}-${i}`} className="text-slate-400">
-          {tok.slice(2, -2)}
-        </del>
-      );
-    }
-    const link = tok.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/i);
-    if (link) {
-      return (
-        <a
-          key={`${keyPrefix}-${i}`}
-          href={link[2]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-cyan-300 underline underline-offset-2 hover:text-cyan-200 break-all"
-        >
-          {link[1]}
-        </a>
-      );
-    }
-    if (tok.startsWith('`') && tok.endsWith('`') && tok.length > 2) {
-      const codeContent = tok.slice(1, -1);
-      return (
-        <code
-          key={`${keyPrefix}-${i}`}
-          className="px-1.5 py-0.5 rounded bg-[#070A10] border border-cyan-500/25 font-mono text-[12px] text-cyan-200 break-words"
-        >
-          {codeContent}
-        </code>
-      );
-    }
-    return <React.Fragment key={`${keyPrefix}-${i}`}>{tok}</React.Fragment>;
-  });
+  const nodes = tokenizeInlineMarkdown(line);
+  return renderInlineNodes(nodes, keyPrefix, onAction);
 }
 
 export function renderFormattedContent(
@@ -1054,7 +1513,93 @@ export function renderFormattedContent(
       const trimmed = line.trim();
       const structuralLine = line.trimStart();
 
-      // Detect collapsible details block: `[details: Title] ... [/details]` or `<details><summary>...</summary>...</details>`
+      // 1. Blok matematyczny LaTeX `$$...$$` (jednoliniowy lub wieloliniowy)
+      if (trimmed.startsWith('$$')) {
+        const blockStartIdx = idx;
+        const singleLineMatch = trimmed.match(/^\$\$(.+?)\$\$$/);
+        if (singleLineMatch && singleLineMatch[1].trim()) {
+          renderedElements.push(
+            <InteractiveMathBlock
+              key={`math-blk-${segIdx}-${blockStartIdx}`}
+              tex={singleLineMatch[1].trim()}
+              onAction={onAction}
+            />,
+          );
+          idx += 1;
+          continue;
+        }
+        const mathLines: string[] = [];
+        const afterOpen = trimmed.slice(2).trim();
+        if (afterOpen) mathLines.push(afterOpen);
+        idx += 1;
+        while (idx < lines.length) {
+          const curTrimmed = lines[idx].trim();
+          if (curTrimmed.endsWith('$$')) {
+            const beforeClose = curTrimmed.slice(0, -2).trim();
+            if (beforeClose) mathLines.push(beforeClose);
+            idx += 1;
+            break;
+          }
+          mathLines.push(lines[idx]);
+          idx += 1;
+        }
+        const texBody = mathLines.join('\n').trim();
+        if (texBody) {
+          renderedElements.push(
+            <InteractiveMathBlock
+              key={`math-blk-${segIdx}-${blockStartIdx}`}
+              tex={texBody}
+              onAction={onAction}
+            />,
+          );
+        }
+        continue;
+      }
+
+      // 2. Blok matematyczny LaTeX `\[...\]` (jednoliniowy lub wieloliniowy)
+      if (trimmed.startsWith('\\[')) {
+        const blockStartIdx = idx;
+        const singleBracketMatch = trimmed.match(/^\\\[(.+?)\\\]$/);
+        if (singleBracketMatch && singleBracketMatch[1].trim()) {
+          renderedElements.push(
+            <InteractiveMathBlock
+              key={`math-brk-${segIdx}-${blockStartIdx}`}
+              tex={singleBracketMatch[1].trim()}
+              onAction={onAction}
+            />,
+          );
+          idx += 1;
+          continue;
+        }
+        const mathLines: string[] = [];
+        const afterOpen = trimmed.slice(2).trim();
+        if (afterOpen) mathLines.push(afterOpen);
+        idx += 1;
+        while (idx < lines.length) {
+          const curTrimmed = lines[idx].trim();
+          if (curTrimmed.endsWith('\\]')) {
+            const beforeClose = curTrimmed.slice(0, -2).trim();
+            if (beforeClose) mathLines.push(beforeClose);
+            idx += 1;
+            break;
+          }
+          mathLines.push(lines[idx]);
+          idx += 1;
+        }
+        const texBody = mathLines.join('\n').trim();
+        if (texBody) {
+          renderedElements.push(
+            <InteractiveMathBlock
+              key={`math-brk-${segIdx}-${blockStartIdx}`}
+              tex={texBody}
+              onAction={onAction}
+            />,
+          );
+        }
+        continue;
+      }
+
+      // 3. Detect collapsible details block: `[details: Title] ... [/details]`
       const detailsMatch = trimmed.match(/^\[(?:details|szczegoly|szczegóły):\s*([^\]\n]+)\]$/i);
       if (detailsMatch) {
         const summaryTitle = detailsMatch[1].trim();
@@ -1082,7 +1627,7 @@ export function renderFormattedContent(
         continue;
       }
 
-      // Detect Markdown Table block (both outer-piped `| A | B |` and standard `A | B`)
+      // 4. Detect Markdown Table block (both outer-piped `| A | B |` and standard `A | B`)
       if (
         looksLikeTableRow(trimmed) &&
         idx + 1 < lines.length &&
@@ -1110,7 +1655,35 @@ export function renderFormattedContent(
         continue;
       }
 
-      // Interactive Copilot/Work blocks: [step:...], [toggle:...], [form:...]
+      // 5. Interactive Copilot/Work blocks
+      const actionCardToken = parseActionCardToken(trimmed);
+      if (actionCardToken) {
+        renderedElements.push(
+          <InteractiveActionCard
+            key={`acard-${segIdx}-${idx}`}
+            card={actionCardToken}
+            keyPrefix={`acard-${segIdx}-${idx}`}
+            onAction={onAction}
+          />,
+        );
+        idx += 1;
+        continue;
+      }
+
+      const checkboxBlockToken = parseCheckboxToken(trimmed);
+      if (checkboxBlockToken) {
+        renderedElements.push(
+          <InteractiveActionCheckbox
+            key={`chkbox-${segIdx}-${idx}`}
+            checkbox={checkboxBlockToken}
+            onAction={onAction}
+            block
+          />,
+        );
+        idx += 1;
+        continue;
+      }
+
       const stepToken = parseStepToken(trimmed);
       if (stepToken) {
         renderedElements.push(<InteractiveStepCard key={`step-${segIdx}-${idx}`} step={stepToken} />);
@@ -1240,19 +1813,67 @@ export function renderFormattedContent(
         continue;
       }
 
-      // Interactive Checklist (`- [ ] ...` or `- [x] ...`)
+      // 6. Grupowany pasek przycisków akcji (Copilot / ChatGPT Work action bar)
+      const lineButtons = extractButtonsFromLine(trimmed);
+      if (lineButtons) {
+        const barStartIdx = idx;
+        const groupedButtons = [...lineButtons];
+        idx += 1;
+        while (idx < lines.length) {
+          const nextBtns = extractButtonsFromLine(lines[idx]);
+          if (!nextBtns) break;
+          groupedButtons.push(...nextBtns);
+          idx += 1;
+        }
+        renderedElements.push(
+          <div
+            key={`btn-bar-${segIdx}-${barStartIdx}`}
+            data-chat-action-bar="true"
+            className="my-2 flex flex-wrap items-center gap-2"
+          >
+            {groupedButtons.map((btn, bIdx) => (
+              <ChatInteractiveButton
+                key={`btn-bar-${segIdx}-${barStartIdx}-${bIdx}`}
+                label={btn.label}
+                action={btn.action}
+                onAction={onAction}
+                disabled={isUnsafeChatInteractiveAction(btn.action)}
+                inGroup
+              />
+            ))}
+          </div>,
+        );
+        continue;
+      }
+
+      // 7. Interactive Markdown Checklist (`- [ ] ...` / `- [x] ...`) — grupowane z paskiem postępu i akcją wysyłki
       const checklistMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
       if (checklistMatch) {
+        const groupStartIdx = idx;
+        const mdItems: Array<{ initialChecked: boolean; text: string }> = [
+          {
+            initialChecked: checklistMatch[1].toLowerCase() === 'x',
+            text: checklistMatch[2],
+          },
+        ];
+        idx += 1;
+        while (idx < lines.length) {
+          const nextMatch = lines[idx].trim().match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
+          if (!nextMatch) break;
+          mdItems.push({
+            initialChecked: nextMatch[1].toLowerCase() === 'x',
+            text: nextMatch[2],
+          });
+          idx += 1;
+        }
         renderedElements.push(
-          <InteractiveChecklistItem
-            key={`chk-${segIdx}-${idx}`}
-            initialChecked={checklistMatch[1].toLowerCase() === 'x'}
-            text={checklistMatch[2]}
-            keyPrefix={`chk-${segIdx}-${idx}`}
+          <InteractiveMarkdownChecklistGroup
+            key={`chk-grp-${segIdx}-${groupStartIdx}`}
+            items={mdItems}
+            keyPrefix={`chk-${segIdx}-${groupStartIdx}`}
             onAction={onAction}
           />,
         );
-        idx += 1;
         continue;
       }
 
@@ -1347,7 +1968,7 @@ export function renderFormattedContent(
       }
 
       renderedElements.push(
-        <div key={`p-${idx}`} className="leading-relaxed">
+        <div key={`p-${idx}`} className="svl-chat-prose leading-relaxed">
           {renderFormattedLine(line, `l-${idx}`, onAction)}
         </div>,
       );

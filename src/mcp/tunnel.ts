@@ -1,40 +1,147 @@
-// Tunel wychodzący: serwer MCP osiągalny z internetu bez stałego IP i bez własnej domeny.
-// Domyślnie Cloudflare Quick Tunnel (bez konta): adres https://<losowy>.trycloudflare.com.
-// Tunel startuje, gdy jest sieć, i jest restartowany po zerwaniu (backoff + watchdog).
+// Tunel wychodzący i sieć mesh (bez stałego IP, bez przekierowania portów — jak Hamachi):
+// Obsługuje: auto, Cloudflare Tunnel (Quick + Named, automatyczny fallback QUIC → HTTP/2 TCP:443),
+// Tailscale Funnel / WireGuard Mesh, ngrok oraz tunel zwrotny SSH (`ssh-reverse`).
+// Dodatkowo wykrywa aktywne interfejsy overlay/mesh (Tailscale 100.64.0.0/10, ZeroTier, WireGuard, Hamachi).
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import dns from 'node:dns/promises';
+import os from 'node:os';
 import type { TunnelKind } from './config.ts';
 
 export type TunnelState = 'off' | 'waiting_network' | 'starting' | 'up' | 'down';
+
+export interface MeshEndpoint {
+  network: 'tailscale' | 'zerotier' | 'wireguard' | 'hamachi';
+  iface: string;
+  address: string;
+  mcpUrl: string;
+}
 
 export interface TunnelOptions {
   kind: TunnelKind;
   port: number;
   bin?: string;
   cloudflaredToken?: string; // nazwany tunel Cloudflare (stały adres)
-  publicUrl?: string; // znany stały adres (nazwany tunel / domena ngrok)
+  cloudflaredProtocol?: '' | 'quic' | 'http2';
+  sshReverseTarget?: string; // user@relay-host dla trybu ssh-reverse
+  sshReverseRemotePort?: number;
+  publicUrl?: string; // znany stały adres (nazwany tunel / domena ngrok / Tailscale)
 }
 
 export interface TunnelStatus {
   kind: TunnelKind;
+  effectiveKind?: Exclude<TunnelKind, 'auto'>;
   state: TunnelState;
   publicUrl: string | null;
   mcpUrl: string | null;
+  meshEndpoints?: MeshEndpoint[];
+  protocol?: string;
   since: string | null;
   restarts: number;
   lastError: string | null;
 }
 
-export function buildTunnelCommand(o: TunnelOptions): { bin: string; args: string[]; env: Record<string, string> } | null {
+function isTailscaleCgnatIpv4(ip: string): boolean {
+  const parts = ip.split('.').map((p) => Number.parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return false;
+  return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+}
+
+function isHamachiIpv4(ip: string): boolean {
+  return /^25\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip);
+}
+
+/** Wykrywa lokalne interfejsy VPN mesh bez stałego IP (Tailscale, ZeroTier, WireGuard, Hamachi). */
+export function detectMeshInterfaces(
+  port: number,
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces(),
+): MeshEndpoint[] {
+  const found: MeshEndpoint[] = [];
+  for (const [iface, addrs] of Object.entries(interfaces || {})) {
+    if (!addrs) continue;
+    const low = iface.toLowerCase();
+    for (const entry of addrs) {
+      if (!entry || entry.internal || entry.family !== 'IPv4' || !entry.address) continue;
+      let network: MeshEndpoint['network'] | null = null;
+      if (low.startsWith('tailscale') || low.startsWith('utun') && isTailscaleCgnatIpv4(entry.address) || isTailscaleCgnatIpv4(entry.address)) {
+        network = 'tailscale';
+      } else if (low.startsWith('zt')) {
+        network = 'zerotier';
+      } else if (low.startsWith('wg')) {
+        network = 'wireguard';
+      } else if (low.startsWith('ham') || isHamachiIpv4(entry.address)) {
+        network = 'hamachi';
+      }
+      if (network) {
+        found.push({
+          network,
+          iface,
+          address: entry.address,
+          mcpUrl: `http://${entry.address}:${port}/mcp`,
+        });
+      }
+    }
+  }
+  return found;
+}
+
+function defaultHasBinary(bin: string): boolean {
+  try {
+    const r = spawnSync('which', [bin], { stdio: 'ignore', timeout: 2000 });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Automatyczny wybór najlepszego transportu bez stałego IP (jak Hamachi):
+ * 1. Nazwany tunel Cloudflare (jeśli podano token i jest `cloudflared`),
+ * 2. Tailscale Funnel (jeśli `publicUrl` ma `.ts.net` lub jest interfejs Tailscale i brak cloudflared),
+ * 3. Cloudflare Quick Tunnel (`cloudflared` — zero konta, zero stałego IP),
+ * 4. ngrok,
+ * 5. Tunel zwrotny SSH (`ssh-reverse`, jeśli podano `sshReverseTarget`),
+ * 6. Domyślnie `cloudflared` (z czytelną instrukcją instalacji).
+ */
+export function resolveAutoTunnelKind(
+  opts: TunnelOptions,
+  hasBinary: (bin: string) => boolean = defaultHasBinary,
+  meshEndpoints: MeshEndpoint[] = detectMeshInterfaces(opts.port),
+): Exclude<TunnelKind, 'auto'> {
+  if (opts.kind !== 'auto') return opts.kind;
+  const cfBin = opts.bin || 'cloudflared';
+  if (opts.cloudflaredToken && hasBinary(cfBin)) return 'cloudflared';
+  if (opts.publicUrl && /\.ts\.net/i.test(opts.publicUrl) && hasBinary('tailscale')) return 'tailscale';
+  if (hasBinary(cfBin)) return 'cloudflared';
+  if (meshEndpoints.some((m) => m.network === 'tailscale') && hasBinary('tailscale')) return 'tailscale';
+  if (hasBinary('ngrok')) return 'ngrok';
+  if (opts.sshReverseTarget && hasBinary('ssh')) return 'ssh-reverse';
+  return 'cloudflared';
+}
+
+export function buildTunnelCommand(
+  o: TunnelOptions,
+  hasBinary: (bin: string) => boolean = defaultHasBinary,
+): { bin: string; args: string[]; env: Record<string, string> } | null {
+  const effectiveKind = o.kind === 'auto' ? resolveAutoTunnelKind(o, hasBinary) : o.kind;
   const target = `http://127.0.0.1:${o.port}`;
-  switch (o.kind) {
-    case 'cloudflared':
+  switch (effectiveKind) {
+    case 'cloudflared': {
+      const protoArgs = o.cloudflaredProtocol ? ['--protocol', o.cloudflaredProtocol] : [];
       if (o.cloudflaredToken) {
         // Token przez env (nie widać go w `ps`).
-        return { bin: o.bin || 'cloudflared', args: ['tunnel', '--no-autoupdate', 'run'], env: { TUNNEL_TOKEN: o.cloudflaredToken } };
+        return {
+          bin: o.bin || 'cloudflared',
+          args: ['tunnel', '--no-autoupdate', ...protoArgs, 'run'],
+          env: { TUNNEL_TOKEN: o.cloudflaredToken },
+        };
       }
-      return { bin: o.bin || 'cloudflared', args: ['tunnel', '--no-autoupdate', '--url', target], env: {} };
+      return {
+        bin: o.bin || 'cloudflared',
+        args: ['tunnel', '--no-autoupdate', ...protoArgs, '--url', target],
+        env: {},
+      };
+    }
     case 'ngrok':
       return {
         bin: o.bin || 'ngrok',
@@ -44,6 +151,24 @@ export function buildTunnelCommand(o: TunnelOptions): { bin: string; args: strin
     case 'tailscale':
       // Tailscale Funnel: stały adres https://<host>.<tailnet>.ts.net (wymaga zalogowanego tailscaled).
       return { bin: o.bin || 'tailscale', args: ['funnel', String(o.port)], env: {} };
+    case 'ssh-reverse': {
+      const relayTarget = String(o.sshReverseTarget || '').trim();
+      if (!relayTarget) return null;
+      const remotePort = o.sshReverseRemotePort || o.port;
+      return {
+        bin: o.bin || 'ssh',
+        args: [
+          '-NT',
+          '-o', 'BatchMode=yes',
+          '-o', 'ExitOnForwardFailure=yes',
+          '-o', 'ServerAliveInterval=15',
+          '-o', 'ServerAliveCountMax=3',
+          '-R', `0.0.0.0:${remotePort}:127.0.0.1:${o.port}`,
+          relayTarget,
+        ],
+        env: {},
+      };
+    }
     default:
       return null;
   }
@@ -55,6 +180,7 @@ export function parseTunnelUrl(kind: TunnelKind, line: string): string | null {
     cloudflared: /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i,
     ngrok: /"url":"(https:\/\/[^"]+)"/i,
     tailscale: /https:\/\/[a-z0-9.-]+\.ts\.net/i,
+    'ssh-reverse': /https?:\/\/[a-z0-9.-]+(?::\d+)?/i,
   };
   const re = patterns[kind];
   if (!re) return null;
@@ -91,6 +217,7 @@ export class TunnelManager {
   private failedChecks = 0;
   private stopped = false;
   private attempt = 0;
+  private forceCloudflaredHttp2 = false;
   readonly status: TunnelStatus;
 
   constructor(
@@ -99,13 +226,25 @@ export class TunnelManager {
       onUrl?: (status: TunnelStatus) => void;
       onLog?: (level: 'INFO' | 'WARN' | 'ERROR', message: string) => void;
     } = {},
-    private readonly deps: { hasInternet?: () => Promise<boolean>; fetchImpl?: typeof fetch; spawnImpl?: typeof spawn } = {},
+    private readonly deps: {
+      hasInternet?: () => Promise<boolean>;
+      fetchImpl?: typeof fetch;
+      spawnImpl?: typeof spawn;
+      hasBinary?: (bin: string) => boolean;
+      detectMesh?: (port: number) => MeshEndpoint[];
+    } = {},
   ) {
+    const meshEndpoints = (deps.detectMesh || detectMeshInterfaces)(opts.port);
+    const effectiveKind = opts.kind === 'auto'
+      ? resolveAutoTunnelKind(opts, deps.hasBinary || defaultHasBinary, meshEndpoints)
+      : opts.kind;
     this.status = {
       kind: opts.kind,
+      effectiveKind,
       state: opts.kind === 'none' ? 'off' : 'waiting_network',
       publicUrl: opts.publicUrl || null,
       mcpUrl: opts.publicUrl ? `${opts.publicUrl}/mcp` : null,
+      meshEndpoints,
       since: null,
       restarts: 0,
       lastError: null,
@@ -150,14 +289,32 @@ export class TunnelManager {
 
   private async launch(): Promise<void> {
     if (this.stopped || this.proc) return;
+    this.status.meshEndpoints = (this.deps.detectMesh || detectMeshInterfaces)(this.opts.port);
     const online = await (this.deps.hasInternet || hasInternet)();
     if (!online) {
       this.status.state = 'waiting_network';
       this.schedule(10_000);
       return;
     }
-    const cmd = buildTunnelCommand(this.opts);
-    if (!cmd) return;
+    const effectiveKind = this.opts.kind === 'auto'
+      ? resolveAutoTunnelKind(this.opts, this.deps.hasBinary || defaultHasBinary, this.status.meshEndpoints)
+      : this.opts.kind;
+    this.status.effectiveKind = effectiveKind;
+    const protocol = effectiveKind === 'cloudflared'
+      ? (this.opts.cloudflaredProtocol || (this.forceCloudflaredHttp2 ? 'http2' : ''))
+      : '';
+    this.status.protocol = protocol || (effectiveKind === 'cloudflared' ? 'auto' : effectiveKind);
+
+    const cmd = buildTunnelCommand(
+      { ...this.opts, kind: effectiveKind, cloudflaredProtocol: protocol },
+      this.deps.hasBinary || defaultHasBinary,
+    );
+    if (!cmd) {
+      if (effectiveKind === 'ssh-reverse') {
+        this.fail('Tryb ssh-reverse wymaga ustawienia MCP_SSH_REVERSE_TARGET (np. user@vps.example.com).');
+      }
+      return;
+    }
     this.status.state = 'starting';
     let child: ChildProcess;
     try {
@@ -168,14 +325,16 @@ export class TunnelManager {
     }
     this.proc = child;
     // cloudflared drukuje adres zanim połączenie z krawędzią Cloudflare jest gotowe —
-    // „up” dopiero po „Registered tunnel connection”. Brak rejestracji w 90 s → restart.
-    const needsRegistration = this.opts.kind === 'cloudflared';
+    // „up” dopiero po „Registered tunnel connection”. Brak rejestracji w 90 s → restart z fallbackiem HTTP/2 (TCP 443).
+    const needsRegistration = effectiveKind === 'cloudflared';
     let pendingUrl: string | null = null;
     let registered = !needsRegistration;
     const regTimer = needsRegistration
       ? setTimeout(() => {
           if (this.proc === child && !registered) {
-            this.status.lastError = 'cloudflared nie połączył się z Cloudflare w 90 s (zablokowany port 7844 TCP/UDP?).';
+            this.forceCloudflaredHttp2 = !this.forceCloudflaredHttp2;
+            this.status.lastError =
+              'cloudflared nie połączył się z Cloudflare w 90 s (zablokowany port 7844 TCP/UDP?) — przełączam protokół na HTTP/2.';
             child.kill('SIGTERM');
           }
         }, 90_000)
@@ -183,7 +342,7 @@ export class TunnelManager {
     regTimer?.unref?.();
     const onData = (buf: Buffer) => {
       for (const line of buf.toString('utf8').split('\n')) {
-        const url = parseTunnelUrl(this.opts.kind, line);
+        const url = parseTunnelUrl(effectiveKind, line);
         if (url) {
           pendingUrl = url;
           this.status.publicUrl = url;
@@ -199,8 +358,8 @@ export class TunnelManager {
     };
     child.stdout?.on('data', onData);
     child.stderr?.on('data', onData);
-    // Tailscale ze stałym adresem: nie zawsze drukuje URL — uznaj za gotowy po starcie procesu.
-    if (this.opts.publicUrl && this.opts.kind === 'tailscale') {
+    // Tailscale lub ssh-reverse ze stałym adresem: nie zawsze drukuje URL — uznaj za gotowy po starcie procesu.
+    if (this.opts.publicUrl && (effectiveKind === 'tailscale' || effectiveKind === 'ssh-reverse')) {
       setTimeout(() => this.proc === child && this.status.state === 'starting' && this.setUrl(this.opts.publicUrl!), 5_000).unref?.();
     }
     child.on('error', (e: NodeJS.ErrnoException) => {
@@ -212,7 +371,7 @@ export class TunnelManager {
       if (regTimer) clearTimeout(regTimer);
       if (this.proc !== child) return;
       this.proc = null;
-      this.fail(`Tunel ${this.opts.kind} zakończył się (kod ${code ?? signal}).`);
+      this.fail(`Tunel ${effectiveKind} zakończył się (kod ${code ?? signal}).`);
     });
   }
 
@@ -225,8 +384,9 @@ export class TunnelManager {
     if (!this.stopped) this.schedule(restartDelayMs(this.attempt++));
   }
 
-  /** Watchdog: sprawdza publiczny adres; po 3 nieudanych próbach restartuje tunel (np. zerwane łącze). */
+  /** Watchdog: sprawdza publiczny adres; po 3 nieudanych próbach restartuje tunel (np. zerwane łącze lub zmiana IP). */
   async checkHealth(): Promise<void> {
+    this.status.meshEndpoints = (this.deps.detectMesh || detectMeshInterfaces)(this.opts.port);
     if (this.stopped || this.status.state !== 'up' || !this.status.publicUrl) return;
     let ok = false;
     try {

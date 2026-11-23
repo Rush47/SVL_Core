@@ -12,7 +12,7 @@ import {
 import { useSvlSync } from '../utils/svlSyncStore';
 
 export const DEFAULT_AGENT_AVATARS: Partial<Record<AvatarProfileKey, string>> = {
-  System_SI_1: jynMitekCoreAvatarImg,
+  Jyn: jynMitekCoreAvatarImg,
   Operator: operatorAvatarImg,
 };
 
@@ -20,8 +20,8 @@ const PROFILE_META: Record<
   AvatarProfileKey,
   { label: string; short: string; ringClass: string; bgClass: string; textClass: string }
 > = {
-  System_SI_1: {
-    label: 'Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)',
+  Jyn: {
+    label: 'Jyn Mitek (Infrastruktura · ROOT)',
     short: 'JM',
     ringClass: 'border-cyan-400/80',
     bgClass: 'bg-cyan-950/70',
@@ -35,7 +35,7 @@ const PROFILE_META: Record<
     textClass: 'text-violet-200',
   },
   JEDI_Omni_OS: {
-    label: 'JEDI Omni-OS v11.5 (VM + AI Generatywne)',
+    label: 'JEDI Omni-OS v12 (VM + AI Generatywne)',
     short: 'JD',
     ringClass: 'border-emerald-400/80',
     bgClass: 'bg-emerald-950/70',
@@ -51,9 +51,9 @@ const PROFILE_META: Record<
 };
 
 const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
-  { key: 'System_SI_1', label: 'Jyn Mitek (System_SI_1 · Infrastruktura · ROOT)' },
+  { key: 'Jyn', label: 'Jyn Mitek (Infrastruktura · ROOT)' },
   { key: 'SI_Sphere', label: 'SI_Sphere (Rdzeń Floty SVL-465 · ROOT)' },
-  { key: 'JEDI_Omni_OS', label: 'JEDI Omni-OS v11.5 (VM + AI Generatywne)' },
+  { key: 'JEDI_Omni_OS', label: 'JEDI Omni-OS v12 (VM + AI Generatywne)' },
   { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
 ];
 
@@ -78,15 +78,28 @@ export const SvlAvatar: React.FC<{
         textClass: 'text-slate-300',
       };
 
-  const primarySrc = resolvedKey
-    ? effectiveAvatars[resolvedKey] || DEFAULT_AGENT_AVATARS[resolvedKey] || ''
-    : '';
+  const customSrc = resolvedKey ? effectiveAvatars[resolvedKey] || '' : '';
+  const defaultSrc = resolvedKey ? DEFAULT_AGENT_AVATARS[resolvedKey] || '' : '';
 
-  const [imgFailed, setImgFailed] = useState(false);
+  const [fallbackStep, setFallbackStep] = useState<0 | 1 | 2>(0);
 
   useEffect(() => {
-    setImgFailed(false);
-  }, [primarySrc]);
+    setFallbackStep(0);
+  }, [customSrc, defaultSrc]);
+
+  const activeSrc =
+    fallbackStep === 0
+      ? customSrc || defaultSrc
+      : fallbackStep === 1 && customSrc && defaultSrc && customSrc !== defaultSrc
+        ? defaultSrc
+        : '';
+
+  const handleImgError = () => {
+    setFallbackStep((prev) => {
+      if (prev === 0 && customSrc && defaultSrc && customSrc !== defaultSrc) return 1;
+      return 2;
+    });
+  };
 
   const fontSize = Math.max(9, Math.round(size * 0.36));
 
@@ -96,13 +109,13 @@ export const SvlAvatar: React.FC<{
       title={meta.label}
       className={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border ${meta.ringClass} ${meta.bgClass} ${meta.textClass} font-semibold select-none ${className}`}
     >
-      {primarySrc && !imgFailed ? (
+      {activeSrc ? (
         <img
-          src={primarySrc}
+          src={activeSrc}
           alt={`Awatar: ${meta.label}`}
           referrerPolicy="no-referrer"
           className="h-full w-full object-cover"
-          onError={() => setImgFailed(true)}
+          onError={handleImgError}
         />
       ) : (
         <span>{meta.short}</span>
@@ -114,7 +127,7 @@ export const SvlAvatar: React.FC<{
 export const AvatarSettingsModal: React.FC<{
   initialAgent?: AvatarProfileKey;
   onClose: () => void;
-}> = ({ initialAgent = 'System_SI_1', onClose }) => {
+}> = ({ initialAgent = 'Jyn', onClose }) => {
   const { avatars, saveAgentAvatar, resetAgentAvatar, refreshDomainModules } = useSvlSync();
   const [selectedProfile, setSelectedProfile] = useState<AvatarProfileKey>(initialAgent);
   const [sourceMode, setSourceMode] = useState<'file' | 'url' | 'prompt'>('file');

@@ -104,6 +104,13 @@ SVL_SHIP_OLLAMA_LOCAL_PORT=11434
 SVL_SHIP_OLLAMA_MODELS=
 # GPU na statku (dużo VRAM): 999 = wszystkie warstwy modelu na GPU.
 OLLAMA_NUM_GPU=999
+# Universal MCP Hub bez stałego IP (jak Hamachi): auto | cloudflared | tailscale | ngrok | ssh-reverse | none
+MCP_NODE_NAME=svl-364
+MCP_TUNNEL=auto
+MCP_PORT=3334
+MCP_ALLOW_SHELL=1
+MCP_READ_ONLY=0
+SVL_BASE_URL=http://127.0.0.1:3000
 # Uzupełnij według potrzeb:
 GITHUB_TOKEN=
 GEMINI_API_KEY=
@@ -156,12 +163,16 @@ EOF
   systemctl enable --now svl-sentinel.service
 }
 
+install_mcp_zeroip() {
+  SVL_INSTALL_TAILSCALE="${SVL_INSTALL_TAILSCALE:-0}" \
+    bash "${SVL_ROOT}/deploy/install-mcp.sh" "${SVL_ROOT}" "root"
+}
+
 install_ollama() {
   command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh
 }
 
-# Maksymalna wydajność Ollamy: modele zostają w pamięci, flash attention, skwantowany cache KV,
-# Bielik i Maya załadowane jednocześnie (bez wymiany modeli między wiadomościami).
+# Maksymalna wydajność Ollamy: modele zostają w pamięci, flash attention, skwantowany cache KV.
 tune_ollama() {
   mkdir -p /etc/systemd/system/ollama.service.d &&
   cat > /etc/systemd/system/ollama.service.d/svl-wydajnosc.conf <<'CONF'
@@ -215,6 +226,11 @@ else
   skip "Ollama — maksymalna wydajność" "brak usługi ollama.service"
 fi
 step "Usługi systemd (svl-coreos2, svl-sentinel)" install_services
+if [ "${SVL_INSTALL_MCP:-1}" = "1" ]; then
+  step "Universal MCP Hub + Tunel Zero-IP (svl-mcp.service)" install_mcp_zeroip
+else
+  skip "Universal MCP Hub" "ustaw SVL_INSTALL_MCP=1, aby zainstalować"
+fi
 step "Sprawdzenie działania" verify_running
 if [ "${SVL_RUN_DEBOOTSTRAP:-0}" = "1" ]; then
   step "Debootstrap Debian 13 → ${DEBOOTSTRAP_TARGET}" run_debootstrap
@@ -229,4 +245,4 @@ if [ "${FAILED}" -ne 0 ]; then
   echo "WYNIK: instalacja NIEPEŁNA — sprawdź kroki z BŁĄD powyżej (log: ${LOG_FILE})."
   exit 1
 fi
-echo "WYNIK: SVL CoreOS 2: Apex zainstalowany i działa (http://<adres>:3000)."
+echo "WYNIK: SVL CoreOS 2: Apex + Universal MCP Hub zainstalowany i działa (http://<adres>:3000, MCP: sudo svl-mcp-info)."

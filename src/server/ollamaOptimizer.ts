@@ -189,6 +189,18 @@ export function isAutoGitSyncAllowed(env: Record<string, string | undefined> = p
  * Resolves and validates an installed Ollama model with a 30s TTL cache per host (and 15s negative
  * cache when offline) so consecutive chat/proactive calls skip redundant network probes.
  */
+export type ResolveCachedOllamaResult =
+  | {
+      ok: true;
+      model: string;
+      cached: boolean;
+      exactMatch: boolean;
+      substituted: boolean;
+      installedModels: string[];
+      version: string;
+    }
+  | { ok: false; reason: string; cached?: boolean };
+
 export async function resolveCachedOllamaModel(
   baseUrl: string,
   requestedModel: string,
@@ -200,13 +212,16 @@ export async function resolveCachedOllamaModel(
     probeTimeoutMs?: number;
     fetchImpl?: typeof fetch;
   } = {},
-): Promise<{ ok: true; model: string; cached: boolean } | { ok: false; reason: string; cached?: boolean }> {
+): Promise<ResolveCachedOllamaResult> {
   const base = baseUrl.replace(/\/$/, '');
   const ttlMs = opts.ttlMs ?? DEFAULT_CACHE_TTL_MS;
   const offlineTtlMs = opts.offlineTtlMs ?? DEFAULT_OFFLINE_CACHE_TTL_MS;
   // 1,5 s dawało fałszywe „niedostępna”, gdy Ollama ładowała lub generowała model.
   const probeTimeoutMs = opts.probeTimeoutMs ?? 6000;
   const fetchFn = opts.fetchImpl ?? fetch;
+
+  const extractNames = (list: Array<{ name?: string; model?: string }>): string[] =>
+    list.map((m) => String(m?.name || m?.model || '').trim()).filter(Boolean);
 
   const cached = ollamaTagsCache.get(base);
   if (!opts.forceRefresh && cached && Date.now() - cached.checkedAt < ttlMs) {
@@ -216,7 +231,15 @@ export async function resolveCachedOllamaModel(
       Boolean(opts.requireVision),
     );
     if (resolved.installedCount > 0) {
-      return { ok: true, model: resolved.name, cached: true };
+      return {
+        ok: true,
+        model: resolved.name,
+        cached: true,
+        exactMatch: !resolved.substituted,
+        substituted: resolved.substituted,
+        installedModels: extractNames(cached.models),
+        version: cached.version,
+      };
     }
   }
 
@@ -265,7 +288,15 @@ export async function resolveCachedOllamaModel(
       version: versionStr,
       models,
     });
-    return { ok: true, model: resolved.name, cached: false };
+    return {
+      ok: true,
+      model: resolved.name,
+      cached: false,
+      exactMatch: !resolved.substituted,
+      substituted: resolved.substituted,
+      installedModels: extractNames(models),
+      version: versionStr,
+    };
   } catch (error) {
     ollamaTagsCache.delete(base);
     const reason = `Ollama (${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}`;

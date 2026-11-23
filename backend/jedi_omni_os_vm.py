@@ -336,7 +336,7 @@ class JediOmniOsVmRuntime:
         command_text: str,
         *,
         actor: str = "Mateusz Mitek (Operator)",
-        conversation_id: str = "conv-system-si-1",
+        conversation_id: str = "conv-jyn",
         generates_lethal_risk: Optional[bool] = None,
         no_other_option: Optional[bool] = None,
     ) -> dict[str, Any]:

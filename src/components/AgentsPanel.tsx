@@ -49,7 +49,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   } = useSvlSync();
   const agentsList: any[] = agentsData?.agents || [];
   const effectiveAgents = getEffectiveCanonicalAgents(agentsList);
-  const selectedAgent = selectedAgentPanel || effectiveAgents[0]?.canonicalName || 'System_SI_1';
+  const selectedAgent = selectedAgentPanel || effectiveAgents[0]?.canonicalName || 'Jyn';
 
   const [senderActor, setSenderActor] = useState<'operator'>('operator');
   const [taskTitle, setTaskTitle] = useState('');
@@ -796,7 +796,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                 </span>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Każde zapytanie kierowane do <strong className="text-emerald-300">JEDI Omni-OS v12</strong> generuje pełną odpowiedź AI bez blokad (Grok/Ollama/Gemini z pamięcią SQLite), a polecenia systemowe i synchronizacja (<code className="text-cyan-300">/synchronizuj</code>, <code className="text-emerald-300">/jedi status</code>, <code className="text-emerald-300">/jedi apply-v12-core</code>) uruchamiają maszynę wirtualną <code className="text-emerald-300">JEDI_Omni_OS_Magnum_Opus_v12</code> w czasie rzeczywistym:
+                Każde zapytanie kierowane do <strong className="text-emerald-300">JEDI Omni-OS v12</strong> generuje pełną odpowiedź AI bez blokad (Ollama/Gemini z pamięcią SQLite), a polecenia systemowe i synchronizacja (<code className="text-cyan-300">/synchronizuj</code>, <code className="text-emerald-300">/jedi status</code>, <code className="text-emerald-300">/jedi apply-v12-core</code>) uruchamiają maszynę wirtualną <code className="text-emerald-300">JEDI_Omni_OS_Magnum_Opus_v12</code> w czasie rzeczywistym:
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] font-mono text-slate-300 bg-[#0B0D13] p-3 rounded-lg border border-slate-800">
                 <div><span className="text-emerald-300">/jedi status</span> · stan VM i metryki</div>
@@ -1136,7 +1136,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           </span>
         </div>
 
-        {/* ROOT Authority Matrix: Operator + System_SI_1 */}
+        {/* ROOT Authority Matrix: Operator + Jyn */}
         <div className="p-3.5 rounded-lg bg-[#0B0D13] border border-emerald-500/30 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs">

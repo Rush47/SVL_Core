@@ -320,7 +320,7 @@ function SVLWorkspaceShell() {
                 ? 'border-rose-700 bg-rose-950/30 text-rose-300'
                 : 'border-slate-700 bg-[#0B0D13] text-slate-300 hover:border-slate-600'}`}
             title={operatorAuthStatus === 'authorized'
-              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · System_SI_1, SI_Sphere & JEDI Omni-OS v12 VM)`
+              ? `Operator ROOT: ${operatorRootInfo?.operator || 'Mateusz Mitek'} (uid=${operatorRootInfo?.uid ?? 0} · ${operatorRootInfo?.scopesCount || 22} zakresów ROOT · Jyn, SI_Sphere & JEDI Omni-OS v12 VM)`
               : operatorAuthStatus === 'denied'
                 ? 'Serwer odrzucił token operatora'
                 : 'Wpisz prywatny SVL_OPERATOR_TOKEN'}

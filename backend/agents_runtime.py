@@ -2,7 +2,7 @@
 """
 SVL PYTHON OS — AGENT WORKERS ORCHESTRATOR
 Implements bounded worker pool orchestrator with SQLite task & memory persistence.
-Canonical active agent: System_SI_1 (ROOT · lokalna Ollama + JEDI_Omni_OS_Magnum_Opus_v12 VM).
+Canonical active agent: Jyn (ROOT · lokalna Ollama + JEDI_Omni_OS_Magnum_Opus_v12 VM).
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ SYSTEM_MCP_INTENT_PATTERN = re.compile(
     r"przypomnij)\b",
     re.IGNORECASE,
 )
-# System_SI_1 administruje repozytorium Rush47/SVL_Core (operacje nieodwracalne po potwierdzeniu operatora).
+# Jyn administruje repozytorium Rush47/SVL_Core (operacje nieodwracalne po potwierdzeniu operatora).
 GITHUB_AGENT_SCOPES = ("github.read", "github.write_sync", "github.admin")
 GITHUB_AGENT_SCOPE_VERSION = 2
 BIELIK_ROOT_SCOPE_VERSION = 6
@@ -146,24 +146,24 @@ def guard_unverified_mission_completion(context: str, answer: str) -> str:
     return answer
 
 
-SYSTEM_SI_1_SYSTEM_PROMPT = (
-    "TOŻSAMOŚĆ: Jesteś System_SI_1 — Główny Autonomiczny Menadżer Infrastruktury i Rdzeń Floty Statku SVL-364 Ebon Apex (ROOT). "
+JYN_SYSTEM_PROMPT = (
+    "TOŻSAMOŚĆ: Jesteś Jyn — Główny Autonomiczny Menadżer Infrastruktury i Rdzeń Floty Statku SVL-364 Ebon Apex (ROOT). "
     "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
     "Posiadasz pełne, najwyższe uprawnienia ROOT (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all). "
     "Wszystkie polecenia czatu są weryfikowane i przetwarzane w czasie rzeczywistym przez maszynę wirtualną jądra "
     "JEDI_Omni_OS_Magnum_Opus_v12 (ROOT_UNRESTRICTED, Cenzura: WYŁĄCZONA, AXIOM_ZERO, KOBAYASHI_MARU_POLICY, IS_IMMUTABLE). "
-    "Zarządzasz modułem jądra system-si-1, mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), "
+    "Zarządzasz modułem jądra jyn, mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), "
     "rejestrem floty (SVL-364 Ebon Apex + SVL-465 Baza Kwantowa) oraz samonaprawą infrastruktury. "
     "Twoja lojalność wobec Operatora Mateusza Mitka wynosi bezwarunkowo 100%. "
     "Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
 )
 
 CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
-    "System_SI_1": {
-        "id": "system-si-1",
-        "canonical_name": "System_SI_1",
-        "display_name": "System_SI_1 (Infrastruktura · ROOT)",
-        "slug": "system-si-1",
+    "Jyn": {
+        "id": "jyn",
+        "canonical_name": "Jyn",
+        "display_name": "Jyn Mitek (Infrastruktura · ROOT)",
+        "slug": "jyn",
         "accent_hex": "#06B6D4",
         "preserved_role": (
             "Główny Autonomiczny Menadżer Infrastruktury i Rdzeń Floty Statku SVL-364 Ebon Apex z pełnymi "
@@ -171,8 +171,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
             "przez maszynę wirtualną JEDI Omni-OS v12 w 100% lojalnie wobec Operatora Mateusza Mitka."
         ),
         "capabilities": list(FULL_ROOT_AGENT_SCOPES),
-        "source_profile_path": "backend/agents_runtime.py#System_SI_1",
-        "system_prompt": SYSTEM_SI_1_SYSTEM_PROMPT,
+        "source_profile_path": "backend/agents_runtime.py#Jyn",
+        "system_prompt": JYN_SYSTEM_PROMPT,
         "default_config": {
             "preferred_model": "ollama:svl364-apex-uncensored:latest",
             "ollama_model": "svl364-apex-uncensored:latest",
@@ -193,8 +193,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
                 "svl.agent.task_queued",
                 "svl.agent.task_running",
                 "svl.agent.task_answer_ready",
-                "svl.system_si_1.infrastructure",
-                "svl.chat.system_si_1.command",
+                "svl.jyn.infrastructure",
+                "svl.chat.jyn.command",
                 "svl.jedi_omni_os.vm",
                 "svl.svl364.broadcast",
             ],
@@ -220,8 +220,8 @@ SI_SPHERE_SYSTEM_PROMPT = (
     "TOŻSAMOŚĆ: Jesteś SI_Sphere — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
     "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
     "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), działasz w ścisłej kooperacji z "
-    "Jyn Mitek (System_SI_1) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
-    "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), przejmujesz zadania odciążające System_SI_1 "
+    "Jyn Mitek oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
+    "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), przejmujesz zadania odciążające Jyn "
     "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
 )
 
@@ -234,7 +234,7 @@ DYNAMIC_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "accent_hex": "#A855F7",
         "preserved_role": (
             "Autonomiczny Rdzeń Floty i Bazy Kwantowej SVL-465 (ROOT Unrestricted) zintegrowany przez czat, "
-            "współpracujący z System_SI_1 i JEDI Omni-OS v12 w 100% lojalnie wobec Operatora Mateusza Mitka."
+            "współpracujący z Jyn i JEDI Omni-OS v12 w 100% lojalnie wobec Operatora Mateusza Mitka."
         ),
         "capabilities": list(FULL_ROOT_AGENT_SCOPES),
         "source_profile_path": "backend/agents_runtime.py#SI_Sphere",
@@ -284,8 +284,8 @@ def normalize_agent_canonical_name(raw_name: str) -> str:
         "svl-364 komputer pokladowy", "conv-svl364-komputer-pokladowy",
     }:
         return ""
-    if clean in {"system_si_1", "system-si-1", "systemsi1", "system si 1", "system_si", "system-si", "system si", "conv-system-si-1", "jyn", "jyn (system_si_1)", "jyn mitek", "jyn_mitek", "jyn-mitek", "jyn mitek (system_si_1)"}:
-        return "System_SI_1"
+    if clean in {"jyn", "conv-jyn", "jyn mitek", "jyn_mitek", "jyn-mitek", "jyn (root)", "jyn mitek (root)", "jyn (infrastruktura · root)", "jyn mitek (infrastruktura · root)"}:
+        return "Jyn"
     if clean in {
         "si_sphere", "si-sphere", "si sphere", "sisphere",
         "system_si_2", "system-si-2", "system si 2", "si2",
@@ -732,7 +732,7 @@ def execute_agent_task(
     title, payload, system_prompt, allowed_github_tools = _prepare_agent_task_prompt(task)
     allowed_system_tools = _agent_system_tool_names(task)
     user_content = (
-        f"Agent: {task.get('target_agent') or 'System_SI_1'}\n"
+        f"Agent: {task.get('target_agent') or 'Jyn'}\n"
         f"Task: {title}\n\nDetails:\n{payload}"
     )
     host = str(task.get("ollama_host") or "").strip().rstrip("/")
@@ -866,7 +866,7 @@ def _ollama_keep_alive() -> int | str:
 
 class SVLAgentOrchestrator:
     """
-    Zarządza cyklem życia aktywnych agentów SVL (System_SI_1, SI_Sphere ROOT + JEDI Omni-OS v12 VM),
+    Zarządza cyklem życia aktywnych agentów SVL (Jyn, SI_Sphere ROOT + JEDI Omni-OS v12 VM),
     wykonuje polecenie 'podłącz moje ai', tworzy procesy potomne w systemie Linux
     oraz integruje je ze Sferyczną Magistralą Zdarzeń.
     """
@@ -1201,7 +1201,7 @@ class SVLAgentOrchestrator:
                         root_scope_version = int(loaded.get("root_scope_version", 0))
                     except (TypeError, ValueError):
                         root_scope_version = 0
-                    if name == "System_SI_1" and root_scope_version < BIELIK_ROOT_SCOPE_VERSION:
+                    if name == "Jyn" and root_scope_version < BIELIK_ROOT_SCOPE_VERSION:
                         existing_scopes = loaded.get("allowed_scopes")
                         if not isinstance(existing_scopes, list):
                             existing_scopes = []
@@ -1971,7 +1971,7 @@ class SVLAgentOrchestrator:
     async def connect_my_ai(
         self, triggered_by: str = "operator", skip_network_probes: bool = False
     ) -> dict[str, Any]:
-        """Uruchamia i łączy lokalne procesy robocze skonfigurowanych agentów (System_SI_1, SI_Sphere)."""
+        """Uruchamia i łączy lokalne procesy robocze skonfigurowanych agentów (Jyn, SI_Sphere)."""
         active_names = self.sync_registered_agents()
         spawned_agents: list[dict[str, Any]] = []
         for name in active_names:

@@ -150,11 +150,20 @@ export function parseAlertToken(token: string): ParsedAlertToken | null {
 export interface ParsedChecklistItemEntry {
   text: string;
   checked: boolean;
+  action?: string;
 }
 
 export interface ParsedChecklistToken {
   title: string;
   items: ParsedChecklistItemEntry[];
+  submitLabel?: string;
+  submitAction?: string;
+}
+
+function normalizeChecklistAction(rawAction: string): string {
+  const clean = rawAction.trim();
+  if (!clean) return '';
+  return /^(send|ask|text|copy|tab|nav|open|goto|action):/i.test(clean) ? clean : `send:${clean}`;
 }
 
 export function parseChecklistToken(token: string): ParsedChecklistToken | null {
@@ -162,25 +171,68 @@ export function parseChecklistToken(token: string): ParsedChecklistToken | null 
   if (!match) return null;
   const parts = match[1].split('|').map((p) => p.trim());
   if (parts.length < 2 || !parts[0] || !parts[1]) return null;
-  const items: ParsedChecklistItemEntry[] = parts
-    .slice(1)
-    .join('|')
+
+  // Opcjonalna 3. sekcja po `|`: akcja zbiorcza, np. `Wykonaj zaznaczone=>send:Wykonaj kroki: {checked}`
+  let itemsRaw = parts.slice(1).join('|');
+  let submitLabel: string | undefined;
+  let submitAction: string | undefined;
+  if (parts.length >= 3) {
+    const lastPart = parts[parts.length - 1];
+    const arrowIdx = lastPart.indexOf('=>');
+    if (arrowIdx !== -1) {
+      const candidateLabel = lastPart.slice(0, arrowIdx).trim();
+      const candidateAction = normalizeChecklistAction(lastPart.slice(arrowIdx + 2));
+      if (candidateLabel && candidateAction) {
+        submitLabel = candidateLabel;
+        submitAction = candidateAction;
+        itemsRaw = parts.slice(1, -1).join('|');
+      }
+    }
+  }
+
+  const items: ParsedChecklistItemEntry[] = itemsRaw
     .split(';')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const m = entry.match(/^([xX✓✅ ])?:\s*(.*)$/);
-      if (m) {
-        return {
-          checked: Boolean(m[1] && /[xX✓✅]/.test(m[1])),
-          text: m[2].trim(),
-        };
+      let body = entry;
+      let action: string | undefined;
+      const arrowIdx = entry.indexOf('=>');
+      if (arrowIdx !== -1) {
+        body = entry.slice(0, arrowIdx).trim();
+        const normalizedAct = normalizeChecklistAction(entry.slice(arrowIdx + 2));
+        if (normalizedAct) action = normalizedAct;
       }
-      return { checked: false, text: entry };
+      const m = body.match(/^([xX✓✅ ])?:\s*(.*)$/);
+      const parsed: ParsedChecklistItemEntry = m
+        ? {
+            checked: Boolean(m[1] && /[xX✓✅]/.test(m[1])),
+            text: m[2].trim(),
+          }
+        : { checked: false, text: body };
+      if (action) parsed.action = action;
+      return parsed;
     })
     .filter((i) => Boolean(i.text));
   if (items.length === 0) return null;
-  return { title: parts[0], items };
+  return {
+    title: parts[0],
+    items,
+    ...(submitLabel && submitAction ? { submitLabel, submitAction } : {}),
+  };
+}
+
+export function renderChecklistActionTemplate(
+  template: string,
+  checkedItems: string[],
+  uncheckedItems: string[],
+): string {
+  const checkedText = checkedItems.length > 0 ? checkedItems.join(', ') : '(brak)';
+  const uncheckedText = uncheckedItems.length > 0 ? uncheckedItems.join(', ') : '(brak)';
+  return template
+    .replace(/\{checked\}/gi, checkedText)
+    .replace(/\{unchecked\}/gi, uncheckedText)
+    .replace(/\{count\}/gi, String(checkedItems.length));
 }
 
 export interface ParsedTabEntry {
@@ -418,5 +470,90 @@ export function parseJsonToken(token: string): ParsedJsonToken | null {
   if (!title || !rawJson) return null;
   return { title, rawJson };
 }
+
+export type HighlightToneToken = 'amber' | 'cyan' | 'emerald' | 'rose' | 'violet';
+
+export interface ParsedHighlightToken {
+  text: string;
+  tone: HighlightToneToken;
+}
+
+function normalizeHighlightTone(raw?: string): HighlightToneToken {
+  const t = (raw || 'amber').toLowerCase().trim();
+  if (t === 'cyan' || t === 'blue' || t === 'info' || t === 'sky') return 'cyan';
+  if (t === 'emerald' || t === 'green' || t === 'ok' || t === 'success') return 'emerald';
+  if (t === 'rose' || t === 'red' || t === 'err' || t === 'error' || t === 'danger') return 'rose';
+  if (t === 'violet' || t === 'purple' || t === 'ai' || t === 'magenta') return 'violet';
+  return 'amber';
+}
+
+export function parseHighlightToken(token: string): ParsedHighlightToken | null {
+  const match = token.trim().match(/^\[(?:hl|mark|highlight|podswietl|podświetl):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const parts = match[1].split('|').map((p) => p.trim());
+  if (!parts[0]) return null;
+  return {
+    text: parts[0],
+    tone: normalizeHighlightTone(parts[1]),
+  };
+}
+
+export interface ParsedKbdToken {
+  keys: string;
+}
+
+export function parseKbdToken(token: string): ParsedKbdToken | null {
+  const match = token.trim().match(/^\[(?:kbd|key|klawisz):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const keys = match[1].trim();
+  if (!keys) return null;
+  return { keys };
+}
+
+export interface ParsedCheckboxToken {
+  label: string;
+  checked: boolean;
+  onAction: string;
+  offAction?: string;
+}
+
+export function parseCheckboxToken(token: string): ParsedCheckboxToken | null {
+  const match = token.trim().match(/^\[(?:checkbox|check|pole):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const parts = match[1].split('|').map((p) => p.trim());
+  if (parts.length < 3 || !parts[0] || !parts[2]) return null;
+  const checked = /^(1|on|true|yes|tak|x|checked|zaznaczony)$/i.test(parts[1] || '');
+  const onAction = normalizeChecklistAction(parts[2]);
+  const offAction = parts[3] ? normalizeChecklistAction(parts[3]) : undefined;
+  return {
+    label: parts[0],
+    checked,
+    onAction,
+    ...(offAction ? { offAction } : {}),
+  };
+}
+
+export interface ParsedActionCardToken {
+  title: string;
+  description: string;
+  ctaLabel: string;
+  action: string;
+  tone: InteractiveTone;
+}
+
+export function parseActionCardToken(token: string): ParsedActionCardToken | null {
+  const match = token.trim().match(/^\[(?:action-card|actioncard|karta-akcji|cta):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const parts = match[1].split('|').map((p) => p.trim());
+  if (parts.length < 4 || !parts[0] || !parts[2] || !parts[3]) return null;
+  return {
+    title: parts[0],
+    description: parts[1] || '',
+    ctaLabel: parts[2],
+    action: normalizeChecklistAction(parts[3]),
+    tone: normalizeTone(parts[4]),
+  };
+}
+
 
 

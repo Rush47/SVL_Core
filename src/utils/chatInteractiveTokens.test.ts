@@ -1,22 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  parseActionCardToken,
   parseAlertToken,
   parseBadgeToken,
   parseBarsToken,
+  parseCheckboxToken,
   parseChecklistToken,
   parseChipsToken,
   parseConfirmToken,
   parseDiffToken,
   parseFormToken,
   parseGaugeToken,
+  parseHighlightToken,
   parseJsonToken,
+  parseKbdToken,
   parseKpiToken,
   parseStepToken,
   parseTabsToken,
   parseTerminalToken,
   parseTimelineToken,
   parseToggleToken,
+  renderChecklistActionTemplate,
   renderFormTemplate,
 } from './chatInteractiveTokens.ts';
 
@@ -149,5 +154,55 @@ test('parseChecklistToken, parseTabsToken, parseConfirmToken, parseChipsToken, p
     title: 'Config',
     rawJson: '{"ok":true}',
   });
+});
+
+test('parseHighlightToken, parseKbdToken, parseCheckboxToken, parseActionCardToken and checklist actions', () => {
+  assert.deepEqual(parseHighlightToken('[hl: Kluczowy alert|rose]'), {
+    text: 'Kluczowy alert',
+    tone: 'rose',
+  });
+  assert.deepEqual(parseHighlightToken('[podświetl: Info|cyan]'), {
+    text: 'Info',
+    tone: 'cyan',
+  });
+  assert.deepEqual(parseKbdToken('[kbd: Ctrl+Shift+P]'), {
+    keys: 'Ctrl+Shift+P',
+  });
+  assert.deepEqual(
+    parseCheckboxToken('[checkbox: Tryb diagnostyczny|on|send:/diag on|send:/diag off]'),
+    {
+      label: 'Tryb diagnostyczny',
+      checked: true,
+      onAction: 'send:/diag on',
+      offAction: 'send:/diag off',
+    },
+  );
+  assert.deepEqual(
+    parseActionCardToken('[action-card: Skan systemu|Sprawdź integralność węzłów|Uruchom skan|action:scan|ok]'),
+    {
+      title: 'Skan systemu',
+      description: 'Sprawdź integralność węzłów',
+      ctaLabel: 'Uruchom skan',
+      action: 'action:scan',
+      tone: 'ok',
+    },
+  );
+
+  const cl = parseChecklistToken(
+    '[checklist: Wdrożenie|x:Sprawdź logi=>send:/status; :Otwórz jądro=>tab:kernel|Wykonaj zaznaczone=>send:Wykonaj: {checked} ({count})]',
+  );
+  assert.deepEqual(cl, {
+    title: 'Wdrożenie',
+    items: [
+      { checked: true, text: 'Sprawdź logi', action: 'send:/status' },
+      { checked: false, text: 'Otwórz jądro', action: 'tab:kernel' },
+    ],
+    submitLabel: 'Wykonaj zaznaczone',
+    submitAction: 'send:Wykonaj: {checked} ({count})',
+  });
+  assert.equal(
+    renderChecklistActionTemplate(cl!.submitAction!, ['Sprawdź logi'], ['Otwórz jądro']),
+    'send:Wykonaj: Sprawdź logi (1)',
+  );
 });
 

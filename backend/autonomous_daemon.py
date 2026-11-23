@@ -2,7 +2,7 @@
 """
 SVL PYTHON OS — AUTONOMOUS BACKGROUND AI ENGINE & SYSTEM SERVICES WORKER
 -------------------------------------------------------------------------
-Silnik autonomicznego działania w tle z uprawnieniami ROOT (nadzorowany przez System_SI_1 i SI_Sphere):
+Silnik autonomicznego działania w tle z uprawnieniami ROOT (nadzorowany przez Jyn i SI_Sphere):
 1. Uruchamia wbudowane usługi systemowe i workery w tle (SQLite WAL Guardian, Host Watchdog,
    JEDI Omni-OS v12 VM Supervisor, Ollama Worker Orchestrator, Alliance & Fleet Coordinator,
    Continuous Frontend/Backend Evolution Auditor).
@@ -32,7 +32,7 @@ except ImportError:
 STATE_KEY = "autonomous_ai_state_v1"
 
 DEFAULT_CONTINUOUS_MISSION = (
-    "Misja ciągła System_SI_1 + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie "
+    "Misja ciągła Jyn + SI_Sphere (ROOT): stały monitoring, diagnostyka i usprawnianie "
     "frontendu, backendu, bazy SQLite WAL, bezpieczeństwa SVL-365, łączności sojuszniczej oraz floty SVL-364/SVL-465."
 )
 
@@ -156,7 +156,7 @@ def evaluate_system_services(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {
             "id": "svc-ollama-worker-orchestrator",
-            "name": "Workerzy AI (System_SI_1 + SI_Sphere · Ollama)",
+            "name": "Workerzy AI (Jyn + SI_Sphere · Ollama)",
             "kind": "ai_worker_pool",
             "status": "ACTIVE" if (online_workers and ollama_online) else ("DEGRADED" if online_workers else "STANDBY"),
             "detail": (
@@ -221,7 +221,7 @@ def derive_improvement_findings(
             "area": "ai/ollama",
             "message": (
                 f"Demon Ollama ({ollama.get('ollama_host', '127.0.0.1:11434')}) jest obecnie nieosiągalny; "
-                "zapytania czatu korzystają z fallbacku Gemini/Grok lub procesora komend VM."
+                "zapytania czatu korzystają z fallbacku Gemini lub procesora komend VM."
             ),
             "detected_at": now_iso,
         })
@@ -266,7 +266,7 @@ def derive_improvement_findings(
 
 class AutonomousAIDaemon:
     """
-    Zarządza autonomicznym wątkiem tła dla System_SI_1 + SI_Sphere z uprawnieniami ROOT.
+    Zarządza autonomicznym wątkiem tła dla Jyn + SI_Sphere z uprawnieniami ROOT.
     """
 
     def __init__(
@@ -302,7 +302,7 @@ class AutonomousAIDaemon:
             "interval_sec": self.default_interval_sec,
             "ai_integration_level": "MAX_ROOT_AUTONOMOUS",
             "continuous_mission": DEFAULT_CONTINUOUS_MISSION,
-            "managed_by": ["Jyn Mitek (System_SI_1)", "SI_Sphere", "JEDI_Omni_OS"],
+            "managed_by": ["Jyn Mitek", "SI_Sphere", "JEDI_Omni_OS"],
             "cycles_completed": 0,
             "last_cycle_at": None,
             "last_cycle_duration_ms": None,
@@ -583,9 +583,9 @@ class AutonomousAIDaemon:
         self,
         text: str,
         *,
-        sender: str = "Jyn Mitek (System_SI_1)",
-        conversation_id: str = "conv-system-si-1",
-        title: str = "Jyn Mitek (System_SI_1)",
+        sender: str = "Jyn Mitek",
+        conversation_id: str = "conv-jyn",
+        title: str = "Jyn Mitek",
         model: str = "ollama:svl364-apex-uncensored:latest",
         origin: str = "autonomous-daemon",
         correlation_id: str = "",

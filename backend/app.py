@@ -116,7 +116,7 @@ class SVLBackendRuntime:
         self.repl_globals["magnum_core"] = self.jedi_vm.core
         self._register_initial_services()
         self.svl364_ssh_mcp = SVL364SshMcpController(self.kernel)
-        # Powiadomienia System_SI_1 z prawdziwych danych jednostki SVL-364 (pomiar przez SSH).
+        # Powiadomienia Jyn z prawdziwych danych jednostki SVL-364 (pomiar przez SSH).
         self.ship_monitor = ShipMonitor(
             self.kernel,
             probe=self.svl364_ssh_mcp.telemetry.ship,
@@ -508,30 +508,85 @@ class SVLBackendRuntime:
             models = list(prev_models) if isinstance(prev_models, list) else []
             error_msg = f"Ollama zajęta (lista modeli nie wróciła na czas): {error_msg}"
 
+        # Druga Ollama (statek SVL-364 przez tunel SSH lub zdalny URL) — sprawdzana równolegle bez kolizji z lokalną.
+        secondary_candidates: list[tuple[str, str]] = []
+        ship_url = (
+            os.environ.get("SVL_SHIP_OLLAMA_URL")
+            or os.environ.get("OLLAMA_SHIP_HOST")
+            or os.environ.get("OLLAMA_SECONDARY_HOST")
+            or ""
+        ).strip().rstrip("/")
+        if ship_url and ship_url != ollama_host:
+            secondary_candidates.append(("ship", ship_url))
+        elif os.environ.get("SVL_SHIP_OLLAMA", "").strip().lower() in {"1", "true", "yes", "on"}:
+            local_tunnel_host = os.environ.get("SVL_SHIP_OLLAMA_LOCAL_HOST", "127.0.0.1").strip() or "127.0.0.1"
+            local_tunnel_port = os.environ.get("SVL_SHIP_OLLAMA_LOCAL_PORT", "11434").strip() or "11434"
+            tunnel_url = f"http://{local_tunnel_host}:{local_tunnel_port}".rstrip("/")
+            if tunnel_url != ollama_host:
+                secondary_candidates.append(("ship", tunnel_url))
+
+        tagged_models = [{**m, "endpoint_id": "local", "endpoint_host": ollama_host} for m in models]
+        endpoints_report: list[dict[str, Any]] = [
+            {
+                "id": "local",
+                "host": ollama_host,
+                "reachable": reachable,
+                "models_count": len(models),
+                "error": error_msg,
+            }
+        ]
+        secondary_host_used: Optional[str] = None
+        for sec_id, sec_url in secondary_candidates:
+            sec_ok, sec_models, sec_err = self._probe_single_ollama_endpoint(sec_url, timeout=probe_timeout)
+            endpoints_report.append(
+                {
+                    "id": sec_id,
+                    "host": sec_url,
+                    "reachable": sec_ok,
+                    "models_count": len(sec_models),
+                    "error": sec_err,
+                }
+            )
+            if sec_ok:
+                secondary_host_used = sec_url
+                reachable = True
+                if error_msg:
+                    error_msg = None
+                existing_names = {(m.get("endpoint_id"), str(m.get("name", "")).lower()) for m in tagged_models}
+                for sm in sec_models:
+                    key = (sec_id, str(sm.get("name", "")).lower())
+                    if key not in existing_names:
+                        tagged_models.append({**sm, "endpoint_id": sec_id, "endpoint_host": sec_url})
+                        existing_names.add(key)
+
         # Report only actual daemon responses. A built-in catalog is not proof of installation.
         loaded_models: list[str] = []
         if reachable and not fast_only:
-            try:
-                req_ps = urllib.request.Request(f"{ollama_host}/api/ps", headers={"Accept": "application/json"})
-                with urllib.request.urlopen(req_ps, timeout=0.5) as r_ps:
-                    ps_data = json.loads(r_ps.read().decode("utf-8"))
-                    ps_list = [str(m.get("name", "")) for m in ps_data.get("models", []) if m.get("name")]
-                    if ps_list:
-                        loaded_models = ps_list
-            except Exception:
-                pass
+            for ps_host in [ollama_host, *([secondary_host_used] if secondary_host_used else [])]:
+                try:
+                    req_ps = urllib.request.Request(f"{ps_host}/api/ps", headers={"Accept": "application/json"})
+                    with urllib.request.urlopen(req_ps, timeout=0.5) as r_ps:
+                        ps_data = json.loads(r_ps.read().decode("utf-8"))
+                        for m in ps_data.get("models", []):
+                            m_name = str(m.get("name", ""))
+                            if m_name and m_name not in loaded_models:
+                                loaded_models.append(m_name)
+                except Exception:
+                    pass
 
         telemetry = self.kernel.operator.scope.collect_host_telemetry()
         report = {
             "ollama_host": ollama_host,
+            "secondary_ollama_host": secondary_candidates[0][1] if secondary_candidates else None,
+            "endpoints": endpoints_report,
             "binary_installed": binary_installed,
             "daemon_reachable": reachable,
             "busy": busy,
             "preferred_14b_vision_model": preferred_model,
             "recommended_vision_model": "llama3.2-vision:11b",
-            "models": models,
+            "models": tagged_models,
             "loaded_models": loaded_models,
-            "vision_models_available": [m["name"] for m in models if m.get("vision_supported")],
+            "vision_models_available": [m["name"] for m in tagged_models if m.get("vision_supported")],
             "pull_state": pull_state,
             "host_ram_total_mb": telemetry["ram_total_mb"],
             "host_ram_available_mb": telemetry["ram_available_mb"],
@@ -936,7 +991,7 @@ class SVLCoreOS2ApexController:
             "debootstrap_status": install["debootstrap_status"],
             "install_log": install["install_log"],
             "operator_root": "Mateusz Mitek",
-            "kernel_master_daemon": "System_SI_1 (agent ROOT w backendzie SVL)",
+            "kernel_master_daemon": "Jyn (agent ROOT w backendzie SVL)",
             "secondary_daemon": "JEDI Omni-OS v12 (VM czasu rzeczywistego · ROOT_UNRESTRICTED)",
             "kernel_throughput_boost": "brak pomiaru",
             "neural_kernel_link_boost": "brak pomiaru",
@@ -1014,7 +1069,7 @@ class SVLCoreOS2ApexController:
         if emit_chat and chat_notice:
             posted = self.rt.kernel.post_maya_report(
                 chat_notice,
-                model_label="System_SI_1 · SVL CoreOS 2 (wynik serwera)",
+                model_label="Jyn · SVL CoreOS 2 (wynik serwera)",
                 message_prefix="msg-apex-ctl",
                 origin=origin,
                 correlation_id=corr,
@@ -1185,7 +1240,7 @@ class SVLCoreOS2ApexController:
                     "username": "jyn_mitek_root",
                     "uid": 0,
                     "gid": 0,
-                    "role": "Jyn Mitek (System_SI_1) & Flota Podłączonych AI (SI_Sphere, JEDI v12)",
+                    "role": "Jyn Mitek & Flota Podłączonych AI (SI_Sphere, JEDI v12)",
                     "privileges": "ALL=(ALL:ALL) NOPASSWD: ALL",
                     "status": "ZAUTORYZOWANY",
                     "value": "uid=0 (root) · Bezhasłowe NOPASSWD",
@@ -1295,7 +1350,7 @@ class SVLCoreOS2ApexController:
         if emit_chat:
             posted = self.rt.kernel.post_maya_report(
                 notice,
-                model_label="System_SI_1 · Linux Debian 13 (Trixie) Verifier",
+                model_label="Jyn · Linux Debian 13 (Trixie) Verifier",
                 message_prefix="msg-debian13",
                 origin=origin,
                 correlation_id=corr,
@@ -1411,10 +1466,10 @@ async def handle_api_request(
         posted = None
         if method == "POST" and bool(body.get("emitToChat")):
             target_conv_id = str(body.get("conversationId") or body.get("conversation_id") or "").strip() or None
-            # Raport publikuje System_SI_1 na aktywnym kanale czatu (domyślnie „wszyscy”).
+            # Raport publikuje Jyn na aktywnym kanale czatu (domyślnie „wszyscy”).
             posted = runtime.kernel.post_maya_report(
                 report_md,
-                model_label="System_SI_1 · raport SVL_System (wynik serwera)",
+                model_label="Jyn · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
                 conversation_id=target_conv_id,
                 origin=origin,
@@ -1557,7 +1612,7 @@ async def handle_api_request(
         agents = runtime.orchestrator.refresh_states()
         meta = runtime.kernel.get_sync_metadata()
         convs = runtime.kernel.list_conversations_with_messages()
-        si1_mod = next((m for m in mods if m.get("id") == "system-si-1"), None)
+        si1_mod = next((m for m in mods if m.get("id") == "jyn"), None)
         si1_fleet = (si1_mod or {}).get("config", {}).get("fleet") if isinstance((si1_mod or {}).get("config"), dict) else None
         ship_fleet = si1_fleet if isinstance(si1_fleet, list) and si1_fleet else [{"id": "SVL-364", "name": "SVL-364 Ebon Apex"}]
         active_mod_ids = [m["id"] for m in mods if m.get("status") == "ACTIVE"]
@@ -1627,8 +1682,8 @@ async def handle_api_request(
         text = str(body.get("text") or body.get("message") or "").strip()
         if not text:
             return 400, {"ok": False, "error": "Wymagana treść wiadomości (text)."}
-        sender = str(body.get("sender") or "Jyn Mitek (System_SI_1)").strip() or "Jyn Mitek (System_SI_1)"
-        conversation_id = str(body.get("conversation_id") or body.get("conversationId") or "conv-system-si-1").strip() or "conv-system-si-1"
+        sender = str(body.get("sender") or "Jyn Mitek").strip() or "Jyn Mitek"
+        conversation_id = str(body.get("conversation_id") or body.get("conversationId") or "conv-jyn").strip() or "conv-jyn"
         title = str(body.get("title") or sender).strip() or sender
         res = await asyncio.to_thread(
             runtime.autonomous_daemon.send_proactive_message,
@@ -2138,7 +2193,7 @@ async def handle_api_request(
         if not cid:
             return 400, {"ok": False, "error": "conversation_id is required"}
         registered_names = runtime.orchestrator.list_registered_agent_names()
-        protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-system-si-1"}
+        protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-jyn", "conv-svl364-mcp-root"}
         if "SI_Sphere" in registered_names:
             protected_channels.add("conv-si-sphere")
         for name in registered_names:
@@ -2255,6 +2310,58 @@ async def handle_api_request(
         report = await asyncio.to_thread(build_infrastructure_report, runtime.kernel)
         return 200, {**report, "serverRevision": runtime.kernel.get_server_revision()}
 
+    if method == "GET" and path == "/api/py/infrastructure/overview":
+        sync_flag = str(query.get("sync", "")).lower() in ("1", "true", "yes")
+        overview = await asyncio.to_thread(
+            runtime.svl364_ssh_mcp.infrastructure_registry.get_overview,
+            sync_mcp=sync_flag,
+        )
+        return 200, overview
+
+    if method == "POST" and path == "/api/py/infrastructure/assets":
+        try:
+            res = await asyncio.to_thread(
+                runtime.svl364_ssh_mcp.infrastructure_registry.upsert_asset,
+                body if isinstance(body, dict) else {},
+                origin=origin,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/infrastructure/missions":
+        try:
+            res = await asyncio.to_thread(
+                runtime.svl364_ssh_mcp.infrastructure_registry.upsert_mission,
+                body if isinstance(body, dict) else {},
+                origin=origin,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/infrastructure/research":
+        try:
+            res = await asyncio.to_thread(
+                runtime.svl364_ssh_mcp.infrastructure_registry.upsert_research,
+                body if isinstance(body, dict) else {},
+                origin=origin,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/infrastructure/botany":
+        try:
+            res = await asyncio.to_thread(
+                runtime.svl364_ssh_mcp.infrastructure_registry.update_botany,
+                body if isinstance(body, dict) else {},
+                origin=origin,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
     if method == "GET" and path == "/api/py/svl364/telemetry":
         # Prawdziwe pomiary: /proc, nvidia-smi, ufw, OpenSSH, czasy odpowiedzi usług.
         controller = runtime.svl364_ssh_mcp
@@ -2286,8 +2393,89 @@ async def handle_api_request(
             correlation_id=corr,
             confirmed=True,
             raw=bool(body.get("raw")),
+            as_root=bool(body.get("as_root") or body.get("asRoot")),
         )
         return (200 if res.get("ok") else 400), res
+
+    if method == "POST" and path == "/api/py/svl364/root/exec":
+        cmd = str(body.get("command") or "").strip()
+        if body.get("confirmed") is not True:
+            return 400, {
+                "ok": False,
+                "error": "Wykonanie polecenia ROOT na SVL-364 wymaga jawnego confirmed=true.",
+            }
+        res = await asyncio.to_thread(
+            runtime.svl364_ssh_mcp.execute_root_command,
+            cmd,
+            timeout_sec=float(body.get("timeout_sec") or 30.0),
+            origin=origin,
+            correlation_id=corr,
+            confirmed=True,
+            raw=body.get("raw", True) is not False,
+            prefer_transport=str(body.get("transport") or "auto"),
+        )
+        return (200 if res.get("ok") else 400), res
+
+    if method == "GET" and path == "/api/py/svl364/mcp-bridge/status":
+        return 200, runtime.svl364_ssh_mcp.get_status()
+
+    if method == "POST" and path == "/api/py/svl364/mcp-bridge/config":
+        try:
+            res = runtime.svl364_ssh_mcp.configure_remote_mcp(
+                body,
+                origin=origin,
+                correlation_id=corr,
+            )
+            return 200, res
+        except (ValueError, RuntimeError) as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/svl364/mcp-bridge/test":
+        res = await asyncio.to_thread(
+            runtime.svl364_ssh_mcp.test_remote_mcp,
+            timeout_sec=float(body.get("timeout_sec") or 12.0),
+        )
+        return (200 if res.get("ok") else 424), res
+
+    if method == "GET" and path == "/api/py/svl364/overview":
+        include_probe = str(query.get("probe", "")).lower() in ("1", "true", "yes")
+        overview = await asyncio.to_thread(
+            runtime.svl364_ssh_mcp.ship_hub.get_overview,
+            include_mcp_probe=include_probe,
+            ollama_host=runtime.ollama_host or os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
+            comfyui_url=os.environ.get("COMFYUI_HOST", "http://127.0.0.1:8188"),
+        )
+        return 200, overview
+
+    if method == "POST" and path == "/api/py/svl364/navigation":
+        try:
+            res = runtime.svl364_ssh_mcp.ship_hub.update_navigation(
+                body,
+                origin=origin,
+                correlation_id=corr,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/svl364/incidents":
+        try:
+            res = runtime.svl364_ssh_mcp.ship_hub.record_incident(
+                body,
+                origin=origin,
+                correlation_id=corr,
+                emit_notification=body.get("emitNotification", True) is not False,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
+    if method == "POST" and path == "/api/py/svl364/incidents/resolve":
+        res = runtime.svl364_ssh_mcp.ship_hub.resolve_incident(
+            str(body.get("incidentId") or body.get("id") or ""),
+            origin=origin,
+        )
+        return (200 if res.get("ok") else 404), res
 
     if method == "POST" and path == "/api/py/svl364/ssh-mcp/config":
         action = str(body.get("action") or "").strip()
@@ -2415,7 +2603,7 @@ async def handle_api_request(
         if not command_text:
             return 400, {"ok": False, "error": "Pole 'command' jest wymagane do przetworzenia w maszynie wirtualnej JEDI Omni-OS v12."}
         actor = str(body.get("actor") or "Mateusz Mitek").strip()[:120]
-        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "conv-system-si-1").strip()[:120]
+        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "conv-jyn").strip()[:120]
         force_lethal = body.get("generatesLethalRisk")
         force_override = body.get("noOtherOption")
         res = runtime.jedi_vm.process_chat_command(

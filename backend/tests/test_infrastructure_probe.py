@@ -164,5 +164,88 @@ class ProbeTests(unittest.TestCase):
         self.assertIn("neighbors", report["discovered"]["sources"])
 
 
+class InfrastructureRegistryTests(unittest.TestCase):
+    def test_registry_totals_navigation_sync_crud_and_mcp_tool(self) -> None:
+        from svl364_ssh_mcp import SVL364SshMcpController
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kernel = SVLSystemKernel(db_path=str(Path(tmp) / "infra-reg.sqlite3"), operator_token="t" * 40)
+            ctrl = SVL364SshMcpController(kernel)
+
+            # Zmień pozycję SVL-364 na Marsa i sprawdź synchronizację lokalizacji w rejestrze infrastruktury
+            ctrl.ship_hub.update_navigation({"currentBody": "mars", "missionStatus": "ORBIT_HOLD"}, origin="test")
+
+            with patch("infrastructure_probe.Path.home", return_value=Path(tmp)):
+                overview = ctrl.infrastructure_registry.get_overview(sync_mcp=False)
+
+            self.assertTrue(overview["ok"])
+            totals = overview["totals"]
+            self.assertEqual(totals["outpostsCount"], 6)
+            self.assertEqual(totals["shipsCount"], 10002)
+            self.assertEqual(totals["infrastructureObjectsCount"], 500)
+            self.assertEqual(totals["allianceStationsTotal"], 46_500_000)
+            self.assertGreaterEqual(totals["botanyModulesCount"], 5)
+
+            svl364_asset = next(a for a in overview["assets"] if a["id"] == "ship-svl-364")
+            self.assertIn("Mars", svl364_asset["location"])
+            self.assertAlmostEqual(svl364_asset["au"], 1.524, places=2)
+
+            # Dodanie nowej placówki zwiększa dokładną liczbę placówek i zapisuje się w SQLite
+            added_asset = ctrl.infrastructure_registry.upsert_asset(
+                {
+                    "type": "outpost",
+                    "name": "Baza Księżycowa Kopernik",
+                    "location": "Księżyc · Krater Kopernik",
+                    "sector": "Sektor Ziemski",
+                    "au": 1.002,
+                    "unitCount": 1,
+                    "crew": 55,
+                    "hasBotany": True,
+                },
+                origin="test",
+            )
+            self.assertTrue(added_asset["ok"])
+            self.assertEqual(added_asset["totals"]["outpostsCount"], 7)
+
+            # Dodanie misji, badania oraz aktualizacja botaniki przez narzędzie MCP svl364_infrastructure_registry
+            mcp_mission = ctrl.call_mcp_tool(
+                "svl364_infrastructure_registry",
+                {
+                    "action": "upsert_mission",
+                    "payload": {"title": "Dostawa nasion na Marsa", "progressPct": 45},
+                },
+                origin="test",
+            )
+            self.assertTrue(mcp_mission["ok"])
+            self.assertEqual(mcp_mission["data"]["mission"]["progressPct"], 45)
+
+            mcp_res = ctrl.call_mcp_tool(
+                "svl364_infrastructure_registry",
+                {
+                    "action": "upsert_research",
+                    "payload": {"title": "Fotosynteza głębokokosmiczna LED", "researchersCount": 32},
+                },
+                origin="test",
+            )
+            self.assertTrue(mcp_res["ok"])
+            self.assertEqual(mcp_res["data"]["research"]["researchersCount"], 32)
+
+            mcp_bot = ctrl.call_mcp_tool(
+                "svl364_infrastructure_registry",
+                {
+                    "action": "update_botany",
+                    "payload": {
+                        "id": "botany-apex-citadel",
+                        "o2OutputPct": 116.4,
+                        "eventText": "Zakończono zbiór 140 kg biomasy z sektora B2.",
+                    },
+                },
+                origin="test",
+            )
+            self.assertTrue(mcp_bot["ok"])
+            self.assertEqual(mcp_bot["data"]["botany"]["o2OutputPct"], 116.4)
+            self.assertIn("140 kg", mcp_bot["data"]["botany"]["recentEvents"][0]["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -180,7 +180,7 @@ export function formatActionReceipt(tool: string, result: Record<string, any> | 
 
 /**
  * Deklaracje narzędzi Gemini używają typów `Type.OBJECT` = "OBJECT". API zgodne z OpenAI
- * (xAI Grok) i Ollama oczekują JSON Schema z małymi literami ("object"), inaczej
+ * Ollama oczekuje JSON Schema z małymi literami ("object"), inaczej
  * mogą odrzucić całe żądanie. Konwersja jest rekurencyjna i nie zmienia oryginału.
  */
 export function toJsonSchema(schema: unknown): unknown {

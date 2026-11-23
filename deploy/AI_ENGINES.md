@@ -1,19 +1,4 @@
-# Lokalne modele Qwen i silnik obrazów
-
-## Grok (xAI) — główny silnik czatu
-
-Gdy w `.env` (albo w zmiennych środowiska usługi) ustawisz `XAI_API_KEY`, brama SVL używa **Grok** (`https://api.x.ai/v1/chat/completions`, domyślny model `grok-4.7`) jako **głównego** silnika rozmów. To jest płatne API xAI — klucz zostaje wyłącznie po stronie serwera i nie jest logowany.
-
-Jeśli klucza nie ma, jest pusty albo wygląda na placeholder, albo wywołanie API zwróci błąd (w tym 403 z powodu braku kredytów / limitu wydatków), system wraca do **darmowej lokalnej Ollamy**, a następnie — gdy skonfigurowano `GEMINI_API_KEY` — do Gemini. Kolejność w `/api/chat` i w rozmowie obustronnej: Grok → Ollama → Gemini.
-
-```bash
-# w .env na hoście z bramą SVL
-XAI_API_KEY="wstaw_klucz_z_console.x.ai"
-XAI_MODEL="grok-4.7"      # opcjonalnie
-XAI_TIMEOUT_MS="60000"    # opcjonalnie, ms na jedną próbę
-```
-
-Status silnika widać na karcie silników AI (`GET /api/ai/engines`). Po zmianie `.env` uruchom ponownie gateway. Brak kredytów na koncie xAI jest zgłaszany jako `Grok: brak kredytów na koncie xAI` i nie jest ponawiany.
+# Lokalne modele Qwen, Ollama i silnik obrazów
 
 Konfiguracja dodaje model tekstowy Qwen 3.8 27B do Ollama oraz Qwen Image 2.1 w ComfyUI. Instalator przeznaczony jest dla Debian 13 z działającym sterownikiem NVIDIA i wcześniej zainstalowanym Ollama/SVL.
 
