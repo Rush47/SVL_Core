@@ -32,9 +32,12 @@ except ImportError:  # uruchomienie jako pakiet backend.*
 SVL_SYSTEMD_UNITS = ("svl-python-os", "svl-comfyui", "ollama", "ssh")
 KNOWN_PORTS = {
     22: "SSH",
+    22: "SSH",
+    2222: "SSH (SVL-365)",
     80: "HTTP",
     443: "HTTPS",
     3000: "SVL Gateway",
+    3334: "SVL Universal MCP",
     5432: "PostgreSQL",
     6379: "Redis",
     8085: "SVL Python Kernel",
@@ -192,14 +195,24 @@ def tcp_probe(host: str, port: int, timeout: float = 2.0) -> dict[str, Any]:
 
 
 def ssh_config_hosts() -> dict[str, Any]:
-    path = Path.home() / ".ssh" / "config"
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
+    ssh_dir = Path.home() / ".ssh"
+    path = ssh_dir / "config"
+    config_d = ssh_dir / "config.d"
+    texts: list[str] = []
+    if path.is_file():
+        try:
+            texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError as exc:
+            return {"source": str(path), "hosts": [], "reason": f"Nie można odczytać {path}: {exc}"}
+    if config_d.is_dir():
+        for conf_file in sorted(config_d.glob("*.conf")):
+            try:
+                texts.append(conf_file.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                pass
+    if not texts:
         return {"source": str(path), "hosts": [], "reason": f"Brak pliku {path} dla użytkownika backendu."}
-    except OSError as exc:
-        return {"source": str(path), "hosts": [], "reason": f"Nie można odczytać {path}: {exc}"}
-    hosts = parse_ssh_config(text)[:MAX_PROBED_HOSTS]
+    hosts = parse_ssh_config("\n".join(texts))[:MAX_PROBED_HOSTS]
     with ThreadPoolExecutor(max_workers=8) as pool:
         probes = list(pool.map(lambda h: tcp_probe(h["hostname"], h["port"]), hosts))
     return {

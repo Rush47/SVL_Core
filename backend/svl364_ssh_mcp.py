@@ -1147,7 +1147,11 @@ class SVL364SshMcpController:
 
         ssh_dir = Path.home() / ".ssh"
         config_dir = ssh_dir / "config.d"
-        key_path = ssh_dir / "svl364_ed25519"
+        is_svl365 = alias.lower() in {"svl-365", "svl365", "ship2", "ship-365"}
+        key_filename = "svl365_ed25519" if is_svl365 else "svl364_ed25519"
+        conf_filename = "svl-365.conf" if is_svl365 else "svl-364.conf"
+        key_comment = f"svl-365@{alias}" if is_svl365 else f"svl-364@{alias}"
+        key_path = ssh_dir / key_filename
         public_key_path = Path(f"{key_path}.pub")
         ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         config_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1158,7 +1162,7 @@ class SVL364SshMcpController:
             if not ssh_keygen:
                 raise RuntimeError("Brak programu ssh-keygen; nie można wygenerować klucza.")
             proc = subprocess.run(
-                [ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", str(key_path), "-C", f"svl-364@{alias}"],
+                [ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-f", str(key_path), "-C", key_comment],
                 capture_output=True,
                 text=True,
                 timeout=20,
@@ -1169,13 +1173,14 @@ class SVL364SshMcpController:
             generated = True
 
         if not key_path.exists() or not public_key_path.exists():
-            raise ValueError("Brak pary kluczy SVL-364. Ustaw generate_key=true.")
+            raise ValueError("Brak pary kluczy SSH. Ustaw generate_key=true.")
         key_path.chmod(0o600)
         public_key_path.chmod(0o644)
 
+        host_aliases = "SVL-365 Ship2" if is_svl365 and alias in {"SVL-365", "Ship2"} else ("Ship SVL-364" if not is_svl365 and alias in {"Ship", "SVL-364"} else alias)
         entry = (
-            f"# BEGIN SVL-364 ({alias})\n"
-            f"Host {alias}\n"
+            f"# BEGIN {'SVL-365' if is_svl365 else 'SVL-364'} ({alias})\n"
+            f"Host {host_aliases}\n"
             f"    HostName {hostname}\n"
             f"    Port {port}\n"
             f"    User {user}\n"
@@ -1186,9 +1191,9 @@ class SVL364SshMcpController:
             "    ServerAliveInterval 15\n"
             "    ServerAliveCountMax 3\n"
             "    StrictHostKeyChecking accept-new\n"
-            f"# END SVL-364 ({alias})\n"
+            f"# END {'SVL-365' if is_svl365 else 'SVL-364'} ({alias})\n"
         )
-        dedicated_path = config_dir / "svl-364.conf"
+        dedicated_path = config_dir / conf_filename
         dedicated_tmp = dedicated_path.with_suffix(".conf.tmp")
         dedicated_tmp.write_text(entry, encoding="utf-8")
         dedicated_tmp.chmod(0o600)
@@ -1203,11 +1208,14 @@ class SVL364SshMcpController:
             main_tmp.chmod(0o600)
             main_tmp.replace(main_config)
 
-        status = self.update_config(
-            {"ssh_host": alias, "ssh_port": port, "ssh_user": user},
-            origin=origin,
-            correlation_id=correlation_id,
-        )
+        if is_svl365:
+            status = self.get_status()
+        else:
+            status = self.update_config(
+                {"ssh_host": alias, "ssh_port": port, "ssh_user": user},
+                origin=origin,
+                correlation_id=correlation_id,
+            )
         public_key = public_key_path.read_text(encoding="utf-8").strip()
         append_python_log(
             "ssh_config",
@@ -1228,20 +1236,21 @@ class SVL364SshMcpController:
             "publicKeyPath": str(public_key_path),
             "configPath": str(dedicated_path),
             "status": status,
-            "nextStep": "Dodaj publicKey do ~/.ssh/authorized_keys na SVL-364, następnie wywołaj svl_ssh_test.",
+            "nextStep": f"Dodaj publicKey do ~/.ssh/authorized_keys na {alias}, następnie wywołaj svl_ssh_test.",
         }
 
-    def get_public_key(self) -> dict[str, Any]:
-        path = Path.home() / ".ssh" / "svl364_ed25519.pub"
+    def get_public_key(self, alias: str = "Ship") -> dict[str, Any]:
+        is_svl365 = str(alias or "").strip().lower() in {"svl-365", "svl365", "ship2", "ship-365"}
+        path = Path.home() / ".ssh" / ("svl365_ed25519.pub" if is_svl365 else "svl364_ed25519.pub")
         if not path.is_file():
             return {
                 "ok": False,
-                "error": "Brak publicznego klucza SVL-364. Najpierw użyj svl_ssh_configure z generate_key=true.",
+                "error": f"Brak publicznego klucza dla {alias}. Najpierw użyj svl_ssh_configure z generate_key=true.",
             }
         return {"ok": True, "publicKey": path.read_text(encoding="utf-8").strip(), "path": str(path)}
 
-    def test_connection(self, timeout_sec: int = 12) -> dict[str, Any]:
-        target = self.configured_target()
+    def test_connection(self, timeout_sec: int = 12, target_override: Optional[str] = None) -> dict[str, Any]:
+        target = str(target_override or "").strip() or self.configured_target()
         diagnostics: dict[str, Any] = {"target": target, "config": {}, "tcp": {}, "authentication": {}}
         ssh_bin = find_real_binary("ssh")
         if not ssh_bin:
@@ -1451,7 +1460,11 @@ class SVL364SshMcpController:
         if cmd_mode == "natural" and natural_directive:
             natural_summary_lines = [f"Przetworzono polecenie naturalne: {natural_directive}"]
 
-        ssh_host = self._configured_ssh_target(cfg)
+        override_alias = str(kwargs.get("alias") or kwargs.get("target") or "").strip()
+        if override_alias:
+            ssh_host = self._validate_openssh_value(override_alias, "aliasu SSH", r"[A-Za-z0-9][A-Za-z0-9._@-]{0,62}", 63)
+        else:
+            ssh_host = self._configured_ssh_target(cfg)
         # Tylko prawdziwy OpenSSH; nigdy nie wykonujemy polecenia lokalnie zamiast zdalnie.
         ssh_bin = find_real_binary("ssh")
         if not ssh_bin:
@@ -2150,6 +2163,8 @@ class SVL364SshMcpController:
                 ssh_kwargs["as_root"] = bool(arguments.get("as_root"))
             if "raw" in arguments:
                 ssh_kwargs["raw"] = bool(arguments.get("raw"))
+            if arguments.get("alias") or arguments.get("target"):
+                ssh_kwargs["alias"] = str(arguments.get("alias") or arguments.get("target")).strip()
             ssh_res = self.execute_ssh_command(cmd, **ssh_kwargs)
             return {
                 "ok": ssh_res["ok"],
@@ -2243,7 +2258,8 @@ class SVL364SshMcpController:
             }
 
         if tool_name == "svl364_ssh_public_key":
-            result = self.get_public_key()
+            alias_arg = str(arguments.get("alias") or arguments.get("target") or "Ship").strip()
+            result = self.get_public_key(alias=alias_arg)
             self._record_mcp_activity(tool_name, arguments, json.dumps(result, ensure_ascii=False), started, origin)
             return {
                 "ok": result.get("ok") is True,
@@ -2256,7 +2272,8 @@ class SVL364SshMcpController:
             }
 
         if tool_name == "svl364_ssh_test":
-            result = self.test_connection()
+            target_arg = str(arguments.get("alias") or arguments.get("target") or "").strip() or None
+            result = self.test_connection(target_override=target_arg)
             self._record_mcp_activity(tool_name, arguments, json.dumps(result, ensure_ascii=False), started, origin)
             return {
                 "ok": result.get("ok") is True,
