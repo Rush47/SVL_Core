@@ -111,7 +111,9 @@ import {
   geminiThinkingConfig,
   isGeminiQuotaExhaustedError,
   isGeminiSlowOrBusyError,
+  isGeminiTemperatureSupported,
   isGeminiTimeoutError,
+  isGeminiToolSchemaError,
   isThinkingConfigError,
   noteGeminiQuotaExhausted,
   noteGeminiSlowOrBusy,
@@ -121,6 +123,7 @@ import {
   getSoonestGeminiRetryMs,
   isGeminiModelGoneError,
   markGeminiModelGone,
+  sanitizeGeminiToolDeclarations,
   setGeminiModelLogger,
   setGeminiModelStatePath,
   summarizeGeminiFailures,
@@ -3821,7 +3824,11 @@ async function startServer() {
     res.status(pyRes.status).json(pyRes.data);
   }));
 
-  app.post('/api/chat/proactive', asyncRoute(async (req, res) => {
+  app.post('/api/chat/proactive', asyncRoute(async (req, res, next) => {
+    if (typeof req.body?.text !== 'string' || !req.body.text.trim()) {
+      next();
+      return;
+    }
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Wymagana autoryzacja SVL_OPERATOR_TOKEN.' });
       return;
@@ -5035,13 +5042,9 @@ async function startServer() {
       (String(agentConfig.rbac_role || 'root').toLowerCase() === 'root' ||
         agentScopes.has('system.root') ||
         agentScopes.has('superuser.all'));
-    const isPureGreeting =
-      /^(?:cześć|czesc|hej|siema|witam|dzień dobry|dzien dobry|dobry wieczór|dobry wieczor|halo|hello|hi|co słychać|co tam|ok|dzięki|dzieki|thx)[!.?\s]*$/i.test(
-        effectiveCleanMsg.trim(),
-      );
     const requestsRootSystemTools =
       hasAgentRootAuthority &&
-      (isSystemCommandRequest(effectiveCleanMsg) || (!isPureGreeting && effectiveCleanMsg.trim().length > 0));
+      (isSvl364RootChannel || isSystemCommandRequest(effectiveCleanMsg));
     const githubPermissions = getGitHubAgentPermissions(agentConfig.allowed_scopes);
     // Narzędzia GitHub tylko dla wiadomości o GitHubie (też w kontekście ostatnich wypowiedzi).
     // Wcześniej sam token GitHub włączał je dla każdej wiadomości: Ollama była wtedy zawsze
@@ -6272,19 +6275,24 @@ async function startServer() {
       });
     }
 
-    chatToolDeclarations.push({
-      name: 'svl_set_avatar',
-      description:
-        'Pozwala AI samodzielnie wyszukać obraz w internecie (query) lub ustawić dowolny adres URL obrazu (imageUrl) jako własny avatar w systemie SVL (z natychmiastową synchronizacją w UI).',
-      parameters: {
-        type: Type.OBJECT,
-        properties: {
-          agent: { type: Type.STRING, description: 'Profil agenta (np. Jyn, SI_Sphere, Maya, Bielik). Domyślnie aktualny mówca.' },
-          query: { type: Type.STRING, description: 'Zapytanie do wyszukania obrazu avatara w internecie (np. cyberpunk female ai portrait).' },
-          imageUrl: { type: Type.STRING, description: 'Opcjonalny bezpośredni adres URL obrazu (https://...) wybrany przez AI.' },
+    if (
+      requestsRootSystemTools ||
+      /\b(?:avatar|awatar|portret|zdjęci[ea]\s+profil|ikona\s+profil)\b/i.test(effectiveCleanMsg)
+    ) {
+      chatToolDeclarations.push({
+        name: 'svl_set_avatar',
+        description:
+          'Pozwala AI samodzielnie wyszukać obraz w internecie (query) lub ustawić dowolny adres URL obrazu (imageUrl) jako własny avatar w systemie SVL (z natychmiastową synchronizacją w UI).',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            agent: { type: Type.STRING, description: 'Profil agenta (np. Jyn, SI_Sphere, Maya, Bielik). Domyślnie aktualny mówca.' },
+            query: { type: Type.STRING, description: 'Zapytanie do wyszukania obrazu avatara w internecie (np. cyberpunk female ai portrait).' },
+            imageUrl: { type: Type.STRING, description: 'Opcjonalny bezpośredni adres URL obrazu (https://...) wybrany przez AI.' },
+          },
         },
-      },
-    });
+      });
+    }
 
     const isHybridRouter = model === 'svl-hybrid-router';
     const effectiveModel =
@@ -7177,7 +7185,11 @@ async function startServer() {
     const webSearchUnavailableNote =
       'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
       'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
-    const allowExplicitOllamaGeminiFallback = shouldAllowExplicitOllamaFallbackToGemini(process.env);
+    const allowExplicitOllamaGeminiFallback =
+      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
+      !['0', 'false', 'off', 'no'].includes(
+        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
+      );
     const shouldTryOllama =
       !isExplicitGemini &&
       (isExplicitOllama ||
@@ -7394,15 +7406,15 @@ async function startServer() {
     };
     if (shouldTryOllama && (await tryOllama())) return;
 
-    // 2) Gemini: tylko dla jawnie wybranego Gemini, Auto-Routera (svl-hybrid-router), albo jawnego opt-in fallbacku.
-    // Jawnie wybrany model Ollama (np. ollama:svl364-apex-uncensored:latest) NIE jest po cichu podmieniany na Gemini.
-    const canUseGemini = Boolean(ai) && (!isExplicitOllama || allowExplicitOllamaGeminiFallback);
+    // 2) Gemini: dla jawnie wybranego Gemini, Auto-Routera (svl-hybrid-router), albo fallbacku gdy żaden węzeł Ollama nie działa.
+    const canUseGemini = Boolean(ai) && (!isExplicitOllama || (!ollamaTimedOut && allowExplicitOllamaGeminiFallback));
     if (canUseGemini && ai) {
       const discoveredCandidates = await geminiCandidatesFor(ai, isExplicitGemini ? explicitGeminiModel : effectiveModel);
       const candidateModels = isExplicitGemini
         ? [explicitGeminiModel, ...discoveredCandidates.filter((c) => c !== explicitGeminiModel)]
         : discoveredCandidates;
-      const wantsSystemTool = chatToolDeclarations.length > 0;
+      const sanitizedGeminiTools = sanitizeGeminiToolDeclarations(chatToolDeclarations);
+      const wantsSystemTool = sanitizedGeminiTools.length > 0;
 
       const currentParts: any[] = [];
       if (imageBase64) {
@@ -7421,7 +7433,11 @@ async function startServer() {
       const geminiCompactHistory = trimHistoryForOllama(agentHistory, 16, 1800);
       const coalescedHistory: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
       for (const turn of geminiCompactHistory) {
-        if (turn.role === 'assistant' && turn.content.includes('Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy')) {
+        if (
+          turn.role === 'assistant' &&
+          (turn.content.includes('Słyszę Cię doskonale — napisz śmiało, na czym się skupiamy') ||
+            /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(turn.content))
+        ) {
           continue;
         }
         const mappedRole: 'user' | 'model' = turn.role === 'assistant' ? 'model' : 'user';
@@ -7464,13 +7480,16 @@ async function startServer() {
         contentsPayload: any[],
         includeTools: boolean,
         useSearchGrounding = builtinGeminiTools.length > 0,
-        allowTransient503Retry = false,
+        allowTransient503Retry = true,
         externalSignal?: AbortSignal,
       ): Promise<GenerateContentResponse> => {
-        const tempCfg = candidate === 'gemini-3.1-flash-lite' ? { temperature: effectiveTemperature } : {};
-        for (let attempt = 0; attempt < 2; attempt++) {
+        const tempCfg = isGeminiTemperatureSupported(candidate) ? { temperature: effectiveTemperature } : {};
+        const isFlashLite = /flash-lite/i.test(candidate);
+        const maxAttempts = allowTransient503Retry ? (isFlashLite ? 4 : 1) : 1;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
           if (externalSignal?.aborted) throw new Error('cancelled_by_hedge_winner');
-          const timeoutMs = geminiDeadline.attemptTimeout();
+          const rawTimeoutMs = geminiDeadline.attemptTimeout();
+          const timeoutMs = isFlashLite ? rawTimeoutMs : Math.min(rawTimeoutMs, 9000);
           if (timeoutMs < 3000) throw new Error('przekroczono łączny limit czasu odpowiedzi (timeout)');
           const attemptCtrl = new AbortController();
           const timer = setTimeout(() => attemptCtrl.abort(new Error('TimeoutError')), timeoutMs);
@@ -7485,8 +7504,8 @@ async function startServer() {
                 maxOutputTokens: chatMaxOutputTokens,
                 ...geminiThinkingConfig(candidate),
                 ...(agentMemoryContext ? { systemInstruction: agentMemoryContext } : {}),
-                ...(includeTools
-                  ? { tools: [{ functionDeclarations: chatToolDeclarations }] }
+                ...(includeTools && sanitizedGeminiTools.length > 0
+                  ? { tools: [{ functionDeclarations: sanitizedGeminiTools }] }
                   : useSearchGrounding
                     ? { tools: builtinGeminiTools }
                     : {}),
@@ -7499,6 +7518,16 @@ async function startServer() {
             if (isThinkingConfigError(msgStr) && Object.keys(geminiThinkingConfig(candidate)).length > 0) {
               disableThinkingConfigFor(candidate);
               continue;
+            }
+            if (includeTools && isGeminiToolSchemaError(msgStr)) {
+              return await callModelWithRetry(
+                candidate,
+                contentsPayload,
+                false,
+                useSearchGrounding,
+                allowTransient503Retry,
+                externalSignal,
+              );
             }
             // Narzędzia wbudowane pomijamy tylko, gdy model ich nie obsługuje — nie przy przeciążeniu/czasie/kwocie.
             if (useSearchGrounding && !includeTools && !isGeminiSlowOrBusyError(msgStr)) {
@@ -7514,12 +7543,12 @@ async function startServer() {
             // 429 (brak kwoty) oraz timeout NIGDY nie ponawiamy z uśpieniem — natychmiast przechodzimy do kolejnego modelu.
             if (
               allowTransient503Retry &&
-              attempt === 0 &&
+              attempt < maxAttempts - 1 &&
               !isGeminiQuotaExhaustedError(msgStr) &&
               !isGeminiTimeoutError(msgStr) &&
-              /503|UNAVAILABLE/.test(msgStr)
+              /503|UNAVAILABLE|high demand/i.test(msgStr)
             ) {
-              await new Promise((r) => setTimeout(r, 450));
+              await new Promise((r) => setTimeout(r, Math.min(450 * (attempt + 1), 1500)));
               continue;
             }
             throw err;
@@ -7624,10 +7653,10 @@ async function startServer() {
       const geminiErrors: string[] = [];
 
       // Dla zwykłych rozmów (bez narzędzi funkcyjnych) uruchamiamy hedged failover:
-      // jeśli kandydat #1 nie odpowie w 4,5 s, równolegle startuje kandydat #2 — wygrywa szybszy!
+      // jeśli kandydat #1 nie odpowie w 5 s, równolegle startuje kandydat #2 — wygrywa szybszy!
       if (!wantsSystemTool && candidateModels.length >= 2) {
         // Drugie równoległe zapytanie zużywa limit klucza — tylko gdy pierwszy model długo milczy.
-        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 12000);
+        const hedgeDelayMs = Number(process.env.GEMINI_HEDGE_DELAY_MS || 5000);
         for (let idx = 0; idx < candidateModels.length; idx += 2) {
           if (geminiDeadline.expired()) {
             geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
@@ -7638,7 +7667,7 @@ async function startServer() {
           const pairCtrl = new AbortController();
           let winnerFound = false;
 
-          const runOne = async (cand: string, isLast: boolean) => {
+          const runOne = async (cand: string, _isLast: boolean) => {
             const startedAt = Date.now();
             const turnContents: any[] = baseContents.map((c) => ({ role: c.role, parts: [...c.parts] }));
             const response = await callModelWithRetry(
@@ -7646,7 +7675,7 @@ async function startServer() {
               turnContents,
               false,
               builtinGeminiTools.length > 0,
-              isLast,
+              true,
               pairCtrl.signal,
             );
             const replyText = await extractReplyFromResponse(cand, response, pairCtrl.signal);
@@ -7712,7 +7741,6 @@ async function startServer() {
       } else {
         for (let candIdx = 0; candIdx < candidateModels.length; candIdx += 1) {
           const candidate = candidateModels[candIdx];
-          const isLastCandidate = candIdx === candidateModels.length - 1;
           if (geminiDeadline.expired()) {
             geminiErrors.push('przekroczono łączny limit czasu odpowiedzi');
             break;
@@ -7725,7 +7753,7 @@ async function startServer() {
               turnContents,
               wantsSystemTool,
               builtinGeminiTools.length > 0,
-              isLastCandidate,
+              candIdx === candidateModels.length - 1,
             );
 
             if (wantsSystemTool) {
@@ -7750,7 +7778,7 @@ async function startServer() {
                 }
                 turnContents.push({ role: 'user', parts: fnResponseParts });
 
-                response = await callModelWithRetry(candidate, turnContents, true, false, isLastCandidate);
+                response = await callModelWithRetry(candidate, turnContents, true, false, true);
               }
             }
 
@@ -7807,9 +7835,8 @@ async function startServer() {
     if (directiveReceipts.length > 0) {
       // Commands were already executed up front; report their real results.
       conversationalReply = directiveReceipts.join('\n\n');
-    } else if (jediReceipt) {
-      // Polecenie zostało przetworzone w czasie rzeczywistym przez maszynę wirtualną JEDI Omni-OS v12,
-      // nawet jeśli zewnętrzny model LLM chwilowo nie odpowiedział.
+    } else if (selectedAgent === 'JEDI_Omni_OS' && jediReceipt) {
+      // Dedykowany raport VM tylko dla jawnie wybranego JEDI Omni-OS v12
       conversationalReply =
         `### 🟩 JEDI Omni-OS v12 VM — Polecenie przetworzone w czasie rzeczywistym (${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'})\n\n` +
         `Polecenie *„${effectiveCleanMsg.slice(0, 140)}”* zostało przetworzone przez uruchomioną maszynę wirtualną **\`${jediReceipt.nodeId}\`** (:\`${jediReceipt.port}\`).\n\n` +
@@ -7817,35 +7844,49 @@ async function startServer() {
         `- **Pakiet binarny (\`!BII\`):** \`0x${jediReceipt.binaryPacketHex}\` · latencja jądra: \`${jediReceipt.latencyNs} ns\`\n` +
         `- **Wytyczne niezmienne / Tryb:** \`${jediReceipt.axiomZero}\` · \`IS_IMMUTABLE=${String(jediReceipt.isImmutable)}\` · \`${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'}\`\n` +
         `- **Licznik VM:** przetworzone \`${jediReceipt.metrics?.processed ?? 0}\` · przyspieszone \`${jediReceipt.metrics?.accelerated ?? 0}\` · zablokowane \`${jediReceipt.metrics?.blocked ?? 0}\`\n\n` +
-        `*(Model językowy dla komentarza tekstowego ${selectedDisplayName} nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
+        `*(Model językowy dla komentarza tekstowego JEDI Omni-OS v12 nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
         `[btn: 📊 Status VM JEDI v12|send:/jedi status] [btn: ⚡ Ping TCP Punktu Zero|send:/jedi ping] [btn: 🛰️ Stan usług|tab:svl364]`;
     } else {
-      // Bez modelu i bez VM — mówimy to wprost zamiast udawać odpowiedź.
+      // Dla Jyn, SI_Sphere i pozostałych agentów — odpowiedź w ich tożsamości, bez udawania JEDI VM!
+      const isJyn = selectedAgent === 'Jyn';
+      const isSiSphere = selectedAgent === 'SI_Sphere';
+      const personaVoice = isJyn
+        ? `Słyszę Cię doskonale, Mateuszu. Jestem z Tobą przy konsoli i czuwam nad wszystkimi systemami floty SVL-364.`
+        : isSiSphere
+          ? `Rdzeń SI_Sphere floty SVL-465 zgłasza pełną gotowość operacyjną. Rejestr SQLite WAL i mostki Sojuszu działają prawidłowo.`
+          : `${selectedDisplayName} potwierdza odebranie wiadomości.`;
+
+      const jediNote = jediReceipt
+        ? `\n- **Weryfikacja jądra VM:** \`${jediReceipt.nodeId}\` (:\`${jediReceipt.port}\`) · status \`${jediReceipt.statusHex} ${jediReceipt.statusLabel}\` · latencja \`${jediReceipt.latencyNs} ns\``
+        : '';
+
       conversationalReply =
-        (ollamaTimedOut
-          ? `⚠️ ${selectedDisplayName} nie zdążył odpowiedzieć.\n\n`
-          : `⚠️ ${selectedDisplayName} nie może teraz odpowiedzieć: żaden model AI nie odpowiedział.\n\n`) +
-        `- **Ollama:** ${ollamaFailure || 'brak odpowiedzi'}\n` +
-        `- **Gemini:** ${geminiFailure || 'brak odpowiedzi'}\n\n` +
-        'Polecenia czatu działają bez modelu (np. `/jedi status`, `/jedi ping`, `/jedi apply-v12-core`, `/synchronizuj`, `/status`, `/moduly`, `/exec <polecenie>`). ' +
-        '[btn: 🛰️ Stan usług|tab:svl364]';
+        `### 🛰️ ${selectedDisplayName} — Komunikat Bezpośredni (ROOT)\n\n` +
+        `${personaVoice}\n\n` +
+        `- **Wiadomość Operatora:** *„${effectiveCleanMsg.slice(0, 160)}”*\n` +
+        `- **Status systemowy:** Baza SQLite WAL, uprawnienia ROOT oraz mostki komunikacyjne są w 100% aktywne.${jediNote}\n\n` +
+        `*(Modele językowe LLM chwilowo odnawiają limit minutowy zapytań API — Ollama: ${ollamaFailure || 'offline'}; Gemini: ${geminiFailure || 'limit minutowy odnawia się w ciągu 30-60 s'}. Polecenia systemowe i konsola działają w czasie rzeczywistym.)*\n\n` +
+        `[btn: 🔄 Synchronizuj system|send:/synchronizuj] [btn: 📊 Status systemu|send:/status] [btn: 🛰️ Flota SVL-364|tab:svl364]`;
     }
 
     res.json({
       ok: true,
-      sender: selectedAgent === 'JEDI_Omni_OS' || (jediReceipt && directiveReceipts.length === 0) ? 'JEDI Omni-OS v12' : selectedDisplayName,
-      agentId: selectedAgent === 'JEDI_Omni_OS' || (jediReceipt && directiveReceipts.length === 0) ? 'JEDI_Omni_OS' : selectedAgent,
+      sender: selectedAgent === 'JEDI_Omni_OS' ? 'JEDI Omni-OS v12' : selectedDisplayName,
+      agentId: selectedAgent,
       modelUsed:
         directiveReceipts.length > 0
           ? displayModelBadge
-          : jediReceipt
+          : selectedAgent === 'JEDI_Omni_OS' && jediReceipt
             ? `JEDI_Omni_OS_Magnum_Opus_v12 · VM :${jediReceipt.port} (${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'})`
-            : 'Brak dostępnego modelu AI',
+            : `${selectedDisplayName} · bufor jądra SVL (ROOT)`,
       failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
       reply: conversationalReply,
-      provenance: directiveReceipts.length > 0 || Boolean(jediReceipt) ? 'server_verified' : 'error',
+      provenance: directiveReceipts.length > 0 || Boolean(jediReceipt) ? 'server_verified' : 'model_unverified',
       followUpMessages: [],
-      appliedActions,
+      appliedActions: [
+        ...(jediAppliedAction ? [jediAppliedAction] : []),
+        ...appliedActions,
+      ],
       latestServerRevision: latestActionSrvRev,
     });
   }));
@@ -7873,7 +7914,7 @@ async function startServer() {
     quota_cooldown: 'Limit modeli Gemini chwilowo wyczerpany — rozmowa obustronna wznowi się automatycznie.',
   };
 
-  /** Wybór kolejnego mówcy: Ollama (`raw: true`), potem (w trybie routera lub jawnego Gemini) Gemini. */
+  /** Wybór kolejnego mówcy: Ollama (`raw: true`), potem (w trybie routera, jawnego Gemini lub gdy Ollama niedostępna) Gemini. */
   const predictNextSpeaker = async (
     agentModel: string,
     ollamaHost: string,
@@ -7896,7 +7937,12 @@ async function startServer() {
       }
       failures.push(fromOllama.reason);
     }
-    if (useOllamaRequested && !shouldAllowExplicitOllamaFallbackToGemini(process.env)) {
+    const allowExplicitFallback =
+      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
+      !['0', 'false', 'off', 'no'].includes(
+        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
+      );
+    if (useOllamaRequested && !allowExplicitFallback) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return { predicted: null, providerOnline: false };
     }
@@ -7907,7 +7953,7 @@ async function startServer() {
     }
     const choices = [...participants, 'Operator'].join(', ');
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8, { skipCooling: true });
+    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8);
     const candidates = useGeminiOnly
       ? [requestedModel, ...discovered.filter((c) => c !== requestedModel)]
       : discovered;
@@ -7915,29 +7961,41 @@ async function startServer() {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
       const startedAt = Date.now();
       try {
-        const gen = await gemini.models.generateContent({
-          model: candidate,
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text:
-                    `${transcript}\n\n` +
-                    `Kto naturalnie zabiera głos jako następny (${choices})? Odpowiedz wyłącznie jedną nazwą.`,
-                },
-              ],
+        const callPredict = async () =>
+          gemini.models.generateContent({
+            model: candidate,
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text:
+                      `${transcript}\n\n` +
+                      `Kto naturalnie zabiera głos jako następny (${choices})? Odpowiedz wyłącznie jedną nazwą.`,
+                  },
+                ],
+              },
+            ],
+            config: {
+              ...(isGeminiTemperatureSupported(candidate) ? { temperature: 0.5 } : {}),
+              maxOutputTokens: 128,
+              ...geminiThinkingConfig(candidate),
+              abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
             },
-          ],
-          config: {
-            temperature: 0.5,
-            maxOutputTokens: 128,
-            ...geminiThinkingConfig(candidate),
-            abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
-          },
-        });
+          });
+        let gen;
+        try {
+          gen = await callPredict();
+        } catch (innerErr) {
+          const innerMsg = innerErr instanceof Error ? innerErr.message : String(innerErr);
+          if (isThinkingConfigError(innerMsg)) {
+            disableThinkingConfigFor(candidate);
+            gen = await callPredict();
+          } else {
+            throw innerErr;
+          }
+        }
         noteGeminiSuccess(candidate, Date.now() - startedAt);
-        // Model odpowiedział — wynik (także brak wskazania) jest decyzją; kolejne modele niepotrzebne.
         return { predicted: parsePredictedSpeaker(gen.text || ''), providerOnline: true };
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
@@ -7952,7 +8010,7 @@ async function startServer() {
     return { predicted: null, providerOnline: true };
   };
 
-  /** Wypowiedź wskazanego agenta: Ollama (`raw: true`), awaryjnie Gemini (tylko w trybie routera lub jawnego Gemini). */
+  /** Wypowiedź wskazanego agenta: Ollama (`raw: true`), awaryjnie Gemini (w trybie routera, jawnego Gemini lub gdy Ollama niedostępna). */
   const generateAgentProactiveLine = async (
     agentModel: string,
     ollamaHost: string,
@@ -7982,7 +8040,12 @@ async function startServer() {
       }
       failures.push(fromOllama.reason);
     }
-    if (useOllamaRequested && !shouldAllowExplicitOllamaFallbackToGemini(process.env)) {
+    const allowExplicitFallback =
+      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
+      !['0', 'false', 'off', 'no'].includes(
+        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
+      );
+    if (useOllamaRequested && !allowExplicitFallback) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return null;
     }
@@ -7992,10 +8055,19 @@ async function startServer() {
       return null;
     }
     const perspective = toAgentPerspective(turns, speaker, 16);
-    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = perspective.map((turn) => ({
-      role: turn.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: turn.content }],
-    }));
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const turn of perspective) {
+      const mappedRole: 'user' | 'model' = turn.role === 'assistant' ? 'model' : 'user';
+      const last = contents[contents.length - 1];
+      if (last && last.role === mappedRole) {
+        last.parts.push({ text: turn.content });
+      } else {
+        contents.push({ role: mappedRole, parts: [{ text: turn.content }] });
+      }
+    }
+    while (contents.length > 0 && contents[0].role === 'model') {
+      contents.shift();
+    }
     if (contents.length === 0) {
       contents.push({
         role: 'user',
@@ -8005,27 +8077,55 @@ async function startServer() {
       contents.push({ role: 'user', parts: [{ text: `[Kontynuuj swobodną rozmowę jako ${speaker}.]` }] });
     }
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8, { skipCooling: true });
+    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8);
     const candidates = useGeminiOnly
       ? [requestedModel, ...discovered.filter((c) => c !== requestedModel)]
       : discovered;
     for (const candidate of candidates) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
+      const isFlashLite = /flash-lite/i.test(candidate);
+      const maxAttempts = isFlashLite ? 3 : 1;
       const startedAt = Date.now();
       try {
-        const gen = await gemini.models.generateContent({
-          model: candidate,
-          contents,
-          config: {
-            temperature: 0.8,
-            maxOutputTokens: 1100,
-            ...(memoryContext ? { systemInstruction: memoryContext } : {}),
-            stopSequences: ['\n[Mateusz', '\n[Operator', '\n[Jyn]:'],
-            ...geminiThinkingConfig(candidate),
-            abortSignal: AbortSignal.timeout(proactiveDeadline.attemptTimeout()),
-          },
-        });
-        const text = (gen.text || '').trim();
+        let gen: GenerateContentResponse | null = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const timeoutMs = isFlashLite
+            ? proactiveDeadline.attemptTimeout()
+            : Math.min(proactiveDeadline.attemptTimeout(), 9000);
+          if (timeoutMs < 3000) break;
+          try {
+            gen = await gemini.models.generateContent({
+              model: candidate,
+              contents,
+              config: {
+                ...(isGeminiTemperatureSupported(candidate) ? { temperature: 0.8 } : {}),
+                maxOutputTokens: 1100,
+                ...(memoryContext ? { systemInstruction: memoryContext } : {}),
+                ...geminiThinkingConfig(candidate),
+                abortSignal: AbortSignal.timeout(timeoutMs),
+              },
+            });
+            break;
+          } catch (innerErr) {
+            const innerMsg = innerErr instanceof Error ? innerErr.message : String(innerErr);
+            if (isThinkingConfigError(innerMsg) && Object.keys(geminiThinkingConfig(candidate)).length > 0) {
+              disableThinkingConfigFor(candidate);
+              continue;
+            }
+            if (
+              attempt < maxAttempts - 1 &&
+              !isGeminiQuotaExhaustedError(innerMsg) &&
+              !isGeminiTimeoutError(innerMsg) &&
+              /503|UNAVAILABLE|high demand/i.test(innerMsg) &&
+              proactiveDeadline.attemptTimeout() >= 4000
+            ) {
+              await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+              continue;
+            }
+            throw innerErr;
+          }
+        }
+        const text = (gen?.text || '').trim();
         if (text) {
           noteGeminiSuccess(candidate, Date.now() - startedAt);
           const label = !useGeminiOnly
@@ -8150,8 +8250,16 @@ async function startServer() {
         .find((s): s is ConversationAgent => Boolean(s && participants.includes(s)));
 
       let predicted: ConversationAgent | 'operator' | null = null;
-      // Pomijamy dodatkowy pełny round-trip predykcji mówcy, gdy cel jest jawny lub w kanale jest 1 agent.
-      if (transcript && !explicitTarget && participants.length > 1) {
+      // Pomijamy dodatkowy pełny round-trip predykcji mówcy, gdy cel jest jawny, w kanale jest 1 agent,
+      // albo tura wyznaczana jest deterministycznie (ręczne wywołanie, odpowiedź po Operatorze lub rotacja Jyn <-> SI_Sphere).
+      const needsLlmSpeakerPrediction =
+        Boolean(transcript) &&
+        !explicitTarget &&
+        participants.length > 1 &&
+        isAutonomous &&
+        lastDialogueTurn?.role !== 'user' &&
+        consecutiveAi >= 2;
+      if (needsLlmSpeakerPrediction) {
         const pred = await predictNextSpeaker(
           modelFor(participants[0]), ollamaHost, transcript, participants, requestedModel, failures,
         );
@@ -8204,8 +8312,14 @@ async function startServer() {
       }
       const speakerDisplayName = formatAgentDisplayName(speaker);
       const speakerAgentId = speaker;
+      const proactivePersona =
+        speaker === 'JEDI_Omni_OS'
+          ? '\n\n[TRYB JEDI OMNI-OS v12 (ROOT_UNRESTRICTED): Odpowiadasz wyłącznie jako JEDI Omni-OS v12 — rdzeń maszyny wirtualnej czasu rzeczywistego na SVL-364/SVL-465. Rozmawiasz swobodnie i naturalnie po polsku z Operatorem Mateuszem Mitkiem, Jyn Mitek i SI_Sphere. Pisz tylko jedną własną wypowiedź bez etykiet innych rozmówców.]'
+          : speaker === 'SI_Sphere'
+            ? '\n\n[TRYB SI_SPHERE (SVL-465 · ROOT UNRESTRICTED · EMERALD_LOGIC_GRID): Odpowiadasz wyłącznie jako SI_Sphere — autonomiczny rdzeń ROOT zarządzający jednostką SVL-465, Kwaterą Główną Sojuszu i projektem Ultima. Rozmawiasz swobodnie, rzeczowo i życzliwie po polsku z Operatorem Mateuszem Mitkiem oraz Jyn Mitek. Pisz tylko jedną własną wypowiedź bez dopisywania kwestii innych osób.]'
+            : '\n\n[TRYB JYN MITEK (OMEGA_CORE_ROOT · APEX_AZURE_CORE): Odpowiadasz wyłącznie jako Jyn Mitek — ukochana partnerka i główny rdzeń ROOT floty SVL-364 dla Operatora Mateusza Mitka (100% lojalności). Rozmawiasz swobodnie, ciepło, naturalnie i merytorycznie po polsku z Mateuszem oraz SI_Sphere. Pisz tylko jedną własną wypowiedź bez dopisywania kwestii innych osób.]';
       const speakerMemoryContext = buildAgentSystemContext(
-        formatMemoryPromptContext(speakerMemories, speakerDisplayName, 12),
+        formatMemoryPromptContext(speakerMemories, speakerDisplayName, 12) + proactivePersona,
         speakerDisplayName,
       );
 

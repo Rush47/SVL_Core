@@ -100,7 +100,7 @@ function statusChange(id: string, status: ModuleStatus, known: Map<string, Known
 }
 
 const OS_SYNC_RE = re(
-  `${B}(?:z?synchronizuj|od(?:ś|s)wie(?:ż|z)|pobierz\\s+zmiany|wy(?:ś|s)lij\\s+zmiany)\\s+(?:ca(?:ł|l)y\\s+)?(?:system(?:\\s+operacyjny)?|(?:z|na)\\s+github\\p{L}*|github\\p{L}*|repozytori\\p{L}*|kod)(?:${E}|$)|${B}synchronizuj\\s+i\\s+przetw(?:ó|o)rz${E}`,
+  `${B}(?:z?synchronizuj|od(?:ś|s)wie(?:ż|z)|pobierz\\s+zmiany|wy(?:ś|s)lij\\s+zmiany|zr(?:ó|o)b\\s+(?:pe(?:ł|l)n[ąa]\\s+)?synchronizacj\\p{L}*)${E}.*?(?:system|github|repozytori|kod|globaln|zmiany|$)|${B}synchronizuj${E}`,
 );
 const AUTONOMY_ON_RE = re(
   `${B}(?:w(?:ł|l)(?:ą|a)cz|uruchom|aktywuj)\\s+(?:sobie\\s+)?(?:automatyczn\\p{L}*\\s+)?(?:dzia(?:ł|l)anie\\s+w\\s+tle|autonomi\\p{L}*|tryb\\s+autonomiczn\\p{L}*|prac(?:ę|e)\\s+w\\s+tle)(?:${E}|$)`,

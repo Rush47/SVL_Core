@@ -25,6 +25,7 @@
     "@google/genai": "^3.6.1",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@tailwindcss/vite": "^4.3.5",
+    "@types/katex": "^0.16.8",
     "@types/ws": "^8.18.2",
     "@vector-im/compound-design-tokens": "^11.3.1",
     "@vector-im/compound-web": "^10.6.0",
@@ -42,7 +43,6 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/katex": "^0.16.8",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

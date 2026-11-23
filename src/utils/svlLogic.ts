@@ -57,7 +57,7 @@ export function getEffectiveCanonicalAgents(
   );
   const result = [...CANONICAL_AGENTS];
   for (const tpl of DYNAMIC_AGENT_TEMPLATES) {
-    if (liveNames.has(tpl.canonicalName) && !result.some((r) => r.canonicalName === tpl.canonicalName)) {
+    if ((liveNames.size === 0 || liveNames.has(tpl.canonicalName)) && !result.some((r) => r.canonicalName === tpl.canonicalName)) {
       result.push(tpl);
     }
   }

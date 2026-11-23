@@ -129,13 +129,32 @@ test('createGeminiDeadline uses fast 20s per-attempt and 55s total default budge
 });
 
 test('isGeminiChatModelName przepuszcza tylko modele czatu (z logów AI Studio)', async () => {
-  const { isGeminiChatModelName } = await import('./geminiModels.ts');
-  for (const ok of ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite-preview', 'gemini-3.1-pro-preview', 'models/gemini-2.5-flash']) {
+  const {
+    isGeminiChatModelName,
+    isGeminiTemperatureSupported,
+    isGeminiToolSchemaError,
+    sanitizeGeminiToolDeclarations,
+  } = await import('./geminiModels.ts');
+  for (const ok of ['gemini-4-hydrogen', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite-preview', 'gemini-3.1-pro-preview', 'models/gemini-2.5-flash']) {
     assert.equal(isGeminiChatModelName(ok), true, ok);
   }
-  for (const bad of ['gemini-3.5-transcribe', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-omni-flash-preview', 'gemini-4-neon', 'gemini-4-hydrogen', 'gemini-3.1-pro-preview-customtools', 'gemini-embedding-001']) {
+  for (const bad of ['gemini-3.5-transcribe', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-omni-flash-preview', 'gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.1-pro-preview-customtools', 'gemini-embedding-001']) {
     assert.equal(isGeminiChatModelName(bad), false, bad);
   }
+  assert.equal(isGeminiTemperatureSupported('gemini-4-hydrogen'), false);
+  assert.equal(isGeminiTemperatureSupported('gemini-3.1-flash-lite'), true);
+  assert.deepEqual(geminiThinkingConfig('gemini-4-hydrogen'), { thinkingConfig: { thinkingLevel: 'LOW' } });
+  assert.equal(isGeminiToolSchemaError('400 INVALID_ARGUMENT: parameters.properties: should be non-empty for OBJECT type'), true);
+  assert.equal(isGeminiToolSchemaError('400 INVALID_ARGUMENT: Duplicate function declaration name: svl_set_avatar'), true);
+
+  const cleaned = sanitizeGeminiToolDeclarations([
+    { name: 'svl_system_status', description: 'status', parameters: { type: 'OBJECT', properties: {} } },
+    { name: 'svl_set_avatar', description: 'first', parameters: { type: 'OBJECT', properties: { agent: { type: 'STRING' } } } },
+    { name: 'svl_set_avatar', description: 'duplicate', parameters: { type: 'OBJECT', properties: { query: { type: 'STRING' } } } },
+  ]);
+  assert.equal(cleaned.length, 2);
+  assert.equal('parameters' in cleaned[0], false);
+  assert.equal(cleaned[1].description, 'first');
 });
 
 test('diversify stawia modele pro na końcu (darmowy limit zwraca dla nich 429)', async () => {

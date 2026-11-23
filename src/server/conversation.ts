@@ -52,6 +52,9 @@ function isDialogueTurn(turn: DialogueTurn): boolean {
   if (turn.role === 'assistant' && txt.startsWith('⚠️') && /nie może teraz odpowiedzieć|nie zdążył/i.test(txt)) {
     return false;
   }
+  if (turn.role === 'assistant' && /Model językowy dla komentarza tekstowego .* nie był dostępny/i.test(txt)) {
+    return false;
+  }
   return true;
 }
 

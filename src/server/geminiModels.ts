@@ -5,25 +5,64 @@
 // modeli z API (`models.list()`), wybiera te obsługujące `generateContent`, układa je
 // (szybkie → stabilne → nowsze) i pamięta modele, które zwróciły 404, żeby ich nie ponawiać.
 
-/** Zapas, gdy listy modeli nie da się pobrać (szybkie i stabilne modele lite na początku). */
+/** Zapas, gdy listy modeli nie da się pobrać (szybkie i stabilne modele darmowe na początku). */
 export const GEMINI_STATIC_FALLBACK = [
-  'gemini-flash-lite-latest',
   'gemini-3.1-flash-lite',
+  'gemini-4-hydrogen',
+  'gemini-flash-lite-latest',
   'gemini-flash-latest',
-  'gemini-3-flash-preview',
 ];
 
-const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma|transcribe|banana|omni|customtools|thinking-exp)/i;
+const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma|transcribe|banana|omni|customtools|thinking-exp|4-neon|4-carbon|4-argon)/i;
 /**
- * Tylko modele czatu: gemini-[wersja-]flash|flash-lite|pro[-latest|-preview…|-001].
- * Odrzuca modele specjalne i kodowe nazwy eksperymentów (np. transcribe, nano-banana, 4-neon),
+ * Tylko modele czatu: darmowy gemini-4-hydrogen oraz gemini-[wersja-]flash|flash-lite|pro[-latest|-preview…|-001].
+ * Odrzuca modele specjalne i płatne warianty (np. transcribe, nano-banana, 4-neon, 4-carbon, 4-argon),
  * które w logach zwracały 400/429 i zjadały czas zapytania.
  */
-const CHAT_MODEL_NAME = /^gemini-(?:\d+(?:\.\d+)?-)?(?:flash-lite|flash|pro)(?:-latest|-preview(?:-[\w.-]+)?|-\d{3})?$/i;
+const CHAT_MODEL_NAME = /^(?:gemini-4-hydrogen|gemini-(?:\d+(?:\.\d+)?-)?(?:flash-lite|flash|pro)(?:-latest|-preview(?:-[\w.-]+)?|-\d{3})?)$/i;
 
 export function isGeminiChatModelName(name: string): boolean {
   const n = String(name || '').replace(/^models\//, '').trim();
   return CHAT_MODEL_NAME.test(n) && !EXCLUDED.test(n);
+}
+
+/** Gemini 4 nie przyjmuje parametrów temperature/topP/topK — pomijamy je dla modeli gemini-4-*. */
+export function isGeminiTemperatureSupported(model: string): boolean {
+  return !/^gemini-4-/i.test(String(model || '').replace(/^models\//, '').trim());
+}
+
+/** Czy błąd 400 dotyczy deklaracji narzędzi (wtedy ponawiamy zapytanie bez narzędzi). */
+export function isGeminiToolSchemaError(message: string): boolean {
+  return /\b400\b|INVALID_ARGUMENT/i.test(String(message || '')) &&
+    /(function_declarations|parameters\.properties|duplicate function|tool|schema)/i.test(String(message || ''));
+}
+
+/**
+ * Deduplikuje deklaracje narzędzi po nazwie i usuwa puste `parameters: { type: OBJECT, properties: {} }`,
+ * które Gemini API odrzuca błędem 400 INVALID_ARGUMENT.
+ */
+export function sanitizeGeminiToolDeclarations<T extends { name?: string; parameters?: any }>(declarations: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const decl of declarations) {
+    const name = String(decl?.name || '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const params = decl?.parameters;
+    const isEmptyObjectSchema =
+      params &&
+      typeof params === 'object' &&
+      String(params.type || '').toUpperCase() === 'OBJECT' &&
+      (!params.properties ||
+        (typeof params.properties === 'object' && Object.keys(params.properties as Record<string, unknown>).length === 0));
+    if (isEmptyObjectSchema) {
+      const { parameters: _omit, ...rest } = decl;
+      out.push(rest as T);
+    } else {
+      out.push(decl);
+    }
+  }
+  return out;
 }
 
 export interface GeminiModelInfo {
@@ -47,7 +86,7 @@ export function rankGeminiChatModels(models: GeminiModelInfo[]): string[] {
     .filter((n) => isGeminiChatModelName(n));
   const unique = [...new Set(names)];
   const score = (n: string) => {
-    const tier = /flash-lite/i.test(n) ? 1 : /flash/i.test(n) ? 0 : /pro/i.test(n) ? 2 : 3;
+    const tier = /flash-lite/i.test(n) ? 1 : /flash|4-hydrogen/i.test(n) ? 0 : /pro/i.test(n) ? 2 : 3;
     const unstable = /(preview|exp|experimental)/i.test(n) ? 1 : 0;
     const alias = /-latest$/i.test(n) ? 0 : 1; // aliasy *-latest zawsze wskazują działający model
     return { tier, unstable, alias, version: versionOf(n) };
@@ -157,17 +196,20 @@ export async function discoverGeminiModels(client: any): Promise<string[]> {
   return discovering;
 }
 
-const COOLDOWN_MS = 5 * 60 * 1000;
-const TIMEOUT_COOLDOWN_MS = 15 * 60 * 1000;
-const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
+const COOLDOWN_MS = 10 * 1000;
+const TIMEOUT_COOLDOWN_MS = 30 * 1000;
+const QUOTA_COOLDOWN_MS = 60 * 1000;
+const QUOTA_DAILY_COOLDOWN_MS = 15 * 60 * 1000;
 const WORKING_TTL_MS = 45 * 60 * 1000;
 const coolingDown = new Map<string, number>();
+const quotaCoolingModels = new Set<string>();
 const workingModels = new Map<string, { at: number; avgMs: number }>();
 const noThinkingConfig = new Set<string>();
 
 /** Resetuje stan zdrowia modeli (używane głównie w testach jednostkowych). */
 export function resetGeminiModelHealth(): void {
   coolingDown.clear();
+  quotaCoolingModels.clear();
   workingModels.clear();
   goneModels.clear();
   noThinkingConfig.clear();
@@ -178,6 +220,7 @@ export function resetGeminiModelHealth(): void {
 /** Zapamiętuje sprawdzony szybki model — w kolejnych zapytaniach będzie wywoływany jako pierwszy. */
 export function noteGeminiSuccess(model: string, durationMs = 2000): void {
   coolingDown.delete(model);
+  quotaCoolingModels.delete(model);
   const prev = workingModels.get(model);
   const safeMs = Math.max(100, Math.round(durationMs));
   const avgMs = prev ? Math.round(prev.avgMs * 0.6 + safeMs * 0.4) : safeMs;
@@ -194,13 +237,14 @@ export function parseGeminiRetryDelayMs(message: string): number | null {
   return m ? Math.round(Number(m[1]) * 1000) : null;
 }
 
-/** Przekroczona kwota (429) → na koniec kolejki: na czas z retryDelay (limit minutowy) albo 30 min. */
+/** Przekroczona kwota (429) → na koniec kolejki: na czas z retryDelay (limit minutowy) albo 60 s / 15 min perDay. */
 export function noteGeminiQuotaExhausted(model: string, errorMessage?: string): void {
   workingModels.delete(model);
   const retryMs = parseGeminiRetryDelayMs(errorMessage || '');
   const perDay = /per ?day|PerDay|daily/i.test(errorMessage || '');
-  const cooldown = retryMs !== null && !perDay ? Math.min(QUOTA_COOLDOWN_MS, Math.max(15_000, retryMs)) : QUOTA_COOLDOWN_MS;
+  const cooldown = retryMs !== null && !perDay ? Math.min(QUOTA_COOLDOWN_MS, Math.max(10_000, retryMs)) : (perDay ? QUOTA_DAILY_COOLDOWN_MS : QUOTA_COOLDOWN_MS);
   coolingDown.set(model, Date.now() + cooldown);
+  quotaCoolingModels.add(model);
   persistModelState();
   modelLogger?.('WARN', `Model Gemini ${model} ma wyczerpaną kwotę (429) — pomijany przez ${Math.round(cooldown / 1000)} s`);
 }
@@ -220,7 +264,10 @@ export function setGeminiModelStatePath(filePath: string | null, fs?: FsLike): v
     const now = Date.now();
     for (const m of Array.isArray(data?.gone) ? data.gone : []) if (typeof m === 'string') goneModels.add(m);
     for (const [m, until] of Object.entries(data?.cooling || {})) {
-      if (typeof until === 'number' && until > now) coolingDown.set(m, until);
+      if (typeof until === 'number' && until > now) {
+        coolingDown.set(m, until);
+        if (until - now > 2 * 60 * 1000) quotaCoolingModels.add(m);
+      }
     }
   } catch {
     // brak pliku lub uszkodzony — start bez zapamiętanego stanu
@@ -265,12 +312,14 @@ export function summarizeGeminiFailures(errors: string[]): string {
   return (parts.join(', ') || 'brak odpowiedzi') + hint;
 }
 
-/** Model zawiesił się (timeout) → na 15 minut na koniec kolejki. */
+/** Model zawiesił się (timeout) → dla darmowych modeli flash-lite tylko 30 s, dla pozostałych 15 min. */
 export function noteGeminiTimeout(model: string): void {
   workingModels.delete(model);
-  coolingDown.set(model, Date.now() + TIMEOUT_COOLDOWN_MS);
+  const isFreePriority = FREE_TIER_PRIORITY_MODELS.includes(model);
+  const cooldown = isFreePriority ? 30 * 1000 : TIMEOUT_COOLDOWN_MS;
+  coolingDown.set(model, Date.now() + cooldown);
   persistModelState();
-  modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas odpowiedzi — pomijany przez 15 min`);
+  modelLogger?.('WARN', `Model Gemini ${model} przekroczył czas odpowiedzi — pomijany przez ${Math.round(cooldown / 1000)} s`);
 }
 
 /** Przekroczony czas / 503 / 429 → model na koniec kolejki (z właściwym czasem karencji). */
@@ -283,10 +332,14 @@ export function noteGeminiSlowOrBusy(model: string, errorMessage?: string): void
     noteGeminiTimeout(model);
     return;
   }
-  workingModels.delete(model);
-  coolingDown.set(model, Date.now() + COOLDOWN_MS);
+  const isFreePriority = FREE_TIER_PRIORITY_MODELS.includes(model);
+  if (!isFreePriority) {
+    workingModels.delete(model);
+  }
+  const cooldown = isFreePriority ? 3000 : COOLDOWN_MS;
+  coolingDown.set(model, Date.now() + cooldown);
   persistModelState();
-  modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony — na 5 min na koniec kolejki`);
+  modelLogger?.('WARN', `Model Gemini ${model} jest chwilowo przeciążony (503) — na ${Math.round(cooldown / 1000)} s na koniec kolejki`);
 }
 
 /** Najbliższy moment (ms od teraz), gdy któryś model Gemini wyjdzie z karencji; null = brak karencji. */
@@ -303,7 +356,15 @@ export function isGeminiSlowOrBusyError(message: string): boolean {
   );
 }
 
-/** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, sprawdzone szybkie modele, wykryte modele, zapas. */
+/** Modele darmowe o najwyższej dostępności w darmowym kluczu Gemini API. */
+export const FREE_TIER_PRIORITY_MODELS = [
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-3.1-flash-lite-preview',
+];
+
+/** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, sprawdzone szybkie modele, darmowe flash-lite, wykryte modele, zapas. */
 export async function geminiCandidatesFor(
   client: any,
   requestedModel?: string,
@@ -313,34 +374,52 @@ export async function geminiCandidatesFor(
   const requested = String(requestedModel || '').trim();
   const fromApi = await discoverGeminiModels(client);
   const now = Date.now();
+  const isCooling = (m: string) => {
+    const until = coolingDown.get(m);
+    if (!until) return false;
+    if (now >= until) {
+      coolingDown.delete(m);
+      quotaCoolingModels.delete(m);
+      return false;
+    }
+    return true;
+  };
   const provenFast = [...workingModels.entries()]
-    .filter(([m, info]) => !goneModels.has(m) && now - info.at < WORKING_TTL_MS && !(coolingDown.get(m) && now < (coolingDown.get(m) as number)))
+    .filter(([m, info]) => !goneModels.has(m) && now - info.at < WORKING_TTL_MS && !isCooling(m))
     .sort((a, b) => a[1].avgMs - b[1].avgMs)
     .map(([m]) => m);
 
+  const availableFreePriority = FREE_TIER_PRIORITY_MODELS.filter((m) => fromApi.length === 0 || fromApi.includes(m));
   const ordered = [
     process.env.GEMINI_MODEL,
     requested.startsWith('gemini-') ? requested : null,
     ...provenFast,
+    ...availableFreePriority,
     // Wykryte modele najpierw; zapas zawsze na końcu, gdyby lista z API była niepełna.
     ...diversify(fromApi),
     ...GEMINI_STATIC_FALLBACK,
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
   const unique = [...new Set(ordered)].filter((m) => !goneModels.has(m) && (m === process.env.GEMINI_MODEL || isGeminiChatModelName(m)));
   // Modele, które przed chwilą przekroczyły czas / były przeciążone (503) / bez kwoty (429), idą na koniec.
-  const healthy = unique.filter((m) => !(coolingDown.get(m) && now < (coolingDown.get(m) as number)));
+  const healthy = unique.filter((m) => !isCooling(m));
   const cooling = unique.filter((m) => !healthy.includes(m));
+  // Modele po 503 przed modelami z wyczerpaną kwotą 429
+  const transientCooling = cooling.filter((m) => !quotaCoolingModels.has(m));
+  const quotaCooling = cooling.filter((m) => quotaCoolingModels.has(m));
+  const orderedCooling = [...transientCooling, ...quotaCooling];
   const pinned = [
     process.env.GEMINI_MODEL,
     requested.startsWith('gemini-') ? requested : null,
     ...provenFast,
+    ...availableFreePriority.filter((m) => healthy.includes(m)),
   ].filter((m): m is string => Boolean(m && healthy.includes(m)));
-  const pinnedSet = new Set(pinned);
+  const uniquePinned = [...new Set(pinned)];
+  const pinnedSet = new Set(uniquePinned);
   const remainingHealthy = healthy.filter((m) => !pinnedSet.has(m));
   // skipCooling: zapytania w tle (rozmowa obustronna) nie dotykają modeli na karencji 429/503,
   // żeby nie przepalać odnawiającego się limitu minutowego potrzebnego dla wiadomości Operatora.
-  const tail = opts.skipCooling ? [] : cooling;
-  return [...pinned, ...diversify(remainingHealthy), ...tail].slice(0, max);
+  const tail = opts.skipCooling ? [] : orderedCooling;
+  return [...uniquePinned, ...diversify(remainingHealthy), ...tail].slice(0, max);
 }
 
 /**
@@ -372,13 +451,16 @@ export function diversify(models: string[]): string[] {
 }
 
 /**
- * Ograniczenie „myślenia” modeli Gemini 3.x (domyślnie myślą długo — czat przekraczał 30 s).
- * Dla szybkich modeli `flash-lite` domyślnie używamy `MINIMAL`, dla pozostałych `LOW`.
+ * Ograniczenie „myślenia” modeli Gemini 3.x/4.x (domyślnie myślą długo — czat przekraczał 30 s).
+ * Dla `flash-lite` domyślnie używamy `MINIMAL`, dla pozostałych (w tym `gemini-4-hydrogen`, który
+ * nie obsługuje `MINIMAL`) używamy `LOW`.
  * GEMINI_THINKING_LEVEL: MINIMAL | LOW | MEDIUM | HIGH | OFF.
  */
 export function geminiThinkingConfig(model: string): Record<string, unknown> {
+  const isGemini4 = /^gemini-4-/i.test(String(model || '').replace(/^models\//, '').trim());
   const envLevel = String(process.env.GEMINI_THINKING_LEVEL || '').trim().toUpperCase();
-  const level = envLevel || (/flash-lite/i.test(model) ? 'MINIMAL' : 'LOW');
+  let level = envLevel || (/flash-lite/i.test(model) ? 'MINIMAL' : 'LOW');
+  if (isGemini4 && level === 'MINIMAL') level = 'LOW';
   if (level === 'OFF' || noThinkingConfig.has(model)) return {};
   if (!['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].includes(level)) return {};
   return { thinkingConfig: { thinkingLevel: level } };

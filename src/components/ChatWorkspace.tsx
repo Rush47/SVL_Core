@@ -109,7 +109,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
+  const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
   const [geminiModels, setGeminiModels] = useState<string[]>(['gemini-flash-lite-latest']);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [engineOllamaModels, setEngineOllamaModels] = useState<Array<{ name: string; parameterSize?: string | null; vision?: boolean; endpointId?: string; endpointLabel?: string }>>([]);
@@ -483,7 +483,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         agentOverride ||
         (targetAgent === 'Jyn' || targetAgent === 'SI_Sphere' || targetAgent === 'JEDI_Omni_OS'
           ? targetAgent
-          : 'Jyn');
+          : '');
       const recentMsgs = (activeConv.messages || []).slice(-12);
       const lastMsg = recentMsgs[recentMsgs.length - 1];
       const historyPayload = recentMsgs.map((m) => ({
@@ -1009,6 +1009,14 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       }
 
       void refreshAllDomains('chat_message_global_sync');
+      if (isFamilyDuplex && !isSlashCmd && hasSvlOperatorAccessToken()) {
+        const nextFamilyAgent = data.agentId === 'SI_Sphere' ? 'Jyn' : 'SI_Sphere';
+        setTimeout(() => {
+          if (!sendingRef.current) {
+            void handleProactiveRef.current(nextFamilyAgent, true);
+          }
+        }, 700);
+      }
     } catch (error: any) {
       setChatActionError(`Błąd wysyłania wiadomości: ${error?.message || String(error)}`);
     } finally {
