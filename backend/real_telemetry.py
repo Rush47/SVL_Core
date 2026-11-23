@@ -289,10 +289,18 @@ class RealTelemetryCollector:
             "percent": disk_used_percent(usage),
         }
 
-    def gpu(self) -> dict[str, Any]:
+    def clear_caches(self) -> None:
         with self._lock:
-            if self._gpu_cache and time.monotonic() - self._gpu_cache[0] < self.GPU_TTL_SEC:
-                return self._gpu_cache[1]
+            self._gpu_cache = None
+            self._firewall_cache = None
+            self._ssh_target_cache.clear()
+            self._ship_cache.clear()
+
+    def gpu(self, *, use_cache: bool = False) -> dict[str, Any]:
+        if use_cache:
+            with self._lock:
+                if self._gpu_cache and time.monotonic() - self._gpu_cache[0] < self.GPU_TTL_SEC:
+                    return self._gpu_cache[1]
         smi = find_real_binary("nvidia-smi")
         if not smi:
             result = {"available": False, "devices": [], "reason": "Brak narzędzia nvidia-smi — nie wykryto karty NVIDIA."}
@@ -314,10 +322,11 @@ class RealTelemetryCollector:
             self._gpu_cache = (time.monotonic(), result)
         return result
 
-    def firewall(self) -> dict[str, Any]:
-        with self._lock:
-            if self._firewall_cache and time.monotonic() - self._firewall_cache[0] < self.FIREWALL_TTL_SEC:
-                return self._firewall_cache[1]
+    def firewall(self, *, use_cache: bool = False) -> dict[str, Any]:
+        if use_cache:
+            with self._lock:
+                if self._firewall_cache and time.monotonic() - self._firewall_cache[0] < self.FIREWALL_TTL_SEC:
+                    return self._firewall_cache[1]
         ufw = find_real_binary("ufw")
         if not ufw:
             result = {"tool": "ufw", "state": "not_installed", "detail": "Zapora ufw nie jest zainstalowana na tym hoście."}
@@ -444,8 +453,73 @@ class RealTelemetryCollector:
                  target, self.REMOTE_SHIP_COMMAND],
                 capture_output=True, text=True, timeout=10,
             )
-            if proc.returncode == 0:
-                return {**base, "online": True, "raw": proc.stdout[:800], "error": None}
-            return {**base, "error": (proc.stderr or "SSH command failed").strip()[:200]}
+            if proc.returncode != 0:
+                return {**base, "error": (proc.stderr or f"ssh zakończył się kodem {proc.returncode}").strip()[:300]}
+            return {**base, **self.parse_remote_ship(proc.stdout), "online": True}
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {**base, "error": f"Połączenie SSH nie powiodło się: {exc}"}
+
+    @staticmethod
+    def parse_remote_ship(text: str) -> dict[str, Any]:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        out: dict[str, Any] = {
+            "hostname": None,
+            "kernel": None,
+            "uptime_sec": None,
+            "load_avg": None,
+            "cores": None,
+            "ram_total_mb": None,
+            "ram_available_mb": None,
+            "disk_free_gb": None,
+        }
+        if len(lines) >= 1:
+            out["hostname"] = lines[0]
+        if len(lines) >= 2:
+            out["kernel"] = lines[1]
+        for line in lines[2:]:
+            parts = line.split()
+            if re.fullmatch(r"\d+(\.\d+)?\s+\d+(\.\d+)?", line) and out["uptime_sec"] is None:
+                out["uptime_sec"] = float(parts[0])
+            elif len(parts) >= 5 and "/" in parts[3] and out["load_avg"] is None:
+                out["load_avg"] = [float(v) for v in parts[:3]]
+            elif re.fullmatch(r"\d+", line) and out["cores"] is None:
+                out["cores"] = int(line)
+            elif line.startswith("MemTotal:"):
+                out["ram_total_mb"] = round(int(parts[1]) / 1024, 1)
+            elif line.startswith("MemAvailable:"):
+                out["ram_available_mb"] = round(int(parts[1]) / 1024, 1)
+            elif len(parts) >= 6 and parts[-1] == "/":
+                out["disk_free_gb"] = round(int(parts[3]) / 1024**2, 2)
+        return out
+
+    # Całość ------------------------------------------------------------------------------
+    def snapshot(
+        self,
+        *,
+        include_ship: bool,
+        ollama_host: str,
+        comfyui_url: str,
+        ssh_target: str = "Ship",
+    ) -> dict[str, Any]:
+        cpu, network = self._cpu_and_network()
+        memory = parse_meminfo(_read("/proc/meminfo") or "")
+        return {
+            "ok": True,
+            "collected_at": _now(),
+            "host": {
+                "hostname": socket.gethostname(),
+                "os": self._os_name(),
+                "kernel": platform.release(),
+                "architecture": platform.machine(),
+                "uptime_sec": self._uptime_sec(),
+                "cpu": cpu,
+                "memory": memory,
+                "disk": self._disk("/"),
+                "network": network,
+                "gpu": self.gpu(use_cache=True),
+                "firewall": self.firewall(use_cache=True),
+            },
+            "services": self.services(ollama_host, comfyui_url),
+            "ssh_target": self.ssh_target(ssh_target),
+            "ship": self.ship(ssh_target) if include_ship else None,
+        }

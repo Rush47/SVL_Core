@@ -178,5 +178,37 @@ class CollectorTests(unittest.TestCase):
         self.assertIsNone(snap["ship"])
 
 
+    def test_cached_gpu_and_firewall_probes_reuse_ttl_and_refresh_on_direct_call(self) -> None:
+        collector = RealTelemetryCollector()
+        active = subprocess.CompletedProcess(args=["ufw"], returncode=0, stdout="Status: active\n", stderr="")
+        inactive = subprocess.CompletedProcess(args=["ufw"], returncode=0, stdout="Status: inactive\n", stderr="")
+        with (
+            patch("real_telemetry.find_real_binary", return_value="/usr/sbin/ufw"),
+            patch("real_telemetry.subprocess.run", side_effect=[active, inactive]) as run_mock,
+        ):
+            self.assertEqual(collector.firewall(use_cache=True)["state"], "active")
+            # Second cached call within TTL returns cached state without spawning ufw again
+            self.assertEqual(collector.firewall(use_cache=True)["state"], "active")
+            self.assertEqual(run_mock.call_count, 1)
+            # Direct (uncached) call observes transition immediately and refreshes cache
+            self.assertEqual(collector.firewall()["state"], "inactive")
+            self.assertEqual(run_mock.call_count, 2)
+            self.assertEqual(collector.firewall(use_cache=True)["state"], "inactive")
+            self.assertEqual(run_mock.call_count, 2)
+
+        gpu_out = subprocess.CompletedProcess(
+            args=["nvidia-smi"], returncode=0, stdout="NVIDIA RTX 4090, 37, 9216, 24564, 51\n", stderr=""
+        )
+        with (
+            patch("real_telemetry.find_real_binary", return_value="/usr/bin/nvidia-smi"),
+            patch("real_telemetry.subprocess.run", return_value=gpu_out) as gpu_mock,
+        ):
+            first = collector.gpu(use_cache=True)
+            second = collector.gpu(use_cache=True)
+            self.assertTrue(first["available"])
+            self.assertEqual(first, second)
+            self.assertEqual(gpu_mock.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
