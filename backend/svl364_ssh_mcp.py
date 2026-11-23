@@ -408,7 +408,7 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["overview", "sync_mcp", "upsert_asset", "upsert_mission", "upsert_research", "update_botany"],
+                    "enum": ["overview", "sync_mcp", "upsert_asset", "upsert_mission", "upsert_research", "update_botany", "order_upgrade"],
                 },
                 "payload": {
                     "type": "object",
@@ -2408,6 +2408,8 @@ class SVL364SshMcpController:
                     result = self.infrastructure_registry.upsert_research(payload, origin=f"mcp:{origin}")
                 elif action == "update_botany":
                     result = self.infrastructure_registry.update_botany(payload, origin=f"mcp:{origin}")
+                elif action == "order_upgrade":
+                    result = self.infrastructure_registry.order_off_earth_upgrade(payload, origin=f"mcp:{origin}")
                 else:
                     result = {"ok": False, "error": f"Nieobsługiwana akcja: {action}"}
             except ValueError as exc:

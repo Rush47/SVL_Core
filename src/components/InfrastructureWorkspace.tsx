@@ -28,7 +28,7 @@ import { useSvlSync } from '../utils/svlSyncStore';
 import { hasSvlOperatorAccessToken, safeFetchJson } from '../utils/svlLogic';
 
 type WorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
-type SubView = 'assets' | 'missions' | 'botany' | 'network';
+type SubView = 'assets' | 'missions' | 'botany' | 'upgrades' | 'network';
 type AssetFilter = 'all' | 'outpost' | 'ship' | 'infrastructure';
 
 interface InfrastructureWorkspaceProps {
@@ -197,6 +197,41 @@ interface SectorSummary {
   items: string[];
 }
 
+interface ProcurementVendor {
+  id: string;
+  name: string;
+  location: string;
+  rating: string;
+  specialization: string;
+}
+
+interface ProcurementCatalogItem {
+  sku: string;
+  title: string;
+  vendorId: string;
+  vendorName: string;
+  targetHost: string;
+  category: string;
+  tier: string;
+  status: string;
+  integratedWith: string[];
+  specs: string;
+}
+
+interface ProcurementOrder {
+  orderId: string;
+  title: string;
+  vendorName: string;
+  orderedBy: string;
+  targetSystems: string[];
+  items: string[];
+  status: string;
+  deliveryLocation: string;
+  notes: string;
+  orderedAt: string;
+  integratedAt: string;
+}
+
 interface InfrastructureOverviewPayload {
   ok: boolean;
   collectedAt: string;
@@ -233,6 +268,8 @@ interface InfrastructureOverviewPayload {
     botanyAvgO2Pct: number;
     botanyAvgWaterRecycledPct: number;
     botanyTotalBiomassKg: number;
+    installedUpgradesCount?: number;
+    completedOrdersCount?: number;
     liveMonitoredHosts: number;
     liveSshHosts: number;
     liveDiscoveredHosts: number;
@@ -242,6 +279,9 @@ interface InfrastructureOverviewPayload {
   missions: InfrastructureMission[];
   research: InfrastructureResearch[];
   botany: InfrastructureBotany[];
+  procurementVendors?: ProcurementVendor[];
+  procurementCatalog?: ProcurementCatalogItem[];
+  procurementOrders?: ProcurementOrder[];
   liveAgentTasks: HostInfrastructureReport['tasks'];
   hostInfrastructure: HostInfrastructureReport;
   serverRevision: number;
@@ -355,6 +395,17 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
     location: 'Orbita Ziemi',
     biomeType: 'Hydroponika Zamknięta',
     currentActivity: '',
+  });
+
+  // Formularz zamówienia ulepszenia pozaziemskiego (APEX-CITADEL / Ceres / L4)
+  const [showAddOrder, setShowAddOrder] = useState(false);
+  const [orderForm, setOrderForm] = useState({
+    title: '',
+    vendorName: 'APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)',
+    targetHost: 'SVL-365 Sentinel Aegis + SVL-364 Ebon Apex + Jądro SVL',
+    category: 'Host & System Integration',
+    tier: 'OMEGA-MK6',
+    specs: '',
   });
 
   // Formularz monitorowanego hosta TCP (zakładka Hosty & Sieć)
@@ -647,6 +698,44 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
     }
   };
 
+  const handleCreateOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForm.title.trim() || isSaving) return;
+    setIsSaving(true);
+    try {
+      const res = await safeFetchJson<{ ok?: boolean; error?: string }>('/api/infrastructure/procurement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: orderForm.title.trim(),
+          vendorName: orderForm.vendorName.trim(),
+          targetHost: orderForm.targetHost.trim(),
+          category: orderForm.category.trim(),
+          tier: orderForm.tier.trim(),
+          specs: orderForm.specs.trim(),
+        }),
+      });
+      if (res.ok && res.data?.ok) {
+        setShowAddOrder(false);
+        setOrderForm({
+          title: '',
+          vendorName: 'APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)',
+          targetHost: 'SVL-365 Sentinel Aegis + SVL-364 Ebon Apex + Jądro SVL',
+          category: 'Host & System Integration',
+          tier: 'OMEGA-MK6',
+          specs: '',
+        });
+        setStatusMsg('Zamówiono poza Ziemią i natychmiast zintegrowano pakiet ulepszeń z hostem SVL-365 i systemem SVL.');
+        await refreshDomainModules(['modules', 'kernel']);
+        await loadOverview(false);
+      } else {
+        setStatusMsg(res.data?.error || res.error || 'Błąd składania zamówienia pozaziemskiego.');
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const addMonitoredHost = async (name: string, address: string, resetForm: boolean) => {
     if (!name || isSaving) return;
     if (!ADDRESS_RE.test(address)) {
@@ -827,7 +916,7 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
               {totals ? fmtNum(totals.shipsCount) : '—'}
             </div>
             <div className="mt-1 text-[11px] text-slate-400">
-              {totals ? `SVL-364 · SVL-465 · ${fmtNum(Math.max(0, totals.shipsCount - 2))} krążowników` : 'Ładowanie…'}
+              {totals ? `SVL-364 · SVL-365 · SVL-465 · ${fmtNum(Math.max(0, totals.shipsCount - 3))} krążowników` : 'Ładowanie…'}
             </div>
           </div>
 
@@ -891,6 +980,12 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
               label: 'Botanika & Biosfera',
               icon: Leaf,
               count: totals ? totals.botanyModulesCount : 0,
+            },
+            {
+              id: 'upgrades' as SubView,
+              label: 'Stocznia Pozaziemska & SVL-365',
+              icon: Sparkles,
+              count: overview?.procurementCatalog?.length || totals?.installedUpgradesCount || 4,
             },
             {
               id: 'network' as SubView,
@@ -1757,7 +1852,191 @@ export const InfrastructureWorkspace: React.FC<InfrastructureWorkspaceProps> = (
           </div>
         )}
 
-        {/* WIDOK 4: HOSTY & SIEĆ (MCP / LAN) */}
+        {/* WIDOK 4: STOCZNIA POZAZIEMSKA & INTEGRACJA HOSTA SVL-365 */}
+        {subView === 'upgrades' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  Stocznia Pozaziemska (APEX-CITADEL / Ceres / L4) — Ulepszenia Systemu &amp; Hosta SVL-365
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Zamówione poza Ziemią pakiety modernizacji, przebudowy i pełnej integracji naszego systemu SVL oraz hosta statku{' '}
+                  <strong className="text-slate-200">SVL-365 Sentinel Aegis</strong> z mostkiem MCP ROOT i SVL-364.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddOrder((v) => !v)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border border-amber-500/35"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Zamów ulepszenie poza Ziemią
+              </button>
+            </div>
+
+            {showAddOrder && (
+              <form
+                onSubmit={(e) => void handleCreateOrder(e)}
+                className="rounded-xl border border-slate-700 bg-[#0B111B] p-4 grid grid-cols-1 md:grid-cols-3 gap-3"
+              >
+                <input
+                  required
+                  value={orderForm.title}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, title: e.target.value }))}
+                  placeholder="Nazwa pakietu / ulepszenia (np. Koprocesor QKD + Tarcza SVL-365 Mk7)"
+                  className="md:col-span-2 rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={orderForm.tier}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, tier: e.target.value }))}
+                  placeholder="Klasa (np. OMEGA-MK7)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white font-mono"
+                />
+                <select
+                  value={orderForm.vendorName}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, vendorName: e.target.value }))}
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                >
+                  <option value="APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)">
+                    APEX-CITADEL Orbital Foundry &amp; Quantum Shipyard (L2)
+                  </option>
+                  <option value="Jupiter L4 Quantum Emporium (SVL-465 Dock)">
+                    Jupiter L4 Quantum Emporium (SVL-465 Dock)
+                  </option>
+                  <option value="Ceres Deep-Space Cybernetics & Bio-Forge (2.767 AU)">
+                    Ceres Deep-Space Cybernetics &amp; Bio-Forge (2.767 AU)
+                  </option>
+                </select>
+                <input
+                  value={orderForm.targetHost}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, targetHost: e.target.value }))}
+                  placeholder="Docelowy host / system (np. SVL-365 + SVL-364 + Jądro SVL)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <input
+                  value={orderForm.category}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, category: e.target.value }))}
+                  placeholder="Kategoria (np. Host & MCP Integration)"
+                  className="rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <textarea
+                  rows={2}
+                  value={orderForm.specs}
+                  onChange={(e) => setOrderForm((p) => ({ ...p, specs: e.target.value }))}
+                  placeholder="Specyfikacja integracji z naszym systemem i hostem SVL-365"
+                  className="md:col-span-2 rounded-lg bg-[#060A11] border border-slate-700 px-2.5 py-2 text-xs text-white"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button type="button" onClick={() => setShowAddOrder(false)} className="text-xs text-slate-400">
+                    Anuluj
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-4 py-2 rounded-lg text-xs font-medium bg-amber-500/20 text-amber-200 border border-amber-500/35"
+                  >
+                    Zamów i zintegruj przez MCP
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Dostawcy pozaziemscy */}
+            {overview?.procurementVendors && overview.procurementVendors.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {overview.procurementVendors.map((v) => (
+                  <div key={v.id} className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-3.5 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                        {v.rating}
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">{v.location}</span>
+                    </div>
+                    <h3 className="text-xs font-semibold text-white">{v.name}</h3>
+                    <p className="text-[11px] text-slate-400">{v.specialization}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Zainstalowane pakiety przebudowy i integracji */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
+              {(overview?.procurementCatalog || []).map((item) => (
+                <article key={item.sku} className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
+                          {item.sku}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                          {item.tier}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                          {item.status}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-semibold text-white">{item.title}</h3>
+                      <p className="text-[11px] text-slate-400">
+                        Sklep / Stocznia: <strong className="text-slate-200">{item.vendorName}</strong> · Host:{' '}
+                        <strong className="text-cyan-300">{item.targetHost}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">{item.specs}</p>
+                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
+                    {item.integratedWith.map((mod) => (
+                      <span
+                        key={mod}
+                        className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#070C14] border border-slate-800 text-slate-300"
+                      >
+                        {mod}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            {/* Zrealizowane zamówienia pozaziemskie */}
+            {overview?.procurementOrders && overview.procurementOrders.length > 0 && (
+              <div className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-2.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  Dziennik Zamówień i Integracji Pozaziemskich ({overview.procurementOrders.length})
+                </h3>
+                <div className="space-y-2">
+                  {overview.procurementOrders.map((ord) => (
+                    <div
+                      key={ord.orderId}
+                      className="rounded-lg bg-[#070C14] border border-slate-800/80 p-3 flex flex-col md:flex-row md:items-center justify-between gap-2"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                            {ord.orderId} · {ord.status}
+                          </span>
+                          <span className="text-xs font-semibold text-white">{ord.title}</span>
+                        </div>
+                        <p className="text-xs text-slate-400">{ord.notes}</p>
+                        <div className="text-[11px] text-slate-500">
+                          Stocznia: <span className="text-slate-300">{ord.vendorName}</span> · Dostawa:{' '}
+                          <span className="text-slate-300">{ord.deliveryLocation}</span> · Zamawiający:{' '}
+                          <span className="text-slate-300">{ord.orderedBy}</span>
+                        </div>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-400 shrink-0">{fmtTime(ord.integratedAt)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* WIDOK 5: HOSTY & SIEĆ (MCP / LAN) */}
         {subView === 'network' && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

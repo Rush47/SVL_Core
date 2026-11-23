@@ -308,7 +308,7 @@ const TOOLS = [
       properties: {
         action: {
           type: 'string',
-          enum: ['overview', 'sync_mcp', 'upsert_asset', 'upsert_mission', 'upsert_research', 'update_botany'],
+          enum: ['overview', 'sync_mcp', 'upsert_asset', 'upsert_mission', 'upsert_research', 'update_botany', 'order_upgrade'],
         },
         payload: {
           type: 'object',
@@ -673,6 +673,7 @@ export function createSvlMcpServer(ctx: SvlMcpContext): McpServer {
           if (action === 'upsert_mission') return asText(await call(ctx, 'POST', '/api/infrastructure/missions', payload));
           if (action === 'upsert_research') return asText(await call(ctx, 'POST', '/api/infrastructure/research', payload));
           if (action === 'update_botany') return asText(await call(ctx, 'POST', '/api/infrastructure/botany', payload));
+          if (action === 'order_upgrade') return asText(await call(ctx, 'POST', '/api/infrastructure/procurement', payload));
           return { content: [{ type: 'text' as const, text: `Nieznana akcja svl_infrastructure_registry: ${action}` }], isError: true };
         }
         case 'svl_logs':

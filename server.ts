@@ -2580,6 +2580,20 @@ async function startServer() {
     res.status(result.status).json(result.data);
   }));
 
+  app.post('/api/infrastructure/procurement', asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Zamówienia pozaziemskich ulepszeń wymagają SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const result = await callPythonBackend('POST', '/api/py/infrastructure/procurement', req.body || {}, corrId);
+    if (result.status >= 200 && result.status < 300) {
+      broadcastResyncRequired('infrastructure_procurement', Number(result.data?.serverRevision || 0));
+    }
+    res.status(result.status).json(result.data);
+  }));
+
   app.all('/api/svl364/ollama-tunnel', asyncRoute(async (req, res) => {
     if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
       res.status(401).json({ ok: false, error: 'Tunel Ollamy SVL-364 wymaga SVL_OPERATOR_TOKEN.' });

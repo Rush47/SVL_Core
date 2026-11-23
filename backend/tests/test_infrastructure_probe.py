@@ -181,14 +181,19 @@ class InfrastructureRegistryTests(unittest.TestCase):
             self.assertTrue(overview["ok"])
             totals = overview["totals"]
             self.assertEqual(totals["outpostsCount"], 6)
-            self.assertEqual(totals["shipsCount"], 10002)
+            self.assertEqual(totals["shipsCount"], 10003)
             self.assertEqual(totals["infrastructureObjectsCount"], 500)
             self.assertEqual(totals["allianceStationsTotal"], 46_500_000)
-            self.assertGreaterEqual(totals["botanyModulesCount"], 5)
+            self.assertGreaterEqual(totals["botanyModulesCount"], 6)
+            self.assertGreaterEqual(totals["installedUpgradesCount"], 4)
 
             svl364_asset = next(a for a in overview["assets"] if a["id"] == "ship-svl-364")
             self.assertIn("Mars", svl364_asset["location"])
             self.assertAlmostEqual(svl364_asset["au"], 1.524, places=2)
+
+            svl365_asset = next(a for a in overview["assets"] if a["id"] == "ship-svl-365")
+            self.assertIn("Mars", svl365_asset["location"])
+            self.assertAlmostEqual(svl365_asset["au"], 1.524, places=2)
 
             # Dodanie nowej placówki zwiększa dokładną liczbę placówek i zapisuje się w SQLite
             added_asset = ctrl.infrastructure_registry.upsert_asset(
@@ -207,7 +212,7 @@ class InfrastructureRegistryTests(unittest.TestCase):
             self.assertTrue(added_asset["ok"])
             self.assertEqual(added_asset["totals"]["outpostsCount"], 7)
 
-            # Dodanie misji, badania oraz aktualizacja botaniki przez narzędzie MCP svl364_infrastructure_registry
+            # Dodanie misji, badania, aktualizacja botaniki oraz zamówienie pozaziemskie przez MCP svl364_infrastructure_registry
             mcp_mission = ctrl.call_mcp_tool(
                 "svl364_infrastructure_registry",
                 {
@@ -245,6 +250,22 @@ class InfrastructureRegistryTests(unittest.TestCase):
             self.assertTrue(mcp_bot["ok"])
             self.assertEqual(mcp_bot["data"]["botany"]["o2OutputPct"], 116.4)
             self.assertIn("140 kg", mcp_bot["data"]["botany"]["recentEvents"][0]["text"])
+
+            mcp_ord = ctrl.call_mcp_tool(
+                "svl364_infrastructure_registry",
+                {
+                    "action": "order_upgrade",
+                    "payload": {
+                        "title": "Koprocesor QKD + Tarcza SVL-365 Mk7",
+                        "targetHost": "SVL-365 Sentinel Aegis",
+                        "tier": "OMEGA-MK7",
+                    },
+                },
+                origin="test",
+            )
+            self.assertTrue(mcp_ord["ok"])
+            self.assertEqual(mcp_ord["data"]["order"]["status"], "DELIVERED_AND_INTEGRATED")
+            self.assertEqual(mcp_ord["data"]["upgrade"]["tier"], "OMEGA-MK7")
 
 
 if __name__ == "__main__":

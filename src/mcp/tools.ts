@@ -786,6 +786,10 @@ async function svlInfrastructureRegistryTool(ctx: ToolContext, a: Args): Promise
     const r = await callSvlApi(ctx, 'POST', '/api/infrastructure/botany', payload);
     return clip(JSON.stringify(r, null, 2));
   }
+  if (action === 'order_upgrade') {
+    const r = await callSvlApi(ctx, 'POST', '/api/infrastructure/procurement', payload);
+    return clip(JSON.stringify(r, null, 2));
+  }
   throw new Error(`Nieznana akcja svl_infrastructure_registry: ${action}`);
 }
 
@@ -1030,8 +1034,8 @@ export const TOOL_DEFS: ToolDef[] = [
       'Przez MCP zwraca lub aktualizuje dokładną liczbę i lokalizacje naszych placówek, statków i infrastruktury SVL, ' +
       'odświeżane misje, trwające badania oraz stan modułów botanicznych w poszczególnych obiektach.',
     inputSchema: obj({
-      action: { type: 'string', enum: ['overview', 'sync_mcp', 'upsert_asset', 'upsert_mission', 'upsert_research', 'update_botany'] },
-      payload: { type: 'object', description: 'Dane dla operacji zapisu (placówka/statek/infrastruktura, misja, badanie, botanika)' },
+      action: { type: 'string', enum: ['overview', 'sync_mcp', 'upsert_asset', 'upsert_mission', 'upsert_research', 'update_botany', 'order_upgrade'] },
+      payload: { type: 'object', description: 'Dane dla operacji zapisu (placówka/statek/infrastruktura, misja, badanie, botanika, zamówienie pozaziemskie)' },
     }, ['action']),
     write: false,
     handler: svlInfrastructureRegistryTool,

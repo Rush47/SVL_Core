@@ -2362,6 +2362,17 @@ async def handle_api_request(
         except ValueError as exc:
             return 400, {"ok": False, "error": str(exc)}
 
+    if method == "POST" and path == "/api/py/infrastructure/procurement":
+        try:
+            res = await asyncio.to_thread(
+                runtime.svl364_ssh_mcp.infrastructure_registry.order_off_earth_upgrade,
+                body if isinstance(body, dict) else {},
+                origin=origin,
+            )
+            return 200, res
+        except ValueError as exc:
+            return 400, {"ok": False, "error": str(exc)}
+
     if method == "GET" and path == "/api/py/svl364/telemetry":
         # Prawdziwe pomiary: /proc, nvidia-smi, ufw, OpenSSH, czasy odpowiedzi usług.
         controller = runtime.svl364_ssh_mcp

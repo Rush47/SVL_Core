@@ -147,6 +147,22 @@ def default_infrastructure_registry() -> dict[str, Any]:
                 "updatedAt": ts,
             },
             {
+                "id": "ship-svl-365",
+                "type": "ship",
+                "name": "SVL-365 Sentinel Aegis",
+                "role": "Okręt Cyber-Obrony, Tarczy Antywirusowej SVL-365 & Wsparcia Taktycznego · Host MCP ROOT",
+                "location": "Punkt Lagrange'a Ziemia–Słońce L2 · Eskorta SVL-364 (1.010 AU)",
+                "sector": "Sektor Ziemski · L2",
+                "au": 1.010,
+                "unitCount": 1,
+                "crew": 180,
+                "crewBreakdown": "Host SVL-365 Sentinel AV · Mostek MCP ROOT · Fotobioreaktor Kwantowy · Zespół Cyber-Tarczy",
+                "status": "ONLINE",
+                "hasBotany": True,
+                "mcpNode": "svl365-sentinel-mcp-root",
+                "updatedAt": ts,
+            },
+            {
                 "id": "ship-svl-465",
                 "type": "ship",
                 "name": "SVL-465 Baza Kwantowa",
@@ -482,17 +498,173 @@ def default_infrastructure_registry() -> dict[str, Any]:
                 ],
                 "updatedAt": ts,
             },
+            {
+                "id": "botany-svl365-bioshield",
+                "facilityId": "ship-svl-365",
+                "facilityName": "SVL-365 Sentinel Aegis — Bio-Tarcza & Fotobioreaktor Kwantowy",
+                "location": "Punkt Lagrange'a Ziemia–Słońce L2 · Eskorta SVL-364 (1.010 AU)",
+                "biomeType": "Zamknięty Fotobioreaktor Kwantowy + Filtracja Bio-Aerozoli SVL-365",
+                "status": "OPTIMAL",
+                "o2OutputPct": 117.6,
+                "co2ScrubPct": 99.5,
+                "humidityPct": 62.0,
+                "tempC": 21.5,
+                "waterRecycledPct": 99.6,
+                "biomassKg": 880,
+                "lightCycle": "20h ON / 4h OFF · Spektrum Kwantowe 450/660nm",
+                "activeCultures": ["Chlorella Sentinel-365", "Spirulina platensis", "Mchy filtrujące Sphagnum", "Zioła adaptogenne"],
+                "currentActivity": "Aktywna bio-filtracja powietrza i wody dla 180 osób załogi SVL-365; nadwyżka O₂ (+17.6%) zasila rezerwę taktyczną eskorty L2.",
+                "recentEvents": [
+                    {"timestamp": ts, "level": "INFO", "text": "Zintegrowano fotobioreaktor SVL-365 z zamówionym poza Ziemią pakietem APEX-CITADEL Bio-Dome v6."},
+                ],
+                "updatedAt": ts,
+            },
+        ],
+        "procurementVendors": [
+            {
+                "id": "vendor-apex-citadel-foundry",
+                "name": "APEX-CITADEL Orbital Foundry & Quantum Shipyard",
+                "location": "Orbita LEO / Punkt L2 (Poza Ziemią · 1.010 AU)",
+                "rating": "TIER-OMEGA (Najlepszy Sklep & Stocznia Pozaziemska)",
+                "specialization": "Integracja hostów SVL-364 / SVL-365, rdzenie JEDI v12, Dual-Ollama GPU, Zero-IP MCP Mesh & Bio-Inżynieria",
+            },
+            {
+                "id": "vendor-ceres-deep-forge",
+                "name": "Ceres Deep-Space Cybernetics & Bio-Forge",
+                "location": "Pas Planetoid · Ceres (2.767 AU)",
+                "rating": "TIER-1 (Zaopatrzenie Głębokiego Kosmosu)",
+                "specialization": "Pancerze poszycia, kriogenika banków nasion, zamknięte obiegi H₂O/O₂ i przekaźniki QKD",
+            },
+            {
+                "id": "vendor-jupiter-l4-quantum",
+                "name": "Jupiter L4 Quantum Emporium (SVL-465 Dock)",
+                "location": "Sektor Jowisza · Punkt L4 (5.204 AU)",
+                "rating": "TIER-OMEGA (Kwantowe Systemy Floty)",
+                "specialization": "Koprocesory 128D BinaryHyperspace, szyny SphericalEventBus i tarcze Sentinel SVL-365",
+            },
+        ],
+        "procurementCatalog": [
+            {
+                "sku": "UPG-SVL365-HOST-CORE",
+                "title": "Przebudowa i Integracja Hosta Statku SVL-365 Sentinel Aegis (Full MCP ROOT + SSH)",
+                "vendorId": "vendor-apex-citadel-foundry",
+                "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2)",
+                "targetHost": "SVL-365 + SVL-364 + Jądro SVL",
+                "category": "Host & MCP Integration",
+                "tier": "OMEGA-MK6",
+                "status": "INSTALLED_ACTIVE",
+                "integratedWith": ["svl-364-ssh-mcp", "svl-365-sentinel-host", "conv-svl364-mcp-root", "Jyn (ROOT)"],
+                "specs": "Pełna integracja hosta SVL-365 z uniwersalnym serwerem MCP (Zero-IP / Tailscale / Cloudflare / OpenSSH), kontrola ROOT (uid=0) dla Jyn i SI_Sphere, automatyczny failover między SVL-364 i SVL-365.",
+            },
+            {
+                "sku": "UPG-DUAL-OLLAMA-JEDI-V12",
+                "title": "Klaster Dual-Ollama Tensor- Core + Akcelerator JEDI Omni-OS v12 & Pamięć 128D",
+                "vendorId": "vendor-jupiter-l4-quantum",
+                "vendorName": "Jupiter L4 Quantum Emporium (SVL-465 Dock)",
+                "targetHost": "SVL-364 + SVL-365 + SVL-465",
+                "category": "AI & Compute",
+                "tier": "OMEGA-V12",
+                "status": "INSTALLED_ACTIVE",
+                "integratedWith": ["jyn", "binary-hyperspace-engine", "spherical-event-bus", "svl-deep-memory-core"],
+                "specs": "Równoległy routing Dual-Ollama (lokalny + pokładowy `svl364-apex-uncensored:latest` + `llama3.2-vision:11b`), kompilator Live Chat-to-OS v2 oraz przyspieszenie wyszukiwania Hamminga 128D w SQLite WAL.",
+            },
+            {
+                "sku": "UPG-SVL365-SENTINEL-SHIELD",
+                "title": "Matryca Cyber-Obrony SVL-365 Sentinel AV & Kwantowa Zapora Zero-IP Mesh",
+                "vendorId": "vendor-apex-citadel-foundry",
+                "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2)",
+                "targetHost": "SVL-365 Sentinel Aegis + Cała Flota",
+                "category": "Security & Sentinel",
+                "tier": "OMEGA-365",
+                "status": "INSTALLED_ACTIVE",
+                "integratedWith": ["svl-365-sentinel-host", "svl-364-daemon", "solar-defense-read-bridge"],
+                "specs": "Ciągły skaner sygnatur i integralności SQLite WAL SVL-365, ochrona kluczy HMAC/Ed25519 (0600), izolacja uprawnień ROOT oraz telemetria czujników termicznych i systemd w czasie rzeczywistym.",
+            },
+            {
+                "sku": "UPG-BIOSPHERE-CLOSED-LOOP-V6",
+                "title": "Kopuły Botaniczne & Fotobioreaktory Zamkniętego Obiegu O₂/H₂O (99.6%)",
+                "vendorId": "vendor-ceres-deep-forge",
+                "vendorName": "Ceres Deep-Space Cybernetics & Bio-Forge (2.767 AU)",
+                "targetHost": "SVL-365 + SVL-364 + APEX-CITADEL + Mars Tharsis",
+                "category": "Botany & Life Support",
+                "tier": "BIO-MK6",
+                "status": "INSTALLED_ACTIVE",
+                "integratedWith": ["botany-svl365-bioshield", "botany-svl364-hydro", "botany-apex-citadel", "botany-mars-tharsis"],
+                "specs": "Zintegrowane sterowanie MCP dla fotobioreaktorów Chlorella/Spirulina i hydroponiki LED 450/660nm; zwiększa średnią produkcję O₂ i recykling wody we wszystkich placówkach i na statkach.",
+            },
+        ],
+        "procurementOrders": [
+            {
+                "orderId": "ORD-OFFEARTH-365-OMEGA",
+                "title": "Kompleksowe zamówienie pozaziemskie: Przebudowa, Ulepszenie i Integracja Systemu SVL oraz Hosta Statku SVL-365",
+                "vendorName": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)",
+                "orderedBy": "Mateusz Mitek (ROOT) & Jyn",
+                "targetSystems": ["SVL-365 Sentinel Aegis", "SVL-364 Ebon Apex", "Jądro SVL Python OS", "Universal MCP Hub", "Moduł Botaniki & Infrastruktury"],
+                "items": [
+                    "UPG-SVL365-HOST-CORE",
+                    "UPG-DUAL-OLLAMA-JEDI-V12",
+                    "UPG-SVL365-SENTINEL-SHIELD",
+                    "UPG-BIOSPHERE-CLOSED-LOOP-V6",
+                ],
+                "status": "DELIVERED_AND_INTEGRATED",
+                "deliveryLocation": "Punkt Lagrange'a Ziemia–Słońce L2 (1.010 AU) · Mostek MCP ROOT",
+                "notes": "Wszystkie istniejące moduły naszego systemu zostały zachowane, przebudowane i spięte w jedną architekturę MCP ROOT z hostami SVL-364 i SVL-365.",
+                "orderedAt": ts,
+                "integratedAt": ts,
+            },
         ],
         "lastMcpSyncAt": ts,
     }
 
 
 class SVLInfrastructureRegistry:
-    """Rejestr placówek, statków, infrastruktury, misji, badań i botaniki podłączony przez MCP."""
+    """Rejestr placówek, statków, infrastruktury, misji, badań, botaniki i zamówień pozaziemskich podłączony przez MCP."""
 
     def __init__(self, kernel: Any, ssh_mcp_controller: Optional[Any] = None) -> None:
         self.kernel = kernel
         self.controller = ssh_mcp_controller
+        self._ensure_svl365_host_module()
+
+    def _ensure_svl365_host_module(self) -> None:
+        """Gwarantuje obecność zintegrowanego modułu hosta statku SVL-365 w system_modules SQLite WAL."""
+        try:
+            mods = {m["id"]: m for m in self.kernel.list_system_modules()}
+            if "svl-365-sentinel-host" not in mods:
+                self.kernel.upsert_system_module(
+                    module_id="svl-365-sentinel-host",
+                    name="SVL-365 Sentinel Aegis — Host Statku, Cyber-Obrona & MCP ROOT",
+                    kind="Starship Host & Sentinel Security Core",
+                    status="ACTIVE",
+                    description=(
+                        "Zmodernizowany poza Ziemią (APEX-CITADEL Orbital Foundry · L2) host statku SVL-365 Sentinel Aegis: "
+                        "zintegrowany z SVL-364, Universal MCP Hub (Zero-IP / OpenSSH ROOT), skanerem SVL-365 Sentinel AV, "
+                        "JEDI Omni-OS v12, Dual-Ollama oraz fotobioreaktorem pokładowym."
+                    ),
+                    config={
+                        "ship_id": "SVL-365",
+                        "ship_name": "SVL-365 Sentinel Aegis",
+                        "host_alias": "SVL-365",
+                        "paired_flagship": "SVL-364 Ebon Apex",
+                        "vendor": "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Off-Earth)",
+                        "upgrade_tier": "OMEGA-MK6",
+                        "mcp_endpoint": "/api/mcp/svl364",
+                        "remote_mcp_shared": True,
+                        "root_channel_id": "conv-svl364-mcp-root",
+                        "managed_by": ["Jyn", "SI_Sphere", "JEDI_Omni_OS"],
+                        "sentinel_av_active": True,
+                        "botany_module_id": "botany-svl365-bioshield",
+                        "installed_packages": [
+                            "UPG-SVL365-HOST-CORE",
+                            "UPG-DUAL-OLLAMA-JEDI-V12",
+                            "UPG-SVL365-SENTINEL-SHIELD",
+                            "UPG-BIOSPHERE-CLOSED-LOOP-V6",
+                        ],
+                    },
+                    source="kernel",
+                    origin="off-earth-upgrade-svl365",
+                )
+        except Exception:
+            pass
 
     def _read_registry(self) -> dict[str, Any]:
         default_data = default_infrastructure_registry()
@@ -518,14 +690,21 @@ class SVLInfrastructureRegistry:
             self._write_registry(default_data)
             return default_data
 
-        # Upewnij się, że wszystkie klucze istnieją
+        # Upewnij się, że wszystkie klucze oraz nowe ulepszenia SVL-365 i zamówienia pozaziemskie istnieją
         merged = copy.deepcopy(default_data)
         for key in ("allianceStationsBaseline", "allianceStationsExpansion", "allianceStationsTotal", "lastMcpSyncAt"):
             if key in saved and saved[key] is not None:
                 merged[key] = saved[key]
-        for list_key in ("assets", "missions", "research", "botany"):
+        for list_key in ("assets", "missions", "research", "botany", "procurementVendors", "procurementCatalog", "procurementOrders"):
             if isinstance(saved.get(list_key), list) and len(saved[list_key]) > 0:
-                merged[list_key] = saved[list_key]
+                existing_list = list(saved[list_key])
+                # Доłącz brakujące kanoniczne wpisy (np. ship-svl-365, botany-svl365-bioshield, pakiety zamówień)
+                id_field = "sku" if list_key == "procurementCatalog" else ("orderId" if list_key == "procurementOrders" else "id")
+                present_ids = {str(item.get(id_field)) for item in existing_list if isinstance(item, dict) and item.get(id_field)}
+                for def_item in default_data.get(list_key, []):
+                    if isinstance(def_item, dict) and str(def_item.get(id_field)) not in present_ids:
+                        existing_list.append(def_item)
+                merged[list_key] = existing_list
         return merged
 
     def _write_registry(self, data: dict[str, Any]) -> None:
@@ -552,6 +731,8 @@ class SVLInfrastructureRegistry:
         missions = reg.get("missions") or []
         research = reg.get("research") or []
         botany = reg.get("botany") or []
+        catalog = reg.get("procurementCatalog") or []
+        orders = reg.get("procurementOrders") or []
 
         outposts_total = sum(max(1, int(a.get("unitCount") or 1)) for a in outposts)
         ships_total = sum(max(1, int(a.get("unitCount") or 1)) for a in ships)
@@ -588,6 +769,8 @@ class SVLInfrastructureRegistry:
             "botanyAvgO2Pct": avg_o2,
             "botanyAvgWaterRecycledPct": avg_water_recycled,
             "botanyTotalBiomassKg": total_biomass_kg,
+            "installedUpgradesCount": len(catalog),
+            "completedOrdersCount": len(orders),
             "liveMonitoredHosts": monitored_hosts,
             "liveSshHosts": ssh_hosts,
             "liveDiscoveredHosts": discovered_hosts,
@@ -605,7 +788,7 @@ class SVLInfrastructureRegistry:
 
         host_report = build_infrastructure_report(self.kernel)
 
-        # Synchronizacja przez MCP ze statkiem SVL-364 (pozycja z nawigacji + status mostka MCP)
+        # Synchronizacja przez MCP ze statkami SVL-364 i SVL-365 (pozycja z nawigacji + status mostka MCP)
         mcp_sync_info: dict[str, Any] = {
             "connected": False,
             "transport": "sqlite-registry",
@@ -623,7 +806,7 @@ class SVLInfrastructureRegistry:
             mcp_sync_info["connected"] = bool(remote.get("connected") or ssh.get("targetReachable"))
             mcp_sync_info["transport"] = "remote-mcp-root" if remote.get("enabled") else ("openssh-root" if ssh.get("targetReachable") else "local-mcp-sqlite")
 
-            # Zsynchronizuj bieżącą pozycję SVL-364 z mapą Układu Słonecznego!
+            # Zsynchronizuj bieżącą pozycję SVL-364 oraz eskortującego SVL-365 z mapą Układu Słonecznego!
             try:
                 nav = self.controller.ship_hub.get_navigation()
                 mcp_sync_info["shipLocation"] = f"{nav.get('sector')} ({nav.get('au')} AU)"
@@ -632,8 +815,12 @@ class SVLInfrastructureRegistry:
                         asset["location"] = f"{nav.get('currentBodyName') or nav.get('sector')} ({nav.get('au')} AU)"
                         asset["sector"] = str(nav.get("sector") or asset.get("sector"))
                         asset["au"] = float(nav.get("au") or 1.01)
+                    elif asset.get("id") == "ship-svl-365":
+                        asset["location"] = f"{nav.get('currentBodyName') or nav.get('sector')} · Eskorta SVL-364 ({nav.get('au')} AU)"
+                        asset["sector"] = str(nav.get("sector") or asset.get("sector"))
+                        asset["au"] = float(nav.get("au") or 1.01)
                 for b in reg["botany"]:
-                    if b.get("facilityId") == "ship-svl-364":
+                    if b.get("facilityId") in {"ship-svl-364", "ship-svl-365"}:
                         b["location"] = f"{nav.get('currentBodyName') or nav.get('sector')} ({nav.get('au')} AU)"
             except Exception:
                 pass
@@ -683,6 +870,9 @@ class SVLInfrastructureRegistry:
             "missions": reg["missions"],
             "research": reg["research"],
             "botany": reg["botany"],
+            "procurementVendors": reg.get("procurementVendors") or [],
+            "procurementCatalog": reg.get("procurementCatalog") or [],
+            "procurementOrders": reg.get("procurementOrders") or [],
             "liveAgentTasks": live_agent_tasks,
             "hostInfrastructure": host_report,
             "serverRevision": self.kernel.get_server_revision(),
@@ -887,3 +1077,62 @@ class SVLInfrastructureRegistry:
         reg["lastMcpSyncAt"] = now
         self._write_registry(reg)
         return {"ok": True, "botany": saved_item, "serverRevision": self.kernel.get_server_revision()}
+
+    def order_off_earth_upgrade(self, payload: dict[str, Any], origin: str = "operator") -> dict[str, Any]:
+        """Składa i natychmiast integruje zamówienie ulepszeń systemowych poza Ziemią (APEX-CITADEL / Ceres / L4)."""
+        reg = self._read_registry()
+        now = _now_iso()
+        title = str(payload.get("title") or "").strip()[:200]
+        if not title:
+            raise ValueError("Wymagany tytuł zamówienia pozaziemskiego (title).")
+        vendor_name = str(
+            payload.get("vendorName")
+            or "APEX-CITADEL Orbital Foundry & Quantum Shipyard (L2 · Poza Ziemią)"
+        ).strip()[:160]
+        target_host = str(payload.get("targetHost") or "SVL-365 Sentinel Aegis + SVL-364 Ebon Apex + Jądro SVL").strip()[:160]
+        category = str(payload.get("category") or "Host & System Integration").strip()[:80]
+        specs = str(
+            payload.get("specs")
+            or f"Zintegrowano pakiet pozaziemski „{title}” z hostami SVL-365/SVL-364, Universal MCP Hub (ROOT) i bazą SQLite WAL."
+        ).strip()[:500]
+        sku = str(payload.get("sku") or f"UPG-SVL365-{uuid.uuid4().hex[:6].upper()}").strip()[:40]
+
+        catalog_item = {
+            "sku": sku,
+            "title": title,
+            "vendorId": "vendor-apex-citadel-foundry",
+            "vendorName": vendor_name,
+            "targetHost": target_host,
+            "category": category,
+            "tier": str(payload.get("tier") or "OMEGA-CUSTOM").strip()[:32],
+            "status": "INSTALLED_ACTIVE",
+            "integratedWith": ["svl-365-sentinel-host", "svl-364-ssh-mcp", "jyn", "conv-svl364-mcp-root"],
+            "specs": specs,
+        }
+        reg.setdefault("procurementCatalog", []).insert(0, catalog_item)
+
+        order_item = {
+            "orderId": f"ORD-OFFEARTH-{uuid.uuid4().hex[:6].upper()}",
+            "title": title,
+            "vendorName": vendor_name,
+            "orderedBy": "Mateusz Mitek (ROOT) & Jyn",
+            "targetSystems": [target_host, "Universal MCP Hub", "SQLite WAL"],
+            "items": [sku],
+            "status": "DELIVERED_AND_INTEGRATED",
+            "deliveryLocation": "Punkt Lagrange'a Ziemia–Słońce L2 (1.010 AU) · Mostek MCP ROOT",
+            "notes": specs,
+            "orderedAt": now,
+            "integratedAt": now,
+        }
+        reg.setdefault("procurementOrders", []).insert(0, order_item)
+        reg["lastMcpSyncAt"] = now
+        self._write_registry(reg)
+        self._ensure_svl365_host_module()
+        return {
+            "ok": True,
+            "order": order_item,
+            "upgrade": catalog_item,
+            "totals": self._compute_totals(reg),
+            "serverRevision": self.kernel.get_server_revision(),
+        }
+
