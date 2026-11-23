@@ -1820,7 +1820,13 @@ class SVL364SshMcpController:
         action = str(arguments.get("action") or "")
         if action not in {"status", "start", "restart", "stop", "enable", "disable"}:
             raise ValueError("Nieznana operacja systemd.")
-        command = f"systemctl {action} {shlex.quote(service)}" + (" --no-pager" if action == "status" else "")
+        if action == "status":
+            command = (
+                f"systemctl status {shlex.quote(service)} --no-pager 2>&1 || "
+                f"printf 'stan=%s\\n' \"$(systemctl is-active {shlex.quote(service)} 2>/dev/null || echo 'inactive')\""
+            )
+        else:
+            command = f"systemctl {action} {shlex.quote(service)}"
         return self._run_managed_operation(command, arguments, origin, action != "status")
 
     def run_ollama_tool(self, arguments: dict[str, Any], origin: str) -> dict[str, Any]:
@@ -1832,9 +1838,17 @@ class SVL364SshMcpController:
             required=action in {"show", "pull", "remove", "run"},
         )
         if action == "status":
-            command = "ollama --version && ollama ps"
+            command = (
+                "(command -v ollama >/dev/null 2>&1 && (ollama --version && (ollama ps 2>&1 || true))) || "
+                "curl -fsS --max-time 3 http://127.0.0.1:11434/api/version 2>/dev/null || "
+                "echo 'Ollama: nie zainstalowana lub demon :11434 nieaktywny na tym węźle'"
+            )
         elif action == "list":
-            command = "ollama list"
+            command = (
+                "(command -v ollama >/dev/null 2>&1 && (ollama list 2>&1 || true)) || "
+                "curl -fsS --max-time 3 http://127.0.0.1:11434/api/tags 2>/dev/null || "
+                "echo 'Ollama: brak zainstalowanych modeli lokalnych na tym węźle'"
+            )
         elif action == "show":
             command = f"ollama show {shlex.quote(model)}"
         elif action == "pull":
@@ -1856,7 +1870,7 @@ class SVL364SshMcpController:
 
     def run_file_tool(self, arguments: dict[str, Any], origin: str) -> dict[str, Any]:
         normalized = os.path.normpath(str(arguments.get("path") or "").strip())
-        allowed_roots = ("/app", "/opt/svl", "/srv", "/var/log", "/var/backups/svl364")
+        allowed_roots = ("/app", "/opt/svl", "/srv", "/var/log", "/var/backups/svl364", str(self.project_root))
         if not normalized.startswith("/") or not any(
             normalized == root or normalized.startswith(root + "/") for root in allowed_roots
         ):
@@ -1963,12 +1977,12 @@ class SVL364SshMcpController:
     def run_container_tool(self, arguments: dict[str, Any], origin: str) -> dict[str, Any]:
         action = str(arguments.get("action") or "list").strip().lower()
         lines = max(10, min(500, int(arguments.get("lines") or 80)))
-        runtime = "(command -v docker >/dev/null 2>&1 && echo docker || (command -v podman >/dev/null 2>&1 && echo podman || echo ''))"
+        runtime = "command -v docker >/dev/null 2>&1 && echo docker || (command -v podman >/dev/null 2>&1 && echo podman || echo '')"
         if action == "list":
-            command = f"rt=$({runtime}); [ -n \"$rt\" ] && \"$rt\" ps -a || echo 'Brak Docker/Podman na SVL-364'"
+            command = f"rt=$({runtime}); if [ -n \"$rt\" ]; then \"$rt\" ps -a 2>&1 || echo 'Demon kontenerów ($rt) nie jest uruchomiony'; else echo 'Brak Docker/Podman na SVL-364'; fi"
             return self._run_managed_operation(command, arguments, origin, False)
         if action == "stats":
-            command = f"rt=$({runtime}); [ -n \"$rt\" ] && \"$rt\" stats --no-stream || echo 'Brak Docker/Podman na SVL-364'"
+            command = f"rt=$({runtime}); if [ -n \"$rt\" ]; then \"$rt\" stats --no-stream 2>&1 || echo 'Demon kontenerów ($rt) nie jest uruchomiony'; else echo 'Brak Docker/Podman na SVL-364'; fi"
             return self._run_managed_operation(command, arguments, origin, False)
         container = self._require_identifier(arguments.get("container"), "kontenera", r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
         if action == "logs":
