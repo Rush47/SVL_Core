@@ -135,13 +135,14 @@ test('isGeminiChatModelName przepuszcza tylko modele czatu (z logów AI Studio)'
     isGeminiToolSchemaError,
     sanitizeGeminiToolDeclarations,
   } = await import('./geminiModels.ts');
-  for (const ok of ['gemini-4-hydrogen', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite-preview', 'gemini-3.1-pro-preview', 'models/gemini-2.5-flash']) {
+  for (const ok of ['gemma-4-26b-a4b-it', 'gemini-4-hydrogen', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.1-flash-lite-preview', 'gemini-3.1-pro-preview', 'models/gemini-2.5-flash']) {
     assert.equal(isGeminiChatModelName(ok), true, ok);
   }
-  for (const bad of ['gemini-3.5-transcribe', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-omni-flash-preview', 'gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.1-pro-preview-customtools', 'gemini-embedding-001']) {
+  for (const bad of ['gemma-2-9b-it', 'gemini-3.5-transcribe', 'gemini-nano-banana-2.1', 'gemini-omni-1.1-flash', 'gemini-omni-flash-preview', 'gemini-4-neon', 'gemini-4-carbon', 'gemini-4-argon', 'gemini-3.1-pro-preview-customtools', 'gemini-embedding-001']) {
     assert.equal(isGeminiChatModelName(bad), false, bad);
   }
   assert.equal(isGeminiTemperatureSupported('gemini-4-hydrogen'), false);
+  assert.equal(isGeminiTemperatureSupported('gemma-4-26b-a4b-it'), true);
   assert.equal(isGeminiTemperatureSupported('gemini-3.1-flash-lite'), true);
   assert.deepEqual(geminiThinkingConfig('gemini-4-hydrogen'), { thinkingConfig: { thinkingLevel: 'LOW' } });
   assert.equal(isGeminiToolSchemaError('400 INVALID_ARGUMENT: parameters.properties: should be non-empty for OBJECT type'), true);

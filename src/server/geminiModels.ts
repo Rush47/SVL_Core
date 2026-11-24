@@ -7,29 +7,32 @@
 
 /** Zapas, gdy listy modeli nie da się pobrać (szybkie i stabilne modele darmowe na początku). */
 export const GEMINI_STATIC_FALLBACK = [
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it',
+  'gemini-3.1-flash-lite',
   'gemini-3.5-flash-lite',
   'gemini-flash-lite-latest',
-  'gemini-3.1-flash-lite',
   'gemini-4-hydrogen',
   'gemini-flash-latest',
 ];
 
-const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma|transcribe|banana|omni|customtools|thinking-exp|4-neon|4-carbon|4-argon)/i;
+const EXCLUDED = /(embed|embedding|aqa|imagen|image|tts|audio|live|native-audio|veo|lyria|robotics|computer-use|learnlm|gemma(?!-4-)|transcribe|banana|omni|customtools|thinking-exp|4-neon|4-carbon|4-argon)/i;
 /**
- * Tylko modele czatu: darmowy gemini-4-hydrogen oraz gemini-[wersja-]flash|flash-lite|pro[-latest|-preview…|-001].
+ * Tylko modele czatu: gemma-4-* instruction oraz darmowy gemini-4-hydrogen i gemini-[wersja-]flash|flash-lite|pro[-latest|-preview…|-001].
  * Odrzuca modele specjalne i płatne warianty (np. transcribe, nano-banana, 4-neon, 4-carbon, 4-argon),
  * które w logach zwracały 400/429 i zjadały czas zapytania.
  */
-const CHAT_MODEL_NAME = /^(?:gemini-4-hydrogen|gemini-(?:\d+(?:\.\d+)?-)?(?:flash-lite|flash|pro)(?:-latest|-preview(?:-[\w.-]+)?|-\d{3})?)$/i;
+const CHAT_MODEL_NAME = /^(?:gemma-4-(?:26b-a4b|31b)-it|gemini-4-hydrogen|gemini-(?:\d+(?:\.\d+)?-)?(?:flash-lite|flash|pro)(?:-latest|-preview(?:-[\w.-]+)?|-\d{3})?)$/i;
 
 export function isGeminiChatModelName(name: string): boolean {
   const n = String(name || '').replace(/^models\//, '').trim();
   return CHAT_MODEL_NAME.test(n) && !EXCLUDED.test(n);
 }
 
-/** Gemini 4 nie przyjmuje parametrów temperature/topP/topK — pomijamy je dla modeli gemini-4-*. */
+/** Gemini 4 nie przyjmuje parametrów temperature/topP/topK — pomijamy je dla modeli gemini-4-*. Modele gemma-4 obsługują temperature. */
 export function isGeminiTemperatureSupported(model: string): boolean {
-  return !/^gemini-4-/i.test(String(model || '').replace(/^models\//, '').trim());
+  const clean = String(model || '').replace(/^models\//, '').trim();
+  return !/^gemini-4-/i.test(clean);
 }
 
 /** Czy błąd 400 dotyczy deklaracji narzędzi (wtedy ponawiamy zapytanie bez narzędzi). */
@@ -87,7 +90,7 @@ export function rankGeminiChatModels(models: GeminiModelInfo[]): string[] {
     .filter((n) => isGeminiChatModelName(n));
   const unique = [...new Set(names)];
   const score = (n: string) => {
-    const tier = /flash-lite/i.test(n) ? 1 : /flash|4-hydrogen/i.test(n) ? 0 : /pro/i.test(n) ? 2 : 3;
+    const tier = /flash-lite|gemma/i.test(n) ? 1 : /flash|4-hydrogen/i.test(n) ? 0 : /pro/i.test(n) ? 2 : 3;
     const unstable = /(preview|exp|experimental)/i.test(n) ? 1 : 0;
     const alias = /-latest$/i.test(n) ? 0 : 1; // aliasy *-latest zawsze wskazują działający model
     return { tier, unstable, alias, version: versionOf(n) };
@@ -364,10 +367,12 @@ export function isGeminiSlowOrBusyError(message: string): boolean {
 
 /** Modele darmowe o najwyższej dostępności w darmowym kluczu Gemini API. */
 export const FREE_TIER_PRIORITY_MODELS = [
-  'gemini-3.5-flash-lite',
-  'gemini-flash-lite-latest',
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it',
   'gemini-3.1-flash-lite',
   'gemini-3.1-flash-lite-preview',
+  'gemini-3.5-flash-lite',
+  'gemini-flash-lite-latest',
 ];
 
 /** Kandydaci do zapytania: GEMINI_MODEL, jawnie wybrany model, sprawdzone szybkie modele, darmowe flash-lite, wykryte modele, zapas. */
@@ -433,7 +438,7 @@ export async function geminiCandidatesFor(
  * czasu przez najnowszy flash nie próbować trzech kolejnych równie wolnych modeli flash.
  */
 export function diversify(models: string[]): string[] {
-  const family = (m: string) => (/-pro\b|gemini-pro/i.test(m) ? 'pro' : /-latest$/i.test(m) ? 'alias' : /flash-lite/i.test(m) ? 'lite' : /flash/i.test(m) ? 'flash' : 'other');
+  const family = (m: string) => (/-pro\b|gemini-pro/i.test(m) ? 'pro' : /-latest$/i.test(m) ? 'alias' : /flash-lite/i.test(m) ? 'lite' : /gemma/i.test(m) ? 'gemma' : /flash/i.test(m) ? 'flash' : 'other');
   const buckets = new Map<string, string[]>();
   for (const m of models) {
     const f = family(m);
@@ -441,7 +446,7 @@ export function diversify(models: string[]): string[] {
     buckets.get(f)!.push(m);
   }
   // Modele pro na samym końcu: w darmowym limicie klucza zwykle od razu zwracają 429.
-  const order = ['flash', 'lite', 'alias', 'other'];
+  const order = ['flash', 'lite', 'gemma', 'alias', 'other'];
   const out: string[] = [];
   const nonPro = models.length - (buckets.get('pro')?.length || 0);
   while (out.length < nonPro) {
@@ -463,11 +468,13 @@ export function diversify(models: string[]): string[] {
  * GEMINI_THINKING_LEVEL: MINIMAL | LOW | MEDIUM | HIGH | OFF.
  */
 export function geminiThinkingConfig(model: string): Record<string, unknown> {
-  const isGemini4 = /^gemini-4-/i.test(String(model || '').replace(/^models\//, '').trim());
+  const clean = String(model || '').replace(/^models\//, '').trim();
+  if (/^gemma-/i.test(clean)) return {};
+  const isGemini4 = /^gemini-4-/i.test(clean);
   const envLevel = String(process.env.GEMINI_THINKING_LEVEL || '').trim().toUpperCase();
-  let level = envLevel || (/flash-lite/i.test(model) ? 'MINIMAL' : 'LOW');
+  let level = envLevel || (/flash-lite/i.test(clean) ? 'MINIMAL' : 'LOW');
   if (isGemini4 && level === 'MINIMAL') level = 'LOW';
-  if (level === 'OFF' || noThinkingConfig.has(model)) return {};
+  if (level === 'OFF' || noThinkingConfig.has(clean)) return {};
   if (!['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'].includes(level)) return {};
   return { thinkingConfig: { thinkingLevel: level } };
 }
@@ -488,8 +495,8 @@ export function createGeminiDeadline(totalMs = Number(process.env.GEMINI_TOTAL_B
   return {
     perAttemptMs: perAttempt,
     remaining: () => Math.max(0, endsAt - Date.now()),
-    /** Limit pojedynczej próby: min(GEMINI_TIMEOUT_MS, pozostały czas). */
-    attemptTimeout: () => Math.max(0, Math.min(perAttempt, endsAt - Date.now())),
+    /** Limit pojedynczej próby: min(overrideMs || GEMINI_TIMEOUT_MS, pozostały czas). */
+    attemptTimeout: (overrideMs?: number) => Math.max(0, Math.min(overrideMs ?? perAttempt, endsAt - Date.now())),
     expired: () => Date.now() >= endsAt - 1000,
   };
 }

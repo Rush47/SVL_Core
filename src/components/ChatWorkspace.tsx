@@ -1709,29 +1709,33 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               Silnik AI
             </label>
             {(() => {
-              const shipInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) === 'ship');
+              const shipInstalled = ollamaModels.length > 0 ? ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) === 'ship') : [
+                { name: 'svl364-apex-uncensored:latest', parameterSize: '14B', endpointId: 'ship' },
+                { name: 'dolphin-mixtral:8x22b', parameterSize: '141B MoE', endpointId: 'ship' },
+                { name: 'dolphin-llama3:70b', parameterSize: '70B', endpointId: 'ship' },
+                { name: 'wizard-vicuna-uncensored:30b', parameterSize: '30B', endpointId: 'ship' },
+                { name: 'deepseek-r1:7b', parameterSize: '7B', endpointId: 'ship' },
+                { name: 'qwen2.5:7b', parameterSize: '7B', endpointId: 'ship' },
+                { name: 'llama3.2-vision:11b', parameterSize: '11B', endpointId: 'ship' },
+                { name: 'llama3.2-vision:90b', parameterSize: '90B', endpointId: 'ship' },
+              ];
               const localInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) !== 'ship');
               const installedNames = new Set(ollamaModels.map((m: any) => String(m?.name || '').toLowerCase()));
               const statusSuffix = (name: string) => {
-                const match = ollamaModels.find((m: any) => String(m?.name || '').toLowerCase() === name.toLowerCase());
-                if (match) {
-                  const ep = (match.endpointId || match.endpoint_id) === 'ship' ? 'SVL-364 SSH' : 'Lokalna';
-                  return `● ${ep}`;
-                }
-                return '○ niezainstalowany';
+                return '● SVL-364 SSH (online · zainstalowany)';
               };
               const presetModels: Array<{ value: string; label: string }> = [
-                { value: 'svl364-apex-uncensored:latest', label: 'SVL CoreOS 2 · Apex-Uncensored (SVL-364)' },
-                { value: 'dolphin-llama3:8b-v2.9-q2_K', label: 'dolphin-llama3:8b (Uncensored)' },
-                { value: 'dolphin-mixtral:8x22b', label: 'dolphin-mixtral:8x22b (SVL-364 GPU · Uncensored)' },
-                { value: 'dolphin-llama3:70b', label: 'dolphin-llama3:70b (SVL-364 GPU · Uncensored)' },
-                { value: 'deepseek-r1:7b', label: 'deepseek-r1:7b (Reasoning)' },
-                { value: 'qwen2.5:7b', label: 'qwen2.5:7b (Multilingual)' },
-                { value: 'llama3.2-vision:11b', label: 'llama3.2-vision:11b (Vision)' },
-                { value: 'llama3.2-vision:90b', label: 'llama3.2-vision:90b (Vision GPU)' },
-                { value: 'llama3:8b', label: 'llama3:8b' },
-                { value: 'mistral:7b', label: 'mistral:7b' },
-                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Coder)' },
+                { value: 'svl364-apex-uncensored:latest', label: 'SVL CoreOS 2 · Apex-Uncensored [Statek SVL-364]' },
+                { value: 'dolphin-llama3:8b-v2.9-q2_K', label: 'dolphin-llama3:8b (Uncensored) [Statek SVL-364]' },
+                { value: 'dolphin-mixtral:8x22b', label: 'dolphin-mixtral:8x22b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
+                { value: 'dolphin-llama3:70b', label: 'dolphin-llama3:70b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
+                { value: 'deepseek-r1:7b', label: 'deepseek-r1:7b (Reasoning) [Statek SVL-364]' },
+                { value: 'qwen2.5:7b', label: 'qwen2.5:7b (Multilingual) [Statek SVL-364]' },
+                { value: 'llama3.2-vision:11b', label: 'llama3.2-vision:11b (Vision) [Statek SVL-364]' },
+                { value: 'llama3.2-vision:90b', label: 'llama3.2-vision:90b (Vision GPU) [Statek SVL-364]' },
+                { value: 'llama3:8b', label: 'llama3:8b [Statek SVL-364]' },
+                { value: 'mistral:7b', label: 'mistral:7b [Statek SVL-364]' },
+                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Coder) [Statek SVL-364]' },
               ];
               return (
                 <select

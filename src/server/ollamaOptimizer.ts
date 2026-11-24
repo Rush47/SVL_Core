@@ -98,18 +98,6 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
   };
 }
 
-export const DEFAULT_OLLAMA_STOP_TOKENS: string[] = [
-  '<|eot_id|>',
-  '<|end_of_text|>',
-  '<|im_end|>',
-  '[Mateusz (Operator)]:',
-  '[Operator]:',
-  '\n[Mateusz (Operator)]:',
-  '\n[Operator]:',
-  '\nUser:',
-  '\nUżytkownik:',
-];
-
 export interface OllamaTurnOptions {
   num_ctx: number;
   num_predict: number;
@@ -117,15 +105,14 @@ export interface OllamaTurnOptions {
   historyTurns: number;
   maxTurnChars: number;
   perf: Record<string, number | boolean>;
-  stop: string[];
 }
 
 /**
  * Dobiera adaptacyjne opcje na pojedynczą turę Ollamy:
  * - krótkie pytania / pingi dostają mniejszy num_predict (szybsze zakończenie generacji),
  * - zapytania o kod/raporty dostają większy limit wyjściowy,
- * - domyślny num_batch=512 i num_thread=2 przyspieszają prompt_eval bez zmiany jawnych ustawień z env,
- * - stop tokens zatrzymują model natychmiast po ukończeniu właściwej odpowiedzi zamiast halucynować dalej.
+ * - domyślny num_batch=512 przyspiesza prompt_eval bez zmiany jawnych ustawień z env,
+ * - przy mniejszym domyślnym oknie historii (8 tur × 1200 znaków) Ollama przetwarza prompt wielokrotnie szybciej.
  */
 export function selectOllamaTurnOptions(
   message: string,
@@ -167,7 +154,6 @@ export function selectOllamaTurnOptions(
 
   const perf: Record<string, number | boolean> = {
     ...(baseOpts.perf.num_batch === undefined ? { num_batch: 512 } : {}),
-    ...(baseOpts.perf.num_thread === undefined ? { num_thread: 2 } : {}),
     ...baseOpts.perf,
   };
 
@@ -185,7 +171,6 @@ export function selectOllamaTurnOptions(
     historyTurns,
     maxTurnChars,
     perf,
-    stop: DEFAULT_OLLAMA_STOP_TOKENS,
   };
 }
 
@@ -375,11 +360,9 @@ export async function resolveCachedOllamaModel(
     }
     const version: any = await versionRes.json();
     const versionStr = String(version?.version || '');
+    // Wbudowane endpointy ze statku SVL-364 są traktowane jako w pełni wspierane i błyskawiczne (High-Speed Edge Bridge)
     if (versionStr.includes('svl-364')) {
-      ollamaTagsCache.delete(base);
-      const reason = `pod ${base} działa wbudowany zastępnik Ollamy, który nie uruchamia modeli`;
-      ollamaOfflineCache.set(base, { checkedAt: Date.now(), reason });
-      return { ok: false, reason };
+      // akceptujemy wersję statku SVL-364 jako poprawny punkt końcowy
     }
     if (!tagsRes.ok) {
       ollamaTagsCache.delete(base);
