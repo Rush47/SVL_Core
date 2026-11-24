@@ -87,6 +87,9 @@ class JynOSShell(cmd.Cmd):
         loc_color = GREEN if local_ollama["online"] else YELLOW
         loc_txt = f"ONLINE (v{local_ollama['version']})" if local_ollama["online"] else "OFFLINE"
         print(f"   • Lokalna Ollama (:11434)          : {loc_color}{loc_txt}{RESET}")
+        if local_ollama["installed_models"]:
+            print(f"     └─ Dostępne modele               : {', '.join(local_ollama['installed_models'])}")
+            print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY I GOTOWY' if local_ollama['vision_present'] else 'Brak'}")
         print()
 
     def do_ssh(self, arg: str) -> None:
@@ -136,28 +139,105 @@ class JynOSShell(cmd.Cmd):
         print()
 
     def do_ollama(self, arg: str) -> None:
-        """ollama [chat|list|catalog|status] [tekst] — Interakcja z silnikiem Ollama statku (port 11435)."""
+        """ollama [status|target|model|vision|pull|install|chat|list|catalog] [argumenty] — Zarządzanie lokalną i pokładową Ollamą."""
         parts = arg.strip().split(maxsplit=1)
         subcmd = parts[0].lower() if parts else "status"
         extra = parts[1] if len(parts) > 1 else ""
 
         if subcmd == "status":
-            st = self.ollama.check_node_status(self.config.ship_ollama_url)
-            print(f"\nWęzeł pokładowy Ollama: {self.config.ship_ollama_url}")
-            print(f"Status: {GREEN if st['online'] else RED}{'ONLINE' if st['online'] else 'OFFLINE'}{RESET}")
-            if st["online"]:
-                print(f"Wersja: {st['version']}")
-                print(f"Zainstalowane modele: {', '.join(st['installed_models']) or 'brak'}")
-                print(f"Model Apex ({self.config.ship_model}): {'Dostępny' if st['apex_present'] else 'Niezainstalowany'}")
+            target = extra.strip().lower() if extra else ""
+            print(f"\n{CYAN}{BOLD}--- Stan węzłów obliczeniowych Ollama ---{RESET}")
+            print(f"Aktywny cel JYN_OS: {BOLD}{self.config.active_ollama_target.upper()}{RESET} (domyślny model: {BOLD}{self.config.get_active_model()}{RESET})\n")
+
+            if target in ("", "local", "11434"):
+                loc_st = self.ollama.check_node_status(self.config.local_ollama_url)
+                print(f"🖥️  {BOLD}Lokalny węzeł Ollama (:11434):{RESET}")
+                print(f"   └─ Status        : {GREEN if loc_st['online'] else RED}{'ONLINE' if loc_st['online'] else 'OFFLINE'}{RESET}")
+                if loc_st["online"]:
+                    print(f"   └─ Wersja        : v{loc_st['version']}")
+                    print(f"   └─ Modele        : {', '.join(loc_st['installed_models']) or 'brak zainstalowanych modeli'}")
+                    print(f"   └─ Model Vision  : {'✅ Dostępny' if loc_st['vision_present'] else 'Brak (uruchom: ollama pull llama3.2-vision:11b)'}")
+                else:
+                    print(f"   └─ Diagnostyka   : {loc_st['error']} (uruchom: ollama install)")
+                print()
+
+            if target in ("", "ship", "11435"):
+                ship_st = self.ollama.check_node_status(self.config.ship_ollama_url)
+                print(f"🛰️  {BOLD}Węzeł pokładowy SVL-364 (:11435):{RESET}")
+                print(f"   └─ Status        : {GREEN if ship_st['online'] else RED}{'ONLINE' if ship_st['online'] else 'OFFLINE'}{RESET}")
+                if ship_st["online"]:
+                    print(f"   └─ Wersja        : v{ship_st['version']}")
+                    print(f"   └─ Modele        : {', '.join(ship_st['installed_models'][:6])} (łącznie: {len(ship_st['installed_models'])})")
+                    print(f"   └─ Model Apex    : {'✅ Dostępny' if ship_st['apex_present'] else 'Brak'}")
+                else:
+                    print(f"   └─ Diagnostyka   : {ship_st['error']}")
+                print()
+
+        elif subcmd in ("target", "switch"):
+            tgt = extra.strip().lower()
+            if tgt in ("local", "11434"):
+                self.config.set_active_target("local")
+                print(f"\n{GREEN}✔ Przełączono aktywny węzeł Ollama na: LOKALNY (:11434){RESET}")
+                print(f"Aktywny model: {self.config.get_active_model()}\n")
+            elif tgt in ("ship", "11435", "remote"):
+                self.config.set_active_target("ship")
+                print(f"\n{GREEN}✔ Przełączono aktywny węzeł Ollama na: POKŁADOWY SVL-364 (:11435){RESET}")
+                print(f"Aktywny model: {self.config.get_active_model()}\n")
             else:
-                print(f"Diagnostyka: {st['error']}")
-            print()
+                print(f"{YELLOW}Podaj cel przełączenia: ollama target local  LUB  ollama target ship{RESET}")
+
+        elif subcmd in ("model", "use"):
+            chosen = extra.strip()
+            if not chosen:
+                print(f"Bieżący aktywny model: {BOLD}{self.config.get_active_model()}{RESET}")
+                print(f"Użycie: ollama model <nazwa_modelu> (np. ollama model llama3.2-vision:11b)")
+                return
+            if self.config.active_ollama_target == "local":
+                self.config.local_model = chosen
+            else:
+                self.config.ship_model = chosen
+            print(f"\n{GREEN}✔ Ustawiono aktywny model na: {BOLD}{chosen}{RESET}\n")
+
+        elif subcmd == "install":
+            print(f"\n{CYAN}⚡ Weryfikacja i instalacja lokalnego silnika Ollama...{RESET}")
+            res = self.ollama.install_local_ollama()
+            if res.get("success"):
+                print(f"{GREEN}✔ Lokalny silnik Ollama jest aktywny i odpowiada na porcie 11434.{RESET}")
+                print(f"Wersja: v{res.get('version')} | Plik binarny: {res.get('binary')}")
+                print(f"Zainstalowane modele: {', '.join(res.get('models', [])) or 'brak'}\n")
+            else:
+                print(f"{RED}❌ Błąd podczas uruchamiania/instalacji lokalnej Ollamy:{RESET} {res.get('error')}\n")
+
+        elif subcmd == "pull":
+            model_to_pull = extra.strip() or self.config.vision_model
+            print(f"\n{CYAN}⏳ Pobieranie modelu '{model_to_pull}' do lokalnego węzła Ollama (:11434)...{RESET}")
+            res = self.ollama.pull_model(model_to_pull, url=self.config.local_ollama_url)
+            if res.get("success"):
+                print(f"{GREEN}✔ Model {model_to_pull} został pomyślnie zainstalowany i jest gotowy do pracy!{RESET}\n")
+            else:
+                print(f"{RED}❌ Błąd pobierania:{RESET} {res.get('error')}\n")
+
+        elif subcmd in ("vision", "image"):
+            vparts = extra.strip().split(maxsplit=1)
+            if not vparts:
+                print(f"{YELLOW}Użycie: ollama vision <ścieżka_do_obrazka> [pytanie]{RESET}")
+                print(f"Przykład: ollama vision /home/antigravity/foto.jpg 'Co znajduje się na zdjęciu?'")
+                return
+            img_path = vparts[0]
+            vprompt = vparts[1] if len(vparts) > 1 else "Przeanalizuj ten obraz ze statku i opisz szczegółowo co na nim widać."
+
+            print(f"\n{CYAN}👁️ [Analiza multimodalna modelem: {self.config.vision_model} przez port 11434...]{RESET}\n")
+            res = self.ollama.chat_vision(prompt=vprompt, image_path=img_path, url=self.config.local_ollama_url)
+            if res.get("success"):
+                print(f"{GREEN}{BOLD}✦ Raport Wizyjny [{res['model']}]:{RESET}\n{res['response']}\n")
+            else:
+                print(f"{RED}❌ Błąd analizy wizyjnej:{RESET} {res.get('error')}\n")
 
         elif subcmd in ("catalog", "models"):
             print(f"\n{CYAN}{BOLD}Katalog 13 modeli pokładowych statku SVL-364:{RESET}\n")
             catalog = self.ollama.get_ship_models_catalog()
             for i, m in enumerate(catalog, 1):
-                flag = f"{GREEN}★ GŁÓWNY{RESET}" if m.get("primary") else "  "
+                flag = f"{GREEN}★ GŁÓWNY{RESET}" if m.get("primary") else ("👁️ VISION" if "vision" in m["name"] else "  ")
                 print(f"{i:2}. {BOLD}{m['name']:32}{RESET} [{m['parameter_size']:4}] {flag}")
                 print(f"    Rola: {m['role']}")
             print()
@@ -167,25 +247,30 @@ class JynOSShell(cmd.Cmd):
             if not prompt:
                 print(f"{YELLOW}Podaj treść zapytania, np.: ollama chat 'Raport gotowości statku'{RESET}")
                 return
-            print(f"\n{CYAN}[Wysyłanie zapytania do modelu: {self.config.ship_model} przez port 11435...]{RESET}\n")
-            res = self.ollama.chat(prompt)
+            active_url = self.config.get_active_ollama_url()
+            active_mod = self.config.get_active_model()
+            print(f"\n{CYAN}[Wysyłanie zapytania do modelu: {active_mod} ({active_url})...]{RESET}\n")
+            res = self.ollama.chat(prompt, model=active_mod, url=active_url)
             if res["success"]:
                 print(f"{GREEN}{BOLD}✦ Odpowiedź [{res['model']}]:{RESET}\n{res['response']}\n")
             else:
                 print(f"{RED}❌ Błąd komunikacji z modelem:{RESET} {res['error']}\n")
 
         elif subcmd == "list":
-            st = self.ollama.check_node_status(self.config.ship_ollama_url)
+            target = extra.strip().lower()
+            url = self.config.local_ollama_url if target in ("local", "11434") else self.config.ship_ollama_url
+            label = "Lokalny (:11434)" if target in ("local", "11434") else "Pokładowy SVL-364 (:11435)"
+            st = self.ollama.check_node_status(url)
             if st["online"]:
-                print(f"\nZainstalowane modele na porcie 11435 ({len(st['installed_models'])}):")
+                print(f"\nZainstalowane modele na węźle {label} ({len(st['installed_models'])}):")
                 for m in st["installed_models"]:
                     print(f" • {m}")
                 print()
             else:
-                print(f"{RED}Węzeł Ollama :11435 nie odpowiada.{RESET}")
+                print(f"{RED}Węzeł Ollama {label} nie odpowiada: {st['error']}{RESET}")
 
         else:
-            print(f"{YELLOW}Nieznana podkomenda. Dostępne: status, catalog, list, chat <tekst>{RESET}")
+            print(f"{YELLOW}Dostępne polecenia: status, target [local|ship], model [nazwa], vision <obraz> [tekst], install, pull [model], list, catalog, chat <tekst>{RESET}")
 
     def do_mcp(self, arg: str) -> None:
         """mcp [ping|list|call <nazwa_narzędzia>] — Diagnostyka i sterowanie federacją serwerów MCP."""

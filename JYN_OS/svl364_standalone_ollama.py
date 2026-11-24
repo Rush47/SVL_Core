@@ -105,7 +105,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
 
             # Szybka próba odpytania lokalnego serwera Ollama (:11434) z pełnym czasem inferencji
             if os.environ.get("SVL_SHIP_OLLAMA_PROXY_LOCAL", "1") == "1":
-                for target_model in [model, "svl364-apex-uncensored:latest", "llama3.2:1b"]:
+                for target_model in [model, "llama3.2-vision:11b", "svl364-apex-uncensored:latest", "llama3.2:1b"]:
                     try:
                         import urllib.request
                         proxy_body = dict(body)

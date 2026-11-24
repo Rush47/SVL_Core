@@ -53,10 +53,12 @@ def resolve_auth_token(endpoint_url: str = "") -> str:
             pass
     return ""
 
-# Domyślne adresy silnika Ollama (Statek SVL-364 przez tunel SSH port 11435 oraz lokalna instancja 11434)
 DEFAULT_SHIP_OLLAMA_URL = os.environ.get("SVL_SHIP_OLLAMA_URL", "http://127.0.0.1:11435")
 DEFAULT_LOCAL_OLLAMA_URL = os.environ.get("SVL_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434")
 DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "svl364-apex-uncensored:latest")
+DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "llama3.2-vision:11b")
+DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "llama3.2-vision:11b")
+DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")
 
 # Brama API telemetrii i stanu SVL CoreOS
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
@@ -174,12 +176,35 @@ class JynOSConfig:
     ship_ollama_url: str = DEFAULT_SHIP_OLLAMA_URL
     local_ollama_url: str = DEFAULT_LOCAL_OLLAMA_URL
     ship_model: str = DEFAULT_SHIP_MODEL
+    local_model: str = DEFAULT_LOCAL_MODEL
+    vision_model: str = DEFAULT_VISION_MODEL
+    active_ollama_target: str = DEFAULT_OLLAMA_TARGET
 
     gateway_url: str = DEFAULT_GATEWAY_URL
     backend_url: str = DEFAULT_BACKEND_URL
 
     connect_timeout: float = 3.5
     command_timeout: float = 30.0
+
+    def get_active_ollama_url(self) -> str:
+        """Zwraca URL aktywnego węzła Ollama (domyślnie lokalny :11434 lub statku :11435)."""
+        if self.active_ollama_target.lower() in ("ship", "remote", "11435"):
+            return self.ship_ollama_url
+        return self.local_ollama_url
+
+    def get_active_model(self) -> str:
+        """Zwraca domyślny model dla aktywnego węzła."""
+        if self.active_ollama_target.lower() in ("ship", "remote", "11435"):
+            return self.ship_model
+        return self.local_model
+
+    def set_active_target(self, target: str) -> None:
+        """Przełącza aktywny cel Ollama pomiędzy 'local' a 'ship'."""
+        cleaned = target.strip().lower()
+        if cleaned in ("ship", "remote", "svl364", "11435"):
+            self.active_ollama_target = "ship"
+        else:
+            self.active_ollama_target = "local"
 
     @classmethod
     def load_from_env(cls) -> "JynOSConfig":

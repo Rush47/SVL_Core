@@ -115,6 +115,30 @@ def setup_security_tokens() -> None:
         mcp_token_file.chmod(0o600)
 
 
+def ensure_local_ollama_ready() -> None:
+    """Weryfikuje lokalną instalację Ollamy (:11434) oraz obecność modelu wizyjnego."""
+    ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
+    if not os.path.isfile(ollama_bin):
+        print("ℹ️  [JYN_OS] Brak binarki ollama w systemie. Możesz ją zainstalować komendą: curl -fsSL https://ollama.com/install.sh | sh")
+        return
+
+    if not is_port_open("127.0.0.1", 11434):
+        print("⚡ [JYN_OS] Uruchamianie lokalnej usługi Ollama w tle (port 11434)...")
+        subprocess.Popen(
+            [ollama_bin, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(25):
+            time.sleep(0.15)
+            if is_port_open("127.0.0.1", 11434):
+                break
+
+    if is_port_open("127.0.0.1", 11434):
+        print("🖥️  [JYN_OS] Lokalny węzeł Ollama (:11434) jest aktywny.")
+
+
 def ensure_backup_ollama_running() -> None:
     """Uruchamia autonomiczny proces zapasowej Ollamy SVL-364 (:11435) jeśli port jest wolny."""
     if not is_port_open("127.0.0.1", 11435):
@@ -140,6 +164,7 @@ def main() -> int:
 
     setup_ssh_environment()
     setup_security_tokens()
+    ensure_local_ollama_ready()
     ensure_backup_ollama_running()
 
     cfg = JynOSConfig.load_from_env()
