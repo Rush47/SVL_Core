@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List
@@ -97,84 +98,57 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                 body = {}
 
         if path in ("/api/chat", "/api/generate"):
-            model = str(body.get("model", "svl364-apex-uncensored:latest"))
-            messages = body.get("messages", [])
-            last_prompt = body.get("prompt", "")
-            if messages and isinstance(messages, list):
-                last_prompt = messages[-1].get("content", "")
+            if os.environ.get("SVL_SHIP_OLLAMA_PROXY_LOCAL", "1") != "1":
+                self._send_json(503, {"error": "Przekazywanie zapytań do Ollamy jest wyłączone."})
+                return
 
-            # Szybka próba odpytania lokalnego serwera Ollama (:11434) z obsługą stream=True i stream=False
-            if os.environ.get("SVL_SHIP_OLLAMA_PROXY_LOCAL", "1") == "1":
-                is_stream = bool(body.get("stream", False))
-                for target_model in [model, "svl364-apex-uncensored:latest", "qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:1b"]:
-                    try:
-                        import urllib.request
-                        proxy_body = dict(body)
-                        proxy_body["model"] = target_model
-                        proxy_options = dict(proxy_body.get("options") or {})
-                        if not proxy_options.get("num_predict"):
-                            proxy_options["num_predict"] = 240
-                        if not proxy_options.get("num_ctx"):
-                            proxy_options["num_ctx"] = 2048
-                        proxy_body["options"] = proxy_options
-                        proxy_req = urllib.request.Request(
-                            f"http://127.0.0.1:11434{path}",
-                            data=json.dumps(proxy_body).encode("utf-8"),
-                            headers={"Content-Type": "application/json"},
-                            method="POST",
-                        )
-                        with urllib.request.urlopen(proxy_req, timeout=55.0) as pr:
-                            if pr.status == 200:
-                                if is_stream:
-                                    self.send_response(200)
-                                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
-                                    self.send_header("Access-Control-Allow-Origin", "*")
-                                    self.end_headers()
-                                    for raw_line in pr:
-                                        line_str = raw_line.decode("utf-8", errors="replace").strip()
-                                        if not line_str:
-                                            continue
-                                        chunk_obj = json.loads(line_str)
-                                        chunk_obj["model"] = model
-                                        self.wfile.write((json.dumps(chunk_obj) + "\n").encode("utf-8"))
-                                        self.wfile.flush()
-                                    return
-                                proxy_res = json.loads(pr.read().decode("utf-8"))
-                                proxy_res["model"] = model
-                                self._send_json(200, proxy_res)
-                                return
-                    except Exception:
-                        continue
-
-            # Inteligentna odpowiedź fallbackowa Jyn Mitek (zamiast sztywnego echa zapytania)
-            reply_text = (
-                f"Cześć Mateuszu! Czuwam nad parametrami jądra SVL-364 oraz mostkiem systemowym.\n\n"
-                f"Wszystkie usługi autonomiczne i bufor pamięci rejestrują stan stabilny. "
-                f"W czym mogę Ci teraz pomóc przy konsoli operacyjnej?"
+            proxy_body = dict(body)
+            options = dict(proxy_body.get("options") or {})
+            options.setdefault("num_predict", 240)
+            options.setdefault("num_ctx", 2048)
+            proxy_body["options"] = options
+            # Klient JYN_OS obsługuje wybór modeli zapasowych po HTTP 404.
+            proxy_req = urllib.request.Request(
+                f"http://127.0.0.1:11434{path}",
+                data=json.dumps(proxy_body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
+            try:
+                upstream = urllib.request.urlopen(proxy_req, timeout=55.0)
+            except urllib.error.HTTPError as exc:
+                with exc:
+                    try:
+                        error = json.load(exc).get("error") or str(exc)
+                    except (OSError, ValueError, AttributeError):
+                        error = str(exc)
+                self._send_json(exc.code, {"error": error})
+                return
+            except OSError as exc:
+                self._send_json(502, {"error": f"Ollama na porcie 11434 jest niedostępna: {exc}"})
+                return
 
-            if path == "/api/chat":
-                self._send_json(
-                    200,
-                    {
-                        "model": model,
-                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "message": {"role": "assistant", "content": reply_text},
-                        "done": True,
-                        "total_duration": 42000000,
-                        "eval_count": 120,
-                    },
-                )
-            else:
-                self._send_json(
-                    200,
-                    {
-                        "model": model,
-                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                        "response": reply_text,
-                        "done": True,
-                    },
-                )
+            with upstream:
+                if proxy_body.get("stream", True):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    try:
+                        for line in upstream:
+                            self.wfile.write(line)
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    except OSError as exc:
+                        self.wfile.write(json.dumps({"error": str(exc)}).encode("utf-8") + b"\n")
+                else:
+                    try:
+                        result = json.load(upstream)
+                    except (OSError, ValueError) as exc:
+                        self._send_json(502, {"error": f"Błąd odpowiedzi z Ollamy: {exc}"})
+                    else:
+                        self._send_json(200, result)
             return
 
         if path == "/api/show":

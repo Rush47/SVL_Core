@@ -130,14 +130,14 @@ class SvlOllamaClient:
         import time
         now = time.monotonic()
         cached = getattr(self, "_cached_svl_ctx", None)
-        if cached and (now - cached[0]) < 25.0 and cached[1]:
+        if cached and (now - cached[0]) < 25.0:
             return cached[1]
 
         ctx = ""
         try:
             ov_url = f"{self.config.backend_url.rstrip('/')}/api/py/svl364/overview"
             req = urllib.request.Request(ov_url, headers={"User-Agent": "JYN_OS-Ollama/2.6.0"})
-            with urllib.request.urlopen(req, timeout=3.0) as r:
+            with urllib.request.urlopen(req, timeout=0.75) as r:
                 data = json.loads(r.read().decode("utf-8"))
                 if data.get("ok"):
                     summary = data.get("summary") or {}
@@ -230,7 +230,7 @@ class SvlOllamaClient:
         candidates = [selected_model]
         if has_images:
             candidates.extend([self.config.vision_model, "moondream:1.8b"])
-        candidates.extend(["svl364-apex-uncensored:latest", "qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:1b"])
+        candidates.extend(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:1b", "svl364-apex-uncensored:latest"])
         seen = set()
         ordered: List[str] = []
         for m in candidates:
@@ -250,7 +250,6 @@ class SvlOllamaClient:
             "num_ctx": 2048,
             "num_predict": 260 if is_detailed else 200,
             "num_batch": 512,
-            "num_thread": max(1, os.cpu_count() or 2),
         }
 
     def chat(
@@ -352,27 +351,37 @@ class SvlOllamaClient:
                 headers={"Content-Type": "application/json", "User-Agent": "JYN_OS-Ollama/2.5.0"},
                 method="POST",
             )
+            emitted_text = False
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as response:
                     for raw_line in response:
-                        line = raw_line.decode("utf-8", errors="replace").strip()
-                        if not line:
+                        if not raw_line.strip():
                             continue
-                        chunk = json.loads(line)
+                        chunk = json.loads(raw_line)
+                        if chunk.get("error"):
+                            last_err = str(chunk["error"])
+                            break
+                        actual_model = chunk.get("model") or cand_model
                         token = chunk.get("message", {}).get("content", "")
                         if token:
-                            yield {"ok": True, "model": cand_model, "token": token, "done": False}
+                            emitted_text = True
+                            yield {"ok": True, "model": actual_model, "token": token, "done": False}
                         if chunk.get("done"):
-                            yield {"ok": True, "model": cand_model, "token": "", "done": True}
-                            return
-                    return
+                            if emitted_text:
+                                yield {"ok": True, "model": actual_model, "token": "", "done": True}
+                                return
+                            last_err = f"Pusta odpowiedź z modelu {actual_model}"
+                            break
+                    else:
+                        last_err = f"Przerwany strumień odpowiedzi z modelu {cand_model}"
+                    break
             except urllib.error.HTTPError as he:
-                try:
-                    err_text = he.read().decode("utf-8")
-                except Exception:
-                    err_text = str(he)
+                with he:
+                    err_text = he.read().decode("utf-8", errors="replace")
                 last_err = f"HTTP {he.code}: {err_text}"
-                continue
+                if he.code == 404:
+                    continue
+                break
             except Exception as e:
                 last_err = f"Błąd połączenia z węzłem Ollama ({target_url}): {e}"
                 break

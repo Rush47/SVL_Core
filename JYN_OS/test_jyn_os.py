@@ -60,7 +60,7 @@ class TestJynOSClientSuite(unittest.TestCase):
         self.assertIn("11434", ollama.config.local_ollama_url)
         self.assertEqual(ollama.config.active_ollama_target, "local")
         self.assertEqual(ollama.config.get_active_ollama_url(), ollama.config.local_ollama_url)
-        self.assertEqual(ollama.config.get_active_model(), "svl364-apex-uncensored:latest")
+        self.assertEqual(ollama.config.get_active_model(), "qwen2.5:1.5b")
 
         ollama.config.set_active_target("ship")
         self.assertEqual(ollama.config.active_ollama_target, "ship")

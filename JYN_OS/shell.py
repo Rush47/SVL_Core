@@ -418,7 +418,7 @@ class JynOSShell(cmd.Cmd):
             return
         active_url = self.config.get_active_ollama_url()
         active_mod = self.config.get_active_model()
-        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url})]{RESET}")
+        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url})]{RESET}", flush=True)
 
         collected: list[str] = []
         used_model = active_mod
@@ -431,7 +431,7 @@ class JynOSShell(cmd.Cmd):
             history=self.chat_history,
         ):
             if not chunk.get("ok"):
-                print(f"{RED}❌ Błąd komunikacji z modelem:{RESET} {chunk.get('error')}\n")
+                print(f"\n{RED}❌ Błąd komunikacji z modelem:{RESET} {chunk.get('error')}\n")
                 return
             used_model = chunk.get("model", used_model)
             tok = chunk.get("token", "")

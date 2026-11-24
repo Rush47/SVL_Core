@@ -88,7 +88,7 @@ Wpisz `help` lub `?`, aby wyświetlić listę wbudowanych poleceń:
 - `exec <komenda>` — Bezpośrednie wykonanie polecenia bash na statku SVL-364.
 - `ollama status` — Status węzła Ollama na statku i załadowane modele.
 - `ollama catalog` — Wyświetlenie pełnego katalogu 13 modeli pokładowych.
-- `ollama chat <zapytanie>` — Wysłanie zapytania do modelu `svl364-apex-uncensored:latest`.
+- `ollama chat <zapytanie>` — Wysłanie zapytania do aktywnego modelu. Domyślnie lokalnie działa `qwen2.5:1.5b` (instalacja modelu przez `ollama pull qwen2.5:1.5b` w terminalu systemowym).
 - `mcp ping` — Skan stanu wszystkich 4 serwerów w federacji MCP.
 - `mcp list` — Pobranie i wylistowanie wszystkich dostępnych narzędzi MCP.
 - `mcp call <narzędzie>` — Wywołanie określonego narzędzia MCP.
@@ -154,7 +154,8 @@ JYN_OS automatycznie wykrywa klucze i tokeny z katalogu `data/` repozytorium `SV
 | `SVL_SSH_TARGET` | `Ship` | Profil lub alias OpenSSH statku docelowego |
 | `SVL_SSH_KEY` | `~/.ssh/svl364_ed25519` | Ścieżka do prywatnego klucza OpenSSH |
 | `SVL_SHIP_OLLAMA_URL` | `http://127.0.0.1:11435` | Adres URL zapasowej Ollamy statku SVL-364 |
-| `SVL_SHIP_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model do zapytań czatu |
+| `SVL_LOCAL_MODEL` | `qwen2.5:1.5b` | Domyślny model czatu lokalnego |
+| `SVL_SHIP_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model czatu na węźle pokładowym |
 | `SVL_MCP_UNIVERSAL_HUB`| `http://127.0.0.1:3334/mcp` | Punkt końcowy Universal MCP Hub |
 | `SVL_MCP_SYSTEM` | `http://127.0.0.1:3000/mcp/svl` | Punkt końcowy bramy System MCP |
 | `SVL_MCP_SHIP` | `http://127.0.0.1:3000/api/mcp/svl364` | Punkt końcowy Ship MCP Gateway |
