@@ -49,6 +49,8 @@ def setup_ssh_environment() -> None:
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
+            if not key_path.is_file():
+                raise RuntimeError("Nie udało się wygenerować klucza SSH.")
             key_path.chmod(0o600)
             if pub_key_path.is_file():
                 pub_key_path.chmod(0o644)
@@ -171,7 +173,19 @@ def main() -> int:
     shell = JynOSShell(cfg)
     shell.do_status("")
 
-    print("\n✅ Środowisko JYN_OS jest w 100% gotowe.")
+    status = shell.ollama.check_node_status(cfg.get_active_ollama_url())
+    if not status["online"] or status["error"]:
+        print(f"\n❌ Ollama niegotowa: {status['error']}")
+        return 1
+    if cfg.get_active_model() not in status["installed_models"]:
+        print(f"\n❌ Brak aktywnego modelu: {cfg.get_active_model()}")
+        return 1
+    try:
+        shell.ollama._verify_apex(cfg.get_active_ollama_url(), cfg.get_active_model())
+    except (OSError, ValueError) as exc:
+        print(f"\n❌ Weryfikacja modelu nieudana: {exc}")
+        return 1
+    print("\n✅ Aktywny węzeł Ollama i model są dostępne. Stan pozostałych usług podano powyżej.")
     print("👉 Uruchomienie konsoli:  ./jyn_os  lub  python3 main.py")
     print("👉 Uruchomienie audytu:   python3 main.py status\n")
     return 0

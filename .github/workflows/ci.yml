@@ -30,5 +30,7 @@ jobs:
         run: npm run test:unit
       - name: Testy Pythona
         run: npm run test:python
+      - name: Testy JYN_OS
+        run: python3 -m unittest JYN_OS.test_jyn_os -v
       - name: Build frontendu
         run: npx vite build

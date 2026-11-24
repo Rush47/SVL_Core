@@ -48,13 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target",
         "-t",
-        default=os.environ.get("SVL_SSH_TARGET", "Ship"),
+        default=None,
         help="Profil lub alias OpenSSH docelowego statku (domyślnie: Ship)",
     )
     parser.add_argument(
         "--key",
         "-k",
-        default=os.environ.get("SVL_SSH_KEY", str(Path.home() / ".ssh" / "svl364_ed25519")),
+        default=None,
         help="Ścieżka do klucza prywatnego OpenSSH (domyślnie: ~/.ssh/svl364_ed25519)",
     )
 
@@ -81,7 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     ollama_sub = ollama_p.add_subparsers(dest="ollama_action")
     ollama_sub.add_parser("status", help="Status węzła Ollama i zainstalowane modele")
     ollama_sub.add_parser("models", help="Katalog 13 modeli pokładowych SVL-364")
-    ollama_sub.add_parser("list", help="Lista pobranych modeli na węźle statku")
+    list_p = ollama_sub.add_parser("list", help="Lista pobranych modeli na aktywnym węźle")
+    list_p.add_argument("node", nargs="?", choices=("local", "ship"))
     chat_p = ollama_sub.add_parser("chat", help="Wysłanie zapytania do modelu statku")
     chat_p.add_argument("prompt", help="Treść zapytania dla modelu AI")
     chat_p.add_argument("--model", "-m", default=None, help="Nazwa modelu (domyślnie: svl364-apex-uncensored:latest)")
@@ -148,7 +149,10 @@ def main() -> int:
             if model:
                 shell.config.local_model = model
                 shell.config.ship_model = model
-            shell.do_ollama(f"chat {prompt}")
+            return 0 if shell._run_complete_chat(prompt) else 1
+        if action == "list":
+            node = getattr(args, "node", None)
+            shell.do_ollama("list" + (f" {node}" if node else ""))
         else:
             shell.do_ollama(action)
         return 0

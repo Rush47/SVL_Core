@@ -94,6 +94,9 @@ class SvlOllamaClient:
         try:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 resp_json = json.loads(response.read().decode("utf-8"))
+                if not isinstance(resp_json, dict) or resp_json.get("status") != "success" or resp_json.get("error"):
+                    raise ValueError(str(resp_json.get("error") or resp_json.get("status") or "Brak potwierdzenia pobrania") if isinstance(resp_json, dict) else "Niepoprawna odpowiedź Ollamy")
+                self._apex_verified.clear()
                 return {
                     "success": True,
                     "model": model,
@@ -257,7 +260,9 @@ class SvlOllamaClient:
         )
         with urllib.request.urlopen(req, timeout=5.0) as response:
             info = json.load(response)
-        size = str((info.get("details") or {}).get("parameter_size", ""))
+        if not isinstance(info, dict) or not isinstance(info.get("details"), dict):
+            raise ValueError("Ollama nie zwróciła metadanych modelu.")
+        size = str(info["details"].get("parameter_size", ""))
         match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*B\s*", size, re.I)
         if not match or not 65 <= float(match.group(1)) <= 75:
             raise ValueError(f"Alias {model} nie wskazuje na zweryfikowany model 70B (parameter_size={size or 'brak'}). Odtwórz Apex z Modelfile 70B.")
@@ -313,9 +318,15 @@ class SvlOllamaClient:
             try:
                 with urllib.request.urlopen(req, timeout=self.config.chat_timeout if timeout is None else timeout) as response:
                     resp_json = json.loads(response.read().decode("utf-8"))
-                    message = resp_json.get("message", {})
-                    content = str(message.get("content", "")).strip()
-                    if content and resp_json.get("done", True):
+                    if not isinstance(resp_json, dict):
+                        raise ValueError("Niepoprawny format odpowiedzi Ollamy")
+                    if resp_json.get("error"):
+                        last_err = str(resp_json["error"])
+                        break
+                    message = resp_json.get("message") or {}
+                    content = message.get("content") if isinstance(message, dict) else None
+                    if isinstance(content, str) and content.strip() and resp_json.get("done") is True:
+                        content = content.strip()
                         return {
                             "success": True,
                             "model": cand_model,
@@ -330,7 +341,7 @@ class SvlOllamaClient:
                             "done_reason": resp_json.get("done_reason"),
                             "truncated": resp_json.get("done_reason") == "length",
                         }
-                    last_err = f"Pusta odpowiedź z modelu {cand_model}"
+                    last_err = f"Pusta lub niedokończona odpowiedź z modelu {cand_model}"
             except urllib.error.HTTPError as he:
                 try:
                     err_text = he.read().decode("utf-8")
@@ -339,6 +350,9 @@ class SvlOllamaClient:
                 last_err = f"HTTP {he.code}: {err_text}"
                 if he.code == 404 and images:
                     continue
+                break
+            except TimeoutError:
+                last_err = f"Przekroczono czas oczekiwania na Ollamę ({target_url}). Sprawdź zasoby hosta i SVL_CHAT_TIMEOUT."
                 break
             except Exception as e:
                 last_err = f"Błąd połączenia z węzłem Ollama ({target_url}): {e}"
@@ -393,8 +407,7 @@ class SvlOllamaClient:
         if not installed:
             try:
                 subprocess.run(
-                    ["curl -fsSL https://ollama.com/install.sh | sh"],
-                    shell=True,
+                    ["bash", "-o", "pipefail", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
                     check=True,
                     capture_output=True,
                     timeout=120,

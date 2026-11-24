@@ -2,6 +2,8 @@
 """Testy jednostkowe systemu klienta JYN_OS."""
 
 import unittest
+import tempfile
+import os
 import io
 import json
 from unittest.mock import patch
@@ -19,6 +21,7 @@ from JYN_OS.ssh_client import Svl364SshClient
 from JYN_OS.ollama_client import SvlOllamaClient
 from JYN_OS.mcp_client import SvlMcpClient
 from JYN_OS.telemetry import SvlShipTelemetry
+from JYN_OS.shell import JynOSShell
 
 
 class TestJynOSClientSuite(unittest.TestCase):
@@ -36,14 +39,16 @@ class TestJynOSClientSuite(unittest.TestCase):
         self.assertIn("qwen2.5-coder:7b", names)
 
     def test_auth_token_resolver_finds_token(self):
-        token = resolve_auth_token("http://127.0.0.1:3000/api/mcp/svl364")
-        self.assertTrue(len(token) > 0, "Powinien odnaleźć poprawny token autoryzacji")
+        with patch.dict(os.environ, {"SVL_OPERATOR_TOKEN": "test-token"}):
+            self.assertEqual(resolve_auth_token("http://127.0.0.1:3000/api/mcp/svl364"), "test-token")
 
     def test_ssh_client_detects_ship_key_and_target(self):
-        ssh = Svl364SshClient(self.cfg)
-        status = ssh.get_key_status()
-        self.assertTrue(status["private_key_exists"])
-        self.assertEqual(ssh.config.ssh_profile, "Ship")
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "test_key"
+            key.touch()
+            ssh = Svl364SshClient(JynOSConfig(ssh_key_path=key, ssh_profile="Ship"))
+            self.assertTrue(ssh.get_key_status()["private_key_exists"])
+            self.assertEqual(ssh.config.ssh_profile, "Ship")
 
     def test_mcp_client_endpoints_defined(self):
         mcp = SvlMcpClient(self.cfg)
@@ -130,6 +135,41 @@ class TestApexCompleteChat(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertIn("70B", result["error"])
         self.assertEqual(mock.call_count, 1)
+
+
+class TestRuntimeRegression(unittest.TestCase):
+    def test_single_word_chat_and_eof(self):
+        shell = JynOSShell(JynOSConfig())
+        with patch.object(shell, "_run_complete_chat", return_value=True) as run:
+            self.assertIsNone(shell.default("Cześć"))
+            run.assert_called_once_with("Cześć")
+        self.assertTrue(shell.do_EOF(""))
+
+    def test_chat_interrupt_does_not_exit_shell_or_write_history(self):
+        shell = JynOSShell(JynOSConfig())
+        with patch.object(shell.ollama, "chat", side_effect=KeyboardInterrupt):
+            self.assertFalse(shell._run_complete_chat("Cześć"))
+        self.assertEqual(shell.chat_history, [])
+
+    def test_model_pull_error_not_success(self):
+        client = SvlOllamaClient(JynOSConfig())
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen", return_value=io.BytesIO(b'{"error":"disk full"}')):
+            result = client.pull_model("test")
+        self.assertFalse(result["success"])
+        self.assertIn("disk full", result["error"])
+
+    def test_chat_rejects_partial_and_null(self):
+        client = SvlOllamaClient(JynOSConfig())
+        for reply in ({"message": {"content": None}, "done": True},
+                      {"message": {"content": "partial"}, "done": False}):
+            with patch("JYN_OS.ollama_client.urllib.request.urlopen",
+                       return_value=io.BytesIO(json.dumps(reply).encode())):
+                self.assertFalse(client.chat("test", model="other")["success"])
+
+    def test_target_alias_normalized(self):
+        cfg = JynOSConfig(active_ollama_target=" SVL364 ")
+        self.assertEqual(cfg.active_ollama_target, "ship")
+        self.assertEqual(cfg.get_active_ollama_url(), cfg.ship_ollama_url)
 
 
 if __name__ == "__main__":

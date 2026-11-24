@@ -255,11 +255,15 @@ class JynOSShell(cmd.Cmd):
             print(f"\n{GREEN}✔ Wyczyszczono historię rozmowy sesji JYN_OS.{RESET}\n")
 
         elif subcmd == "list":
-            target = extra.strip().lower()
-            url = self.config.local_ollama_url if target in ("local", "11434") else self.config.ship_ollama_url
-            label = "Lokalny (:11434)" if target in ("local", "11434") else "Pokładowy SVL-364 (:11435)"
+            target = extra.strip().lower() or self.config.active_ollama_target
+            if target not in ("local", "11434", "ship", "11435", "remote"):
+                print(f"{YELLOW}Użycie: ollama list [local|ship]{RESET}")
+                return
+            local = target in ("local", "11434")
+            url = self.config.local_ollama_url if local else self.config.ship_ollama_url
+            label = "Lokalny (:11434)" if local else "Pokładowy SVL-364 (:11435)"
             st = self.ollama.check_node_status(url)
-            if st["online"]:
+            if st["online"] and not st["error"]:
                 print(f"\nZainstalowane modele na węźle {label} ({len(st['installed_models'])}):")
                 for m in st["installed_models"]:
                     print(f" • {m}")
@@ -412,17 +416,21 @@ class JynOSShell(cmd.Cmd):
         """quit — Zamyka powłokę klienta JYN_OS."""
         return self.do_exit(arg)
 
-    def _run_complete_chat(self, prompt: str) -> None:
-        cleaned = prompt.strip().strip("'").strip('"')
+    def _run_complete_chat(self, prompt: str) -> bool:
+        cleaned = prompt.strip()
         if not cleaned:
-            return
+            return False
         active_url = self.config.get_active_ollama_url()
         active_mod = self.config.get_active_model()
         print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url}) — generowanie odpowiedzi]{RESET}", flush=True)
-        result = self.ollama.chat(cleaned, model=active_mod, url=active_url, history=self.chat_history)
+        try:
+            result = self.ollama.chat(cleaned, model=active_mod, url=active_url, history=self.chat_history)
+        except KeyboardInterrupt:
+            print(f"\n{YELLOW}Przerwano oczekiwanie na odpowiedź.{RESET}")
+            return False
         if not result.get("success"):
             print(f"\n{RED}❌ Błąd komunikacji z modelem:{RESET} {result.get('error')}\n")
-            return
+            return False
         full_reply = result["response"]
         used_model = result["model"]
         print(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} {full_reply}\n", flush=True)
@@ -433,6 +441,7 @@ class JynOSShell(cmd.Cmd):
             {"role": "assistant", "content": full_reply},
         ])
         self.chat_history = self.chat_history[-20:]
+        return True
 
     def do_chat(self, arg: str) -> None:
         """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek (pełna odpowiedź bez strumieniowania + pamięć sesji)."""
@@ -450,10 +459,11 @@ class JynOSShell(cmd.Cmd):
         cleaned = line.strip()
         if not cleaned:
             return
-        if " " in cleaned or cleaned.endswith("?"):
-            self._run_complete_chat(cleaned)
-        else:
-            print(f"{YELLOW}Nieznane polecenie '{cleaned}'. Wpisz 'help' lub zadaj pytanie dla Jyn (np. chat {cleaned}).{RESET}")
+        self._run_complete_chat(cleaned)
+
+    def do_EOF(self, arg: str) -> bool:
+        """Zakończ sesję po Ctrl-D lub zamknięciu wejścia."""
+        return self.do_exit(arg)
 
     def emptyline(self) -> bool:
         """Nie powtarzaj ostatniego polecenia po wciśnięciu Enter."""

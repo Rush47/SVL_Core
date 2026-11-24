@@ -59,25 +59,33 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        length = int(self.headers.get("Content-Length", 0))
-        body = {}
-        if length > 0:
-            try:
-                body = json.loads(self.rfile.read(length).decode("utf-8"))
-            except Exception:
-                body = {}
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if not 0 <= length <= 64 * 1024 * 1024:
+                self._send_json(413, {"error": "Nieprawidłowy rozmiar żądania"})
+                return
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            if not isinstance(body, dict):
+                raise ValueError("Oczekiwano obiektu JSON")
+        except (ValueError, UnicodeError):
+            self._send_json(400, {"error": "Niepoprawne żądanie JSON"})
+            return
 
-        if path in ("/api/chat", "/api/generate"):
+        if path in ("/api/chat", "/api/generate", "/api/pull", "/api/create"):
             if os.environ.get("SVL_SHIP_OLLAMA_PROXY_LOCAL", "1") != "1":
                 self._send_json(503, {"error": "Przekazywanie zapytań do Ollamy jest wyłączone."})
                 return
 
             proxy_body = dict(body)
-            options = dict(proxy_body.get("options") or {})
-            options.setdefault("num_predict", DEFAULT_CHAT_NUM_PREDICT)
-            options.setdefault("num_ctx", DEFAULT_CHAT_NUM_CTX)
-            proxy_body["options"] = options
-            # Klient JYN_OS obsługuje wybór modeli zapasowych po HTTP 404.
+            proxy_body.setdefault("stream", False)
+            if path in ("/api/chat", "/api/generate"):
+                options = proxy_body.get("options") or {}
+                if not isinstance(options, dict):
+                    self._send_json(400, {"error": "options musi być obiektem JSON"})
+                    return
+                options.setdefault("num_predict", DEFAULT_CHAT_NUM_PREDICT)
+                options.setdefault("num_ctx", DEFAULT_CHAT_NUM_CTX)
+                proxy_body["options"] = options
             proxy_req = urllib.request.Request(
                 f"http://127.0.0.1:11434{path}",
                 data=json.dumps(proxy_body).encode("utf-8"),

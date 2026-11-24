@@ -222,6 +222,9 @@ class JynOSConfig:
     chat_num_predict: int = DEFAULT_CHAT_NUM_PREDICT
     chat_timeout: float = DEFAULT_CHAT_TIMEOUT
 
+    def __post_init__(self) -> None:
+        self.set_active_target(self.active_ollama_target)
+
     def get_active_ollama_url(self) -> str:
         """Zwraca URL aktywnego węzła Ollama (domyślnie lokalny :11434 lub statku :11435)."""
         if self.active_ollama_target.lower() in ("ship", "remote", "11435"):
