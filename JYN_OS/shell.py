@@ -46,6 +46,7 @@ class JynOSShell(cmd.Cmd):
         self.mcp = SvlMcpClient(self.config)
         self.ollama = SvlOllamaClient(self.config)
         self.telemetry = SvlShipTelemetry(self.config, self.ssh)
+        self.chat_history: list[dict[str, str]] = []
 
     def do_status(self, arg: str) -> None:
         """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11435)."""
@@ -247,14 +248,11 @@ class JynOSShell(cmd.Cmd):
             if not prompt:
                 print(f"{YELLOW}Podaj treść zapytania, np.: ollama chat 'Raport gotowości statku'{RESET}")
                 return
-            active_url = self.config.get_active_ollama_url()
-            active_mod = self.config.get_active_model()
-            print(f"\n{CYAN}[Wysyłanie zapytania do modelu: {active_mod} ({active_url})...]{RESET}\n")
-            res = self.ollama.chat(prompt, model=active_mod, url=active_url)
-            if res["success"]:
-                print(f"{GREEN}{BOLD}✦ Odpowiedź [{res['model']}]:{RESET}\n{res['response']}\n")
-            else:
-                print(f"{RED}❌ Błąd komunikacji z modelem:{RESET} {res['error']}\n")
+            self._run_streaming_chat(prompt)
+
+        elif subcmd in ("clear", "reset-chat"):
+            self.chat_history.clear()
+            print(f"\n{GREEN}✔ Wyczyszczono historię rozmowy sesji JYN_OS.{RESET}\n")
 
         elif subcmd == "list":
             target = extra.strip().lower()
@@ -270,7 +268,7 @@ class JynOSShell(cmd.Cmd):
                 print(f"{RED}Węzeł Ollama {label} nie odpowiada: {st['error']}{RESET}")
 
         else:
-            print(f"{YELLOW}Dostępne polecenia: status, target [local|ship], model [nazwa], vision <obraz> [tekst], install, pull [model], list, catalog, chat <tekst>{RESET}")
+            print(f"{YELLOW}Dostępne polecenia: status, target [local|ship], model [nazwa], vision <obraz> [tekst], install, pull [model], list, catalog, chat <tekst>, clear{RESET}")
 
     def do_mcp(self, arg: str) -> None:
         """mcp [ping|list|call <nazwa_narzędzia>] — Diagnostyka i sterowanie federacją serwerów MCP."""
@@ -414,6 +412,68 @@ class JynOSShell(cmd.Cmd):
         """quit — Zamyka powłokę klienta JYN_OS."""
         return self.do_exit(arg)
 
+    def _run_streaming_chat(self, prompt: str) -> None:
+        cleaned = prompt.strip().strip("'").strip('"')
+        if not cleaned:
+            return
+        active_url = self.config.get_active_ollama_url()
+        active_mod = self.config.get_active_model()
+        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url})]{RESET}")
+
+        collected: list[str] = []
+        used_model = active_mod
+        header_printed = False
+
+        for chunk in self.ollama.chat_stream(
+            cleaned,
+            model=active_mod,
+            url=active_url,
+            history=self.chat_history,
+        ):
+            if not chunk.get("ok"):
+                print(f"{RED}❌ Błąd komunikacji z modelem:{RESET} {chunk.get('error')}\n")
+                return
+            used_model = chunk.get("model", used_model)
+            tok = chunk.get("token", "")
+            if tok:
+                if not header_printed:
+                    sys.stdout.write(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} ")
+                    header_printed = True
+                sys.stdout.write(tok)
+                sys.stdout.flush()
+                collected.append(tok)
+
+        sys.stdout.write("\n\n")
+        sys.stdout.flush()
+        full_reply = "".join(collected).strip()
+        if full_reply:
+            self.chat_history.append({"role": "user", "content": cleaned})
+            self.chat_history.append({"role": "assistant", "content": full_reply})
+            if len(self.chat_history) > 20:
+                self.chat_history = self.chat_history[-20:]
+
+    def do_chat(self, arg: str) -> None:
+        """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek (strumieniowanie na żywo + pamięć sesji)."""
+        if not arg.strip():
+            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn>{RESET}")
+            return
+        self._run_streaming_chat(arg)
+
+    def do_jyn(self, arg: str) -> None:
+        """jyn <wiadomość> — Alias bezpośredniej rozmowy z Jyn Mitek."""
+        self.do_chat(arg)
+
+    def default(self, line: str) -> None:
+        """Kieruje wypowiedzi w języku naturalnym bezpośrednio do czatu Jyn Mitek."""
+        cleaned = line.strip()
+        if not cleaned:
+            return
+        if " " in cleaned or cleaned.endswith("?"):
+            self._run_streaming_chat(cleaned)
+        else:
+            print(f"{YELLOW}Nieznane polecenie '{cleaned}'. Wpisz 'help' lub zadaj pytanie dla Jyn (np. chat {cleaned}).{RESET}")
+
     def emptyline(self) -> bool:
         """Nie powtarzaj ostatniego polecenia po wciśnięciu Enter."""
         return False
+

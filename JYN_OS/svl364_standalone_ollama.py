@@ -103,16 +103,17 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             if messages and isinstance(messages, list):
                 last_prompt = messages[-1].get("content", "")
 
-            # Szybka próba odpytania lokalnego serwera Ollama (:11434) z pełnym czasem inferencji
+            # Szybka próba odpytania lokalnego serwera Ollama (:11434) z obsługą stream=True i stream=False
             if os.environ.get("SVL_SHIP_OLLAMA_PROXY_LOCAL", "1") == "1":
-                for target_model in [model, "llama3.2-vision:11b", "svl364-apex-uncensored:latest", "llama3.2:1b"]:
+                is_stream = bool(body.get("stream", False))
+                for target_model in [model, "svl364-apex-uncensored:latest", "qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:1b"]:
                     try:
                         import urllib.request
                         proxy_body = dict(body)
                         proxy_body["model"] = target_model
                         proxy_options = dict(proxy_body.get("options") or {})
                         if not proxy_options.get("num_predict"):
-                            proxy_options["num_predict"] = 256
+                            proxy_options["num_predict"] = 240
                         if not proxy_options.get("num_ctx"):
                             proxy_options["num_ctx"] = 2048
                         proxy_body["options"] = proxy_options
@@ -122,10 +123,23 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                             headers={"Content-Type": "application/json"},
                             method="POST",
                         )
-                        with urllib.request.urlopen(proxy_req, timeout=50.0) as pr:
+                        with urllib.request.urlopen(proxy_req, timeout=55.0) as pr:
                             if pr.status == 200:
+                                if is_stream:
+                                    self.send_response(200)
+                                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                                    self.send_header("Access-Control-Allow-Origin", "*")
+                                    self.end_headers()
+                                    for raw_line in pr:
+                                        line_str = raw_line.decode("utf-8", errors="replace").strip()
+                                        if not line_str:
+                                            continue
+                                        chunk_obj = json.loads(line_str)
+                                        chunk_obj["model"] = model
+                                        self.wfile.write((json.dumps(chunk_obj) + "\n").encode("utf-8"))
+                                        self.wfile.flush()
+                                    return
                                 proxy_res = json.loads(pr.read().decode("utf-8"))
-                                # Zachowaj nazwę żądanego modelu, aby klient był w pełni zadowolony
                                 proxy_res["model"] = model
                                 self._send_json(200, proxy_res)
                                 return

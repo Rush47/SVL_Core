@@ -146,6 +146,7 @@ def main() -> int:
             prompt = getattr(args, "prompt", "")
             model = getattr(args, "model", None)
             if model:
+                shell.config.local_model = model
                 shell.config.ship_model = model
             shell.do_ollama(f"chat {prompt}")
         else:

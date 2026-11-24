@@ -174,25 +174,67 @@ export function selectOllamaTurnOptions(
   };
 }
 
+const OLLAMA_COMPACT_INTERACTIVE_GUIDE =
+  'Zasady odpowiedzi Jyn Mitek: ZAWSZE pisz w 1. osobie r.ż. („sprawdziłam”, „monitoruję”, „melduję”) bezpośrednio do Operatora w wołaczu „Mateuszu” (nigdy „pan Mateusz”, nigdy nie zaczynaj od „Jyn,” ani „Cześć Jyn”). Odpowiadaj wyłącznie poprawną polszczyzną, zwięźle i konkretnie z podanych danych SVL-364. Możesz dodać czytelne punkty/tabele Markdown oraz 1–2 przyciski na końcu `[btn: Etykieta|send:/status]`.';
+
+/**
+ * Dla lokalnego modelu Ollama na CPU dołączamy schematy narzędzi JSON wyłącznie wtedy,
+ * gdy wiadomość jest jawnym poleceniem wykonawczym/mutującym (np. uruchom w powłoce, zapisz, włącz/wyłącz),
+ * a nie zwykłym pytaniem o stan, raport, misje lub badania (które są już w kontekście systemowym).
+ */
+export function shouldAttachToolsForLocalOllama(
+  message: string,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (env.OLLAMA_FORCE_TOOLS === '1' || env.OLLAMA_FORCE_TOOLS === 'true') return true;
+  if (env.OLLAMA_DISABLE_TOOLS === '1' || env.OLLAMA_DISABLE_TOOLS === 'true') return false;
+  const text = String(message || '').trim();
+  if (!text) return false;
+  // Jeśli to pytanie informacyjne o stan/raport/misje/badania bez czasownika mutacji — nie obciążaj CPU 16 schematami narzędzi
+  const hasExplicitActionVerb =
+    /(?<![\p{L}\p{N}_])(?:wykonaj|uruchom\s+(?:komend|polec|skan|cykl|worker)|zrestartuj|zainstaluj|skonfiguruj|zapisz\s+w\s+pamięci|zapamiętaj|utwórz\s+(?:moduł|kanał)|stwórz\s+(?:moduł|kanał)|ustaw\s+(?:awatar|avatar)|usuń\s+wirus|włącz\s+autonom|wyłącz\s+autonom|nadaj\s+uprawnie|ssh\s+exec|root\s+exec)(?![\p{L}\p{N}_])/iu.test(
+      text,
+    );
+  return hasExplicitActionVerb;
+}
+
 /**
  * Stabilizuje i skraca kontekst systemowy dla Ollamy, usuwając zmienne z każdej tury
- * (np. latency=5752ns, scenario=#848530, pkt=0x..., cykle_wykonane=N), dzięki czemu
- * prefix promptu pozostaje identyczny między turami i trafia w KV-cache Ollamy.
+ * (np. latency=5752ns, scenario=#848530, pkt=0x..., cykle_wykonane=N) oraz kompresując
+ * 4,4k-znakowy poradnik UI tak, aby pamięć agenta oraz wszystkie misje i badania SVL-364 zawsze mieściły się w oknie.
  */
-export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 2800): string {
+export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 2600): string {
   const raw = String(fullContext || '').trim();
   if (!raw) return '';
   let compact = raw
+    // Zastąp 4,4k-znakowy przewodnik UI zwięzłą wersją dla lokalnych modeli Ollama
+    .replace(
+      /Interaktywny Czat SVL CoreOS 2 \(styl GitHub Copilot[\s\S]*?Przyciski nigdy nie uruchamiają poleceń powłoki \(`\/exec`\)\./,
+      OLLAMA_COMPACT_INTERACTIVE_GUIDE,
+    )
     // Usuń blok zmiennej telemetrii JEDI VM z per-turn ns/scenario/grid/pkt, który unieważnia KV-cache
     .replace(/\n*\[JEDI OMNI-OS v12 VM \(CZAS RZECZYWISTY[^\]]*\]/gi, '')
+    // Skompresuj długi statyczny blok protokołu SQLite WAL do 1 zwięzłej linii faktów
+    .replace(
+      /\[PROTOKÓŁ PRAWDZIWYCH INFORMACJI SQLITE WAL[\s\S]*?synchronizuje każdą zmianę z czatu\]\.\]/g,
+      '[FAKTY SVL: Sojusz=46,5 mln stanowisk, APEX-CITADEL=1420 załogi, Debian 13 Trixie + JEDI Omni-OS v12 ROOT.]',
+    )
     // Zastąp dynamiczny licznik cykli stałą etykietą w opisie widoczności
     .replace(/cykle_wykonane=\d+/g, 'cykle_wykonane=ACTIVE')
     // Usuń długą listę kilkudziesięciu ID modułów SQLite (zostaw liczbę modułów)
     .replace(/aktywne_moduły_SQLite\((\d+)\)=\[[^\]]*\]/g, 'aktywne_moduły_SQLite=$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+
   if (compact.length > maxChars) {
-    compact = `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+    const feedIdx = compact.indexOf('[BIEŻĄCY STRUMIEŃ POWIADOMIEŃ');
+    if (feedIdx > 0) {
+      const feedTail = compact.slice(feedIdx, feedIdx + 1750).trimEnd();
+      const headBudget = Math.max(700, maxChars - feedTail.length - 6);
+      compact = `${compact.slice(0, headBudget).trimEnd()}…\n\n${feedTail}`;
+    } else {
+      compact = `${compact.slice(0, maxChars - 1).trimEnd()}…`;
+    }
   }
   return compact;
 }

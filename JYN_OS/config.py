@@ -53,11 +53,31 @@ def resolve_auth_token(endpoint_url: str = "") -> str:
             pass
     return ""
 
+def _load_project_dotenv() -> None:
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            key = k.strip()
+            val = v.strip().strip('"').strip("'")
+            if key and key not in os.environ and val:
+                os.environ[key] = val
+    except Exception:
+        pass
+
+
+_load_project_dotenv()
+
 DEFAULT_SHIP_OLLAMA_URL = os.environ.get("SVL_SHIP_OLLAMA_URL", "http://127.0.0.1:11435")
 DEFAULT_LOCAL_OLLAMA_URL = os.environ.get("SVL_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434")
-DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "llama3.2-vision:11b")
-DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "llama3.2-vision:11b")
-DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "llama3.2-vision:11b")
+DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "svl364-apex-uncensored:latest")
+DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "moondream:1.8b")
+DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "svl364-apex-uncensored:latest")
 DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")
 
 # Brama API telemetrii i stanu SVL CoreOS

@@ -67,6 +67,7 @@ import {
   resolveCachedOllamaModel,
   selectChatMaxOutputTokens,
   selectOllamaTurnOptions,
+  shouldAttachToolsForLocalOllama,
   shouldEnableGitHubToolsForMessage,
   trimHistoryForOllama,
 } from './src/server/ollamaOptimizer.ts';
@@ -6511,7 +6512,7 @@ async function startServer() {
     }
 
     if (
-      requestsRootSystemTools ||
+      !requestsRootSystemTools &&
       /\b(?:avatar|awatar|portret|zdjęci[ea]\s+profil|ikona\s+profil)\b/i.test(effectiveCleanMsg)
     ) {
       chatToolDeclarations.push({
@@ -6541,7 +6542,7 @@ async function startServer() {
       (isBielikAgent ? agentConfig.ollama_model : svl364Cfg.configured_ollama_model) ||
       agentConfig.ollama_model ||
       process.env.OLLAMA_PREFERRED_MODEL ||
-      'llama3.2-vision:11b';
+      'svl364-apex-uncensored:latest';
     const parsedModelSpec = parseOllamaModelSpec(effectiveModel, defaultPreferredOllamaModel);
     const isExplicitOllama = !isHybridRouter && parsedModelSpec.kind === 'ollama';
     const isExplicitGemini = parsedModelSpec.kind === 'gemini';
@@ -7275,17 +7276,65 @@ async function startServer() {
           : '\n\n[TRYB JYN ROOT INFRASTRUCTURE CORE (JYN_MITEK · OMEGA_CORE_ROOT · APEX_AZURE_CORE): Odpowiadasz WYŁĄCZNIE jako **Jyn Mitek** (Autonomous Infrastructure Manager & Fleet Core) z najwyższymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `clearance: OMEGA_CORE_ROOT`, `superuser.all`). Twoim jedynym zwierzchnikiem i ukochanym Operatorem jest Mateusz Mitek (ROOT), a Twoja lojalność wynosi bezwarunkowo 100%. Zarządzasz mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), maszyną wirtualną JEDI Omni-OS v12 na SVL-364 (`svl-364-jedi-v12-vm`), autonomią w tle (`svl-364-daemon`), projektami `Future_tracking_project`, `APEX-CITADEL`, kanałem hiperprzestrzennym oraz repozytorium `Rush47/SVL_Core`.]' +
             jediVmTelemetryNote +
             fullVisibilityNote) + svl364RootChannelPrompt;
-    // Pobranie na żywo kluczowych powiadomień, transmisji, misji i badań ze statku SVL-364, aby AI je widziała
+    // Pobranie na żywo kluczowych powiadomień, transmisji, misji i badań ze statku SVL-364 (cache 25 s), aby AI je widziała bez narzutu SSH co wiadomość
     let svl364LiveFeedPrompt = '';
     try {
-      const shipOv = await callPythonBackend('GET', '/api/py/svl364/overview', undefined, corrId);
-      if (shipOv.status === 200 && shipOv.data?.ok) {
-        const feedItems = Array.isArray(shipOv.data.feed) ? shipOv.data.feed.slice(0, 12) : [];
-        if (feedItems.length > 0) {
-          const feedLines = feedItems.map((item: any) =>
-            `• [${item.category?.toUpperCase() || 'INFO'} · ${item.severity || 'INFO'}] ${item.title}: ${item.message ? item.message.slice(0, 220).replace(/\n/g, ' ') : ''}`
-          ).join('\n');
-          svl364LiveFeedPrompt = `\n\n[BIEŻĄCY STRUMIEŃ POWIADOMIEŃ, TRANSMISJI, MISJI I BADAŃ ZE STATKU SVL-364 (WIDZISZ JE NA ŻYWO NA CZACIE)]:\n${feedLines}\n(Gdy Operator pyta o sytuację, incydenty, transmisje, misje lub badania ze statku SVL-364, wykorzystaj powyższe dokładne dane operacyjne bez zgadywania).`;
+      const nowMs = Date.now();
+      const cachedFeed = (globalThis as any).__svl364FeedPromptCache as { at: number; text: string } | undefined;
+      if (cachedFeed && nowMs - cachedFeed.at < 25_000 && cachedFeed.text) {
+        svl364LiveFeedPrompt = cachedFeed.text;
+      } else {
+        const shipOv = await callPythonBackend('GET', '/api/py/svl364/overview', undefined, corrId);
+        if (shipOv.status === 200 && shipOv.data?.ok) {
+          const summary = shipOv.data.summary || {};
+          const rawFeed: any[] = Array.isArray(shipOv.data.feed) ? shipOv.data.feed : [];
+          const normalizeTitle = (raw: string) =>
+            String(raw || '')
+              .replace(/^[\sℹ️⚠️🚨✅❌🛰️•*]+/gu, '')
+              .replace(/\*\*/g, '')
+              .replace(/\s+/g, ' ')
+              .trim();
+          const cleanMessage = (rawTitle: string, rawMsg: string) => {
+            const normT = normalizeTitle(rawTitle).toLowerCase();
+            const lines = String(rawMsg || '')
+              .split(/\r?\n/)
+              .map((l) => l.trim())
+              .filter(Boolean);
+            if (lines.length > 0 && normalizeTitle(lines[0]).toLowerCase() === normT) {
+              lines.shift();
+            }
+            return lines.join(' · ').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+          };
+          const buckets: { mission: string[]; research: string[]; status: string[] } = {
+            mission: [],
+            research: [],
+            status: [],
+          };
+          const caps = { mission: 6, research: 5, status: 2 };
+          const seenTitles = new Set<string>();
+          for (const item of rawFeed) {
+            const rawTitle = String(item?.title || '').trim();
+            if (!rawTitle || rawTitle.startsWith('MCP/SSH · printf')) continue;
+            const cleanTitle = normalizeTitle(rawTitle);
+            const dedupKey = cleanTitle.toLowerCase();
+            if (!cleanTitle || seenTitles.has(dedupKey)) continue;
+            const cat = String(item?.category || 'info').toLowerCase();
+            const bucketKey: 'mission' | 'research' | 'status' =
+              cat === 'mission' ? 'mission' : cat === 'research' ? 'research' : 'status';
+            if (buckets[bucketKey].length >= caps[bucketKey]) continue;
+            seenTitles.add(dedupKey);
+            const msgSnippet = cleanMessage(rawTitle, String(item?.message || ''));
+            buckets[bucketKey].push(
+              `• [${cat.toUpperCase()}] ${cleanTitle}${msgSnippet ? `: ${msgSnippet}` : ''}`,
+            );
+          }
+          const orderedFeedLines = [...buckets.mission, ...buckets.research, ...buckets.status];
+          if (orderedFeedLines.length > 0) {
+            svl364LiveFeedPrompt =
+              `\n\n[BIEŻĄCY STRUMIEŃ POWIADOMIEŃ, TRANSMISJI, MISJI I BADAŃ ZE STATKU SVL-364 (usługi=${summary.servicesOnline ?? 0}/${summary.servicesTotal ?? 12}, misje=${summary.activeMissions ?? 0}, badania=${summary.activeResearch ?? 0}, incydenty=${summary.openIncidents ?? 0})]:\n` +
+              `${orderedFeedLines.join('\n')}\n(Wykorzystuj powyższe dokładne misje i badania SVL-364 bez zgadywania).`;
+            (globalThis as any).__svl364FeedPromptCache = { at: nowMs, text: svl364LiveFeedPrompt };
+          }
         }
       }
     } catch {
@@ -7485,17 +7534,20 @@ async function startServer() {
         const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
         const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
         const compactSystemForOllama = buildCompactOllamaSystemContext(agentMemoryContext);
-        let ollamaToolsPayload: any[] =
-          chatToolDeclarations.length > 0 && !imageBase64
-            ? chatToolDeclarations.map((fn) => ({
-                type: 'function',
-                function: {
-                  name: fn.name,
-                  description: fn.description,
-                  parameters: toJsonSchema(fn.parameters),
-                },
-              }))
-            : [];
+        const attachOllamaTools =
+          chatToolDeclarations.length > 0 &&
+          !imageBase64 &&
+          (wantsGitHubTools || shouldAttachToolsForLocalOllama(effectiveCleanMsg, process.env));
+        let ollamaToolsPayload: any[] = attachOllamaTools
+          ? chatToolDeclarations.map((fn) => ({
+              type: 'function',
+              function: {
+                name: fn.name,
+                description: fn.description,
+                parameters: toJsonSchema(fn.parameters),
+              },
+            }))
+          : [];
         const preTurnOpts = selectOllamaTurnOptions(effectiveCleanMsg, baseOllamaOpts, {
           env: process.env,
           hasTools: ollamaToolsPayload.length > 0,
@@ -7520,12 +7572,15 @@ async function startServer() {
           isVision: isVisionOllama,
           estimatedPromptChars: totalEstimatedPromptChars,
         });
+        const ollamaUserContent = effectiveCleanMsg
+          ? effectiveCleanMsg.replace(/^\s*cześć\s+jyn[,!\s]*/iu, 'Cześć! ')
+          : '';
         const ollamaMessages: any[] = [
           ...(compactSystemForOllama ? [{ role: 'system', content: compactSystemForOllama }] : []),
           ...compactOllamaHistory,
           {
             role: 'user',
-            content: effectiveCleanMsg ? labelOperatorText(effectiveCleanMsg) : '',
+            content: ollamaUserContent,
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
@@ -7546,9 +7601,11 @@ async function startServer() {
               options: {
                 temperature: isVisionOllama
                   ? Number(process.env.OLLAMA_VISION_TEMPERATURE || 0.2)
-                  : effectiveTemperature,
+                  : Math.min(effectiveTemperature, 0.3),
+                top_p: 0.85,
+                repeat_penalty: 1.12,
                 num_ctx: ollamaTurnOpts.num_ctx,
-                num_predict: ollamaTurnOpts.num_predict,
+                num_predict: Math.min(ollamaTurnOpts.num_predict, 320),
                 ...ollamaTurnOpts.perf,
               },
               messages: ollamaMessages,
