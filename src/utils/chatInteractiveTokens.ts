@@ -555,5 +555,235 @@ export function parseActionCardToken(token: string): ParsedActionCardToken | nul
   };
 }
 
+export type ChartType = 'line' | 'bar' | 'donut' | 'radar' | 'gauge';
+
+export interface ParsedChartSeries {
+  name: string;
+  values: number[];
+  color?: string;
+}
+
+export interface ParsedChartToken {
+  type: ChartType;
+  title: string;
+  labels: string[];
+  series: ParsedChartSeries[];
+  unit?: string;
+  subtitle?: string;
+}
+
+export function parseChartToken(token: string): ParsedChartToken | null {
+  const match = token.trim().match(/^\[(?:chart|wykres):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const rawParts = match[1].split('|').map((p) => p.trim());
+  if (rawParts.length < 2) return null;
+
+  let type: ChartType = 'bar';
+  let title = rawParts[0];
+  let labels: string[] = [];
+  const series: ParsedChartSeries[] = [];
+  let unit: string | undefined;
+  let subtitle: string | undefined;
+
+  let startIndex = 1;
+  const firstLower = rawParts[0].toLowerCase();
+  if (['line', 'bar', 'donut', 'radar', 'gauge', 'liniowy', 'slupkowy', 'kolowy', 'radarowy', 'miernik'].includes(firstLower)) {
+    if (firstLower === 'line' || firstLower === 'liniowy') type = 'line';
+    else if (firstLower === 'bar' || firstLower === 'slupkowy') type = 'bar';
+    else if (firstLower === 'donut' || firstLower === 'kolowy') type = 'donut';
+    else if (firstLower === 'radar' || firstLower === 'radarowy') type = 'radar';
+    else if (firstLower === 'gauge' || firstLower === 'miernik') type = 'gauge';
+    title = rawParts[1] || 'Wykres';
+    startIndex = 2;
+  }
+
+  for (let i = startIndex; i < rawParts.length; i++) {
+    const part = rawParts[i];
+    if (!part) continue;
+    const lower = part.toLowerCase();
+    if (lower.startsWith('unit:') || lower.startsWith('jednostka:')) {
+      unit = part.slice(part.indexOf(':') + 1).trim();
+      continue;
+    }
+    if (lower.startsWith('sub:') || lower.startsWith('opis:')) {
+      subtitle = part.slice(part.indexOf(':') + 1).trim();
+      continue;
+    }
+
+    if (type === 'line' && labels.length === 0 && !part.includes(':') && !part.includes('=')) {
+      labels = part.split(',').map((l) => l.trim()).filter(Boolean);
+      continue;
+    }
+
+    const colonIdx = part.indexOf(':');
+    const eqIdx = part.indexOf('=');
+    const sepIdx = colonIdx !== -1 ? colonIdx : eqIdx;
+
+    if (sepIdx !== -1) {
+      const sName = part.slice(0, sepIdx).trim();
+      const valStr = part.slice(sepIdx + 1).trim();
+      const nums = valStr.split(',').map((n) => Number(n.replace(/%/g, '').replace(',', '.').trim())).filter(Number.isFinite);
+      if (nums.length > 0) {
+        series.push({ name: sName, values: nums });
+      }
+    } else {
+      const num = Number(part.replace(/%/g, '').replace(',', '.').trim());
+      if (Number.isFinite(num)) {
+        series.push({ name: `Seria ${series.length + 1}`, values: [num] });
+      }
+    }
+  }
+
+  if (series.length === 0) return null;
+
+  if (labels.length === 0) {
+    if (type === 'bar' || type === 'donut' || type === 'radar' || type === 'gauge') {
+      labels = series.map((s) => s.name);
+    } else {
+      const maxLen = Math.max(...series.map((s) => s.values.length));
+      labels = Array.from({ length: maxLen }, (_, idx) => `P${idx + 1}`);
+    }
+  }
+
+  return { type, title, labels, series, unit, subtitle };
+}
+
+export interface ParsedFormulaVariable {
+  symbol: string;
+  value?: number;
+  unit?: string;
+  label?: string;
+  name?: string;
+  defaultValue?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface ParsedFormulaToken {
+  title?: string;
+  tex: string;
+  latex?: string;
+  description?: string;
+  variables: ParsedFormulaVariable[];
+  evaluate?: (vars: Record<string, number>) => number;
+}
+
+export function parseFormulaToken(token: string): ParsedFormulaToken | null {
+  const match = token.trim().match(/^\[(?:formula|wzor|math-card|rownanie):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const parts = match[1].split('|').map((p) => p.trim());
+  if (parts.length === 0 || !parts[0]) return null;
+
+  let title: string | undefined;
+  let tex = parts[0];
+  let description: string | undefined;
+  const variables: ParsedFormulaVariable[] = [];
+
+  let startIndex = 0;
+  if (parts.length >= 2 && !/[\\=+\-*/^_]/.test(parts[0]) && /[\\=+\-*/^_]/.test(parts[1])) {
+    title = parts[0];
+    tex = parts[1];
+    startIndex = 2;
+  } else {
+    startIndex = 1;
+  }
+
+  for (let i = startIndex; i < parts.length; i++) {
+    const p = parts[i];
+    if (!p) continue;
+    const lower = p.toLowerCase();
+    if (lower.startsWith('desc:') || lower.startsWith('opis:')) {
+      description = p.slice(p.indexOf(':') + 1).trim();
+    } else if (lower.startsWith('vars:') || lower.startsWith('zmienne:')) {
+      const rawVars = p.slice(p.indexOf(':') + 1).split(',');
+      for (const rv of rawVars) {
+        const eq = rv.indexOf('=');
+        if (eq !== -1) {
+          const sym = rv.slice(0, eq).trim();
+          const rest = rv.slice(eq + 1).trim();
+          const numMatch = rest.match(/^([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*(.*)$/);
+          if (numMatch) {
+            const val = Number(numMatch[1]);
+            const u = numMatch[2] || undefined;
+            variables.push({ symbol: sym, value: val, defaultValue: val, unit: u, name: sym });
+          } else {
+            variables.push({ symbol: sym, label: rest, name: rest });
+          }
+        } else if (rv.trim()) {
+          variables.push({ symbol: rv.trim(), name: rv.trim() });
+        }
+      }
+    }
+  }
+
+  return { title, tex, latex: tex, description, variables };
+}
+
+export interface ParsedThinkingToken {
+  content: string;
+  thought: string;
+  title?: string;
+  durationSec?: number;
+  duration?: number;
+}
+
+export function parseThinkingToken(token: string): ParsedThinkingToken | null {
+  const match = token.trim().match(/^\[(?:thinking|mysli|refleksja):([^\]]+)\]$/is);
+  if (match) {
+    const raw = match[1].trim();
+    const pipeIdx = raw.lastIndexOf('|');
+    if (pipeIdx !== -1) {
+      const maybeSec = Number(raw.slice(pipeIdx + 1).replace(/[ssek]/gi, '').trim());
+      if (Number.isFinite(maybeSec)) {
+        const thoughtContent = raw.slice(0, pipeIdx).trim();
+        return {
+          content: thoughtContent,
+          thought: thoughtContent,
+          durationSec: maybeSec,
+          duration: maybeSec,
+          title: 'Proces myślowy JYN AI'
+        };
+      }
+    }
+    return {
+      content: raw,
+      thought: raw,
+      title: 'Proces myślowy JYN AI'
+    };
+  }
+
+  const xmlMatch = token.trim().match(/^<thinking>(.*?)<\/thinking>$/is);
+  if (xmlMatch) {
+    const raw = xmlMatch[1].trim();
+    return {
+      content: raw,
+      thought: raw,
+      title: 'Proces myślowy JYN AI'
+    };
+  }
+
+  return null;
+}
+
+export interface ParsedFollowUpToken {
+  prompt: string;
+  action: string;
+  icon?: string;
+}
+
+export function parseFollowUpToken(token: string): ParsedFollowUpToken | null {
+  const match = token.trim().match(/^\[(?:suggest|sugestia|followup|pytanie):([^\]\n]+)\]$/i);
+  if (!match) return null;
+  const parts = match[1].split('|').map((p) => p.trim());
+  if (parts.length === 0 || !parts[0]) return null;
+
+  const prompt = parts[0];
+  const action = parts[1] ? normalizeChecklistAction(parts[1]) : `send:${prompt}`;
+  const icon = parts[2] || undefined;
+  return { prompt, action, icon };
+}
+
+
 
 

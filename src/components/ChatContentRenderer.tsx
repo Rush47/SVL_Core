@@ -68,7 +68,13 @@ import {
   type ParsedTerminalToken,
   type ParsedTimelineToken,
   type ParsedToggleToken,
+  parseChartToken,
+  parseFormulaToken,
+  parseThinkingToken,
 } from '../utils/chatInteractiveTokens';
+import { InteractiveChartWidget } from './InteractiveChartWidget';
+import { InteractiveFormulaWidget } from './InteractiveFormulaWidget';
+import { InteractiveThinkingBlock } from './InteractiveThinkingBlock';
 import {
   tokenizeInlineMarkdown,
   type HighlightTone,
@@ -1811,6 +1817,60 @@ export function renderFormattedContent(
         renderedElements.push(<InteractiveJsonCard key={`json-${segIdx}-${idx}`} jsonItem={jsonToken} />);
         idx += 1;
         continue;
+      }
+
+      const chartToken = parseChartToken(trimmed);
+      if (chartToken) {
+        renderedElements.push(<InteractiveChartWidget key={`chart-${segIdx}-${idx}`} chart={chartToken} />);
+        idx += 1;
+        continue;
+      }
+
+      const formulaToken = parseFormulaToken(trimmed);
+      if (formulaToken) {
+        renderedElements.push(<InteractiveFormulaWidget key={`formula-${segIdx}-${idx}`} formula={formulaToken} />);
+        idx += 1;
+        continue;
+      }
+
+      if (trimmed.startsWith('<thinking>') || /^\[(?:thinking|mysli|refleksja)(?::|\s)/i.test(trimmed)) {
+        let thinkingRaw = trimmed;
+        const thinkingStartIdx = idx;
+        if (trimmed.startsWith('<thinking>') && !trimmed.endsWith('</thinking>')) {
+          const tLines: string[] = [trimmed];
+          idx += 1;
+          while (idx < lines.length) {
+            tLines.push(lines[idx]);
+            if (lines[idx].includes('</thinking>')) {
+              idx += 1;
+              break;
+            }
+            idx += 1;
+          }
+          thinkingRaw = tLines.join('\n');
+        } else if (/^\[(?:thinking|mysli|refleksja):/i.test(trimmed) && !trimmed.endsWith(']')) {
+          const tLines: string[] = [trimmed];
+          idx += 1;
+          while (idx < lines.length) {
+            tLines.push(lines[idx]);
+            if (lines[idx].includes(']')) {
+              idx += 1;
+              break;
+            }
+            idx += 1;
+          }
+          thinkingRaw = tLines.join('\n');
+        } else {
+          idx += 1;
+        }
+
+        const thinkingToken = parseThinkingToken(thinkingRaw);
+        if (thinkingToken) {
+          renderedElements.push(
+            <InteractiveThinkingBlock key={`thinking-${segIdx}-${thinkingStartIdx}`} thinking={thinkingToken} />
+          );
+          continue;
+        }
       }
 
       // 6. Grupowany pasek przycisków akcji (Copilot / ChatGPT Work action bar)

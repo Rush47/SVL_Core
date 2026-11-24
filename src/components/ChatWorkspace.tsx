@@ -27,6 +27,11 @@ import {
   PanelLeftOpen,
   ArrowDown,
   Wrench,
+  Activity,
+  Brain,
+  Sigma,
+  Layers,
+  Code2,
 } from 'lucide-react';
 import {
   SyncableMessage,
@@ -54,6 +59,7 @@ import { RealVisionPanel } from './RealVisionPanel';
 import { renderFormattedContent, renderFormattedLine } from './ChatContentRenderer';
 import { ChatInputField, type ChatInputHandle } from './ChatInputField';
 import { ChatMessageRow } from './ChatMessageRow';
+import { ChatCanvasDrawer } from './ChatCanvasDrawer';
 
 export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
@@ -124,6 +130,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const sendingRef = useRef(false);
   const queuedMessagesRef = useRef<Array<{ text: string; convId: string }>>([]);
   const [queuedCount, setQueuedCount] = useState(0);
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasCode, setCanvasCode] = useState('');
   const handleSendRef = useRef<(text?: string, convId?: string) => Promise<void>>(async () => {});
 
   useEffect(() => {
@@ -1334,6 +1342,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           isFamilyChannel={isFamilyChannel}
           onInteractiveAction={stableInteractiveAction}
           onNavigateTab={onNavigateTab}
+          onOpenCanvas={(code) => {
+            setCanvasCode(code || '');
+            setCanvasOpen(true);
+          }}
         />
       )),
     [windowedMessages, isFamilyChannel, stableInteractiveAction, onNavigateTab],
@@ -1792,6 +1804,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               );
             })()}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setCanvasOpen((v) => !v)}
+            aria-label="Copilot Canvas Workspace"
+            title="Otwórz boczny panel Copilot Canvas Workspace (Edytor, Telemetria, Wzory)"
+            className={`min-h-[34px] sm:min-h-[30px] px-2 sm:px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1 sm:gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer mr-1 ${
+              canvasOpen
+                ? 'bg-cyan-500/25 border-cyan-500/60 text-cyan-200 shadow-sm'
+                : 'bg-[#0B0D13] hover:bg-slate-800 border-slate-700/80 text-slate-300 hover:text-cyan-300'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden md:inline">Canvas</span>
+          </button>
 
           <div ref={toolsMenuRef} className="relative flex items-center justify-end shrink-0">
             <button
@@ -2456,6 +2483,86 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           </div>
         )}
 
+        {/* Copilot & Workspace Interactive Quick Actions Bar */}
+        <div className="px-3 py-1.5 bg-[#0D111A] border-t border-slate-800/60 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
+          <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 shrink-0 mr-1 select-none">
+            <Sparkles className="w-3 h-3 text-cyan-400" />
+            Copilot:
+          </span>
+
+          <button
+            type="button"
+            onClick={() => {
+              const cur = getInput();
+              const tpl = '[chart:line|Wydajność Rdzenia SVL|T-30s:24,T-20s:48,T-10s:72,Teraz:95|unit:%]';
+              setInput(cur ? `${cur}\n${tpl}` : tpl);
+              handleInputEmptyChange(false);
+              composerRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <Activity className="w-3 h-3 text-cyan-400" />
+            <span>+ Wykres</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const cur = getInput();
+              const tpl = '[formula: E = mc^2 | desc:Relatywistyczna równoważność masy i energii | vars:m=1kg,c=299792km/s]';
+              setInput(cur ? `${cur}\n${tpl}` : tpl);
+              handleInputEmptyChange(false);
+              composerRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-purple-500/40 text-slate-300 hover:text-purple-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <Sigma className="w-3 h-3 text-purple-400" />
+            <span>+ Wzór</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const cur = getInput();
+              const tpl = '[thinking: Analiza telemetrii i stanu relatywistycznego SVL Core... | 2.4s]';
+              setInput(cur ? `${cur}\n${tpl}` : tpl);
+              handleInputEmptyChange(false);
+              composerRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/40 text-slate-300 hover:text-indigo-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <Brain className="w-3 h-3 text-indigo-400" />
+            <span>+ Myślenie</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleSendMessage('/status')}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-slate-300 hover:text-emerald-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+            <span>Status SVL</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleSendMessage('/jedi status')}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-violet-500/40 text-slate-300 hover:text-violet-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <Terminal className="w-3 h-3 text-violet-400" />
+            <span>JEDI VM</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCanvasOpen((v) => !v)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-cyan-950/30 hover:bg-cyan-900/40 border border-cyan-500/30 hover:border-cyan-500/60 text-cyan-300 text-[11px] whitespace-nowrap transition-colors ml-auto"
+          >
+            <Layers className="w-3 h-3" />
+            <span>{canvasOpen ? 'Zwiń Canvas' : 'Canvas Workspace'}</span>
+          </button>
+        </div>
+
         {/* Chat Input Composer */}
         <form
           onSubmit={(e) => {
@@ -2545,6 +2652,17 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           />
         </div>
       )}
+      <ChatCanvasDrawer
+        isOpen={canvasOpen}
+        onClose={() => setCanvasOpen(false)}
+        initialCode={canvasCode}
+        onInsertToChat={(text) => {
+          const cur = getInput();
+          setInput(cur ? `${cur}\n${text}` : text);
+          handleInputEmptyChange(false);
+          composerRef.current?.focus();
+        }}
+      />
     </div>
   );
 };

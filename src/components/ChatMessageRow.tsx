@@ -1,8 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { BellRing, Check, CheckCircle2, ChevronDown, Copy, RefreshCw } from 'lucide-react';
+import {
+  BellRing,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  RefreshCw,
+  ThumbsUp,
+  ThumbsDown,
+  Layers,
+  Sparkles,
+  ArrowRight,
+  Code2
+} from 'lucide-react';
 import { CANONICAL_AGENTS, DYNAMIC_AGENT_TEMPLATES, SyncableMessage, formatAgentDisplayName } from '../utils/svlLogic';
 import { SvlAvatar } from './AgentAvatar';
 import { renderFormattedContent } from './ChatContentRenderer';
+import { parseFollowUpToken, ParsedFollowUpToken } from '../utils/chatInteractiveTokens';
 
 export const PROVENANCE_STYLE: Record<
   NonNullable<SyncableMessage['provenance']>,
@@ -49,6 +63,7 @@ interface ChatMessageRowProps {
   isFamilyChannel: boolean;
   onInteractiveAction: (actionValue: string, label?: string) => void | Promise<void>;
   onNavigateTab: (tab: 'agents' | 'kernel') => void;
+  onOpenCanvas?: (code?: string) => void;
 }
 
 export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessageRow({
@@ -56,9 +71,11 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
   isFamilyChannel,
   onInteractiveAction,
   onNavigateTab,
+  onOpenCanvas,
 }) {
   const [actionsExpanded, setActionsExpanded] = useState(true);
   const [copiedMsg, setCopiedMsg] = useState(false);
+  const [feedback, setFeedback] = useState<'up' | 'down' | null>(null);
   const isUser = msg.role === 'user';
   const isNotification = msg.role === 'system';
   const formattedSender = isUser ? msg.sender : formatAgentDisplayName(msg.sender);
@@ -270,38 +287,136 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
         )}
 
         {msg.role === 'assistant' && !isNotification && (
-          <div className="mt-3 pt-2 border-t border-slate-800/60 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
-            <button
-              type="button"
-              onClick={() => {
-                try {
-                  void navigator.clipboard.writeText(msg.content || '');
-                } catch {
-                  // ignore
-                }
-                setCopiedMsg(true);
-                setTimeout(() => setCopiedMsg(false), 1800);
-              }}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-slate-700 hover:text-slate-200 px-2 py-1 transition-colors"
-            >
-              {copiedMsg ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              <span>{copiedMsg ? 'Skopiowano' : 'Kopiuj'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void onInteractiveAction('action:sync', 'Synchronizacja globalna')}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-cyan-500/40 hover:text-cyan-200 px-2 py-1 transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" aria-hidden="true" />
-              <span>Synchronizuj</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void onInteractiveAction('send:/status', 'Status systemu')}
-              className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-violet-500/40 hover:text-violet-200 px-2 py-1 transition-colors"
-            >
-              <span>Status systemu</span>
-            </button>
+          <div className="mt-3 pt-2 border-t border-slate-800/60 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    void navigator.clipboard.writeText(msg.content || '');
+                  } catch {
+                    // ignore
+                  }
+                  setCopiedMsg(true);
+                  setTimeout(() => setCopiedMsg(false), 1800);
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-slate-700 hover:text-slate-200 px-2 py-1 transition-colors"
+                title="Kopiuj całą odpowiedź"
+              >
+                {copiedMsg ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedMsg ? 'Skopiowano' : 'Kopiuj'}</span>
+              </button>
+
+              {onOpenCanvas && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const match = (msg.content || '').match(/```(?:[a-zA-Z0-9_-]+)?\n([\s\S]*?)```/);
+                    onOpenCanvas(match ? match[1].trim() : msg.content);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-950/20 hover:border-cyan-500/60 text-cyan-300 px-2 py-1 transition-colors shadow-xs"
+                  title="Otwórz w bocznym panelu Canvas Workspace"
+                >
+                  <Layers className="w-3 h-3" />
+                  <span>Canvas</span>
+                </button>
+              )}
+
+              <div className="inline-flex items-center rounded-md border border-slate-800 bg-[#0A0F1C] p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setFeedback(feedback === 'up' ? null : 'up')}
+                  className={`p-1 rounded transition-colors ${
+                    feedback === 'up'
+                      ? 'text-emerald-400 bg-emerald-950/40'
+                      : 'hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                  title="Dobra odpowiedź"
+                >
+                  <ThumbsUp className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFeedback(feedback === 'down' ? null : 'down')}
+                  className={`p-1 rounded transition-colors ${
+                    feedback === 'down'
+                      ? 'text-rose-400 bg-rose-950/40'
+                      : 'hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                  title="Odpowiedź wymaga poprawy"
+                >
+                  <ThumbsDown className="w-3 h-3" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => void onInteractiveAction('action:sync', 'Synchronizacja globalna')}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-cyan-500/40 hover:text-cyan-200 px-2 py-1 transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" aria-hidden="true" />
+                <span>Synchronizuj</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void onInteractiveAction('send:/status', 'Status systemu')}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-800 bg-[#0A0F1C] hover:border-violet-500/40 hover:text-violet-200 px-2 py-1 transition-colors"
+              >
+                <span>Status</span>
+              </button>
+            </div>
+
+            {/* Contextual Copilot / ChatGPT Follow-up pills */}
+            {(() => {
+              const lines = (msg.content || '').split('\n');
+              const explicitPills: ParsedFollowUpToken[] = [];
+              for (const l of lines) {
+                const p = parseFollowUpToken(l.trim());
+                if (p) explicitPills.push(p);
+              }
+              const displayPills: ParsedFollowUpToken[] =
+                explicitPills.length > 0
+                  ? explicitPills
+                  : (msg.content || '').length > 70
+                    ? [
+                        {
+                          prompt: '📊 Pokaż wykres',
+                          action: 'send:Przedstaw podsumowanie i dane w formie wykresu interaktywnego [chart:line|...]'
+                        },
+                        {
+                          prompt: '📐 Pokaż wzór',
+                          action: 'send:Pokaż matematyczny wzór i definicję fizyczną w formie widgetu [formula:...]'
+                        },
+                        {
+                          prompt: '🔍 Wyjaśnij szczegółowo',
+                          action: 'send:Wyjaśnij tę odpowiedź szczegółowo krok po kroku'
+                        }
+                      ]
+                    : [];
+
+              if (displayPills.length === 0) return null;
+
+              return (
+                <div className="pt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mr-0.5">
+                    <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                    Sugerowane:
+                  </span>
+                  {displayPills.map((pill, pIdx) => (
+                    <button
+                      key={`pill-${pIdx}`}
+                      type="button"
+                      onClick={() => void onInteractiveAction(pill.action, pill.prompt)}
+                      className="inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-slate-900/90 hover:bg-cyan-950/60 text-slate-300 hover:text-cyan-200 border border-slate-800 hover:border-cyan-500/40 transition-colors shadow-xs cursor-pointer group"
+                    >
+                      <span>{pill.prompt}</span>
+                      <ArrowRight className="w-2.5 h-2.5 text-cyan-400 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
