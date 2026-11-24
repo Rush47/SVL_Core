@@ -174,8 +174,8 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "source_profile_path": "backend/agents_runtime.py#Jyn",
         "system_prompt": JYN_SYSTEM_PROMPT,
         "default_config": {
-            "preferred_model": "ollama:svl364-apex-uncensored:latest",
-            "ollama_model": "svl364-apex-uncensored:latest",
+            "preferred_model": os.environ.get("OLLAMA_PREFERRED_MODEL", "ollama:llama3.2-vision:11b"),
+            "ollama_model": os.environ.get("OLLAMA_MODEL", "llama3.2-vision:11b"),
             "fallback_model": "gemini-3.1-flash-lite",
             "vision_enabled": True,
             "temperature": 0.25,

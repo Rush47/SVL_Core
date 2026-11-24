@@ -463,7 +463,7 @@ async function warmConfiguredOllamaModels(): Promise<void> {
     const agents: any[] = Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [];
     const wanted = [
       process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b',
-      process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest',
+      process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
       ...String(process.env.OLLAMA_WARM_MODELS || '').split(','),
       ...agents.map((a) => a?.config?.ollama_model),
       modules.find((m) => m?.id === 'svl-364')?.config?.configured_ollama_model,
@@ -1495,7 +1495,7 @@ async function startServer() {
           models: ollamaModels,
           loadedModels: mergedLoadedModels,
           visionModels: mergedVisionModels,
-          preferredModel: ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest',
+          preferredModel: ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
           visionModel: process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b',
           visionAliases: ['llama3.2-vision:11b', 'llama3.2-vision:90b', 'llama3.2-vision:latest'],
           visionConfig: {
@@ -6395,7 +6395,7 @@ async function startServer() {
       (isBielikAgent ? agentConfig.ollama_model : svl364Cfg.configured_ollama_model) ||
       agentConfig.ollama_model ||
       process.env.OLLAMA_PREFERRED_MODEL ||
-      'svl364-apex-uncensored:latest';
+      'llama3.2-vision:11b';
     const parsedModelSpec = parseOllamaModelSpec(effectiveModel, defaultPreferredOllamaModel);
     const isExplicitOllama = !isHybridRouter && parsedModelSpec.kind === 'ollama';
     const isExplicitGemini = parsedModelSpec.kind === 'gemini';

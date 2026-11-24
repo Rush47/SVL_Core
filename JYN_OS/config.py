@@ -55,7 +55,7 @@ def resolve_auth_token(endpoint_url: str = "") -> str:
 
 DEFAULT_SHIP_OLLAMA_URL = os.environ.get("SVL_SHIP_OLLAMA_URL", "http://127.0.0.1:11435")
 DEFAULT_LOCAL_OLLAMA_URL = os.environ.get("SVL_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434")
-DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "svl364-apex-uncensored:latest")
+DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "llama3.2-vision:11b")
 DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "llama3.2-vision:11b")
 DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "llama3.2-vision:11b")
 DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")

@@ -89,7 +89,7 @@ class SVLBackendRuntime:
         self._image_generation_lock = threading.Lock()
         self.ollama_pull_state: dict[str, Any] = {
             "active": False,
-            "model": os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest"),
+            "model": os.environ.get("OLLAMA_PREFERRED_MODEL", "llama3.2-vision:11b"),
             "status": "Brak aktywnego pobierania w tej sesji.",
             "percent": 0.0,
             "error": None,
@@ -480,7 +480,7 @@ class SVLBackendRuntime:
                 "pull_state": pull_state,
             }
 
-        preferred_model = os.environ.get("OLLAMA_PREFERRED_MODEL", "svl364-apex-uncensored:latest")
+        preferred_model = os.environ.get("OLLAMA_PREFERRED_MODEL", "llama3.2-vision:11b")
         binary_installed = (
             shutil.which("ollama") is not None
             or Path("/usr/local/bin/ollama").exists()

@@ -53,7 +53,7 @@ class TestJynOSClientSuite(unittest.TestCase):
     def test_ollama_client_points_to_backup_ship_port(self):
         ollama = SvlOllamaClient(self.cfg)
         self.assertIn("11435", ollama.config.ship_ollama_url)
-        self.assertEqual(ollama.config.ship_model, "svl364-apex-uncensored:latest")
+        self.assertEqual(ollama.config.ship_model, "llama3.2-vision:11b")
 
     def test_local_ollama_and_vision_config(self):
         ollama = SvlOllamaClient(self.cfg)
@@ -66,7 +66,7 @@ class TestJynOSClientSuite(unittest.TestCase):
         ollama.config.set_active_target("ship")
         self.assertEqual(ollama.config.active_ollama_target, "ship")
         self.assertEqual(ollama.config.get_active_ollama_url(), ollama.config.ship_ollama_url)
-        self.assertEqual(ollama.config.get_active_model(), "svl364-apex-uncensored:latest")
+        self.assertEqual(ollama.config.get_active_model(), "llama3.2-vision:11b")
 
 
 if __name__ == "__main__":
