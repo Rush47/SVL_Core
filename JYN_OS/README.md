@@ -88,7 +88,7 @@ Wpisz `help` lub `?`, aby wyświetlić listę wbudowanych poleceń:
 - `exec <komenda>` — Bezpośrednie wykonanie polecenia bash na statku SVL-364.
 - `ollama status` — Status węzła Ollama na statku i załadowane modele.
 - `ollama catalog` — Wyświetlenie pełnego katalogu 13 modeli pokładowych.
-- `ollama chat <zapytanie>` — Wysłanie zapytania do aktywnego modelu. Domyślnie lokalnie działa `qwen2.5:1.5b` (instalacja modelu przez `ollama pull qwen2.5:1.5b` w terminalu systemowym).
+- `ollama chat <zapytanie>` — Wysłanie zapytania do aktywnego modelu. Domyślnie lokalnie działa `svl364-apex-uncensored:latest` (rzeczywisty model 70B). Odpowiedź jest zwracana w całości; brak automatycznej podmiany modelu tekstowego.
 - `mcp ping` — Skan stanu wszystkich 4 serwerów w federacji MCP.
 - `mcp list` — Pobranie i wylistowanie wszystkich dostępnych narzędzi MCP.
 - `mcp call <narzędzie>` — Wywołanie określonego narzędzia MCP.
@@ -154,7 +154,7 @@ JYN_OS automatycznie wykrywa klucze i tokeny z katalogu `data/` repozytorium `SV
 | `SVL_SSH_TARGET` | `Ship` | Profil lub alias OpenSSH statku docelowego |
 | `SVL_SSH_KEY` | `~/.ssh/svl364_ed25519` | Ścieżka do prywatnego klucza OpenSSH |
 | `SVL_SHIP_OLLAMA_URL` | `http://127.0.0.1:11435` | Adres URL zapasowej Ollamy statku SVL-364 |
-| `SVL_LOCAL_MODEL` | `qwen2.5:1.5b` | Domyślny model czatu lokalnego |
+| `SVL_LOCAL_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model czatu lokalnego |
 | `SVL_SHIP_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model czatu na węźle pokładowym |
 | `SVL_MCP_UNIVERSAL_HUB`| `http://127.0.0.1:3334/mcp` | Punkt końcowy Universal MCP Hub |
 | `SVL_MCP_SYSTEM` | `http://127.0.0.1:3000/mcp/svl` | Punkt końcowy bramy System MCP |
@@ -169,3 +169,15 @@ JYN_OS automatycznie wykrywa klucze i tokeny z katalogu `data/` repozytorium `SV
 - Komunikacja ze statkiem odbywa się wyłącznie za pośrednictwem kryptografii asymetrycznej Ed25519 oraz protokołu SSH-2.
 - Żadne sekrety ani tokeny nie są na stałe wpisane do kodu źródłowego.
 - Narzędzia klienta są w 100% zintegrowane ze środowiskiem `SVL_Core` i nie wpływają negatywnie na stabilność testów jądra.
+
+## Odtworzenie rzeczywistego Apex 70B
+
+Na hoście, na którym działa Ollama, po sprawdzeniu dostępnej pamięci i miejsca:
+
+```bash
+ollama pull dolphin-llama3:70b
+ollama create svl364-apex-uncensored:latest -f SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored
+ollama show svl364-apex-uncensored:latest
+```
+
+Uruchom z katalogu głównego repozytorium. JYN_OS sprawdza metadane `parameter_size` przed pierwszą rozmową z Apex i okresowo je odświeża. Model 1.5B podszywający się pod Apex zostanie odrzucony. Lokalne ustawienia środowiskowe mogą jawnie zmienić domyślny model lub węzeł. `keep_alive=-1` utrzymuje model w pamięci pomiędzy rozmowami, jeżeli pozwalają na to zasoby hosta.

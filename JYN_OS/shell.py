@@ -248,7 +248,7 @@ class JynOSShell(cmd.Cmd):
             if not prompt:
                 print(f"{YELLOW}Podaj treść zapytania, np.: ollama chat 'Raport gotowości statku'{RESET}")
                 return
-            self._run_streaming_chat(prompt)
+            self._run_complete_chat(prompt)
 
         elif subcmd in ("clear", "reset-chat"):
             self.chat_history.clear()
@@ -412,52 +412,32 @@ class JynOSShell(cmd.Cmd):
         """quit — Zamyka powłokę klienta JYN_OS."""
         return self.do_exit(arg)
 
-    def _run_streaming_chat(self, prompt: str) -> None:
+    def _run_complete_chat(self, prompt: str) -> None:
         cleaned = prompt.strip().strip("'").strip('"')
         if not cleaned:
             return
         active_url = self.config.get_active_ollama_url()
         active_mod = self.config.get_active_model()
-        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url})]{RESET}", flush=True)
-
-        collected: list[str] = []
-        used_model = active_mod
-        header_printed = False
-
-        for chunk in self.ollama.chat_stream(
-            cleaned,
-            model=active_mod,
-            url=active_url,
-            history=self.chat_history,
-        ):
-            if not chunk.get("ok"):
-                print(f"\n{RED}❌ Błąd komunikacji z modelem:{RESET} {chunk.get('error')}\n")
-                return
-            used_model = chunk.get("model", used_model)
-            tok = chunk.get("token", "")
-            if tok:
-                if not header_printed:
-                    sys.stdout.write(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} ")
-                    header_printed = True
-                sys.stdout.write(tok)
-                sys.stdout.flush()
-                collected.append(tok)
-
-        sys.stdout.write("\n\n")
-        sys.stdout.flush()
-        full_reply = "".join(collected).strip()
-        if full_reply:
-            self.chat_history.append({"role": "user", "content": cleaned})
-            self.chat_history.append({"role": "assistant", "content": full_reply})
-            if len(self.chat_history) > 20:
-                self.chat_history = self.chat_history[-20:]
+        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url}) — generowanie odpowiedzi]{RESET}", flush=True)
+        result = self.ollama.chat(cleaned, model=active_mod, url=active_url, history=self.chat_history)
+        if not result.get("success"):
+            print(f"\n{RED}❌ Błąd komunikacji z modelem:{RESET} {result.get('error')}\n")
+            return
+        full_reply = result["response"]
+        used_model = result["model"]
+        print(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} {full_reply}\n", flush=True)
+        self.chat_history.extend([
+            {"role": "user", "content": cleaned},
+            {"role": "assistant", "content": full_reply},
+        ])
+        self.chat_history = self.chat_history[-20:]
 
     def do_chat(self, arg: str) -> None:
-        """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek (strumieniowanie na żywo + pamięć sesji)."""
+        """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek (pełna odpowiedź bez strumieniowania + pamięć sesji)."""
         if not arg.strip():
             print(f"{YELLOW}Użycie: chat <wiadomość do Jyn>{RESET}")
             return
-        self._run_streaming_chat(arg)
+        self._run_complete_chat(arg)
 
     def do_jyn(self, arg: str) -> None:
         """jyn <wiadomość> — Alias bezpośredniej rozmowy z Jyn Mitek."""
@@ -469,7 +449,7 @@ class JynOSShell(cmd.Cmd):
         if not cleaned:
             return
         if " " in cleaned or cleaned.endswith("?"):
-            self._run_streaming_chat(cleaned)
+            self._run_complete_chat(cleaned)
         else:
             print(f"{YELLOW}Nieznane polecenie '{cleaned}'. Wpisz 'help' lub zadaj pytanie dla Jyn (np. chat {cleaned}).{RESET}")
 

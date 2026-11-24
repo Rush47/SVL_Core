@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+import time
 import os
 import shutil
 import subprocess
@@ -20,6 +22,7 @@ class SvlOllamaClient:
 
     def __init__(self, config: Optional[JynOSConfig] = None):
         self.config = config or JynOSConfig.load_from_env()
+        self._apex_verified: Dict[str, float] = {}
 
     def get_endpoints(self) -> Dict[str, str]:
         return {
@@ -227,17 +230,33 @@ class SvlOllamaClient:
         return messages
 
     def _candidate_models(self, selected_model: str, has_images: bool = False) -> List[str]:
+        # Tekst nie może zostać po cichu przekazany do innego modelu.
         candidates = [selected_model]
         if has_images:
             candidates.extend([self.config.vision_model, "moondream:1.8b"])
-        candidates.extend(["qwen2.5:1.5b", "qwen2.5:3b", "llama3.2:1b", "svl364-apex-uncensored:latest"])
-        seen = set()
-        ordered: List[str] = []
-        for m in candidates:
-            if m and m not in seen:
-                seen.add(m)
-                ordered.append(m)
-        return ordered
+        return list(dict.fromkeys(m for m in candidates if m))
+
+    def _verify_apex(self, target_url: str, model: str) -> None:
+        """Sprawdza rzeczywisty rozmiar modelu, a nie sam alias Apex."""
+        if model.split(":")[0].lower() != "svl364-apex-uncensored":
+            return
+        key = f"{target_url}/{model}"
+        now = time.monotonic()
+        if now - self._apex_verified.get(key, -3600.0) < 60:
+            return
+        req = urllib.request.Request(
+            f"{target_url}/api/show",
+            data=json.dumps({"model": model}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5.0) as response:
+            info = json.load(response)
+        size = str((info.get("details") or {}).get("parameter_size", ""))
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*B\s*", size, re.I)
+        if not match or not 65 <= float(match.group(1)) <= 75:
+            raise ValueError(f"Alias {model} nie wskazuje na zweryfikowany model 70B (parameter_size={size or 'brak'}). Odtwórz Apex z Modelfile 70B.")
+        self._apex_verified[key] = now
 
     def _runtime_options(self, prompt: str) -> Dict[str, Any]:
         is_detailed = len(prompt) > 260 or any(
@@ -260,12 +279,16 @@ class SvlOllamaClient:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        timeout: float = 65.0,
+        timeout: float = 180.0,
     ) -> Dict[str, Any]:
         """Wykonuje zapytanie czatu do modelu z historią rozmowy, kontekstem SVL-364 i automatycznym fallbackiem."""
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
         endpoint = f"{target_url}/api/chat"
         selected_model = model or self.config.get_active_model()
+        try:
+            self._verify_apex(target_url, selected_model)
+        except (OSError, ValueError) as exc:
+            return {"success": False, "model": selected_model, "endpoint": target_url, "error": f"Weryfikacja Apex: {exc}"}
         messages = self._build_messages(prompt, system_prompt=system_prompt, history=history, images=images)
         options = self._runtime_options(prompt)
 
@@ -290,7 +313,7 @@ class SvlOllamaClient:
                     resp_json = json.loads(response.read().decode("utf-8"))
                     message = resp_json.get("message", {})
                     content = str(message.get("content", "")).strip()
-                    if content:
+                    if content and resp_json.get("done", True):
                         return {
                             "success": True,
                             "model": cand_model,
@@ -299,6 +322,10 @@ class SvlOllamaClient:
                             "response": content,
                             "total_duration": resp_json.get("total_duration"),
                             "eval_count": resp_json.get("eval_count"),
+                            "load_duration": resp_json.get("load_duration"),
+                            "prompt_eval_duration": resp_json.get("prompt_eval_duration"),
+                            "eval_duration": resp_json.get("eval_duration"),
+                            "done_reason": resp_json.get("done_reason"),
                         }
                     last_err = f"Pusta odpowiedź z modelu {cand_model}"
             except urllib.error.HTTPError as he:
@@ -307,7 +334,9 @@ class SvlOllamaClient:
                 except Exception:
                     err_text = str(he)
                 last_err = f"HTTP {he.code}: {err_text}"
-                continue
+                if he.code == 404 and images:
+                    continue
+                break
             except Exception as e:
                 last_err = f"Błąd połączenia z węzłem Ollama ({target_url}): {e}"
                 break
@@ -326,67 +355,14 @@ class SvlOllamaClient:
         system_prompt: Optional[str] = None,
         url: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        timeout: float = 65.0,
+        timeout: float = 180.0,
     ) -> Generator[Dict[str, Any], None, None]:
-        """Strumieniuje odpowiedź modelu token po tokenie w czasie rzeczywistym."""
-        target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
-        endpoint = f"{target_url}/api/chat"
-        selected_model = model or self.config.get_active_model()
-        messages = self._build_messages(prompt, system_prompt=system_prompt, history=history)
-        options = self._runtime_options(prompt)
-
-        last_err = ""
-        for cand_model in self._candidate_models(selected_model, has_images=False):
-            payload = {
-                "model": cand_model,
-                "messages": messages,
-                "stream": True,
-                "keep_alive": -1,
-                "options": options,
-            }
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                endpoint,
-                data=data,
-                headers={"Content-Type": "application/json", "User-Agent": "JYN_OS-Ollama/2.5.0"},
-                method="POST",
-            )
-            emitted_text = False
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as response:
-                    for raw_line in response:
-                        if not raw_line.strip():
-                            continue
-                        chunk = json.loads(raw_line)
-                        if chunk.get("error"):
-                            last_err = str(chunk["error"])
-                            break
-                        actual_model = chunk.get("model") or cand_model
-                        token = chunk.get("message", {}).get("content", "")
-                        if token:
-                            emitted_text = True
-                            yield {"ok": True, "model": actual_model, "token": token, "done": False}
-                        if chunk.get("done"):
-                            if emitted_text:
-                                yield {"ok": True, "model": actual_model, "token": "", "done": True}
-                                return
-                            last_err = f"Pusta odpowiedź z modelu {actual_model}"
-                            break
-                    else:
-                        last_err = f"Przerwany strumień odpowiedzi z modelu {cand_model}"
-                    break
-            except urllib.error.HTTPError as he:
-                with he:
-                    err_text = he.read().decode("utf-8", errors="replace")
-                last_err = f"HTTP {he.code}: {err_text}"
-                if he.code == 404:
-                    continue
-                break
-            except Exception as e:
-                last_err = f"Błąd połączenia z węzłem Ollama ({target_url}): {e}"
-                break
-
-        yield {"ok": False, "model": selected_model, "error": last_err or "Brak odpowiedzi z Ollamy.", "done": True}
+        """Zgodność ze starszymi wywołaniami: zwraca jeden kompletny wynik."""
+        result = self.chat(prompt, model=model, system_prompt=system_prompt, url=url, history=history, timeout=timeout)
+        if result.get("success"):
+            yield {"ok": True, "model": result["model"], "token": result["response"], "done": True}
+        else:
+            yield {"ok": False, "model": result.get("model"), "error": result.get("error"), "done": True}
 
     def chat_vision(
         self,

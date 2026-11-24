@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Niezależny serwer zapasowej Ollamy dla statku SVL-364 (Python Standard Library).
-Działa autonomicznie bez zewnętrznych zależności, zapewniając dostęp do 13 modeli
-pokładowych statku SVL-364 na porcie 11435 lub 11436.
+Przekazuje żądania do rzeczywistej Ollamy na porcie 11434; nie symuluje modeli.
 """
 
 from __future__ import annotations
@@ -14,33 +13,12 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from JYN_OS.config import SHIP_MODELS_CATALOG
 
 PORT = int(os.environ.get("SVL_SHIP_OLLAMA_STANDALONE_PORT", "11435"))
 HOST = os.environ.get("SVL_SHIP_OLLAMA_STANDALONE_HOST", "127.0.0.1")
-
-ALL_MODELS: List[Dict[str, Any]] = [
-    {
-        "name": m["name"],
-        "model": m["name"],
-        "modified_at": "2026-11-23T18:00:00Z",
-        "size": 42500000000 if "70b" in m["name"] else (80100000000 if "22b" in m["name"] else 4700000000),
-        "digest": f"sha256:svl364_{m['name'].replace(':', '_')}",
-        "details": {
-            "parent_model": "",
-            "format": "gguf",
-            "family": m.get("family", "llama"),
-            "families": [m.get("family", "llama")],
-            "parameter_size": m.get("parameter_size", "70B"),
-            "quantization_level": "Q4_K_M",
-        },
-    }
-    for m in SHIP_MODELS_CATALOG
-]
-
 
 class Svl364OllamaHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
@@ -66,24 +44,15 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        if path in ("", "/api/version"):
-            self._send_json(200, {"version": "0.6.5"})
-            return
-        if path == "/api/tags":
-            self._send_json(200, {"models": ALL_MODELS})
-            return
-        if path == "/api/ps":
-            loaded = [
-                {
-                    "name": "svl364-apex-uncensored:latest",
-                    "model": "svl364-apex-uncensored:latest",
-                    "size": 42500000000,
-                    "digest": "sha256:svl364_apex",
-                    "expires_at": "2099-01-01T00:00:00Z",
-                    "size_vram": 42500000000,
-                }
-            ]
-            self._send_json(200, {"models": loaded})
+        if path in ("", "/api/version", "/api/tags", "/api/ps"):
+            endpoint = "/api/version" if not path else path
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:11434{endpoint}", timeout=5.0) as upstream:
+                    self._send_json(200, json.load(upstream))
+            except urllib.error.HTTPError as exc:
+                self._send_json(exc.code, {"error": str(exc)})
+            except (OSError, ValueError) as exc:
+                self._send_json(502, {"error": f"Ollama :11434 niedostępna: {exc}"})
             return
         self._send_json(404, {"error": "Endpoint not found"})
 
@@ -115,7 +84,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                 method="POST",
             )
             try:
-                upstream = urllib.request.urlopen(proxy_req, timeout=55.0)
+                upstream = urllib.request.urlopen(proxy_req, timeout=210.0)
             except urllib.error.HTTPError as exc:
                 with exc:
                     try:
@@ -152,12 +121,22 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/show":
-            req_model = str(body.get("name", "svl364-apex-uncensored:latest"))
-            matched = next((m for m in ALL_MODELS if m["name"] == req_model), ALL_MODELS[0])
-            self._send_json(200, matched)
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/show",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5.0) as upstream:
+                    self._send_json(200, json.load(upstream))
+            except urllib.error.HTTPError as exc:
+                self._send_json(exc.code, {"error": str(exc)})
+            except (OSError, ValueError) as exc:
+                self._send_json(502, {"error": str(exc)})
             return
 
-        self._send_json(200, {"status": "success"})
+        self._send_json(404, {"error": "Endpoint not found"})
 
 
 def run_standalone_server(host: str = HOST, port: int = PORT) -> None:

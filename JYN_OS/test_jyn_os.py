@@ -2,6 +2,9 @@
 """Testy jednostkowe systemu klienta JYN_OS."""
 
 import unittest
+import io
+import json
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -60,12 +63,42 @@ class TestJynOSClientSuite(unittest.TestCase):
         self.assertIn("11434", ollama.config.local_ollama_url)
         self.assertEqual(ollama.config.active_ollama_target, "local")
         self.assertEqual(ollama.config.get_active_ollama_url(), ollama.config.local_ollama_url)
-        self.assertEqual(ollama.config.get_active_model(), "qwen2.5:1.5b")
+        self.assertEqual(ollama.config.get_active_model(), "svl364-apex-uncensored:latest")
 
         ollama.config.set_active_target("ship")
         self.assertEqual(ollama.config.active_ollama_target, "ship")
         self.assertEqual(ollama.config.get_active_ollama_url(), ollama.config.ship_ollama_url)
         self.assertEqual(ollama.config.get_active_model(), "svl364-apex-uncensored:latest")
+
+
+class TestApexCompleteChat(unittest.TestCase):
+    def test_single_nonstreaming_request_and_no_fallback(self):
+        cfg = JynOSConfig(local_model="svl364-apex-uncensored:latest", active_ollama_target="local")
+        client = SvlOllamaClient(cfg)
+        show = {"details": {"parameter_size": "70.6B"}}
+        reply = {"message": {"content": "Gotowa odpowiedź"}, "done": True, "eval_count": 12}
+        with patch.object(client, "_fetch_live_svl_context", return_value=""), patch(
+            "JYN_OS.ollama_client.urllib.request.urlopen",
+            side_effect=[io.BytesIO(json.dumps(show).encode()), io.BytesIO(json.dumps(reply).encode())],
+        ) as mock:
+            result = client.chat("test")
+        self.assertTrue(result["success"])
+        self.assertEqual(mock.call_count, 2)
+        payload = json.loads(mock.call_args.args[0].data)
+        self.assertIs(payload["stream"], False)
+        self.assertEqual(payload["model"], cfg.local_model)
+        self.assertEqual(payload["keep_alive"], -1)
+        self.assertEqual(client._candidate_models(cfg.local_model), [cfg.local_model])
+
+    def test_reject_small_model_disguised_as_apex(self):
+        client = SvlOllamaClient(JynOSConfig(local_model="svl364-apex-uncensored:latest", active_ollama_target="local"))
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen", return_value=io.BytesIO(
+            b'{"details":{"parameter_size":"1.5B"}}'
+        )) as mock:
+            result = client.chat("test")
+        self.assertFalse(result["success"])
+        self.assertIn("70B", result["error"])
+        self.assertEqual(mock.call_count, 1)
 
 
 if __name__ == "__main__":
