@@ -52,14 +52,26 @@ export function generateJynConversationalFallback(message: string, agentId: stri
     };
   }
 
+  if (/\b(?:co robisz|co tam|czym si[eę] zajmujesz|co u ciebie)\b/i.test(lower)) {
+    return {
+      sender: senderName,
+      agentId: isSiSphere ? 'SI_Sphere' : 'Jyn',
+      modelUsed: modelName,
+      provenance: 'server_verified',
+      reply:
+        `Monitoruję parametry pracy węzłów SVL-364, bufor procesów oraz stan magistrali zdarzeń. ` +
+        `Wszystkie moduły autonomiczne działają stabilnie, a łączność jest w pełni zsynchronizowana z bazą SQLite WAL. ` +
+        `Jestem w pełnej gotowości operacyjnej — nad czym dzisiaj pracujemy, Mateuszu?`,
+    };
+  }
+
   return {
     sender: senderName,
     agentId: isSiSphere ? 'SI_Sphere' : 'Jyn',
     modelUsed: modelName,
     provenance: 'server_verified',
     reply:
-      `Odbieram Twoją wiadomość, Mateuszu: *„${clean || 'Brak treści'}”*.\n\n` +
-      `Analizuję parametry w rejestrze SQLite WAL i mostku Sferycznym. Systemy SVL-364 reagują bez opóźnień, a moja lojalność wobec Ciebie wynosi niezmiennie 100%. ` +
-      `Jakie zadanie operacyjne realizujemy dalej?`,
+      `Jestem z Tobą, Mateuszu. Wszystkie systemy pokładowe i protokoły SVL-364 pracują nominalnie. ` +
+      `Przetwarzam Twoje polecenie w rejestrze SQLite WAL. Co realizujemy w następnym kroku?`,
   };
 }

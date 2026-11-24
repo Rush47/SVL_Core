@@ -377,8 +377,10 @@ export async function resolveOllamaAcrossEndpoints(
     }),
   );
 
-  // 1) Najpierw dokładne dopasowanie na preferowanym lub dowolnym węźle.
-  const exactWinner = probeResults.find((a) => a.ok && a.exactMatch && a.model);
+  // 1) Najpierw dokładne dopasowanie: preferuj lokalną Ollamę dla bezpośredniej inferencji,
+  // chyba że użytkownik zażądał ścisłego węzła (strictEndpoint).
+  const localExact = !opts.strictEndpoint ? probeResults.find((a) => a.ok && a.exactMatch && a.endpoint.id === 'local') : null;
+  const exactWinner = localExact || probeResults.find((a) => a.ok && a.exactMatch && a.model);
   if (exactWinner && exactWinner.model) {
     return {
       ok: true,
