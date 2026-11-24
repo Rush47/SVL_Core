@@ -313,6 +313,15 @@ function SVLWorkspaceShell() {
         <div className="order-2 lg:order-3 flex items-center gap-1.5 shrink-0 ml-auto lg:ml-0">
           <button
             type="button"
+            onClick={() => selectWorkspaceTab('svl364')}
+            className="min-h-[38px] lg:min-h-[30px] px-2.5 py-1 rounded-md border border-cyan-500/40 bg-cyan-950/30 hover:bg-cyan-900/40 text-[11px] font-medium text-cyan-200 whitespace-nowrap transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="Przejdź do Centrum Operacyjnego i Powiadomień Statku SVL-364"
+          >
+            <span>🛰️</span>
+            <span className="hidden sm:inline">SVL-364</span>
+          </button>
+          <button
+            type="button"
             aria-expanded={operatorAuthVisible}
             aria-label="Otwórz autoryzację operatora"
             onClick={() => setOperatorAuthVisible((visible) => !visible)}

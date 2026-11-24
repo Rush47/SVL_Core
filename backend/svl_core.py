@@ -3909,6 +3909,22 @@ class SVLSystemKernel:
         lines = [f"{icon} **{clean_title}**" if clean_title else icon]
         if clean_message and clean_message != clean_title:
             lines.append(clean_message)
+
+        # Interaktywne przyciski i akcje dla czatu (zgodne z interactiveElements.ts)
+        cat_lower = clean_category.lower()
+        if "mission" in cat_lower:
+            lines.append("[btn: 🛰️ Centrum SVL-364|tab:svl364] [btn: 💬 Zapytaj Jyn o misję|ask:Jyn]")
+        elif "research" in cat_lower:
+            lines.append("[btn: 🔬 Raport Badań|tab:svl364] [btn: 💬 Analizuj z Jyn|ask:Jyn]")
+        elif "transmission" in cat_lower:
+            lines.append("[btn: 📡 Sprawdź mostek MCP|tab:svl364] [btn: 🛰️ Centrum SVL-364|tab:svl364]")
+        elif "alarm" in cat_lower or sev in ("CRITICAL", "ALERT"):
+            lines.append("[btn: 🚨 Centrum Awaryjne|tab:svl364] [btn: 🛡️ Skan AV|action:scan]")
+        elif "system" in cat_lower:
+            lines.append("[btn: 🖥️ Jądro SVL|tab:kernel] [btn: 🛰️ Statek SVL-364|tab:svl364]")
+        elif "svl364" in cat_lower or "incident" in cat_lower:
+            lines.append("[btn: 🛰️ Centrum Operacyjne SVL-364|tab:svl364]")
+
         notif_msg = {
             "id": notif_id,
             "role": "system",
@@ -3934,6 +3950,27 @@ class SVLSystemKernel:
                 level="ERROR", origin=origin, details={"error": saved.get("error")},
             )
             return {"ok": False, "error": saved.get("error") or "Nie zapisano powiadomienia."}
+
+        # Replikacja powiadomienia na czat Jyn oraz kanał ROOT statku SVL-364 (aby natychmiast przychodziły na otwarty czat)
+        if not saved.get("deduplicated"):
+            for extra_chan_id, extra_chan_title in [
+                ("conv-jyn", "Jyn — Zarządzanie Infrastrukturą (ROOT)"),
+                ("conv-svl364-mcp-root", "SVL-364 Ebon Apex (ROOT)"),
+            ]:
+                try:
+                    extra_msg = dict(notif_msg)
+                    extra_msg["id"] = f"{notif_id}-{extra_chan_id}"
+                    self.save_chat_message(
+                        extra_chan_id,
+                        extra_chan_title,
+                        "jedi-omni-os-v11.5",
+                        extra_msg,
+                        origin=origin,
+                        correlation_id=correlation_id,
+                        event_id=f"evt-{notif_id}-{extra_chan_id}",
+                    )
+                except Exception:
+                    pass
         if not saved.get("deduplicated"):
             append_python_log(
                 "notification",

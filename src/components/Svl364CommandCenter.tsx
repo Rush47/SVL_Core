@@ -29,7 +29,7 @@ import { Svl364SolarMap, type ShipNavigationData } from './Svl364SolarMap';
 
 type WorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux';
 type SubView = 'overview' | 'alerts' | 'mcp' | 'sensors';
-type FeedFilter = 'all' | 'alarm' | 'transmission' | 'sensor' | 'incident';
+type FeedFilter = 'all' | 'incident' | 'transmission' | 'mission' | 'research' | 'system' | 'alarm' | 'sensor';
 
 interface CenterProps {
   onNavigate: (tab: WorkspaceTab) => void;
@@ -58,14 +58,15 @@ interface ShipSensorItem {
 
 interface ShipFeedItem {
   id: string;
-  category: 'transmission' | 'alarm' | 'sensor' | 'incident';
-  severity: 'CRITICAL' | 'WARN' | 'INFO';
+  category: 'transmission' | 'alarm' | 'sensor' | 'incident' | 'mission' | 'research' | 'system';
+  severity: 'CRITICAL' | 'WARN' | 'INFO' | 'OK';
   title: string;
   message: string;
   source: string;
   resolved?: boolean;
   createdAt?: string;
   ephemeral?: boolean;
+  details?: Record<string, any>;
 }
 
 interface ShipOverviewPayload {
@@ -178,6 +179,9 @@ interface ShipOverviewPayload {
     warnings: number;
     transmissions: number;
     openIncidents: number;
+    activeMissions?: number;
+    activeResearch?: number;
+    systemEvents?: number;
   };
   bilateralIntegration?: {
     orderId: string;
@@ -245,11 +249,14 @@ const STATUS_DOT: Record<string, string> = {
   unknown: 'bg-slate-500',
 };
 
-const CATEGORY_META: Record<ShipFeedItem['category'], { label: string; badgeClass: string }> = {
-  alarm: { label: 'ALARM', badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/35' },
-  transmission: { label: 'TRANSMISJA', badgeClass: 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35' },
-  sensor: { label: 'SENSOR', badgeClass: 'bg-amber-500/15 text-amber-200 border-amber-500/35' },
-  incident: { label: 'INCYDENT', badgeClass: 'bg-slate-700/60 text-slate-200 border-slate-600/50' },
+const CATEGORY_META: Record<ShipFeedItem['category'], { label: string; badgeClass: string; icon: string }> = {
+  alarm: { label: 'ALARM', badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/35', icon: '🚨' },
+  transmission: { label: 'TRANSMISJA', badgeClass: 'bg-cyan-500/15 text-cyan-200 border-cyan-500/35', icon: '📡' },
+  mission: { label: 'MISJA', badgeClass: 'bg-indigo-500/15 text-indigo-200 border-indigo-500/35', icon: '🚀' },
+  research: { label: 'BADANIE', badgeClass: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/35', icon: '🔬' },
+  system: { label: 'SYSTEM', badgeClass: 'bg-violet-500/15 text-violet-200 border-violet-500/35', icon: '🖥️' },
+  sensor: { label: 'SENSOR', badgeClass: 'bg-amber-500/15 text-amber-200 border-amber-500/35', icon: '📊' },
+  incident: { label: 'INCYDENT', badgeClass: 'bg-slate-700/60 text-slate-200 border-slate-600/50', icon: '⚠️' },
 };
 
 export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
@@ -415,7 +422,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
           severity: newSeverity,
           title: newTitle.trim(),
           message: newMessage.trim() || newTitle.trim(),
-          emitNotification: newSeverity === 'CRITICAL' || newCategory === 'alarm' || newCategory === 'transmission',
+          emitNotification: true,
         }),
       });
       if (res.ok && res.data?.ok) {
@@ -755,6 +762,15 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               <span className="rounded bg-[#070B12] border border-slate-800 px-2 py-1 text-cyan-300">
                 Transmisje: {overview?.summary?.transmissions ?? 0}
               </span>
+              <span className="rounded bg-[#070B12] border border-slate-800 px-2 py-1 text-indigo-300">
+                Misje: {overview?.summary?.activeMissions ?? 0}
+              </span>
+              <span className="rounded bg-[#070B12] border border-slate-800 px-2 py-1 text-emerald-300">
+                Badania: {overview?.summary?.activeResearch ?? 0}
+              </span>
+              <span className="rounded bg-[#070B12] border border-slate-800 px-2 py-1 text-violet-300">
+                System: {overview?.summary?.systemEvents ?? 0}
+              </span>
             </div>
           </div>
         </header>
@@ -964,8 +980,11 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                     {(
                       [
                         { id: 'all', label: 'Wszystkie' },
-                        { id: 'alarm', label: 'Alarmy' },
                         { id: 'transmission', label: 'Transmisje' },
+                        { id: 'mission', label: 'Misje' },
+                        { id: 'research', label: 'Badania' },
+                        { id: 'system', label: 'System' },
+                        { id: 'alarm', label: 'Alarmy' },
                         { id: 'sensor', label: 'Sensory' },
                         { id: 'incident', label: 'Incydenty' },
                       ] as Array<{ id: FeedFilter; label: string }>
@@ -1055,10 +1074,65 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                 onSubmit={handleRecordIncident}
                 className="rounded-xl border border-slate-800/90 bg-[#0B111B] p-4 space-y-3"
               >
-                <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                  <FileWarning className="h-4 w-4 text-amber-400" />
-                  Nowy raport incydentu / transmisji
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                    <FileWarning className="h-4 w-4 text-amber-400" />
+                    Nowa transmisja / meldunek / incydent
+                  </h2>
+                </div>
+
+                {/* Gotowe szablony szybkiej emisji meldunku / transmisji na czat */}
+                <div className="flex flex-wrap gap-1 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCategory('mission');
+                      setNewSeverity('INFO');
+                      setNewTitle('Misja L2: Synchronizacja teleskopu Nancy Grace');
+                      setNewMessage('Postęp 78%. Stabilna orientacja optyki, brak dryfu orbitalnego. System podtrzymuje zbieżność sensorów z centrum APEX-CITADEL.');
+                    }}
+                    className="rounded bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 px-2 py-0.5 text-[10px] font-mono text-indigo-200 cursor-pointer"
+                  >
+                    🚀 Misja L2
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCategory('research');
+                      setNewSeverity('OK');
+                      setNewTitle('Badanie: Hydroponika i fotobioreaktory O₂/H₂O');
+                      setNewMessage('Wydajność fotosyntetyczna fotobioreaktora Chlorella na statku SVL-364 osiągnęła 99.4%. Generacja O₂ stabilna.');
+                    }}
+                    className="rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 text-[10px] font-mono text-emerald-200 cursor-pointer"
+                  >
+                    🔬 Badanie O₂
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCategory('transmission');
+                      setNewSeverity('INFO');
+                      setNewTitle('Transmisja QKD: Bezpieczny kanał Ziemia ↔ SVL-364');
+                      setNewMessage('Współczynnik błędu kwantowego QBER < 0.8%. Klucze szyfrujące zaktualizowane w SQLite WAL. Kanał taktyczny aktywny.');
+                    }}
+                    className="rounded bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-mono text-cyan-200 cursor-pointer"
+                  >
+                    📡 Depesza QKD
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewCategory('system');
+                      setNewSeverity('INFO');
+                      setNewTitle('Zdarzenie systemowe: Stan jądra Debian 13 & JEDI v12');
+                      setNewMessage('Wszystkie 6 warstw systemowych i moduły kontenerowe aktywne. Uprawnienia ROOT uid=0 zaryglowane sprzętowo.');
+                    }}
+                    className="rounded bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/30 px-2 py-0.5 text-[10px] font-mono text-violet-200 cursor-pointer"
+                  >
+                    🖥️ Jądro Debian 13
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <select
                     value={newCategory}
@@ -1066,10 +1140,13 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                     aria-label="Kategoria zgłoszenia"
                     className="rounded-lg border border-slate-700 bg-[#070B12] px-2.5 py-1.5 text-slate-100"
                   >
-                    <option value="transmission">Transmisja</option>
-                    <option value="alarm">Krytyczny alarm</option>
-                    <option value="sensor">Odczyt z sensora</option>
-                    <option value="incident">Raport incydentu</option>
+                    <option value="transmission">📡 Transmisja taktyczna</option>
+                    <option value="mission">🚀 Powiadomienie o misji</option>
+                    <option value="research">🔬 Raport z badań</option>
+                    <option value="system">🖥️ Zdarzenie systemowe</option>
+                    <option value="alarm">🚨 Krytyczny alarm</option>
+                    <option value="sensor">📊 Odczyt z sensora</option>
+                    <option value="incident">⚠️ Raport incydentu</option>
                   </select>
                   <select
                     value={newSeverity}
@@ -1077,9 +1154,10 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                     aria-label="Priorytet zgłoszenia"
                     className="rounded-lg border border-slate-700 bg-[#070B12] px-2.5 py-1.5 text-slate-100"
                   >
-                    <option value="CRITICAL">CRITICAL</option>
-                    <option value="WARN">WARN</option>
-                    <option value="INFO">INFO</option>
+                    <option value="CRITICAL">CRITICAL (Krytyczny)</option>
+                    <option value="WARN">WARN (Ostrzeżenie)</option>
+                    <option value="INFO">INFO (Informacja)</option>
+                    <option value="OK">OK (Nominalny / Sukces)</option>
                   </select>
                 </div>
                 <input
@@ -1102,7 +1180,7 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                   className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 px-3 py-2 text-xs font-semibold text-white cursor-pointer"
                 >
                   <Send className="h-3.5 w-3.5" />
-                  {submittingIncident ? 'Zapisywanie...' : 'Zapisz raport w SQLite'}
+                  {submittingIncident ? 'Zapisywanie i emisja na czat...' : 'Wyślij na Czat i zapisz w SQLite'}
                 </button>
               </form>
 
@@ -1144,21 +1222,32 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
             <div className="lg:col-span-8 rounded-xl border border-slate-800/90 bg-[#0B111B] flex flex-col">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 px-4 py-3">
                 <h2 className="text-sm font-semibold text-slate-100">
-                  Pełny rejestr powiadomień, transmisji i incydentów ({filteredFeed.length})
+                  Strumień transmisji, misji, badań i incydentów ({filteredFeed.length})
                 </h2>
                 <div className="flex flex-wrap gap-1">
-                  {(['all', 'alarm', 'transmission', 'sensor', 'incident'] as FeedFilter[]).map((f) => (
+                  {(
+                    [
+                      { id: 'all', label: 'Wszystkie' },
+                      { id: 'transmission', label: 'Transmisje' },
+                      { id: 'mission', label: 'Misje' },
+                      { id: 'research', label: 'Badania' },
+                      { id: 'system', label: 'System' },
+                      { id: 'alarm', label: 'Alarmy' },
+                      { id: 'sensor', label: 'Sensory' },
+                      { id: 'incident', label: 'Incydenty' },
+                    ] as Array<{ id: FeedFilter; label: string }>
+                  ).map((f) => (
                     <button
-                      key={f}
+                      key={f.id}
                       type="button"
-                      onClick={() => setFeedFilter(f)}
-                      className={`rounded px-2.5 py-1 font-mono text-[11px] cursor-pointer ${
-                        feedFilter === f
+                      onClick={() => setFeedFilter(f.id)}
+                      className={`rounded px-2 py-0.5 font-mono text-[10px] cursor-pointer ${
+                        feedFilter === f.id
                           ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/40'
                           : 'bg-[#070B12] text-slate-400 border border-slate-800'
                       }`}
                     >
-                      {f === 'all' ? 'Wszystkie' : CATEGORY_META[f].label}
+                      {f.label}
                     </button>
                   ))}
                 </div>
@@ -1166,12 +1255,14 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
               <div className="divide-y divide-slate-800/70 lg:max-h-[620px] lg:overflow-y-auto">
                 {filteredFeed.map((item) => {
                   const cat = CATEGORY_META[item.category] || CATEGORY_META.incident;
+                  const prog = item.details?.progressPct;
                   return (
-                    <div key={item.id} className="px-4 py-3 space-y-1.5">
+                    <div key={item.id} className="px-4 py-3 space-y-1.5 hover:bg-slate-900/30">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${cat.badgeClass}`}>
-                            {cat.label}
+                          <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold flex items-center gap-1 ${cat.badgeClass}`}>
+                            <span>{cat.icon}</span>
+                            <span>{cat.label}</span>
                           </span>
                           <span
                             className={`font-mono text-[10px] font-semibold ${
@@ -1179,7 +1270,9 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                                 ? 'text-rose-400'
                                 : item.severity === 'WARN'
                                   ? 'text-amber-300'
-                                  : 'text-slate-400'
+                                  : item.severity === 'OK'
+                                    ? 'text-emerald-300'
+                                    : 'text-slate-400'
                             }`}
                           >
                             {item.severity}
@@ -1188,6 +1281,14 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-[10px] text-slate-500">{fmtTime(item.createdAt)}</span>
+                          <button
+                            type="button"
+                            onClick={() => onNavigate('chat')}
+                            className="rounded border border-cyan-500/35 bg-cyan-500/10 hover:bg-cyan-500/25 px-2 py-0.5 font-mono text-[10px] text-cyan-200 cursor-pointer"
+                            title="Przejdź do czatu z Jyn"
+                          >
+                            💬 Czat
+                          </button>
                           {!item.ephemeral && !item.resolved && (
                             <button
                               type="button"
@@ -1197,8 +1298,27 @@ export const Svl364CommandCenter: React.FC<CenterProps> = ({ onNavigate }) => {
                               Oznacz rozwiązany
                             </button>
                           )}
+                          {item.resolved && (
+                            <span className="inline-flex items-center gap-0.5 font-mono text-[10px] text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" /> OK
+                            </span>
+                          )}
                         </div>
                       </div>
+                      {typeof prog === 'number' && (
+                        <div className="space-y-0.5">
+                          <div className="flex justify-between text-[10px] font-mono text-slate-400">
+                            <span>Postęp realizacji:</span>
+                            <span className="text-cyan-300">{prog}%</span>
+                          </div>
+                          <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 rounded-full transition-all duration-500"
+                              style={{ width: `${Math.min(100, Math.max(0, prog))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                       <p className="text-xs text-slate-300 whitespace-pre-wrap">{item.message}</p>
                       <div className="font-mono text-[10px] text-slate-500">Źródło: {item.source}</div>
                     </div>

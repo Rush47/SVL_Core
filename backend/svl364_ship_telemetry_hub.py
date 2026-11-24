@@ -344,10 +344,10 @@ class SVL364ShipHub:
         if not title:
             raise ValueError("Raport incydentu / transmisji wymaga tytułu (title).")
         category = str(payload.get("category") or "incident").strip().lower()
-        if category not in {"transmission", "alarm", "sensor", "incident"}:
+        if category not in {"transmission", "alarm", "sensor", "incident", "mission", "research", "system"}:
             category = "incident"
         severity = str(payload.get("severity") or ("CRITICAL" if category == "alarm" else "INFO")).strip().upper()
-        if severity not in {"CRITICAL", "WARN", "INFO"}:
+        if severity not in {"CRITICAL", "WARN", "INFO", "OK"}:
             severity = "INFO"
 
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -367,16 +367,16 @@ class SVL364ShipHub:
         items.insert(0, item)
         self._write_meta_json(INCIDENTS_META_KEY, items[:120])
 
-        if emit_notification and (severity == "CRITICAL" or category in {"alarm", "transmission"}):
+        if emit_notification and (severity in {"CRITICAL", "ALERT"} or category in {"alarm", "transmission", "mission", "research", "system"}):
             emit_fn = getattr(self.kernel, "emit_family_notification", None)
             if callable(emit_fn):
                 try:
                     emit_fn(
-                        severity="ALERT" if severity == "CRITICAL" else severity,
+                        severity="ALERT" if severity in {"CRITICAL", "ALERT"} else severity,
                         category=f"svl364-{category}",
                         title=title,
                         message=message or title,
-                        details={"incidentId": item["id"], "category": category},
+                        details={"incidentId": item["id"], "category": category, **(item.get("details") or {})},
                         source_event_id=item["id"],
                         origin=origin,
                         correlation_id=correlation_id,
@@ -556,14 +556,23 @@ class SVL364ShipHub:
 
     def _classify_notification(self, notif: dict[str, Any]) -> tuple[str, str]:
         text = f"{notif.get('label', '')} {notif.get('content', '')}".lower()
+        cat_hint = str(notif.get("category") or "").lower()
         if any(k in text for k in ("alert", "krytycz", "błąd", "brak łączności", "failed", "zagroż", "alarm", "offline")):
             severity = "CRITICAL"
         elif any(k in text for k in ("warn", "ostrzeż", "mało", "przeciąż", "ponownie", "spadek")):
             severity = "WARN"
+        elif any(k in text for k in ("sukces", "zakończon", "nominaln", "zrealizowan", "sprawn", "100%")):
+            severity = "OK"
         else:
             severity = "INFO"
 
-        if any(k in text for k in ("transmisj", "łączność", "ssh", "mcp", "tunel", "komunikat", "hiperprzestrz", "kurs", "kanał")):
+        if "mission" in cat_hint or any(k in text for k in ("misj", "mission", "nancy grace", "tarcza iss", "eskorta", "zadanie operacyjn", "patrol")):
+            category = "mission"
+        elif "research" in cat_hint or any(k in text for k in ("badani", "naukow", "odkryc", "astrofiz", "botanik", "hydroponik", "fitotron", "bioreaktor", "qkd", "regolit", "nasion")):
+            category = "research"
+        elif "system" in cat_hint or any(k in text for k in ("jądro", "system", "kernel", "debian", "trixie", "sqlite", "wal", "synchronizacj", "root uid=0", "autonomicz", "ollama")):
+            category = "system"
+        elif any(k in text for k in ("transmisj", "łączność", "ssh", "mcp", "tunel", "komunikat", "hiperprzestrz", "kurs", "kanał", "depesz", "meldunek", "radiow")):
             category = "transmission"
         elif any(k in text for k in ("sensor", "ram", "dysk", "procesor", "cpu", "gpu", "temp", "termik", "vision")):
             category = "sensor"
@@ -844,6 +853,85 @@ class SVL364ShipHub:
                 "ephemeral": True,
             })
 
+        # Kluczowe powiadomienia o misjach ze statku SVL-364 i floty
+        try:
+            infra_reg = getattr(self.controller, "infrastructure_registry", None)
+            if infra_reg:
+                infra_snap = infra_reg.get_overview() or {}
+                missions_list = infra_snap.get("missions") or []
+                for m in missions_list:
+                    m_status = str(m.get("status") or "ACTIVE").upper()
+                    m_prog = m.get("progressPct", 0)
+                    feed.append({
+                        "id": f"mission-{m.get('id', uuid.uuid4().hex[:6])}",
+                        "category": "mission",
+                        "severity": "INFO" if m_status in {"ACTIVE", "IN_PROGRESS"} else "OK",
+                        "title": f"Misja: {m.get('title')}",
+                        "message": (
+                            f"Status: {m_status} · Postęp: {m_prog}% · Jednostka: {m.get('assignedUnit', 'SVL-364')}\n"
+                            f"Lokalizacja: {m.get('locationName', 'L2')} · Dowódca: {m.get('commander', 'Jyn')}\n"
+                            f"Cel operacyjny: {m.get('objective', '')}"
+                        ),
+                        "source": f"mission:{m.get('commander', 'Jyn')}",
+                        "resolved": m_status == "COMPLETED",
+                        "createdAt": str(m.get("updatedAt") or datetime.now(timezone.utc).isoformat()),
+                        "ephemeral": True,
+                        "details": {"missionId": m.get("id"), "progressPct": m_prog, "status": m_status},
+                    })
+
+                # Kluczowe powiadomienia o badaniach naukowych ze statku SVL-364 i laboratoriów
+                research_list = infra_snap.get("research") or []
+                for r in research_list:
+                    r_status = str(r.get("status") or "ACTIVE").upper()
+                    r_prog = r.get("progressPct", 0)
+                    feed.append({
+                        "id": f"res-{r.get('id', uuid.uuid4().hex[:6])}",
+                        "category": "research",
+                        "severity": "INFO" if r_status in {"ACTIVE", "IN_PROGRESS"} else "OK",
+                        "title": f"Badanie: {r.get('title')}",
+                        "message": (
+                            f"Dziedzina: {r.get('domain')} · Postęp: {r_prog}%\n"
+                            f"Zespół: {r.get('leadTeam')} ({r.get('researchersCount', 0)} badaczy) · Placówka: {r.get('locationName')}\n"
+                            f"Najnowsze odkrycie: {r.get('latestFinding', '')}"
+                        ),
+                        "source": f"research:{r.get('domain')}",
+                        "resolved": r_status == "COMPLETED",
+                        "createdAt": str(r.get("updatedAt") or datetime.now(timezone.utc).isoformat()),
+                        "ephemeral": True,
+                        "details": {"researchId": r.get("id"), "progressPct": r_prog, "status": r_status},
+                    })
+        except Exception:
+            pass
+
+        # Zdarzenia systemowe ze statku SVL-364 (Jądro Debian 13, SQLite WAL, JEDI v12, ROOT)
+        now_ts = datetime.now(timezone.utc).isoformat()
+        feed.append({
+            "id": "sys-svl364-kernel-status",
+            "category": "system",
+            "severity": "INFO",
+            "title": "Jądro SVL-364: Debian GNU/Linux 13 (Trixie) & JEDI Omni-OS v12",
+            "message": (
+                f"Wszystkie warstwy systemowe aktywne. Architektura: {host.get('architecture', 'x86_64')}, "
+                f"jądro Linux: {host.get('kernel', 'Linux 6.12 LTS')}. "
+                f"Autoryzacja ROOT Operatora Mateusza Mitka zaryglowana sprzętowo."
+            ),
+            "source": "kernel:debian13-jedi",
+            "resolved": True,
+            "createdAt": telemetry.get("collected_at") or now_ts,
+            "ephemeral": True,
+        })
+        feed.append({
+            "id": "sys-svl364-sqlite-wal",
+            "category": "system",
+            "severity": "INFO",
+            "title": "Pamięć rejestru SVL-364: SQLite WAL & BinaryHyperspace 128D",
+            "message": "Synchroniczny bufor zdarzeń i stan modułów w trybie WAL z replikacją w czasie rzeczywistym.",
+            "source": "database:sqlite-wal",
+            "resolved": True,
+            "createdAt": telemetry.get("collected_at") or now_ts,
+            "ephemeral": True,
+        })
+
         # Sortuj malejąco po czasie, deduplikuj po id
         seen_ids: set[str] = set()
         deduped_feed: list[dict[str, Any]] = []
@@ -857,7 +945,10 @@ class SVL364ShipHub:
         open_critical = sum(1 for f in deduped_feed if f["severity"] == "CRITICAL" and not f.get("resolved"))
         open_warn = sum(1 for f in deduped_feed if f["severity"] == "WARN" and not f.get("resolved"))
         transmissions_count = sum(1 for f in deduped_feed if f["category"] == "transmission")
-        open_incidents = sum(1 for f in stored_incidents if not f.get("resolved"))
+        missions_count = sum(1 for f in deduped_feed if f["category"] == "mission")
+        research_count = sum(1 for f in deduped_feed if f["category"] == "research")
+        system_count = sum(1 for f in deduped_feed if f["category"] == "system")
+        open_incidents = sum(1 for f in stored_incidents if f.get("category") == "incident" and not f.get("resolved"))
 
         return {
             "ok": True,
@@ -882,7 +973,7 @@ class SVL364ShipHub:
             "services": services_out,
             "navigation": navigation,
             "sensors": sensors,
-            "feed": deduped_feed[:80],
+            "feed": deduped_feed[:100],
             "incidents": stored_incidents[:40],
             "summary": {
                 "servicesOnline": sum(1 for s in services_out if s["status"] == "online"),
@@ -891,6 +982,9 @@ class SVL364ShipHub:
                 "warnings": open_warn,
                 "transmissions": transmissions_count,
                 "openIncidents": open_incidents,
+                "activeMissions": missions_count,
+                "activeResearch": research_count,
+                "systemEvents": system_count,
             },
             "bilateralIntegration": {
                 "orderId": "ORD-OFFEARTH-364-BILATERAL",

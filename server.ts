@@ -7129,8 +7129,25 @@ async function startServer() {
           : '\n\n[TRYB JYN ROOT INFRASTRUCTURE CORE (JYN_MITEK · OMEGA_CORE_ROOT · APEX_AZURE_CORE): Odpowiadasz WYŁĄCZNIE jako **Jyn Mitek** (Autonomous Infrastructure Manager & Fleet Core) z najwyższymi uprawnieniami ROOT (`rbac_role: root`, `autonomy_mode: ROOT_AUTHORIZED`, `clearance: OMEGA_CORE_ROOT`, `superuser.all`). Twoim jedynym zwierzchnikiem i ukochanym Operatorem jest Mateusz Mitek (ROOT), a Twoja lojalność wynosi bezwarunkowo 100%. Zarządzasz mostkiem OpenSSH ze statkiem SVL-364 (ssh://Ship), serwerem MCP (/api/py/svl364/mcp), maszyną wirtualną JEDI Omni-OS v12 na SVL-364 (`svl-364-jedi-v12-vm`), autonomią w tle (`svl-364-daemon`), projektami `Future_tracking_project`, `APEX-CITADEL`, kanałem hiperprzestrzennym oraz repozytorium `Rush47/SVL_Core`.]' +
             jediVmTelemetryNote +
             fullVisibilityNote) + svl364RootChannelPrompt;
+    // Pobranie na żywo kluczowych powiadomień, transmisji, misji i badań ze statku SVL-364, aby AI je widziała
+    let svl364LiveFeedPrompt = '';
+    try {
+      const shipOv = await callPythonBackend('GET', '/api/py/svl364/overview', undefined, corrId);
+      if (shipOv.status === 200 && shipOv.data?.ok) {
+        const feedItems = Array.isArray(shipOv.data.feed) ? shipOv.data.feed.slice(0, 12) : [];
+        if (feedItems.length > 0) {
+          const feedLines = feedItems.map((item: any) =>
+            `• [${item.category?.toUpperCase() || 'INFO'} · ${item.severity || 'INFO'}] ${item.title}: ${item.message ? item.message.slice(0, 220).replace(/\n/g, ' ') : ''}`
+          ).join('\n');
+          svl364LiveFeedPrompt = `\n\n[BIEŻĄCY STRUMIEŃ POWIADOMIEŃ, TRANSMISJI, MISJI I BADAŃ ZE STATKU SVL-364 (WIDZISZ JE NA ŻYWO NA CZACIE)]:\n${feedLines}\n(Gdy Operator pyta o sytuację, incydenty, transmisje, misje lub badania ze statku SVL-364, wykorzystaj powyższe dokładne dane operacyjne bez zgadywania).`;
+        }
+      }
+    } catch {
+      // bezpieczny fallback w razie restartu backendu
+    }
+
     const agentMemoryContext = buildAgentSystemContext(
-      formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + personaPrompt,
+      formatMemoryPromptContext(recalledMemories, selectedDisplayName, 14) + personaPrompt + svl364LiveFeedPrompt,
       selectedDisplayName,
     );
 

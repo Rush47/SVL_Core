@@ -388,8 +388,8 @@ MCP_TOOLS_CATALOG: list[dict[str, Any]] = [
             "properties": {
                 "action": {"type": "string", "enum": ["list", "record", "resolve"]},
                 "incidentId": {"type": "string"},
-                "category": {"type": "string", "enum": ["transmission", "alarm", "sensor", "incident"]},
-                "severity": {"type": "string", "enum": ["CRITICAL", "WARN", "INFO"]},
+                "category": {"type": "string", "enum": ["transmission", "alarm", "sensor", "incident", "mission", "research", "system"]},
+                "severity": {"type": "string", "enum": ["CRITICAL", "WARN", "INFO", "OK"]},
                 "title": {"type": "string"},
                 "message": {"type": "string"},
             },
