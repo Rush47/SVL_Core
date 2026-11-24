@@ -97,7 +97,7 @@ test('interactive cards, progress bars, checklists, and collapsible details rend
   });
 
   const md = [
-    '[card: System|Debian 12|warn] [card: Nakładka|Apex OS|ok]',
+    '[card: System|Debian 12|warn] [card: Nakładka|SVL Core|ok]',
     '[progress: Synchronizacja|100%]',
     '- [ ] Sprawdzić logi',
     '- [x] Zapisano kopię',
@@ -107,7 +107,7 @@ test('interactive cards, progress bars, checklists, and collapsible details rend
   ].join('\n');
   const html = renderToStaticMarkup(React.createElement(React.Fragment, null, renderFormattedContent(md, () => {})));
   assert.match(html, /Debian 12/);
-  assert.match(html, /Apex OS/);
+  assert.match(html, /SVL Core/);
   assert.match(html, /100%/);
   assert.match(html, /data-markdown-checklist="true"/);
   assert.match(html, /role="checkbox"/);

@@ -130,10 +130,8 @@ export const ChatInteractiveButton: React.FC<ChatInteractiveButtonProps> = ({
 
   const baseIcon = disabled
     ? <AlertTriangle className={iconCls} aria-hidden="true" />
-    : normalizedAction.startsWith('tab:apex') || normalizedAction.startsWith('nav:apex')
-      ? <Zap className={iconCls} aria-hidden="true" />
-      : normalizedAction.startsWith('tab:svl364') || normalizedAction.startsWith('nav:svl364')
-        ? <Rocket className={iconCls} aria-hidden="true" />
+    : normalizedAction.startsWith('tab:svl364') || normalizedAction.startsWith('nav:svl364')
+      ? <Rocket className={iconCls} aria-hidden="true" />
         : normalizedAction.startsWith('tab:infrastructure') || normalizedAction.startsWith('nav:infrastructure')
           ? <Server className={iconCls} aria-hidden="true" />
           : normalizedAction.startsWith('tab:terminals') || normalizedAction.startsWith('nav:terminals')

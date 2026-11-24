@@ -6113,7 +6113,7 @@ async function startServer() {
       chatToolDeclarations.push(
         {
           name: 'svl_system_status',
-          description: 'Odczytuje na żywo pełny stan systemu SVL (jądro, moduły SQLite, agent Jyn, SI_Sphere, JEDI Omni-OS v12 VM, Ollama, Apex OS, SSH).',
+          description: 'Odczytuje na żywo pełny stan systemu SVL (jądro, moduły SQLite, agent Jyn, SI_Sphere, JEDI Omni-OS v12 VM, Ollama, SSH).',
           parameters: { type: Type.OBJECT, properties: {} },
         },
         {

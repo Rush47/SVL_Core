@@ -59,7 +59,7 @@ export { renderFormattedContent, renderFormattedLine };
 export type ChatMessage = SyncableMessage;
 
 interface ChatWorkspaceProps {
-  onNavigateTab: (tab: 'chat' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
+  onNavigateTab: (tab: 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'terminals' | 'kernel' | 'linux') => void;
 }
 
 export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) => {

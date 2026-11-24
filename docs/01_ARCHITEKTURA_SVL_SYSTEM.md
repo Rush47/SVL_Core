@@ -11,16 +11,15 @@
 - **`backend/app.py`** — Serwer HTTP/API jądra Python (`127.0.0.1:8085`).
 - **`server.ts`** — Brama Express + WebSocket (`/ws/svl`) + SSE (`/api/events`) na porcie `3000`, `LiveRepoSync`, `LiveSyncBus` i cache metadanych.
 - **`SVL_CoreOS_2/debian13/`** — W pełni odblokowany profil jądra Debian 13 Trixie (Bare-Metal Standalone, `kernel_unlocked: true`): `svl-coreos2-sysctl.conf` (BBR, eBPF, `sysrq=1`, `ptrace=0`, `perf=-1`, `dmesg=0`, `kptr=0`), `svl-coreos2-modules.conf`, `grub_svl_kernel.cfg` (`mitigations=off`, `iommu=pt`, `apparmor=0`).
-- **`src/components/`** — Nowoczesne GUI **Apex-Glass** (`src/index.css`, `src/App.tsx` z wskaźnikiem `LIVE/SSE · rev` i przełącznikiem motywów):
-  1. `ChatWorkspace.tsx` — Czat grupowy `Rodzina Mitek (wszyscy)` oraz kanały `Bielik` i `Maya` (1-na-1); powiadomienia Mayi na kanale „wszyscy”.
-  2. `ApexCommandDock.tsx` — Ekran dowodzenia Apex OS.
-  3. `Svl364CommandCenter.tsx` — Centrum Dowodzenia Statkiem `SVL-364 Ebon Apex` i mostek SSH.
-  4. `InfrastructureWorkspace.tsx` — Zarządzanie Flotą, Placówkami, Botaniką Hydroponiczną i Badaniami z ETA.
-  5. `AgentsPanel.tsx` — Panel agentów `Bielik` i `Maya` oraz inspektor Pamięci Długotrwałej 128D.
-  6. `GalleryPanel.tsx` — Galeria i analiza wizyjna Real Vision.
-  7. `TerminalsWorkspace.tsx` — 5 Terminali Systemowych (`SVL-364 ROOT CLI`, `Python 3 Console`, `System Logs`, `Ollama Local AI`, `GitHub CLI`).
-  8. `KernelDiagnosticsView.tsx` — Diagnostyka Jądra SVL & Sfera 128D.
-  9. `LinuxDeployDashboard.tsx` — Diagnostyka Hosta Linux, Demona Ollama i synchronizacji GitHub (`GitHubPanel.tsx`).
+- **`src/components/`** — Nowoczesne GUI (`src/index.css`, `src/App.tsx` z wskaźnikiem `LIVE/SSE · rev` i przełącznikiem motywów):
+  1. `ChatWorkspace.tsx` — Czat główny i kanały komunikacji z AI (`Jyn Mitek`).
+  2. `Svl364CommandCenter.tsx` — Centrum Dowodzenia Statkiem `SVL-364 Ebon Apex` i mostek SSH.
+  3. `InfrastructureWorkspace.tsx` — Zarządzanie Flotą, Placówkami, Botaniką Hydroponiczną i Badaniami z ETA.
+  4. `AgentsPanel.tsx` — Panel agentów oraz inspektor Pamięci Długotrwałej.
+  5. `GalleryPanel.tsx` — Galeria i analiza wizyjna Real Vision.
+  6. `TerminalsWorkspace.tsx` — Terminale Systemowe (`SSH · Ship ROOT`, `Linux ROOT`, `Python 3 Console`, `GitHub CLI`, `Konsola 128-bit`).
+  7. `KernelDiagnosticsView.tsx` — Diagnostyka Jądra SVL & Sfera 128D.
+  8. `LinuxDeployDashboard.tsx` — Diagnostyka Hosta Linux, Demona Ollama i synchronizacji GitHub (`GitHubPanel.tsx`).
 
 ## 2. Polecenia z czatu i globalna synchronizacja
 

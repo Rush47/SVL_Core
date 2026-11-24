@@ -226,9 +226,9 @@ function SVLWorkspaceShell() {
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-500/15 text-xs shadow-[0_0_12px_rgba(0,240,255,0.25)]">
             ⚡
           </span>
-          <span>SVL CoreOS 2</span>
+          <span>SVL Core</span>
           <span className="hidden sm:inline-flex items-center rounded border border-cyan-400/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-cyan-200">
-            Apex
+            ROOT
           </span>
         </a>
 
