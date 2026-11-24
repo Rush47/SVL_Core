@@ -88,7 +88,38 @@ class TestApexCompleteChat(unittest.TestCase):
         self.assertIs(payload["stream"], False)
         self.assertEqual(payload["model"], cfg.local_model)
         self.assertEqual(payload["keep_alive"], -1)
+        self.assertEqual(payload["options"]["num_predict"], min(cfg.chat_num_predict, cfg.chat_num_ctx))
+        self.assertEqual(payload["options"]["num_ctx"], cfg.chat_num_ctx)
         self.assertEqual(client._candidate_models(cfg.local_model), [cfg.local_model])
+
+    def test_long_reply_and_truncation_metadata(self):
+        cfg = JynOSConfig(chat_num_ctx=8192, chat_num_predict=4096, chat_timeout=900)
+        client = SvlOllamaClient(cfg)
+        long_text = "pełna wypowiedź " * 500
+        show = {"details": {"parameter_size": "70B"}}
+        reply = {"message": {"content": long_text}, "done": True, "done_reason": "length"}
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen",
+            side_effect=[io.BytesIO(json.dumps(show).encode()), io.BytesIO(json.dumps(reply).encode())],
+        ) as mock:
+            result = client.chat("Opowiedz", model="svl364-apex-uncensored:latest")
+        self.assertEqual(result["response"], long_text.strip())
+        self.assertTrue(result["truncated"])
+        self.assertEqual(mock.call_args.kwargs["timeout"], 900)
+        payload = json.loads(mock.call_args.args[0].data)
+        self.assertEqual(payload["options"]["num_predict"], 4096)
+        self.assertFalse(payload["stream"])
+
+    def test_no_system_instructions_and_no_live_context_injection(self):
+        client = SvlOllamaClient(JynOSConfig(chat_num_ctx=8192, chat_num_predict=4096))
+        previous = "a" * 2000
+        with patch.object(client, "_fetch_live_svl_context") as fetch:
+            messages = client._build_messages("Dalej", system_prompt="Nie dołączaj tego",
+                history=[{"role": "system", "content": "Stara instrukcja"},
+                         {"role": "assistant", "content": previous}])
+        fetch.assert_not_called()
+        self.assertEqual(messages, [{"role": "system", "content": ""},
+                                    {"role": "assistant", "content": previous},
+                                    {"role": "user", "content": "Dalej"}])
 
     def test_reject_small_model_disguised_as_apex(self):
         client = SvlOllamaClient(JynOSConfig(local_model="svl364-apex-uncensored:latest", active_ollama_target="local"))

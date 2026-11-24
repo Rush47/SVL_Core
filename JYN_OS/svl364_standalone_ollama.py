@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from JYN_OS.config import DEFAULT_CHAT_NUM_CTX, DEFAULT_CHAT_NUM_PREDICT, DEFAULT_CHAT_TIMEOUT
 
 PORT = int(os.environ.get("SVL_SHIP_OLLAMA_STANDALONE_PORT", "11435"))
 HOST = os.environ.get("SVL_SHIP_OLLAMA_STANDALONE_HOST", "127.0.0.1")
@@ -73,8 +74,8 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
 
             proxy_body = dict(body)
             options = dict(proxy_body.get("options") or {})
-            options.setdefault("num_predict", 240)
-            options.setdefault("num_ctx", 2048)
+            options.setdefault("num_predict", DEFAULT_CHAT_NUM_PREDICT)
+            options.setdefault("num_ctx", DEFAULT_CHAT_NUM_CTX)
             proxy_body["options"] = options
             # Klient JYN_OS obsługuje wybór modeli zapasowych po HTTP 404.
             proxy_req = urllib.request.Request(
@@ -84,7 +85,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                 method="POST",
             )
             try:
-                upstream = urllib.request.urlopen(proxy_req, timeout=210.0)
+                upstream = urllib.request.urlopen(proxy_req, timeout=DEFAULT_CHAT_TIMEOUT + 30)
             except urllib.error.HTTPError as exc:
                 with exc:
                     try:

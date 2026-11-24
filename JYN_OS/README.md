@@ -181,3 +181,15 @@ ollama show svl364-apex-uncensored:latest
 ```
 
 Uruchom z katalogu głównego repozytorium. JYN_OS sprawdza metadane `parameter_size` przed pierwszą rozmową z Apex i okresowo je odświeża. Model 1.5B podszywający się pod Apex zostanie odrzucony. Lokalne ustawienia środowiskowe mogą jawnie zmienić domyślny model lub węzeł. `keep_alive=-1` utrzymuje model w pamięci pomiędzy rozmowami, jeżeli pozwalają na to zasoby hosta.
+
+## Swobodne wypowiedzi bez instrukcji systemowych
+
+JYN_OS nie dołącza własnych instrukcji systemowych, instrukcji z historii ani automatycznej telemetrii do rozmowy. Pusty wpis systemowy służy do pominięcia domyślnego promptu Ollamy; dane telemetryczne nadal można sprawdzać osobnymi poleceniami. Modelfile Apex nie zawiera tekstu instrukcji systemowej. Po zmianie Modelfile odtwórz model na hoście.
+
+Domyślnie model może wygenerować do 4096 tokenów odpowiedzi przy kontekście 8192 tokenów i oczekiwaniu do 900 s na odpowiedź HTTP. Model kończy wcześniej naturalnie. Strumieniowanie pozostaje wyłączone. Osiągnięcie limitu generowania jest sygnalizowane w terminalu. Większy kontekst wymaga dodatkowej pamięci i musi być obsługiwany przez model.
+
+| Zmienna | Domyślnie | Znaczenie |
+| --- | --- | --- |
+| SVL_CHAT_NUM_CTX | 8192 | Okno kontekstu |
+| SVL_CHAT_NUM_PREDICT | 4096 | Maksymalny budżet generowania |
+| SVL_CHAT_TIMEOUT | 900 | Timeout HTTP w sekundach |

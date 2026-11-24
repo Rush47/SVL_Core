@@ -189,23 +189,28 @@ class SvlOllamaClient:
         history: Optional[List[Dict[str, str]]] = None,
         images: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        live_ctx = self._fetch_live_svl_context()
-        base_sys = system_prompt or (
-            "Nazywasz się Jyn Mitek (System_SI_1) i jesteś Menadżerką Infrastruktury SVL CoreOS 2 oraz powłoki JYN_OS na statku SVL-364. "
-            "Rozmawia z Tobą Twój Operator: Mateusz Mitek (ROOT) — zwracaj się do niego bezpośrednio w wołaczu „Mateuszu” (nigdy „pan Mateusz”). "
-            "ZAWSZE pisz o sobie wyłącznie w 1. osobie liczby pojedynczej rodzaju żeńskiego (np. „sprawdziłam”, „monitoruję”, „melduję”). "
-            "NIGDY nie pisz o sobie w 3. osobie i NIGDY nie zaczynaj odpowiedzi od „Jyn,” ani „Jyn jest” — to Ty jesteś Jyn, więc zacznij np. od „Cześć Mateuszu!” lub od razu od konkretów. "
-            "Odpowiadaj wyłącznie poprawną polszczyzną bez angielskich wtrąceń, zwięźle i rzeczowo, wymieniając dokładne misje i badania z poniższego stanu SVL-364."
-        )
-        full_sys = f"{base_sys}{live_ctx}"
-
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": full_sys}]
+        # Pusty wpis systemowy blokuje automatyczne dołączanie promptu modelu
+        # przez Ollama. Nie narzucamy osobowości, stylu ani instrukcji.
+        # system_prompt pozostaje tylko dla kompatybilności starszych wywołań.
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": ""}]
         if history:
-            for turn in history[-6:]:
+            # Zachowujemy całe ostatnie wiadomości w przybliżonym budżecie kontekstu.
+            input_tokens = max(256, self.config.chat_num_ctx - min(
+                self.config.chat_num_predict, self.config.chat_num_ctx // 2
+            ) - 256)
+            remaining = max(0, input_tokens * 3 - len(prompt))
+            recent = []
+            for turn in reversed(history[-20:]):
                 role = turn.get("role", "user")
                 content = str(turn.get("content", "")).strip()
-                if role in ("user", "assistant") and content:
-                    messages.append({"role": role, "content": content[:800]})
+                if role not in ("user", "assistant") or not content:
+                    continue
+                cost = len(content) + 32
+                if cost > remaining:
+                    break
+                recent.append({"role": role, "content": content})
+                remaining -= cost
+            messages.extend(reversed(recent))
 
         user_msg: Dict[str, Any] = {"role": "user", "content": prompt}
         if images:
@@ -259,15 +264,12 @@ class SvlOllamaClient:
         self._apex_verified[key] = now
 
     def _runtime_options(self, prompt: str) -> Dict[str, Any]:
-        is_detailed = len(prompt) > 260 or any(
-            kw in prompt.lower() for kw in ("szczegół", "pełny raport", "wszystkie", "wymień", "kod", "skrypt")
-        )
         return {
             "temperature": 0.25,
             "top_p": 0.85,
             "repeat_penalty": 1.12,
-            "num_ctx": 2048,
-            "num_predict": 260 if is_detailed else 200,
+            "num_ctx": self.config.chat_num_ctx,
+            "num_predict": min(self.config.chat_num_predict, self.config.chat_num_ctx),
             "num_batch": 512,
         }
 
@@ -279,9 +281,9 @@ class SvlOllamaClient:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        timeout: float = 180.0,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Wykonuje zapytanie czatu do modelu z historią rozmowy, kontekstem SVL-364 i automatycznym fallbackiem."""
+        """Wykonuje zapytanie czatu do modelu z historią rozmowy, bez narzuconego promptu systemowego."""
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
         endpoint = f"{target_url}/api/chat"
         selected_model = model or self.config.get_active_model()
@@ -309,7 +311,7 @@ class SvlOllamaClient:
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as response:
+                with urllib.request.urlopen(req, timeout=self.config.chat_timeout if timeout is None else timeout) as response:
                     resp_json = json.loads(response.read().decode("utf-8"))
                     message = resp_json.get("message", {})
                     content = str(message.get("content", "")).strip()
@@ -326,6 +328,7 @@ class SvlOllamaClient:
                             "prompt_eval_duration": resp_json.get("prompt_eval_duration"),
                             "eval_duration": resp_json.get("eval_duration"),
                             "done_reason": resp_json.get("done_reason"),
+                            "truncated": resp_json.get("done_reason") == "length",
                         }
                     last_err = f"Pusta odpowiedź z modelu {cand_model}"
             except urllib.error.HTTPError as he:
@@ -355,7 +358,7 @@ class SvlOllamaClient:
         system_prompt: Optional[str] = None,
         url: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        timeout: float = 180.0,
+        timeout: Optional[float] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """Zgodność ze starszymi wywołaniami: zwraca jeden kompletny wynik."""
         result = self.chat(prompt, model=model, system_prompt=system_prompt, url=url, history=history, timeout=timeout)
@@ -370,7 +373,7 @@ class SvlOllamaClient:
         image_path: str,
         model: Optional[str] = None,
         url: Optional[str] = None,
-        timeout: float = 90.0,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Wygodne zapytanie multimodalne dla modelu wizyjnego (llama3.2-vision:11b)."""
         chosen_model = model or self.config.vision_model

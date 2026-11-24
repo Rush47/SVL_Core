@@ -80,6 +80,19 @@ DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "moondream:1.8b")
 DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "svl364-apex-uncensored:latest")
 DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")
 
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
+DEFAULT_CHAT_NUM_CTX = _env_int("SVL_CHAT_NUM_CTX", 8192, 2048, 32768)
+DEFAULT_CHAT_NUM_PREDICT = _env_int("SVL_CHAT_NUM_PREDICT", 4096, 256, 16384)
+DEFAULT_CHAT_TIMEOUT = _env_int("SVL_CHAT_TIMEOUT", 900, 30, 3600)
+
 # Brama API telemetrii i stanu SVL CoreOS
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
 DEFAULT_BACKEND_URL = os.environ.get("SVL_BACKEND_URL", "http://127.0.0.1:8085")
@@ -205,6 +218,9 @@ class JynOSConfig:
 
     connect_timeout: float = 3.5
     command_timeout: float = 30.0
+    chat_num_ctx: int = DEFAULT_CHAT_NUM_CTX
+    chat_num_predict: int = DEFAULT_CHAT_NUM_PREDICT
+    chat_timeout: float = DEFAULT_CHAT_TIMEOUT
 
     def get_active_ollama_url(self) -> str:
         """Zwraca URL aktywnego węzła Ollama (domyślnie lokalny :11434 lub statku :11435)."""

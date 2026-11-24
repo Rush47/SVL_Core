@@ -426,6 +426,8 @@ class JynOSShell(cmd.Cmd):
         full_reply = result["response"]
         used_model = result["model"]
         print(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} {full_reply}\n", flush=True)
+        if result.get("truncated"):
+            print(f"{YELLOW}[Ollama osiągnęła limit generowania; odpowiedź może być niepełna. Możesz poprosić o kontynuację.]{RESET}")
         self.chat_history.extend([
             {"role": "user", "content": cleaned},
             {"role": "assistant", "content": full_reply},
