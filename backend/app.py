@@ -1493,6 +1493,14 @@ async def handle_api_request(
             **reset_res,
         }
 
+    if method == "POST" and path in ("/api/py/kernel/buffer-purge", "/api/py/system/buffer/purge"):
+        purge_res = runtime.kernel.purge_system_buffers(origin=origin, correlation_id=corr)
+        return 200, {
+            "ok": True,
+            **purge_res,
+        }
+
+
     if method == "GET" and path == "/api/py/modules":
         meta = runtime.kernel.get_sync_metadata()
         return 200, {

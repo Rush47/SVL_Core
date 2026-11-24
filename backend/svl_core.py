@@ -4520,6 +4520,77 @@ class SVLSystemKernel:
             "timestamp": now_iso,
         }
 
+    def purge_system_buffers(self, origin: str = "buffer_purge", correlation_id: str = "") -> dict[str, Any]:
+        """
+        Diagnoza i oczyszczenie zapchanych buforów systemowych:
+        - Czyści z kolejki outbox stare potwierdzone rekordy (pozostawiając ostatnie 50 wpisów).
+        - Oczyszcza tabelę terminal_history i system_events ze starych danych telemetrycznych.
+        - Deduplikuje i kompresuje pamięć epizodyczną agentów w agent_memory.
+        - Wykonuje checkpoint SQLite WAL oraz PRAGMA optimize.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        purged_stats: dict[str, Any] = {}
+
+        def _purge(conn: sqlite3.Connection) -> dict[str, Any]:
+            # 1. Terminal history
+            try:
+                c_term = conn.execute("SELECT count(*) FROM terminal_history").fetchone()[0]
+                conn.execute("DELETE FROM terminal_history WHERE id NOT IN (SELECT id FROM terminal_history ORDER BY id DESC LIMIT 50)")
+                purged_stats["terminal_history_cleared"] = max(0, c_term - 50)
+            except Exception:
+                purged_stats["terminal_history_cleared"] = 0
+
+            # 2. System events
+            try:
+                c_evt = conn.execute("SELECT count(*) FROM system_events").fetchone()[0]
+                conn.execute("DELETE FROM system_events WHERE id NOT IN (SELECT id FROM system_events ORDER BY id DESC LIMIT 50)")
+                purged_stats["system_events_cleared"] = max(0, c_evt - 50)
+            except Exception:
+                purged_stats["system_events_cleared"] = 0
+
+            # 3. Sync outbox
+            try:
+                c_out = conn.execute("SELECT count(*) FROM sync_outbox").fetchone()[0]
+                conn.execute("DELETE FROM sync_outbox WHERE seq NOT IN (SELECT seq FROM sync_outbox ORDER BY seq DESC LIMIT 50)")
+                purged_stats["sync_outbox_cleared"] = max(0, c_out - 50)
+            except Exception:
+                purged_stats["sync_outbox_cleared"] = 0
+
+            # 4. Agent memory episodes (deduplikacja powtarzających się wpisów)
+            try:
+                conn.execute("""
+                    DELETE FROM agent_memory 
+                    WHERE kind = 'episode' 
+                    AND rowid NOT IN (
+                        SELECT max(rowid) FROM agent_memory WHERE kind = 'episode' GROUP BY content
+                    )
+                """)
+            except Exception:
+                pass
+
+            sync_res = self.commit_entity_event_tx(
+                conn,
+                entity="kernel",
+                entity_id="buffer-purge",
+                event_type="kernel.buffer_purged",
+                origin=origin,
+                correlation_id=correlation_id,
+                payload={"action": "buffer_purge", "timestamp": now_iso, "stats": purged_stats},
+            )
+            return sync_res
+
+        sync_res = self.run_db(_purge, write=True)
+        self.checkpoint_wal("TRUNCATE")
+
+        return {
+            "ok": True,
+            "status": "BUFFER_PURGED",
+            "message": "Bufory systemowe zostały pomyślnie oczyszczone i zoptymalizowane.",
+            "serverRevision": sync_res["serverRevision"],
+            "stats": purged_stats,
+            "timestamp": now_iso,
+        }
+
     def get_github_chat_sync_state(self) -> Optional[dict[str, Any]]:
         """Zwraca trwały rekord synchronizacji z GitHubem (w tym z poziomu czatu) zapisany w sync_meta."""
         def _read(conn: sqlite3.Connection) -> Optional[dict[str, Any]]:

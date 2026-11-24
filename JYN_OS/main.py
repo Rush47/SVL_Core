@@ -98,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
 
+    # purge-buffer / clean
+    subparsers.add_parser("purge-buffer", help="Oczyszczenie i optymalizacja zapchanych buforów systemowych")
+    subparsers.add_parser("clean", help="Alias do purge-buffer")
+
     return parser
 
 
@@ -159,6 +163,10 @@ def main() -> int:
 
     if args.command in ("reset", "factory-reset"):
         shell.do_reset("force" if getattr(args, "force", False) else "")
+        return 0
+
+    if args.command in ("purge-buffer", "clean"):
+        shell.do_purge_buffer("")
         return 0
 
     return 0

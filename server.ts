@@ -3777,6 +3777,22 @@ async function startServer() {
     res.status(pyRes.status).json(pyRes.data);
   }));
 
+  app.post(['/api/kernel/buffer-purge', '/api/system/buffer/purge'], asyncRoute(async (req, res) => {
+    if (!hasMcpOrOperatorAuth(req) &&
+        !hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+        !hasOperatorAuthorization(req.body?.operatorToken)) {
+      res.status(401).json({ ok: false, error: 'Oczyszczanie buforów wymaga autoryzacji SVL_OPERATOR_TOKEN.' });
+      return;
+    }
+    const corrId: string = (req as any).correlationId || '';
+    const pyRes = await callPythonBackend('POST', '/api/py/kernel/buffer-purge', req.body || {}, corrId);
+    clearOllamaReadyCache();
+    cachedChatContextMeta = null;
+    void pollAndRelayOutbox();
+    res.status(pyRes.status).json(pyRes.data);
+  }));
+
+
   let cachedChatContextMeta: { at: number; healthRes: any; agentsRes: any } | null = null;
   async function getFastChatBackendMeta(corrId: string) {
     if (cachedChatContextMeta && Date.now() - cachedChatContextMeta.at < 30000) {
@@ -7260,6 +7276,7 @@ async function startServer() {
                   : effectiveTemperature,
                 num_ctx: ollamaTurnOpts.num_ctx,
                 num_predict: ollamaTurnOpts.num_predict,
+                stop: ollamaTurnOpts.stop,
                 ...ollamaTurnOpts.perf,
               },
               messages: ollamaMessages,

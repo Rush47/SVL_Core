@@ -275,6 +275,47 @@ class JynOSShell(cmd.Cmd):
         """factory-reset — Alias do polecenia reset."""
         self.do_reset(arg)
 
+    def do_purge_buffer(self, arg: str) -> None:
+        """purge_buffer [clean] — Oczyszcza zapchane bufory systemowe, outbox, historię terminali i pamięć podręczną."""
+        print(f"\n{CYAN}🧹 [JYN_OS] Oczyszczanie i optymalizacja buforów systemowych...{RESET}")
+        token = resolve_auth_token(self.config.gateway_url)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "X-SVL-Operator-Token": token,
+        }
+        endpoints = [
+            f"{self.config.gateway_url}/api/system/buffer/purge",
+            f"{self.config.backend_url}/api/py/kernel/buffer-purge",
+        ]
+        success = False
+        res_data = {}
+        for url in endpoints:
+            try:
+                req = urllib.request.Request(url, data=json.dumps({"operatorToken": token}).encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=10.0) as r:
+                    res_data = json.loads(r.read().decode())
+                    if res_data.get("ok"):
+                        success = True
+                        break
+            except Exception:
+                continue
+
+        if success:
+            stats = res_data.get("stats", {})
+            print(f"{GREEN}{BOLD}✅ Bufory systemowe zostały pomyślnie oczyszczone!{RESET}")
+            print(f" • Terminale usunięte: {stats.get('terminal_history_cleared', 0)} wpisów")
+            print(f" • Zdarzenia usunięte: {stats.get('system_events_cleared', 0)} zdarzeń")
+            print(f" • Outbox odciążony   : {stats.get('sync_outbox_cleared', 0)} rekordów")
+            print(f" • Rewizja jądra     : {res_data.get('serverRevision')}")
+        else:
+            print(f"{RED}❌ Nie udało się oczyścić buforów przez API.{RESET}")
+
+    def do_clean(self, arg: str) -> None:
+        """clean — Alias do polecenia purge_buffer."""
+        self.do_purge_buffer(arg)
+
+
     def do_clear(self, arg: str) -> None:
         """clear — Czyści ekran terminala."""
         os.system("clear" if os.name == "posix" else "cls")
