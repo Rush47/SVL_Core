@@ -94,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     call_p = mcp_sub.add_parser("call", help="Wywołanie narzędzia MCP")
     call_p.add_argument("tool", help="Nazwa narzędzia MCP")
 
+    # reset / factory-reset
+    reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
+    reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
+
     return parser
 
 
@@ -151,6 +155,10 @@ def main() -> int:
             shell.do_mcp(f"call {tool_name}")
         else:
             shell.do_mcp(action)
+        return 0
+
+    if args.command in ("reset", "factory-reset"):
+        shell.do_reset("force" if getattr(args, "force", False) else "")
         return 0
 
     return 0

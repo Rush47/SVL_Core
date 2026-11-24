@@ -12,8 +12,10 @@ import os
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Dict, List
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from JYN_OS.config import SHIP_MODELS_CATALOG
 
 PORT = int(os.environ.get("SVL_SHIP_OLLAMA_STANDALONE_PORT", "11435"))

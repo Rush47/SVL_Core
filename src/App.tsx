@@ -17,15 +17,11 @@ const LinuxDeployDashboard = lazy(() => import('./components/LinuxDeployDashboar
 const GalleryPanel = lazy(() => import('./components/GalleryPanel').then((m) => ({ default: m.GalleryPanel })));
 const Svl364CommandCenter = lazy(() => import('./components/Svl364CommandCenter').then((m) => ({ default: m.Svl364CommandCenter })));
 const InfrastructureWorkspace = lazy(() => import('./components/InfrastructureWorkspace').then((m) => ({ default: m.InfrastructureWorkspace })));
-const ApexCommandDock = lazy(() => import('./components/ApexCommandDock').then((m) => ({ default: m.ApexCommandDock })));
-const AntigravityWorkspace = lazy(() => import('./components/AntigravityWorkspace').then((m) => ({ default: m.AntigravityWorkspace })));
 
-type ActiveWorkspaceTab = 'chat' | 'antigravity' | 'apex' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
+type ActiveWorkspaceTab = 'chat' | 'svl364' | 'infrastructure' | 'agents' | 'gallery' | 'terminals' | 'kernel' | 'linux';
 
 const WORKSPACE_TABS: Array<{ id: ActiveWorkspaceTab; label: string; shortLabel?: string; accent?: string }> = [
   { id: 'chat', label: 'Czat' },
-  { id: 'antigravity', label: 'Antigravity', accent: 'cyan' },
-  { id: 'apex', label: '⚡ Apex OS', accent: 'cyan' },
   { id: 'svl364', label: 'SVL-364' },
   { id: 'infrastructure', label: 'Infrastruktura', shortLabel: 'Infra', accent: 'emerald' },
   { id: 'agents', label: 'Agenci' },
@@ -111,12 +107,12 @@ function SVLWorkspaceShell() {
 
   useEffect(() => {
     if (
-      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'antigravity' || syncedWorkspaceTab === 'apex' || syncedWorkspaceTab === 'svl364' ||
+      syncedWorkspaceTab === 'chat' || syncedWorkspaceTab === 'svl364' ||
       syncedWorkspaceTab === 'infrastructure' || syncedWorkspaceTab === 'agents' ||
       syncedWorkspaceTab === 'gallery' || syncedWorkspaceTab === 'terminals' || syncedWorkspaceTab === 'kernel' ||
       syncedWorkspaceTab === 'linux'
     ) {
-      setActiveTab(syncedWorkspaceTab);
+      setActiveTab(syncedWorkspaceTab as ActiveWorkspaceTab);
     }
   }, [syncedWorkspaceTab]);
 
@@ -129,8 +125,6 @@ function SVLWorkspaceShell() {
     }
     if (activeTab === 'chat') {
       void refreshDomainModules(['chat', 'agents', 'health', 'workspace']);
-    } else if (activeTab === 'apex') {
-      void refreshDomainModules(['health', 'modules', 'kernel', 'agents']);
     } else if (activeTab === 'svl364') {
       void refreshDomainModules(['modules', 'kernel', 'agents', 'health', 'chat', 'terminals']);
     } else if (activeTab === 'infrastructure') {
@@ -263,7 +257,7 @@ function SVLWorkspaceShell() {
                   type="button"
                   onClick={() => selectWorkspaceTab(tab.id)}
                   className={`min-h-[36px] lg:min-h-0 py-1 px-2 rounded-t-md transition-all whitespace-nowrap shrink-0 border-b-2 ${
-                    tab.id === 'apex' || tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
+                    tab.id === 'agents' ? 'font-mono tabular-nums ' : ''
                   }${isActive ? activeBorder : idleClass}`}
                 >
                   {displayLabel}
@@ -454,7 +448,7 @@ function SVLWorkspaceShell() {
       {/* Main Workspace Viewport */}
       <main className="svl-telemetry-grid flex-1 min-h-0 w-full overflow-hidden">
         <div key={activeTab} className="svl-view-enter h-full w-full">
-          {activeTab === 'chat' && <ChatWorkspace onNavigateTab={selectWorkspaceTab} />}
+          {activeTab === 'chat' && <ChatWorkspace onNavigateTab={(tab: any) => selectWorkspaceTab(tab)} />}
           {activeTab !== 'chat' && (
             <Suspense
               fallback={
@@ -464,8 +458,6 @@ function SVLWorkspaceShell() {
                 </div>
               }
             >
-              {activeTab === 'antigravity' && <AntigravityWorkspace />}
-              {activeTab === 'apex' && <ApexCommandDock onNavigateTab={selectWorkspaceTab} />}
               {activeTab === 'svl364' && <Svl364CommandCenter onNavigate={selectWorkspaceTab} />}
               {activeTab === 'infrastructure' && <InfrastructureWorkspace onNavigateTab={selectWorkspaceTab} />}
               {activeTab === 'agents' && (

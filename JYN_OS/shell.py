@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import cmd
+import json
 import os
 import sys
+import urllib.request
 from typing import Optional
 
-from .config import JynOSConfig
+from .config import JynOSConfig, resolve_auth_token
 from .mcp_client import SvlMcpClient
 from .ollama_client import SvlOllamaClient
 from .ssh_client import Svl364SshClient
@@ -225,6 +227,53 @@ class JynOSShell(cmd.Cmd):
 
         else:
             print(f"{YELLOW}Dostępne opcje mcp: ping, list, call <narzędzie>{RESET}")
+
+    def do_reset(self, arg: str) -> None:
+        """reset — Przywraca ustawienia fabryczne (Factory Reset) systemu SVL CoreOS 2 i JYN_OS."""
+        parts = arg.strip().lower()
+        if parts not in ("yes", "y", "tak", "force", "--force", "-f"):
+            confirm = input(f"{YELLOW}⚠️  Czy na pewno chcesz przywrócić ustawienia fabryczne systemu SVL CoreOS 2? [t/N]: {RESET}").strip().lower()
+            if confirm not in ("t", "tak", "y", "yes"):
+                print("Anulowano przywracanie ustawień fabrycznych.")
+                return
+
+        print(f"\n{CYAN}⚙️  [JYN_OS] Wykonywanie procedury Factory Reset...{RESET}")
+        token = resolve_auth_token(self.config.gateway_url)
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "X-SVL-Operator-Token": token,
+        }
+        endpoints = [
+            f"{self.config.gateway_url}/api/kernel/factory-reset",
+            f"{self.config.backend_url}/api/py/kernel/factory-reset",
+        ]
+        success = False
+        res_data = {}
+        for url in endpoints:
+            try:
+                req = urllib.request.Request(url, data=json.dumps({"operatorToken": token}).encode(), headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=10.0) as r:
+                    res_data = json.loads(r.read().decode())
+                    if res_data.get("ok"):
+                        success = True
+                        break
+            except Exception:
+                continue
+
+        if success:
+            print(f"{GREEN}{BOLD}✅ Ustawienia fabryczne zostały pomyślnie przywrócone!{RESET}")
+            print(f" • Status           : {res_data.get('status')}")
+            print(f" • Nowa rewizja     : {res_data.get('serverRevision')}")
+            print(f" • Zainicjalizowane : {res_data.get('modulesCount', 'komplet')} modułów systemowych")
+            print(f"\nUruchamiam automatyczny audyt stanu po resecie:")
+            self.do_status("")
+        else:
+            print(f"{RED}❌ Błąd podczas wykonywania Factory Reset przez API. Sprawdź działanie bramy i jądra.{RESET}")
+
+    def do_factory_reset(self, arg: str) -> None:
+        """factory-reset — Alias do polecenia reset."""
+        self.do_reset(arg)
 
     def do_clear(self, arg: str) -> None:
         """clear — Czyści ekran terminala."""

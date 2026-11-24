@@ -35,3 +35,6 @@ out/
 
 # Serwer MCP (pełny R/W): bieżący adres tunelu (token jest w data/*.secret)
 data/svl_mcp_tunnel.json
+
+**/__pycache__/
+

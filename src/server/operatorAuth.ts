@@ -35,3 +35,19 @@ export function hasOperatorAuthorization(
 
   return tokensMatchConstantTime(candidate, required);
 }
+
+export function extractBearerToken(req: any): string {
+  const auth = req?.headers?.authorization;
+  if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
+    return auth.slice(7).trim();
+  }
+  return '';
+}
+
+export function hasMcpOrOperatorAuth(req: any, env: NodeJS.ProcessEnv = process.env): boolean {
+  const bearer = extractBearerToken(req);
+  const xToken = req?.headers?.['x-svl-operator-token'] || req?.headers?.['x-operator-token'];
+  const bodyToken = req?.body?.operatorToken || req?.body?.token;
+  const candidate = bearer || xToken || bodyToken;
+  return hasOperatorAuthorization(candidate, env);
+}

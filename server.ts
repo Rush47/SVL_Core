@@ -132,12 +132,7 @@ import {
   summarizeGeminiFailures,
 } from './src/server/geminiModels.ts';
 import { appendWebSources, collectWebSources, isWebSearchRequest } from './src/server/webSearch.ts';
-import {
-  FREE_GEMINI_INTERACTION_MODELS,
-  runAntigravityTask,
-  type AntigravityEngineMode,
-} from './src/server/antigravityEngine.ts';
-import { hasOperatorAuthorization, isOperatorTokenRequired } from './src/server/operatorAuth.ts';
+import { hasOperatorAuthorization, isOperatorTokenRequired, hasMcpOrOperatorAuth } from './src/server/operatorAuth.ts';
 import {
   SVL364_ROOT_CHANNEL_ID,
   SVL364_ROOT_CHANNEL_TITLE,
@@ -1515,119 +1510,11 @@ async function startServer() {
               : Boolean(image.reachable ?? image.ok),
           detail: image.detail || image.status || image.error || (image.model ? String(image.model) : null),
         },
-        antigravity: {
-          mode: 'free-tier-interactions',
-          requiresPaidKey: false,
-          geminiConfigured: Boolean(gemini),
-          freeModels: [...FREE_GEMINI_INTERACTION_MODELS],
-          ollamaFallbackReachable: Boolean(ollama.daemon_reachable),
-          tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
-        },
       },
     });
   }));
 
-  let antigravityRunsCount = 0;
 
-  // ANTIGRAVITY (tryb bez płatnego klucza — darmowy Gemini Interactions API + lokalna Ollama)
-  app.get('/api/antigravity/status', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Panel Antigravity wymaga SVL_OPERATOR_TOKEN.' });
-      return;
-    }
-    const corrId: string = (req as any).correlationId || '';
-    const healthRes = await callPythonBackend('GET', '/api/py/health', undefined, corrId);
-    const ollama = healthRes.data?.ollama || {};
-    const ollamaModels = (Array.isArray(ollama.models) ? ollama.models : [])
-      .map((m: any) => String(m?.name || m?.model || '').trim())
-      .filter(Boolean);
-    const gemini = getGeminiClient();
-
-    res.json({
-      ok: true,
-      mode: 'free-tier-interactions',
-      requiresPaidKey: false,
-      gemini: {
-        configured: Boolean(gemini),
-        models: [...FREE_GEMINI_INTERACTION_MODELS],
-        defaultModel: FREE_GEMINI_INTERACTION_MODELS[0],
-      },
-      ollama: {
-        host: String(ollama.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'),
-        reachable: Boolean(ollama.daemon_reachable),
-        defaultModel: String(ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b'),
-        models: ollamaModels,
-      },
-      tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
-      recentRunsCount: antigravityRunsCount,
-      checkedAt: new Date().toISOString(),
-    });
-  }));
-
-  app.post('/api/antigravity/run', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
-      res.status(401).json({ ok: false, error: 'Uruchamianie agenta Antigravity wymaga SVL_OPERATOR_TOKEN.' });
-      return;
-    }
-    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, any>;
-    const engine: AntigravityEngineMode = body.engine === 'ollama' ? 'ollama' : 'gemini-interactions';
-    const corrId: string = (req as any).correlationId || '';
-    const healthRes = engine === 'ollama'
-      ? await callPythonBackend('GET', '/api/py/health', undefined, corrId)
-      : { data: {} };
-    const ollamaHostUrl = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
-    const ollamaDefault = String(healthRes.data?.ollama?.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
-
-    const result = await runAntigravityTask(
-      {
-        prompt: String(body.prompt || ''),
-        engine,
-        model: typeof body.model === 'string' ? body.model : undefined,
-        previousInteractionId: typeof body.previousInteractionId === 'string' ? body.previousInteractionId : null,
-        thinkingLevel:
-          body.thinkingLevel === 'low' || body.thinkingLevel === 'medium' || body.thinkingLevel === 'high'
-            ? body.thinkingLevel
-            : 'medium',
-        tools: body.tools && typeof body.tools === 'object'
-          ? {
-              googleSearch: Boolean(body.tools.googleSearch),
-              urlContext: Boolean(body.tools.urlContext),
-              workspaceTools: body.tools.workspaceTools !== false,
-            }
-          : { googleSearch: true, urlContext: false, workspaceTools: true },
-        history: Array.isArray(body.history) ? body.history : undefined,
-      },
-      {
-        projectRoot: __dirname,
-        getGeminiClient,
-        ollamaHost: () => ollamaHostUrl,
-        ollamaDefaultModel: () => ollamaDefault,
-        scrubOutput: scrubRuntimeLog,
-        runShell: async (command: string) => {
-          const r = await executeLinuxShellCommand(command, __dirname, 'jyn_root');
-          return {
-            ok: r.ok,
-            exitCode: r.exitCode,
-            stdout: r.stdout,
-            stderr: r.stderr,
-          };
-        },
-      },
-    );
-
-    if (result.ok) {
-      antigravityRunsCount += 1;
-    }
-    svlFileLogger.log({
-      layer: 'GATEWAY',
-      level: result.ok ? 'INFO' : 'WARN',
-      category: 'ai_chat',
-      correlationId: corrId,
-      message: `[Antigravity:${result.engine}/${result.model}] ok=${result.ok} steps=${result.steps.length} ${result.durationMs}ms${result.error ? ` err=${result.error.slice(0, 160)}` : ''}`,
-    });
-
-    res.status(result.ok ? 200 : result.statusCode || 502).json(result);
-  }));
 
   // GALERIA — lista zdjęć z ocenami agentów AI.
   app.get('/api/gallery', (req, res) => {
@@ -3875,14 +3762,17 @@ async function startServer() {
     res.status(pyRes.status).json(pyRes.data);
   }));
 
-  app.post('/api/kernel/factory-reset', asyncRoute(async (req, res) => {
-    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
+  app.post(['/api/kernel/factory-reset', '/api/system/factory-reset'], asyncRoute(async (req, res) => {
+    if (!hasMcpOrOperatorAuth(req) &&
+        !hasOperatorAuthorization(req.headers['x-svl-operator-token']) &&
         !hasOperatorAuthorization(req.body?.operatorToken)) {
       res.status(401).json({ ok: false, error: 'Przywracanie ustawień fabrycznych wymaga SVL_OPERATOR_TOKEN.' });
       return;
     }
     const corrId: string = (req as any).correlationId || '';
     const pyRes = await callPythonBackend('POST', '/api/py/kernel/factory-reset', req.body || {}, corrId);
+    clearOllamaReadyCache();
+    cachedChatContextMeta = null;
     void pollAndRelayOutbox();
     res.status(pyRes.status).json(pyRes.data);
   }));
