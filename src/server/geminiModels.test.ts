@@ -246,3 +246,23 @@ test('geminiCandidatesFor domyślnie zwraca do 16 modeli i rozpoznaje przejścio
   gm.resetGeminiModelHealth();
 });
 
+test('selectBestGeminiProModel selects newest stable Pro model over Flash or preview', async () => {
+  const gm = await import('./geminiModels.ts');
+  assert.equal(
+    gm.selectBestGeminiProModel([
+      'gemini-2.5-flash',
+      'gemini-3.1-pro-preview',
+      'gemini-2.0-pro',
+      'gemini-2.5-pro',
+      'gemini-pro-latest',
+    ]),
+    'gemini-2.5-pro',
+  );
+  assert.equal(
+    gm.selectBestGeminiProModel(['gemini-3.1-pro-preview', 'gemini-2.5-flash']),
+    'gemini-3.1-pro-preview',
+  );
+  assert.equal(gm.selectBestGeminiProModel([]), 'gemini-2.5-pro');
+});
+
+

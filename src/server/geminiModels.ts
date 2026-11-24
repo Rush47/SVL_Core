@@ -500,3 +500,30 @@ export function createGeminiDeadline(totalMs = Number(process.env.GEMINI_TOTAL_B
     expired: () => Date.now() >= endsAt - 1000,
   };
 }
+
+/**
+ * Wybiera najlepszy dostępny model klasy Pro (dla płatnego klucza Tier-2/Tier-3).
+ * Preferuje stabilne wersje `gemini-X.Y-pro` (najwyższa wersja) -> `gemini-pro-latest` -> `*-pro-preview*`.
+ */
+export function selectBestGeminiProModel(models: string[]): string {
+  const clean = models
+    .map((m) => String(m || '').replace(/^models\//, '').trim())
+    .filter(Boolean);
+  const proModels = clean.filter((m) => /-pro\b|gemini-pro/i.test(m));
+  if (proModels.length === 0) {
+    return clean[0] || 'gemini-2.5-pro';
+  }
+  const scored = [...new Set(proModels)].sort((a, b) => {
+    const previewA = /(preview|exp|experimental)/i.test(a) ? 1 : 0;
+    const previewB = /(preview|exp|experimental)/i.test(b) ? 1 : 0;
+    if (previewA !== previewB) return previewA - previewB;
+    const verA = versionOf(a);
+    const verB = versionOf(b);
+    if (verA !== verB) return verB - verA;
+    const latestA = /-latest$/i.test(a) ? 0 : 1;
+    const latestB = /-latest$/i.test(b) ? 0 : 1;
+    return latestA - latestB || a.localeCompare(b);
+  });
+  return scored[0] || 'gemini-2.5-pro';
+}
+

@@ -40,7 +40,15 @@ interface EnginesState {
       diskFreeGb: number | null;
       error: string | null;
     };
-    gemini: { configured: boolean; models: string[]; modelCount: number; forcedModel: string | null };
+    gemini: {
+      configured: boolean;
+      models: string[];
+      modelCount: number;
+      forcedModel: string | null;
+      tier?: string;
+      allServicesEnabled?: boolean;
+      services?: string[];
+    };
     image: { engine: string; available: boolean | null; detail: string | null };
   };
 }
@@ -65,6 +73,9 @@ export const AiEnginesCard: React.FC = () => {
   const [tunnelMsg, setTunnelMsg] = useState<string | null>(null);
   const [creatingApex, setCreatingApex] = useState(false);
   const [apexMsg, setApexMsg] = useState<string | null>(null);
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState('');
+  const [geminiSaving, setGeminiSaving] = useState(false);
+  const [geminiMsg, setGeminiMsg] = useState<string | null>(null);
 
   const refreshShip = useCallback(async () => {
     const r = await safeFetchJson<any>('/api/ship/ollama/models', { timeoutMs: 10000 });
@@ -135,6 +146,31 @@ export const AiEnginesCard: React.FC = () => {
       setApexMsg(res.data?.error || res.error || 'Nie udało się zbudować svl364-apex-uncensored:latest.');
     }
     setCreatingApex(false);
+  };
+
+  const configureGeminiKey = async () => {
+    const clean = geminiApiKeyInput.trim();
+    if (!clean) {
+      setGeminiMsg('Wklej klucz GEMINI_API_KEY z Google AI Studio (np. AIza...).');
+      return;
+    }
+    setGeminiSaving(true);
+    setGeminiMsg('Weryfikacja klucza Google API i aktywacja najlepszego modelu Pro oraz usług…');
+    const res = await safeFetchJson<any>('/api/gemini/configure', {
+      method: 'POST',
+      timeoutMs: 20000,
+      body: JSON.stringify({ apiKey: clean, tier: 'paid_pro' }),
+    });
+    if (res.ok && res.data?.ok) {
+      setGeminiApiKeyInput('');
+      setGeminiMsg(
+        `✅ Aktywowano! Główny model: ${res.data.primaryModel} · Modele: ${res.data.modelCount} · Pełny pakiet usług Google aktywny.`,
+      );
+      await refresh();
+    } else {
+      setGeminiMsg(`❌ ${res.data?.error || res.error || 'Błąd weryfikacji klucza Google Gemini API.'}`);
+    }
+    setGeminiSaving(false);
   };
 
   const refresh = useCallback(async () => {
@@ -397,14 +433,67 @@ export const AiEnginesCard: React.FC = () => {
           {/* Gemini */}
           <div className="rounded-lg border border-slate-800 bg-[#0d1017] p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Gemini (jawny silnik)
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Gemini Pro &amp; Usługi Google
               <span className="ml-auto"><Dot ok={e.gemini.configured} /></span>
             </div>
             <div className="text-[11px] text-slate-400">
-              {e.gemini.configured ? <>Dostępne modele: <span className="text-slate-200 font-semibold">{e.gemini.modelCount}</span></> : 'Brak klucza GEMINI_API_KEY'}
+              {e.gemini.configured ? (
+                <>Dostępne modele: <span className="text-slate-200 font-semibold">{e.gemini.modelCount}</span> · Tryb: <span className="text-amber-300 font-semibold uppercase">{e.gemini.tier || 'paid_pro'}</span></>
+              ) : (
+                'Oczekuje na klucz GEMINI_API_KEY (profil Pro + wszystkie usługi gotowy)'
+              )}
             </div>
-            {e.gemini.forcedModel && <div className="text-[10px] text-slate-500">Wymuszony: <span className="font-mono">{e.gemini.forcedModel}</span></div>}
-            <ul className="max-h-40 overflow-y-auto space-y-0.5">
+            {e.gemini.forcedModel && (
+              <div className="text-[10px] text-emerald-400">
+                Główny model: <span className="font-mono font-semibold">{e.gemini.forcedModel}</span>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1 pt-0.5">
+              {(e.gemini.services || ['Search Grounding', 'URL Context', 'Code Exec', 'Vision/Audio', 'MCP']).map((svc) => (
+                <span key={svc} className="rounded border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-200">
+                  {svc}
+                </span>
+              ))}
+            </div>
+            <div className="space-y-1.5 pt-1 border-t border-slate-800/80">
+              <div className="flex gap-1.5">
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/25"
+                >
+                  🔑 Pobierz klucz AI Studio
+                </a>
+                <a
+                  href="https://console.cloud.google.com/billing"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded border border-sky-500/40 bg-sky-500/15 px-2 py-1 text-[10px] font-semibold text-sky-200 hover:bg-sky-500/25"
+                >
+                  💳 Doładuj Billing ($1000)
+                </a>
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  type="password"
+                  value={geminiApiKeyInput}
+                  onChange={(ev) => setGeminiApiKeyInput(ev.target.value)}
+                  placeholder="Wklej GEMINI_API_KEY (AIza...)"
+                  className="flex-1 min-w-0 rounded border border-slate-700 bg-slate-900/90 px-2 py-1 text-[11px] text-slate-200 font-mono placeholder:text-slate-500 focus:border-amber-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void configureGeminiKey()}
+                  disabled={geminiSaving}
+                  className="rounded border border-emerald-500/50 bg-emerald-600/25 px-2.5 py-1 text-[10px] font-semibold text-emerald-200 hover:bg-emerald-600/40 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {geminiSaving ? 'Aktywacja…' : 'Aktywuj Pro'}
+                </button>
+              </div>
+              {geminiMsg && <div className="text-[10px] text-slate-300 leading-snug">{geminiMsg}</div>}
+            </div>
+            <ul className="max-h-32 overflow-y-auto space-y-0.5">
               {e.gemini.models.slice(0, 20).map((m) => (
                 <li key={m} className="text-[11px] text-slate-300 font-mono truncate">{m}</li>
               ))}

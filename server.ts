@@ -127,7 +127,9 @@ import {
   getSoonestGeminiRetryMs,
   isGeminiModelGoneError,
   markGeminiModelGone,
+  resetGeminiModelHealth,
   sanitizeGeminiToolDeclarations,
+  selectBestGeminiProModel,
   setGeminiModelLogger,
   setGeminiModelStatePath,
   summarizeGeminiFailures,
@@ -571,15 +573,19 @@ function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY;
   const hasKey = apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.trim().length >= 10;
   if (!hasKey) {
-    // W środowisku Cloud Run / AI Studio bez jawnego klucza SDK używa Application Default Credentials (ADC)
-    return new GoogleGenAI({
-      apiVersion: process.env.GOOGLE_GENAI_API_VERSION || 'v1beta',
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
+    if (String(process.env.GOOGLE_GENAI_USE_VERTEXAI || '').trim().toLowerCase() === 'true') {
+      return new GoogleGenAI({
+        vertexai: true,
+        project: process.env.GOOGLE_CLOUD_PROJECT || undefined,
+        location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
         },
-      },
-    });
+      });
+    }
+    return null;
   }
   return new GoogleGenAI({
     apiKey: apiKey.trim(),
@@ -590,6 +596,32 @@ function getGeminiClient(): GoogleGenAI | null {
       },
     },
   });
+}
+
+async function upsertLocalEnvFile(updates: Record<string, string>): Promise<void> {
+  const envFilePath = path.join(__dirname, '.env');
+  let raw = '';
+  try {
+    raw = await fs.readFile(envFilePath, 'utf8');
+  } catch {
+    raw = '# SVL Core OS Environment Configuration\n';
+  }
+  const lines = raw.split(/\r?\n/);
+  const remaining = new Map(Object.entries(updates));
+  const updatedLines = lines.map((line) => {
+    const match = /^\s*([A-Z0-9_]+)\s*=/.exec(line);
+    if (!match) return line;
+    const key = match[1];
+    if (!remaining.has(key)) return line;
+    const val = remaining.get(key)!;
+    remaining.delete(key);
+    return `${key}="${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  });
+  for (const [key, val] of remaining.entries()) {
+    updatedLines.push(`${key}="${val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+  }
+  const finalContent = updatedLines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n';
+  await fs.writeFile(envFilePath, finalContent, { encoding: 'utf8', mode: 0o600 });
 }
 
 type SvlRuntimeLogLine = {
@@ -1513,6 +1545,15 @@ async function startServer() {
           models: geminiModels,
           modelCount: geminiModels.length,
           forcedModel: process.env.GEMINI_MODEL || null,
+          tier: process.env.GEMINI_TIER || 'paid_pro',
+          allServicesEnabled: process.env.SVL_GEMINI_ALL_SERVICES !== '0',
+          services: [
+            'Google Search Grounding',
+            'URL Context',
+            'Code Execution',
+            'Multimodal Vision/Audio/PDF',
+            'MCP Function Calling',
+          ],
         },
         image: {
           engine: String(image.engine || process.env.SVL_IMAGE_ENGINE || 'comfyui'),
@@ -1532,6 +1573,111 @@ async function startServer() {
           tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
         },
       },
+    });
+  }));
+
+  // Natychmiastowa konfiguracja i weryfikacja klucza Google Gemini API (wraz z profilem Pro + Wszystkie Usługi)
+  app.post('/api/gemini/configure', express.json({ limit: '16kb' }), asyncRoute(async (req, res) => {
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ ok: false, error: 'Konfiguracja klucza Gemini API wymaga uprawnień Operatora.' });
+      return;
+    }
+    const rawKey = String(req.body?.apiKey || '').trim();
+    const tier = String(req.body?.tier || 'paid_pro').trim().toLowerCase() === 'free' ? 'free' : 'paid_pro';
+    const requestedModel = String(req.body?.preferredModel || '').trim();
+
+    if (!rawKey || rawKey === 'MY_GEMINI_API_KEY' || rawKey.length < 20) {
+      res.status(400).json({
+        ok: false,
+        error: 'Podaj prawidłowy klucz Google Gemini API (np. zaczynający się od AIza...).',
+      });
+      return;
+    }
+
+    const testClient = new GoogleGenAI({
+      apiKey: rawKey,
+      apiVersion: process.env.GOOGLE_GENAI_API_VERSION || 'v1beta',
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+
+    resetGeminiModelHealth();
+    let models: string[] = [];
+    try {
+      models = await discoverGeminiModels(testClient);
+    } catch (err) {
+      res.status(400).json({
+        ok: false,
+        error: `Google API odrzuciło klucz lub nie udało się pobrać listy modeli: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+
+    if (!models || models.length === 0) {
+      res.status(400).json({
+        ok: false,
+        error: 'Klucz nie zwrócił żadnych dostępnych modeli Gemini. Sprawdź uprawnienia klucza w Google AI Studio.',
+      });
+      return;
+    }
+
+    const chosenModel =
+      requestedModel && models.includes(requestedModel)
+        ? requestedModel
+        : tier === 'paid_pro'
+          ? selectBestGeminiProModel(models)
+          : models[0];
+
+    process.env.GEMINI_API_KEY = rawKey;
+    process.env.GEMINI_TIER = tier;
+    process.env.SVL_GEMINI_ALL_SERVICES = '1';
+    process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK = '1';
+    if (tier === 'paid_pro') {
+      process.env.GEMINI_MODEL = chosenModel;
+      process.env.GEMINI_THINKING_LEVEL = 'MEDIUM';
+      process.env.GEMINI_TOTAL_BUDGET_MS = '90000';
+      process.env.GEMINI_TIMEOUT_MS = '45000';
+    } else if (requestedModel) {
+      process.env.GEMINI_MODEL = chosenModel;
+    } else {
+      delete process.env.GEMINI_MODEL;
+    }
+
+    await upsertLocalEnvFile({
+      GEMINI_API_KEY: rawKey,
+      GEMINI_TIER: tier,
+      GEMINI_MODEL: process.env.GEMINI_MODEL || '',
+      SVL_GEMINI_ALL_SERVICES: '1',
+      SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK: '1',
+      ...(tier === 'paid_pro'
+        ? {
+            GEMINI_THINKING_LEVEL: 'MEDIUM',
+            GEMINI_TOTAL_BUDGET_MS: '90000',
+            GEMINI_TIMEOUT_MS: '45000',
+          }
+        : {}),
+    });
+
+    svlFileLogger.log({
+      layer: 'GATEWAY',
+      level: 'INFO',
+      category: 'ai_models',
+      message: `Skonfigurowano klucz Google Gemini API (tryb: ${tier}, główny model: ${chosenModel}, wykryte modele: ${models.length}).`,
+    });
+
+    res.json({
+      ok: true,
+      configured: true,
+      tier,
+      primaryModel: chosenModel,
+      modelCount: models.length,
+      models,
+      servicesEnabled: [
+        'Google Search Grounding',
+        'URL Context',
+        'Code Execution',
+        'Multimodal Vision/Audio/PDF',
+        'MCP Function Calling',
+      ],
     });
   }));
 
