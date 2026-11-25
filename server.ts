@@ -4211,7 +4211,7 @@ async function startServer() {
       {
         command: cleanMsg,
         actor: 'Mateusz Mitek',
-        conversationId: replyConversationId || 'conv-jyn',
+        conversationId: replyConversationId || 'conv-ai-jyn-20261125',
         origin,
         correlationId: corrId,
       },
@@ -5553,7 +5553,7 @@ async function startServer() {
           .replace(/^-|-$/g, '');
         const isSystemSi1 = /system_?si_?1|jyn/i.test(`${rawId} ${rawTitle}`);
         const chanId = isSystemSi1
-          ? 'conv-jyn'
+          ? 'conv-ai-jyn-20261125'
           : rawId.startsWith('conv-')
             ? rawId
             : `conv-${rawId || 'custom-channel'}`;
@@ -6026,7 +6026,7 @@ async function startServer() {
           parameters: {
             type: Type.OBJECT,
             properties: {
-              id: { type: Type.STRING, description: 'Identyfikator kanału, np. conv-jyn.' },
+              id: { type: Type.STRING, description: 'Identyfikator kanału, np. conv-ai-jyn-20261125.' },
               title: { type: Type.STRING, description: 'Nazwa wyświetlana kanału.' },
               welcome_message: { type: Type.STRING, description: 'Opcjonalna wiadomość inauguracyjna w kanale.' },
             },
@@ -6392,7 +6392,7 @@ async function startServer() {
                 ? `- **Przetworzone z czatu (${syncData.processedChatArtifacts.length}):** ${syncData.processedChatArtifacts.map((a: string) => `\`${a}\``).join(', ')}\n`
                 : '') +
               `- **Modele Ollama:** \`${ollamaModelsList.length}\` (${ollamaInfo.daemon_reachable || syncData.ollama?.daemon_reachable ? 'ONLINE' : 'offline'})\n` +
-              `- **Kanały czatu:** ${Array.isArray(syncData.channels) ? syncData.channels.map((c: string) => `\`${c}\``).join(', ') : '`conv-jyn`'}`
+              `- **Kanały czatu:** ${Array.isArray(syncData.channels) ? syncData.channels.map((c: string) => `\`${c}\``).join(', ') : '`conv-ai-jyn-20261125`'}`
             : `❌ Synchronizacja systemu operacyjnego nie powiodła się: ${syncData?.error || 'błąd backendu'}.`,
         };
       }
@@ -7862,9 +7862,9 @@ async function startServer() {
 
   function getCanonicalConversationTitle(id: string): string {
     if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
-    if (id === 'conv-jyn') return 'Jyn — Zarządzanie Infrastrukturą (ROOT)';
+    if (id === 'conv-ai-jyn-20261125') return 'Jyn — Zarządzanie Infrastrukturą (ROOT)';
     if (id === SVL364_ROOT_CHANNEL_ID) return SVL364_ROOT_CHANNEL_TITLE;
-    if (id === 'conv-si-sphere') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
+    if (id === 'conv-ai-si-sphere-20261125') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
     return 'Sesja SVL Python OS';
   }
 
@@ -8163,9 +8163,9 @@ async function startServer() {
         ? agentsRes.data.agents.map((a: any) => String(a?.canonical_name || '')).filter(Boolean)
         : ['Jyn'];
       const channelAgent: ConversationAgent | null =
-        convId === 'conv-jyn'
+        convId === 'conv-ai-jyn-20261125'
           ? 'Jyn'
-          : convId === 'conv-si-sphere' && registeredNames.includes('SI_Sphere')
+          : convId === 'conv-ai-si-sphere-20261125' && registeredNames.includes('SI_Sphere')
             ? 'SI_Sphere'
             : null;
       const activeConvAgents = CONVERSATION_AGENTS.filter((a) => registeredNames.includes(a));

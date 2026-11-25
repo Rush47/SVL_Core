@@ -33,7 +33,7 @@ class JynOSShell(cmd.Cmd):
     intro = f"""
 {CYAN}{BOLD}================================================================================{RESET}
 {MAGENTA}{BOLD}   ✦ JYN_OS v3.0 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
-{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Operator: Mateusz Mitek · Czat PL (stream=OFF){RESET}
+{CYAN}   Rdzeń AI: Jyn Mitek · Operator: Mateusz Mitek · Czat PL (stream=OFF){RESET}
 {DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}status{RESET}{DIM}' dla audytu lub pisz bezpośrednio do Jyn.{RESET}
 {CYAN}{BOLD}================================================================================{RESET}
 """
@@ -59,6 +59,8 @@ class JynOSShell(cmd.Cmd):
     def do_status(self, arg: str) -> None:
         """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435)."""
         print(f"\n{BOLD}🔍 [AUDYT INFRASTRUKTURY SVL-364 / JYN_OS]{RESET}\n")
+
+        print(f"   Konto AI: {self.chat_engine.identity.account_id} · kanał: {self.chat_engine.identity.channel_id}")
 
         # 1. SSH
         key_info = self.ssh.get_key_status()

@@ -157,6 +157,8 @@ def build_polish_chat_messages(
     return messages
 
 
+from .identity import JynIdentity, load_identity
+
 @dataclass
 class JynChatEngine:
     """Silnik rozmowy JYN_OS (bez strumieniowania, język polski, obsługa 13 modeli SVL-364)."""
@@ -164,6 +166,7 @@ class JynChatEngine:
     config: JynOSConfig
     ollama: "SvlOllamaClient"
     history: List[Dict[str, str]] = field(default_factory=list)
+    identity: JynIdentity = field(default_factory=load_identity)
 
     def clear_history(self) -> None:
         self.history.clear()
@@ -174,6 +177,9 @@ class JynChatEngine:
         parts = raw.split(maxsplit=1)
         cmd = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if cmd == "/identity":
+            return ChatTurnResult(ok=True, reply=f"Konto: {self.identity.account_id}\nKanał: {self.identity.channel_id}", model=self.config.get_active_model(), endpoint=self.config.get_active_ollama_url(), local_command=True)
 
         if cmd in ("/clear", "/wyczysc", "/reset"):
             self.clear_history()

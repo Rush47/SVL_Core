@@ -105,7 +105,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     () =>
       effectiveAgents.some((a) => a.canonicalName === 'SI_Sphere') ||
       systemModules.some((m) => String(m.id || '').startsWith('si-sphere')) ||
-      conversations.some((c) => c.id === 'conv-si-sphere'),
+      conversations.some((c) => c.id === 'conv-ai-si-sphere-20261125'),
     [conversations, effectiveAgents, systemModules],
   );
 
@@ -917,9 +917,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const targetConvId = overrideConvId || targetConvObj.id;
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
-        targetConvId === 'conv-jyn' ||
+        targetConvId === 'conv-ai-jyn-20261125' ||
         targetConvId === 'conv-svl364-mcp-root' ||
-        targetConvId === 'conv-si-sphere';
+        targetConvId === 'conv-ai-si-sphere-20261125';
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
         : targetConvObj.messages.length <= 1 && trimmed
@@ -953,13 +953,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const isSi2Channel =
         !isSvl364RootConv &&
         !isJediVmTarget &&
-        (targetConvId === 'conv-si-sphere' ||
+        (targetConvId === 'conv-ai-si-sphere-20261125' ||
           resolvedTarget.agent === 'SI_Sphere' ||
           targetAgent === 'SI_Sphere');
       const isSystemSi1Channel =
         !isJediVmTarget &&
         !isSi2Channel &&
-        (isSvl364RootConv || targetConvId === 'conv-jyn' || targetAgent === 'Jyn');
+        (isSvl364RootConv || targetConvId === 'conv-ai-jyn-20261125' || targetAgent === 'Jyn');
       const isFamilyDuplex =
         !isSvl364RootConv &&
         !isJediVmTarget &&
@@ -1542,9 +1542,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
-            const isSystemSi1Chan = conv.id === 'conv-jyn';
+            const isSystemSi1Chan = conv.id === 'conv-ai-jyn-20261125';
             const isSvl364RootChan = conv.id === 'conv-svl364-mcp-root';
-            const isSi2Chan = conv.id === 'conv-si-sphere';
+            const isSi2Chan = conv.id === 'conv-ai-si-sphere-20261125';
             return (
               <div
                 key={conv.id}
@@ -1607,9 +1607,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </button>
                 {conversations.length > 1 &&
                   !isFamilyChan &&
-                  conv.id !== 'conv-jyn' &&
+                  conv.id !== 'conv-ai-jyn-20261125' &&
                   conv.id !== 'conv-svl364-mcp-root' &&
-                  conv.id !== 'conv-si-sphere' && (
+                  conv.id !== 'conv-ai-si-sphere-20261125' && (
                   <button
                     type="button"
                     aria-label={`Usuń konwersację ${conv.title}`}
@@ -1712,7 +1712,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
                 } else if (val === 'Jyn') {
-                  setActiveConvId('conv-jyn');
+                  setActiveConvId('conv-ai-jyn-20261125');
                   setTargetAgent('Jyn');
                 } else if (val === 'SI_Sphere') {
                   openAgentChannel('SI_Sphere');
@@ -2566,7 +2566,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   ? 'Dowolne polecenie ROOT na SVL-364 lub /mcp...'
                   : targetAgent === 'JEDI_Omni_OS'
                     ? 'Prompt / polecenie dla JEDI Omni-OS...'
-                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-ai-si-sphere-20261125'
                       ? 'Polecenie dla SI_Sphere...'
                       : 'Wpisz polecenie lub wiadomość...'
               }
@@ -2575,9 +2575,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   ? 'Wpisz DOWOLNE polecenie Linux jako ROOT (np. uname -a, /root systemctl status svl-mcp), /mcp connect <url> <token> lub dowolne pytanie do SVL-364...'
                   : targetAgent === 'JEDI_Omni_OS'
                     ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
-                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-ai-si-sphere-20261125'
                       ? 'Wydaj polecenie dla SI_Sphere (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
-                      : activeConv?.id === 'conv-jyn' || targetAgent === 'Jyn'
+                      : activeConv?.id === 'conv-ai-jyn-20261125' || targetAgent === 'Jyn'
                         ? 'Wydaj polecenie dla Jyn Mitek przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
                         : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn Mitek i SI_Sphere...'
               }

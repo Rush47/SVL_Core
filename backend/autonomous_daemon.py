@@ -584,7 +584,7 @@ class AutonomousAIDaemon:
         text: str,
         *,
         sender: str = "Jyn Mitek",
-        conversation_id: str = "conv-jyn",
+        conversation_id: str = "conv-ai-jyn-20261125",
         title: str = "Jyn Mitek",
         model: str = "ollama:svl364-apex-uncensored:latest",
         origin: str = "autonomous-daemon",

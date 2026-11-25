@@ -150,7 +150,7 @@ JYN_SYSTEM_PROMPT = ""
 
 CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
     "Jyn": {
-        "id": "jyn",
+        "id": "jyn-ai-20261125",
         "canonical_name": "Jyn",
         "display_name": "Jyn Mitek (Infrastruktura · ROOT)",
         "slug": "jyn",
@@ -210,7 +210,7 @@ SI_SPHERE_SYSTEM_PROMPT = ""
 
 DYNAMIC_SVL_AGENTS: dict[str, dict[str, Any]] = {
     "SI_Sphere": {
-        "id": "si-sphere",
+        "id": "si-sphere-ai-20261125",
         "canonical_name": "SI_Sphere",
         "display_name": "SI_Sphere (SVL-465 · ROOT)",
         "slug": "si-sphere",
@@ -267,12 +267,12 @@ def normalize_agent_canonical_name(raw_name: str) -> str:
         "svl-364 komputer pokladowy", "conv-svl364-komputer-pokladowy",
     }:
         return ""
-    if clean in {"jyn", "conv-jyn", "jyn mitek", "jyn_mitek", "jyn-mitek", "jyn (root)", "jyn mitek (root)", "jyn (infrastruktura · root)", "jyn mitek (infrastruktura · root)"}:
+    if clean in {"jyn-ai-20261125", "jyn", "conv-ai-jyn-20261125", "jyn mitek", "jyn_mitek", "jyn-mitek", "jyn (root)", "jyn mitek (root)", "jyn (infrastruktura · root)", "jyn mitek (infrastruktura · root)"}:
         return "Jyn"
     if clean in {
-        "si_sphere", "si-sphere", "si sphere", "sisphere",
+        "si-sphere-ai-20261125", "si_sphere", "si-sphere", "si sphere", "sisphere",
         "system_si_2", "system-si-2", "system si 2", "si2",
-        "conv-si-sphere", "si_sphere (root)", "si_sphere (svl-465 · root)", "si_sphere (svl-465 root)",
+        "conv-ai-si-sphere-20261125", "si_sphere (root)", "si_sphere (svl-465 · root)", "si_sphere (svl-465 root)",
     }:
         return "SI_Sphere"
     for key in CANONICAL_SVL_AGENTS:
@@ -1157,19 +1157,20 @@ class SVLAgentOrchestrator:
                 )
                 """
             )
-            for name, meta in CANONICAL_SVL_AGENTS.items():
+            for name, meta in {**CANONICAL_SVL_AGENTS, **{n: m for n, m in DYNAMIC_SVL_AGENTS.items() if conn.execute("SELECT 1 FROM agent_configs WHERE canonical_name = ?", (n,)).fetchone()}}.items():
                 default_cfg = {
                     **meta.get("default_config", {}),
                     "system_prompt": meta["system_prompt"],
+                    "account_id": meta["id"],
                 }
                 default_cfg = sanitize_agent_config(default_cfg)
                 existing = conn.execute(
                     "SELECT config_json FROM agent_configs WHERE canonical_name = ?",
                     (name,),
                 ).fetchone()
-                if not existing:
+                if not existing or (json.loads(existing["config_json"] or "{}") or {}).get("account_id") != meta["id"]:
                     conn.execute(
-                        "INSERT INTO agent_configs (canonical_name, config_json, updated_at) VALUES (?, ?, ?)",
+                        "INSERT INTO agent_configs (canonical_name, config_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(canonical_name) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at",
                         (name, json.dumps(default_cfg, ensure_ascii=False), now_iso),
                     )
                     conn.execute(

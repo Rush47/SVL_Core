@@ -1691,7 +1691,7 @@ async def handle_api_request(
         if not text:
             return 400, {"ok": False, "error": "Wymagana treść wiadomości (text)."}
         sender = str(body.get("sender") or "Jyn Mitek").strip() or "Jyn Mitek"
-        conversation_id = str(body.get("conversation_id") or body.get("conversationId") or "conv-jyn").strip() or "conv-jyn"
+        conversation_id = str(body.get("conversation_id") or body.get("conversationId") or "conv-ai-jyn-20261125").strip() or "conv-ai-jyn-20261125"
         title = str(body.get("title") or sender).strip() or sender
         res = await asyncio.to_thread(
             runtime.autonomous_daemon.send_proactive_message,
@@ -2201,9 +2201,9 @@ async def handle_api_request(
         if not cid:
             return 400, {"ok": False, "error": "conversation_id is required"}
         registered_names = runtime.orchestrator.list_registered_agent_names()
-        protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-jyn", "conv-svl364-mcp-root"}
+        protected_channels = {"conv-rodzina-mitek-wszyscy", "conv-ai-jyn-20261125", "conv-svl364-mcp-root"}
         if "SI_Sphere" in registered_names:
-            protected_channels.add("conv-si-sphere")
+            protected_channels.add("conv-ai-si-sphere-20261125")
         for name in registered_names:
             protected_channels.add(f"conv-agent-{name.lower()}")
         if cid in protected_channels:
@@ -2622,7 +2622,7 @@ async def handle_api_request(
         if not command_text:
             return 400, {"ok": False, "error": "Pole 'command' jest wymagane do przetworzenia w maszynie wirtualnej JEDI Omni-OS v12."}
         actor = str(body.get("actor") or "Mateusz Mitek").strip()[:120]
-        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "conv-jyn").strip()[:120]
+        conversation_id = str(body.get("conversationId") or body.get("conversation_id") or "conv-ai-jyn-20261125").strip()[:120]
         force_lethal = body.get("generatesLethalRisk")
         force_override = body.get("noOtherOption")
         res = runtime.jedi_vm.process_chat_command(
