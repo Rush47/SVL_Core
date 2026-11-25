@@ -159,6 +159,8 @@ import {
   cleanAgentReply,
   consecutiveAiTurns,
   isCannedFallbackReply,
+  isNaturalPrivateChat,
+  toPrivateChatHistory,
   isRepetitive,
   parsePredictedSpeaker,
   toAgentPerspective,
@@ -4030,6 +4032,7 @@ async function startServer() {
     // a pozostali klienci widzą ją od razu przez /ws/svl.
     const replyConversationId = String(conversationId || '').trim().slice(0, 120);
     const replyConversationTitle = String(req.body?.conversationTitle || '').trim().slice(0, 200);
+    const directNaturalChat = isNaturalPrivateChat(replyConversationId, cleanMsg);
     const sendChatJson = res.json.bind(res);
     const chatStartedAt = Date.now();
     // Przyciski potwierdzeń operacji GitHub zleconych przez AI (dopisywane pod odpowiedzią).
@@ -4066,6 +4069,10 @@ async function startServer() {
         res.status(503);
         body = {ok:false, engineProvider:'none', provenance:'error', error:'Zablokowano dawną syntetyczną odpowiedź. Wybrany model nie zwrócił potwierdzonej wypowiedzi.'};
       }
+      if (directNaturalChat && body?.ok === true && typeof body.reply === 'string' && !['ollama', 'gemini'].includes(body.engineProvider)) {
+        res.status(503);
+        body = {ok: false, engineProvider: 'none', provenance: 'error', error: 'Nie otrzymano odpowiedzi z modelu AI. Wynik serwera nie zastępuje rozmowy z agentem.'};
+      }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
       const failed = !body || body.ok !== true || body.provenance === 'error';
       svlFileLogger.log({
@@ -4080,7 +4087,7 @@ async function startServer() {
           `(${Date.now() - chatStartedAt} ms, HTTP ${res.statusCode})`,
         details: failed
           ? { error: body?.error || null, provenance: body?.provenance || null, reasons: body?.failureReasons || null }
-          : { provenance: body?.provenance || null, replyChars: String(body?.reply || '').length },
+          : { provenance: body?.provenance || null, engineProvider: body?.engineProvider || null, actualModel: body?.ollamaModelActual || body?.modelUsed || null, endpointId: body?.ollamaEndpointId || null, replyChars: String(body?.reply || '').length },
       });
       if (body && typeof body === 'object') delete body.failureReasons;
       if (
@@ -5068,8 +5075,8 @@ async function startServer() {
     if (lastHistoryTurn?.role === 'user' && (lastHistoryTurn.content.trim() === cleanMsg || lastHistoryTurn.content.trim() === effectiveCleanMsg)) {
       historyTurns.pop();
     }
-    const agentHistory = conversationAgent ? toAgentPerspective(historyTurns, conversationAgent, 48) : conversationHistory;
-    const labelOperatorText = (text: string) => (conversationAgent ? `[${OPERATOR_LABEL}]: ${text}` : text);
+    const agentHistory = directNaturalChat ? toPrivateChatHistory(historyTurns, selectedAgent, 48) : conversationAgent ? toAgentPerspective(historyTurns, conversationAgent, 48) : conversationHistory;
+    const labelOperatorText = (text: string) => (conversationAgent && !directNaturalChat ? `[${OPERATOR_LABEL}]: ${text}` : text);
     const cleanReplyFor = (text: string) => String(text || '').trim();
     const missionVerificationContext = effectiveCleanMsg;
 
@@ -6992,6 +6999,10 @@ async function startServer() {
       selectedDisplayName,
     );
 
+    const plainPrivateDialogue = directNaturalChat && !requestsRootSystemTools && !wantsGitHubTools && !imageBase64 && !shouldAttachToolsForLocalOllama(effectiveCleanMsg, {});
+    const wantsRichUi = /(?:wykres|diagram|wizualizacj|interaktywn|formularz|przycisk|tabel[aeę])/iu.test(effectiveCleanMsg);
+    const conversationContext = plainPrivateDialogue ? formatMemoryPromptContext(recalledMemories.filter(m => m.kind !== 'episode'), selectedDisplayName, 8) : agentMemoryContext;
+
     // Antivirus Scan & Chat Synchronization priority handler
     const wantsAntivirusScan = /^\/antivirus(?:\s|$)/i.test(cleanMsg);
     if (wantsAntivirusScan) {
@@ -7157,7 +7168,7 @@ async function startServer() {
         );
         const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
         const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
-        const compactSystemForOllama = ['Domyślnie odpowiadaj naturalną, poprawną polszczyzną. Jeśli użytkownik prosi o inny język, użyj wskazanego języka.', buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n');
+        const compactSystemForOllama = ['Domyślnie odpowiadaj naturalną, poprawną polszczyzną. Jeśli użytkownik prosi o inny język, użyj wskazanego języka.', buildCompactOllamaSystemContext(conversationContext), !plainPrivateDialogue || /(?:awatar|avatar)/iu.test(effectiveCleanMsg) ? SELF_AVATAR_CAPABILITY : '', !plainPrivateDialogue || wantsRichUi ? OPENAI_UI_CAPABILITY : ''].filter(Boolean).join('\n');
         const attachOllamaTools =
           chatToolDeclarations.length > 0 &&
           !imageBase64 &&
@@ -7196,9 +7207,7 @@ async function startServer() {
           isVision: isVisionOllama,
           estimatedPromptChars: totalEstimatedPromptChars,
         });
-        const ollamaUserContent = effectiveCleanMsg
-          ? effectiveCleanMsg.replace(/^\s*cześć\s+jyn[,!\s]*/iu, 'Cześć! ')
-          : '';
+        const ollamaUserContent = effectiveCleanMsg;
         const ollamaMessages: any[] = [
           ...(compactSystemForOllama ? [{ role: 'system', content: compactSystemForOllama }] : []),
           ...compactOllamaHistory,
@@ -7208,7 +7217,7 @@ async function startServer() {
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
-        const rawTextChat = useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT === '1' });
+        const rawTextChat = !directNaturalChat && useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT === '1' });
         const rawPrompt = [compactSystemForOllama, ...compactOllamaHistory.map(t => `[${t.role === 'assistant' ? selectedDisplayName : OPERATOR_LABEL}]: ${t.content}`), `[${OPERATOR_LABEL}]: ${ollamaUserContent}`, `[${selectedDisplayName}]: `].filter(Boolean).join('\n');
         const allowedToolNames = (rawTextChat ? [] : chatToolDeclarations).map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
@@ -7229,7 +7238,7 @@ async function startServer() {
               options: {
                 temperature: isVisionOllama
                   ? Number(process.env.OLLAMA_VISION_TEMPERATURE || 0.2)
-                  : Math.min(effectiveTemperature, 0.3),
+                  : effectiveTemperature,
                 top_p: 0.85,
                 repeat_penalty: 1.12,
                 num_ctx: ollamaTurnOpts.num_ctx,
@@ -7463,7 +7472,7 @@ async function startServer() {
                 ...tempCfg,
                 maxOutputTokens: chatMaxOutputTokens,
                 ...geminiThinkingConfig(candidate),
-                systemInstruction: [agentMemoryContext,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n'),
+                systemInstruction: [conversationContext, !plainPrivateDialogue || wantsRichUi ? OPENAI_UI_CAPABILITY : ''].filter(Boolean).join('\n'),
                 ...(includeTools && sanitizedGeminiTools.length > 0 && !isGemma
                   ? { tools: [{ functionDeclarations: sanitizedGeminiTools }] }
                   : useSearchGrounding && !isGemma

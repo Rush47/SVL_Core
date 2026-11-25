@@ -1027,6 +1027,11 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         return;
       }
 
+      const privateNaturalChat = (targetConvId === 'conv-ai-jyn-20261125' || targetConvId === 'conv-ai-si-sphere-20261125') && !trimmed.startsWith('/');
+      if (privateNaturalChat && (!['ollama', 'gemini'].includes(String(data.engineProvider || '')) || !String(data.reply || '').trim())) {
+        setChatActionError('Brak potwierdzonej odpowiedzi modelu AI. Sprawdź wersję serwera oraz połączenie z Ollamą.');
+        return;
+      }
       const total = ((performance.now() - normalStartedAt) / 1000).toFixed(2);
       const metrics = data.ollamaTiming;
       const details = metrics && typeof metrics.wallMs === 'number' ? `; generacja ${(metrics.evalMs / 1000).toFixed(2)} s, prompt ${(metrics.promptMs / 1000).toFixed(2)} s, ładowanie ${(metrics.loadMs / 1000).toFixed(2)} s` : '';

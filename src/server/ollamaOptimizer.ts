@@ -210,7 +210,7 @@ export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 
     // Skompresuj długi statyczny blok protokołu SQLite WAL do 1 zwięzłej linii faktów
     .replace(
       /\[PROTOKÓŁ PRAWDZIWYCH INFORMACJI SQLITE WAL[\s\S]*?synchronizuje każdą zmianę z czatu\]\.\]/g,
-      '[FAKTY SVL: Sojusz=46,5 mln stanowisk, APEX-CITADEL=1420 załogi, Debian 13 Trixie + JEDI Omni-OS v12 ROOT.]',
+      '',
     )
     // Zastąp dynamiczny licznik cykli stałą etykietą w opisie widoczności
     .replace(/cykle_wykonane=\d+/g, 'cykle_wykonane=ACTIVE')
