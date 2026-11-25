@@ -35,11 +35,6 @@ STOP_SEQUENCES: List[str] = [
     "<|im_end|>",
     "<|eot_id|>",
     "</s>",
-    "\nUżytkownik:",
-    "\nUser:",
-    "\nOperator:",
-    "\nMateusz Mitek:",
-    "\n[Operator]:",
 ]
 
 _DETAILED_QUERY_RE = re.compile(
@@ -89,9 +84,8 @@ def clean_polish_response(raw_text: str) -> str:
         return ""
     cleaned = _THINK_BLOCK_RE.sub("", str(raw_text)).strip()
     if _UNCLOSED_THINK_RE.match(cleaned):
-        cleaned = re.sub(r"^<think>", "", cleaned, flags=re.IGNORECASE).strip()
+        return ""
     cleaned = _ROLE_PREFIX_RE.sub("", cleaned).strip()
-    cleaned = _TRAILING_TURN_RE.sub("", cleaned).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned
 

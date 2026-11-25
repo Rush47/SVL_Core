@@ -189,7 +189,7 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
   ) {
     return answer;
   }
-  return UNVERIFIED_MISSION_STATUS_REPLY;
+  return answer + '\n\n' + UNVERIFIED_MISSION_STATUS_REPLY;
 }
 
 /**

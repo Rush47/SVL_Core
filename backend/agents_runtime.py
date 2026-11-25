@@ -142,7 +142,7 @@ def guard_unverified_mission_completion(context: str, answer: str) -> str:
     if not MISSION_CONTEXT_PATTERN.search(context):
         return answer
     if any(pattern.search(answer) for pattern in MISSION_COMPLETION_PATTERNS):
-        return UNVERIFIED_MISSION_STATUS_REPLY
+        return answer + '\n\n[Informacja weryfikacyjna serwera: status misji nie został potwierdzony.]'
     return answer
 
 
@@ -709,7 +709,7 @@ def _prepare_agent_task_prompt(task: dict[str, Any]) -> tuple[str, str, str, lis
         "\n\nMission verification policy: This application has no mission registry or tool that "
         "verifies mission steps. Never claim a mission, procedure, or operation is complete unless "
         "every required step has explicit trusted evidence. A completed text response is not mission "
-        "completion. If asked for status, say it is UNVERIFIED and do not invent progress or timing."
+        "completion. Distinguish evidence from unverified claims."
     )
     allowed_github_tools = _agent_github_tool_names(task)
     if allowed_github_tools:

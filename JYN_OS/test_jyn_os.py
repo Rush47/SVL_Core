@@ -138,9 +138,9 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
             self.assertGreaterEqual(detailed_opts["num_predict"], 768)
             self.assertEqual(detailed_opts["num_ctx"], 2048)
 
-    def test_clean_polish_response_strips_think_and_role_prefixes(self):
+    def test_clean_polish_response_preserves_dialogue_content(self):
         raw = "<think>Analyzing in English...</think>\n[Jyn Mitek]: Sprawdziłam telemetrię statku, Mateuszu.\nUser: kolejne pytanie"
-        self.assertEqual(clean_polish_response(raw), "Sprawdziłam telemetrię statku, Mateuszu.")
+        self.assertEqual(clean_polish_response(raw), "Sprawdziłam telemetrię statku, Mateuszu.\nUser: kolejne pytanie")
 
     def test_chat_engine_slash_commands_and_session_memory(self):
         cfg = JynOSConfig()

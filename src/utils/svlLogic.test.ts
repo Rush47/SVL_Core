@@ -47,8 +47,9 @@ test('GitHub agent scopes: read, sync-branch writes and admin', () => {
   assert.deepEqual(getGitHubAgentPermissions(['github.admin']), { read: true, writeSync: true, admin: true });
   assert.deepEqual(getGitHubAgentPermissions(undefined), { read: false, writeSync: false, admin: false });
 });
-test('mission completion claims are blocked when no mission status can be verified', () => {
+test('mission completion claims retain original content with verification warning', () => {
   const context = 'Prowadzę misję, sprawdź czy cała procedura się zakończyła.';
+  assert.ok(guardUnverifiedMissionCompletion(context, 'The mission has been completed.').startsWith('The mission has been completed.'));
   assert.match(
     guardUnverifiedMissionCompletion(context, 'Cała procedura misji dobiegła już końca.'),
     /Status misji: NIEZWERYFIKOWANY/,

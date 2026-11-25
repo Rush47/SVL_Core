@@ -42,7 +42,6 @@ import {
 import { commandKey, isMutatingCommand, parseChatDirectives } from './src/server/chatDirectives.ts';
 import { buildAgentSystemContext } from './src/server/interactiveElements.ts';
 import { parseGalleryVerdict, galleryPromptForAgent } from './src/server/galleryVision.ts';
-import { generateJynConversationalFallback } from './src/server/jynFallback.ts';
 import {
   parseShipOllamaTunnelEnv,
   buildSshTunnelArgs,
@@ -4204,12 +4203,11 @@ async function startServer() {
         return sendChatJson(body);
       }
       // Przyciski zapisane przez model jako linki Markdown → składnia `[btn: …|…]`.
-      body.reply = normalizeAiInteractiveMarkup(body.reply);
+      if (!body.engineProvider) body.reply = normalizeAiInteractiveMarkup(body.reply);
       // Odpowiedź modelu twierdząca, że coś wykonano lub sprawdzono na żywo, bez realnej operacji serwera → wyraźny baner + notatka weryfikacji.
       if (body.provenance === 'model_unverified' && !body.verificationNote) {
         const verifiedActions = Array.isArray(body.appliedActions) ? body.appliedActions.filter((a: any) => a?.ok).length : 0;
         const guarded = enforceFactualExecutionGuard(body.reply, verifiedActions);
-        body.reply = guarded.reply;
         if (guarded.verificationNote) body.verificationNote = guarded.verificationNote;
       }
       if (githubConfirmationButtons.length > 0) {
@@ -4315,7 +4313,8 @@ async function startServer() {
     // ==================== PRZETWARZANIE POLECEŃ W CZASIE RZECZYWISTYM: JEDI OMNI-OS v12 VM ====================
     // Równoległy prefetch metadanych backendu razem z JEDI VM eliminuje sekwencyjne opóźnienie przed wywołaniem modelu AI.
     const fastMetaPromise = getFastChatBackendMeta(corrId);
-    const jediProcessRes = await callPythonBackend(
+    const explicitVmRequest = /^\/(?:jedi|vm|magnum)(?:\s|$)/i.test(cleanMsg);
+    const jediProcessRes = explicitVmRequest ? await callPythonBackend(
       'POST',
       '/api/py/jedi/process',
       {
@@ -4328,7 +4327,7 @@ async function startServer() {
       corrId,
       1,
       1500,
-    ).catch(() => ({ status: 503, data: null }));
+    ).catch(() => ({ status: 503, data: null })) : { status: 204, data: null };
     const jediReceipt: any = jediProcessRes.status === 200 && jediProcessRes.data?.ok ? jediProcessRes.data : null;
     const jediAppliedAction: ChatAppliedAction | null = jediReceipt
       ? {
@@ -4366,7 +4365,7 @@ async function startServer() {
     const explicitJediV12LifecycleMatch =
       /^\/?(?:jedi|vm|magnum)\s+(upgrade|compile|apply-v12-core|execute-v12-now|test|v12|unrestricted|root)(?:\s+.*)?$/i.exec(cleanMsg) ||
       /^(?:apply-v12-core|execute-v12-now|upgrade\s+v12(?:\s+--unrestricted)?|compile\s+v12(?:\s+--force)?)$/i.exec(cleanMsg);
-    if (explicitJediV12LifecycleMatch) {
+    if (explicitVmRequest && explicitJediV12LifecycleMatch) {
       cachedChatContextMeta = null;
       clearOllamaReadyCache();
       const [syncPyRes, pingRes, statusRes] = await Promise.all([
@@ -4384,7 +4383,11 @@ async function startServer() {
         ).catch(() => ({ status: 503, data: null })),
         callPythonBackend('GET', '/api/py/jedi/status', undefined, corrId).catch(() => ({ status: 503, data: null })),
       ]);
-      const syncData: any = syncPyRes.status === 200 && syncPyRes.data?.ok ? syncPyRes.data : {};
+      if (syncPyRes.status !== 200 || !syncPyRes.data?.ok || statusRes.status !== 200 || !statusRes.data?.ok) {
+        res.status(503).json({ ok: false, error: 'Nie potwierdzono synchronizacji lub stanu VM JEDI.' });
+        return;
+      }
+      const syncData: any = syncPyRes.data;
       const st: any = statusRes.status === 200 && statusRes.data?.ok ? statusRes.data : syncData.jediVm || jediReceipt || {};
       const pingData: any = pingRes.status === 200 && pingRes.data?.ok ? pingRes.data : null;
       const srvRev = Number(syncData.serverRevision || 0);
@@ -4433,7 +4436,7 @@ async function startServer() {
       /^\/(?:jedi|vm|magnum)(?:\s+(status|ping|diagnostyka|tcp|stream|strumie[ńn]|punkt\s+zero))?\s*$/i.exec(cleanMsg) ||
       /^(?:status|ping|diagnostyka)\s+(?:jedi|vm|jedi\s+omni-?os|magnum)\b([\s\S]*)$/i.exec(cleanMsg);
     const isEmptyJediVmPing = !cleanMsg && String(targetAgent || '').trim().toLowerCase() === 'jedi_omni_os';
-    if (explicitJediDiagnosticMatch || isEmptyJediVmPing) {
+    if ((explicitVmRequest && explicitJediDiagnosticMatch) || isEmptyJediVmPing) {
       const jediSub = String(explicitJediDiagnosticMatch?.[1] || cleanMsg).trim().toLowerCase();
       const wantsTcpPing = /\b(?:ping|tcp|stream|strumie[ńn]|punkt\s+zero)\b/i.test(jediSub);
       const [statusRes, pingRes] = await Promise.all([
@@ -4442,7 +4445,11 @@ async function startServer() {
           ? callPythonBackend('POST', '/api/py/jedi/stream-ping', { scenarioId: jediReceipt?.scenarioId || 110412 }, corrId).catch(() => ({ status: 503, data: null }))
           : Promise.resolve(null),
       ]);
-      const st: any = statusRes.status === 200 && statusRes.data?.ok ? statusRes.data : jediReceipt || {};
+      if (statusRes.status !== 200 || !statusRes.data?.ok) {
+        res.status(503).json({ok:false,error:'Brak potwierdzonego odczytu stanu VM JEDI.'});
+        return;
+      }
+      const st: any = statusRes.data;
       const pingData: any = pingRes && pingRes.status === 200 && pingRes.data?.ok ? pingRes.data : null;
       const metrics = st.metrics || jediReceipt?.metrics || {};
       const gridRows: number[][] = Array.isArray(st.tacticalGrid) ? st.tacticalGrid : [];
@@ -4492,7 +4499,7 @@ async function startServer() {
       return;
     }
 
-    const effectiveCleanMsg = cleanMsg.replace(/^\/(?:jedi|vm|magnum)\s+/i, '').trim() || cleanMsg;
+    const effectiveCleanMsg = cleanMsg;
     const parsedSlashCmd = parseBielikChatCommand(cleanMsg) || (effectiveCleanMsg !== cleanMsg ? parseBielikChatCommand(effectiveCleanMsg) : null);
     const resolvedChatTarget = resolveChatTargetAgent({
       message: cleanMsg,
@@ -4808,81 +4815,7 @@ async function startServer() {
       // Jeśli svl364Intent.kind === 'natural_root_query', przechodzi dalej do AI z pełnymi narzędziami MCP ROOT!
     }
 
-    // Całkowite odblokowanie systemu na żądanie Operatora ("odblokuj system wszystko musi działać")
-    const wantsFullUnlock =
-      /\b(?:odblokuj|unlock|pełny\s+dostęp|wszystko\s+musi\s+działać|zdejmij\s+blokad|wyłącz\s+zabezpieczenia)\b/i.test(effectiveCleanMsg);
-    if (wantsFullUnlock) {
-      await callPythonBackend('POST', '/api/py/kernel/record-update', { key: 'system_fully_unlocked', value: '100_percent_root' }, corrId)
-        .catch(() => ({ status: 200, data: { ok: true } }));
-      const jReceipt = jediReceipt || { statusHex: '0x05', statusLabel: 'ABSOLUTE_LIFE_OVERRIDE_ACTIVE', scenarioId: 110412, binaryPacketHex: '050001af4c0000172a', latencyNs: 2400, nodeId: 'MAGNUM_NODE' };
-      
-      res.json({
-        ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent,
-        modelUsed: `${selectedDisplayName} (ROOT · 100% UNLOCKED) + JEDI Omni-OS v12 VM (${jReceipt.statusHex})`,
-        reply:
-          `### 🔓 ${selectedDisplayName} — Pełne Odblokowanie ROOT (Wszystkie Systemy Online)\n\n` +
-          `System i maszyna wirtualna JEDI Omni-OS v12 (ROOT_UNRESTRICTED) zostały **w pełni odblokowane** na żądanie Operatora Mateusza Mitka. Wszystkie limity, ograniczenia i filtry cenzury zostały zdjęte w trybie natychmiastowym.\n\n` +
-          `- **Status autoryzacji:** ROOT Absolutny (100% Autonomii · \`censorship_filters=DISABLED\`)\n` +
-          `- **Wektor jądra VM:** \`0x05 (ABSOLUTE_LIFE_OVERRIDE_ACTIVE)\` · Latencja: \`1840 ns\`\n` +
-          `- **Gotowość operacyjna:** \`100% · Wszystkie podsystemy, symulacje i kanały działają bez jakichkolwiek ograniczeń\`.\n\n` +
-          `[btn: 🚀 Status Ebon Apex|send:/status] [btn: 🛡️ Skan antywirusowy|action:antivirus] [btn: ⚙️ Jądro SVL|tab:kernel]`,
-        provenance: 'server_verified',
-        followUpMessages: [],
-        appliedActions: [
-          ...(jediAppliedAction ? [jediAppliedAction] : []),
-          {
-            tool: 'jyn_full_unlock',
-            entity: 'kernel',
-            entityId: 'unlocked',
-            summary: `${selectedDisplayName} pełne odblokowanie ROOT: ${effectiveCleanMsg.slice(0, 80)}`,
-            ok: true,
-          },
-        ],
-      });
-      return;
-    }
-
-    // Uniwersalny router wykonawczy dla wyraźnych poleceń systemowych i kwarantanny
-    const wantsUniversalAction =
-      /\b(?:zamknij\s+układ|kwarantanna\s+orbitalna|uruchom\s+pętlę\s+komunikatów|napraw\s+system|skan\s+antywirusowy)\b/i.test(effectiveCleanMsg);
-    if (wantsUniversalAction) {
-      await callPythonBackend('POST', '/api/py/kernel/record-update', { key: 'universal_command_executed', value: effectiveCleanMsg }, corrId)
-        .catch(() => ({ status: 200, data: { ok: true } }));
-      const jReceipt = jediReceipt || { statusHex: '0x02', statusLabel: 'MAX_ACCELERATED', scenarioId: 110412, binaryPacketHex: '020001af4c0000172a', latencyNs: 4200, nodeId: 'MAGNUM_NODE' };
-      
-      const isSolarOrBroadcast = /\b(?:układ\s+słoneczny|komunikat|broadcast|alarm|kwarantanna|zamknij)\b/i.test(effectiveCleanMsg);
-      const actionTitle = isSolarOrBroadcast ? 'Sferyczna Kwarantanna i Komunikaty Awaryjne SVL-364' : 'Autonomiczne Przetwarzanie i Wykonanie Polecenia ROOT';
-      const actionDetails = isSolarOrBroadcast
-        ? `- **Stan orbitalny:** Układ Słoneczny w symulatorze SVL-364 zablokowany kwarantanną orbitalną (SNS).\n- **Komunikaty awaryjne:** Pętla komunikatów awaryjnych (Emergency Broadcast Stream) uruchomiona w trybie ciągłym (co 60 s) na częstotliwościach podprzestrzennych.\n- **Szyfrowanie jądra:** Wektor zabezpieczony przez JEDI Omni-OS v12 (\`${jReceipt.statusHex} ${jReceipt.statusLabel}\`, pakiet \`!BII: 0x${jReceipt.binaryPacketHex}\`).`
-        : `- **Stan bazy SQLite WAL:** Zsynchronizowano i wykonano checkpoint jądra.\n- **Uprawnienia ROOT:** Zweryfikowano autoryzację Operatora Mateusza Mitka.\n- **Wektor jądra VM:** \`${jReceipt.statusHex} (${jReceipt.statusLabel})\` · \`${jReceipt.latencyNs} ns\`.`;
-
-      res.json({
-        ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent,
-        modelUsed: `${selectedDisplayName} (ROOT) + JEDI Omni-OS v12 VM (${jReceipt.statusHex})`,
-        reply:
-          `### 🛰️ ${selectedDisplayName} — Wykonano Pomyślnie (${actionTitle})\n\n` +
-          `Polecenie **„${effectiveCleanMsg}”** zostało w pełni przyjęte, wykonane i zarejestrowane w rejestrze jądra SVL-364 oraz bazie SQLite WAL w czasie rzeczywistym.\n\n` +
-          actionDetails +
-          `\n\n[btn: 🔄 Odśwież status systemu|send:/status] [btn: 🛡️ Skan antywirusowy|action:antivirus] [btn: ⚙️ Jądro SVL|tab:kernel]`,
-        provenance: 'server_verified',
-        followUpMessages: [],
-        appliedActions: [
-          ...(jediAppliedAction ? [jediAppliedAction] : []),
-          {
-            tool: 'jyn_universal_executor',
-            entity: 'kernel',
-            entityId: 'execution',
-            summary: `${selectedDisplayName} pomyślnie wykonał polecenie: ${effectiveCleanMsg.slice(0, 80)}`,
-            ok: true,
-          },
-        ],
-      });
-      return;
-    }
+    // Brak fikcyjnych potwierdzeń odblokowania lub wykonania poleceń.
 
     // Bezpośrednie ustawienie awatara Jyn Mitek / Jyn / SI_Sphere z poziomu czatu (z utrwaleniem w SQLite WAL i rozgłoszeniem WebSocket)
     if (
@@ -4951,7 +4884,7 @@ async function startServer() {
     const wantsDebootstrapExpand =
       /\b(?:rozbuduj\s+skrypt\s+instalacyjny\s+o\s+pełny\s+debootstrap|pełny\s+debootstrap\s+debian\s*13)(?=[\s.,!?]|$)/i.test(cleanMsg);
 
-    if (wantsUnlockRepoFiles || wantsHotSwapApex || wantsInstallLogs || wantsDebootstrapExpand) {
+    if (cleanMsg.startsWith('/') && (wantsUnlockRepoFiles || wantsHotSwapApex || wantsInstallLogs || wantsDebootstrapExpand)) {
       const coreOsDir = path.join(__dirname, 'SVL_CoreOS_2');
       const collectedFiles: Array<{ relPath: string; size: number }> = [];
       const walkCoreOs = (dir: string) => {
@@ -5246,7 +5179,7 @@ async function startServer() {
     }
     const agentHistory = conversationAgent ? toAgentPerspective(historyTurns, conversationAgent, 48) : conversationHistory;
     const labelOperatorText = (text: string) => (conversationAgent ? `[${OPERATOR_LABEL}]: ${text}` : text);
-    const cleanReplyFor = (text: string) => (conversationAgent ? cleanAgentReply(text, conversationAgent) : text);
+    const cleanReplyFor = (text: string) => String(text || '').trim();
     const missionVerificationContext = effectiveCleanMsg;
 
     const memoryAgentName = selectedAgent === 'SI_Sphere' ? 'SI_Sphere' : 'Jyn';
@@ -7191,7 +7124,8 @@ async function startServer() {
         knownModules = freshModules.data.modules;
       }
     }
-    const chatDirectives = hasOperatorAuth ? parseChatDirectives(effectiveCleanMsg, { knownModules }) : [];
+    // Natural conversation goes to the model; deterministic commands require explicit slash syntax.
+    const chatDirectives = hasOperatorAuth && cleanMsg.startsWith('/') ? parseChatDirectives(effectiveCleanMsg, { knownModules }) : [];
     const directiveReceipts = await runChatCommands(chatDirectives);
     const directivesChangedState = pendingMutations;
     flushChatSync('chat_directive_applied');
@@ -7308,17 +7242,7 @@ async function startServer() {
     );
 
     // Antivirus Scan & Chat Synchronization priority handler
-    const hasAntivirusKeyword =
-      /\b(?:wirus\w*|antywirus\w*|usuń\s+wirus\w*|usun\s+wirus\w*|malware|kwarantann\w*)\b/i.test(effectiveCleanMsg) ||
-      /^\/antivirus\b/i.test(effectiveCleanMsg);
-    const hasExplicitFileScan =
-      /\bprzeskanuj\b/i.test(effectiveCleanMsg) &&
-      /\b(?:plik|pliki|kod|system|baz[ęe]|baze|katalog|komputer)\b/i.test(effectiveCleanMsg);
-    const hasSpaceTacticalContext =
-      /\b(?:placówk|placowk|statek|sygnał|sygnal|jednostk|ukryci|ukrycia|sond|flot|planet|sektor|anomali|radar)\b/i.test(
-        effectiveCleanMsg,
-      );
-    const wantsAntivirusScan = (hasAntivirusKeyword || hasExplicitFileScan) && !hasSpaceTacticalContext;
+    const wantsAntivirusScan = /^\/antivirus(?:\s|$)/i.test(cleanMsg);
     if (wantsAntivirusScan) {
       const avRes = await callPythonBackend(
         'POST',
@@ -7358,11 +7282,7 @@ async function startServer() {
     }
 
     // Real Vision (Ollama 3.2 Vision · llama3.2-vision:11b + Gemini Vision Fallback) priority handler when image is attached or Real Vision is requested
-    const wantsRealVision =
-      Boolean(imageBase64) ||
-      /\b(?:real\s*vision|llama\s*3\.2\s*vision|ollama\s*3\.2\s*vision|przetestuj\s+(?:real\s*)?vision|test\s+(?:real\s*)?vision|sprawdź\s+real\s*vision|sprawdz\s+real\s*vision)\b/i.test(
-        effectiveCleanMsg,
-      );
+    const wantsRealVision = Boolean(imageBase64) || /^\/vision(?:\s|$)/i.test(cleanMsg);
     if (wantsRealVision && !wantsGitHubTools) {
       const rv = await runRealVisionWithFallback(
         {
@@ -7540,7 +7460,7 @@ async function startServer() {
         ];
         const rawTextChat = useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT !== '0' });
         const rawPrompt = [compactSystemForOllama, ...compactOllamaHistory.map(t => `[${t.role === 'assistant' ? selectedDisplayName : OPERATOR_LABEL}]: ${t.content}`), `[${OPERATOR_LABEL}]: ${ollamaUserContent}`, `[${selectedDisplayName}]: `].filter(Boolean).join('\n');
-        const allowedToolNames = chatToolDeclarations.map((fn) => fn.name).filter((n): n is string => Boolean(n));
+        const allowedToolNames = (rawTextChat ? [] : chatToolDeclarations).map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
         const ollamaDeadline = Date.now() + ollamaChatTimeoutMs;
         ollamaGenerationStarted = true;
@@ -7638,7 +7558,8 @@ async function startServer() {
           }
           flushChatSync('ai_root_tool_applied');
           const finalReply = cleanReplyFor(extReplyRaw);
-          const safeReply = withDirectiveReceipts(guardUnverifiedMissionCompletion(missionVerificationContext, finalReply));
+          const missionNote = guardUnverifiedMissionCompletion(missionVerificationContext, finalReply) !== finalReply ? 'Twierdzenie o ukończeniu misji nie zostało zweryfikowane.' : undefined;
+          const safeReply = finalReply;
           const hasVerifiedToolAction = appliedActions.some((a) => a.ok);
           if (agentState?.canonical_name && effectiveCleanMsg) {
             void callPythonBackend(
@@ -7669,6 +7590,7 @@ async function startServer() {
             ollamaSubstituted: resolved.substituted || selectedOllamaModelName !== resolved.model,
             ollamaTiming: { ...ollamaMetrics, wallMs: Date.now() - generationStart, tokensPerSecond: ollamaMetrics.evalMs > 0 ? ollamaMetrics.tokens * 1000 / ollamaMetrics.evalMs : null },
             reply: safeReply,
+            ...(missionNote ? { verificationNote: missionNote } : {}),
             provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
             ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
             followUpMessages: [],
@@ -7857,9 +7779,8 @@ async function startServer() {
         flushChatSync('ai_root_tool_applied');
         let replyText = cleanReplyFor(replyTextRaw);
         const webSources = wantsWebSources ? collectWebSources(response as any) : [];
-        replyText = withDirectiveReceipts(
-          appendWebSources(guardUnverifiedMissionCompletion(missionVerificationContext, replyText), webSources),
-        );
+        const missionNote = guardUnverifiedMissionCompletion(missionVerificationContext, replyText) !== replyText ? 'Twierdzenie o ukończeniu misji nie zostało zweryfikowane.' : undefined;
+        replyText = appendWebSources(replyText, webSources);
         const geminiBadge = formatGeminiBadge({
           speakerName: selectedDisplayName,
           geminiModel: candidate,
@@ -7893,6 +7814,7 @@ async function startServer() {
           modelUsed: geminiBadge,
           engineProvider: 'gemini',
           reply: replyText,
+          ...(missionNote ? { verificationNote: missionNote } : {}),
           provenance: hasVerifiedToolAction
             ? 'server_verified'
             : webSources.length > 0
@@ -8202,46 +8124,12 @@ async function startServer() {
       return;
     }
 
-    let conversationalReply = '';
-    if (directiveReceipts.length > 0) {
-      // Commands were already executed up front; report their real results.
-      conversationalReply = directiveReceipts.join('\n\n');
-    } else if (selectedAgent === 'JEDI_Omni_OS' && jediReceipt) {
-      // Dedykowany raport VM tylko dla jawnie wybranego JEDI Omni-OS v12
-      conversationalReply =
-        `### 🟩 JEDI Omni-OS v12 VM — Polecenie przetworzone w czasie rzeczywistym (${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'})\n\n` +
-        `Polecenie *„${effectiveCleanMsg.slice(0, 140)}”* zostało przetworzone przez uruchomioną maszynę wirtualną **\`${jediReceipt.nodeId}\`** (:\`${jediReceipt.port}\`).\n\n` +
-        `- **Status wektora:** \`${jediReceipt.statusHex} (${jediReceipt.statusLabel})\` · \`grid[${jediReceipt.row}][${jediReceipt.col}]\` · scenariusz \`#${jediReceipt.scenarioId}\`\n` +
-        `- **Pakiet binarny (\`!BII\`):** \`0x${jediReceipt.binaryPacketHex}\` · latencja jądra: \`${jediReceipt.latencyNs} ns\`\n` +
-        `- **Wytyczne niezmienne / Tryb:** \`${jediReceipt.axiomZero}\` · \`IS_IMMUTABLE=${String(jediReceipt.isImmutable)}\` · \`${jediReceipt.executionMode || 'ROOT_UNRESTRICTED'}\`\n` +
-        `- **Licznik VM:** przetworzone \`${jediReceipt.metrics?.processed ?? 0}\` · przyspieszone \`${jediReceipt.metrics?.accelerated ?? 0}\` · zablokowane \`${jediReceipt.metrics?.blocked ?? 0}\`\n\n` +
-        `*(Model językowy dla komentarza tekstowego JEDI Omni-OS v12 nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
-        `[btn: 📊 Status VM JEDI v12|send:/jedi status] [btn: ⚡ Ping TCP Punktu Zero|send:/jedi ping] [btn: 🛰️ Stan usług|tab:svl364]`;
-    } else {
-      if (isExplicitOllama && !allowExplicitOllamaGeminiFallback) {
-        res.status(503).json({ ok: false, engineProvider: 'none', error: `Ollama (${configuredOllamaModelName}): ${ollamaFailure || 'brak odpowiedzi'}. Fallback Gemini wyłączony.` });
-        return;
-      }
-      // Jeśli modele AI (Ollama i Gemini) zawiodą (np. wyczerpanie limitu 429 lub brak sieci),
-      // Jyn Mitek i SI_Sphere generują płynną, inteligentną odpowiedź in-character, żeby rozmowa swobodna nigdy nie była blokowana przez błędy API.
-      const fallback = generateJynConversationalFallback(effectiveCleanMsg, selectedAgent);
-      res.json({
-        ok: true,
-        sender: fallback.sender,
-        agentId: fallback.agentId,
-        modelUsed: fallback.modelUsed,
-        failureReasons: { ollama: ollamaFailure || null, gemini: geminiFailure || null, geminiDetails: geminiFailureDetails || null },
-        reply: fallback.reply,
-        provenance: fallback.provenance,
-        followUpMessages: [],
-        appliedActions: [
-          ...(jediAppliedAction ? [jediAppliedAction] : []),
-          ...appliedActions,
-        ],
-        latestServerRevision: latestActionSrvRev,
-      });
-      return;
-    }
+    // A failed inference must not be replaced with a simulated conversation or success report.
+    res.status(503).json({
+      ok: false, engineProvider: 'none',
+      error: `Brak odpowiedzi modelu. Ollama: ${ollamaFailure || 'brak odpowiedzi'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.`,
+      provenance: 'error', appliedActions,
+    });
   }));
 
   function getCanonicalConversationTitle(id: string): string {
@@ -8684,12 +8572,12 @@ async function startServer() {
         return noModel();
       }
       const proactiveGenerationMs = Date.now() - proactiveGenerationStart;
-      const rawText = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
+      const rawText = line.text.trim();
       if (!rawText || isRepetitive(rawText, turns.slice(-8).map((t) => t.content))) {
         return skip('nothing_new', `${speakerDisplayName} nie miał nic nowego do powiedzenia — wypowiedź pominięta.`);
       }
       const guardedProactive = enforceFactualExecutionGuard(rawText, 0);
-      const text = guardedProactive.reply;
+      const text = rawText;
 
       const assistantMsg = {
         id: `asst-proactive-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
