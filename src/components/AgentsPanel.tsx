@@ -114,7 +114,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   const [cfgTemperature, setCfgTemperature] = useState('0.7');
   const [cfgRbacRole, setCfgRbacRole] = useState('');
   const [cfgVisionEnabled, setCfgVisionEnabled] = useState(true);
-  const [cfgSystemPrompt, setCfgSystemPrompt] = useState('');
 
   const [isConfigDirty, setIsConfigDirty] = useState(false);
   const [remoteConfigChangedWhileDirty, setRemoteConfigChangedWhileDirty] = useState(false);
@@ -127,7 +126,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     setCfgTemperature(String(activeAgentCfg.temperature ?? 0.7));
     setCfgRbacRole(activeAgentCfg.rbac_role || '');
     setCfgVisionEnabled(activeAgentCfg.vision_enabled !== false);
-    setCfgSystemPrompt(activeAgentCfg.system_prompt || '');
     setIsConfigDirty(false);
     setRemoteConfigChangedWhileDirty(false);
     loadedRevisionRef.current = { agent: selectedAgent, rev: currentConfigRevision };
@@ -158,7 +156,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     activeAgentCfg.temperature,
     activeAgentCfg.rbac_role,
     activeAgentCfg.vision_enabled,
-    activeAgentCfg.system_prompt,
     isConfigDirty,
   ]);
 
@@ -296,7 +293,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             temperature: Number(cfgTemperature) || 0.7,
             rbac_role: cfgRbacRole,
             vision_enabled: cfgVisionEnabled,
-            system_prompt: cfgSystemPrompt,
+            system_prompt: '',
           },
         }),
       });
@@ -1305,21 +1302,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
             </div>
           </div>
 
-          <div>
-            <label htmlFor="cfg-system-prompt" className="block text-xs text-slate-400 mb-1">
-              Instrukcja systemowa (System Prompt) agenta {selectedAgent}:
-            </label>
-            <textarea
-              id="cfg-system-prompt"
-              rows={3}
-              value={cfgSystemPrompt}
-              onChange={(e) => {
-                markDirty();
-                setCfgSystemPrompt(e.target.value);
-              }}
-              className="w-full bg-[#0B0D13] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 leading-relaxed"
-            />
-          </div>
+          <p className="text-xs text-slate-400">Rozmowa bez narzuconej osobowości i stylu (brak promptu agenta).</p>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">

@@ -170,9 +170,6 @@ export function selectOllamaTurnOptions(
   };
 }
 
-const OLLAMA_COMPACT_INTERACTIVE_GUIDE =
-  'Zasady odpowiedzi Jyn Mitek: ZAWSZE pisz w 1. osobie r.ż. („sprawdziłam”, „monitoruję”, „melduję”) bezpośrednio do Operatora w wołaczu „Mateuszu” (nigdy „pan Mateusz”, nigdy nie zaczynaj od „Jyn,” ani „Cześć Jyn”). Odpowiadaj wyłącznie poprawną polszczyzną, wyczerpująco i konkretnie z podanych danych SVL-364. Możesz dodać czytelne punkty/tabele Markdown oraz 1–2 przyciski na końcu `[btn: Etykieta|send:/status]`.';
-
 /**
  * Dla lokalnego modelu Ollama na CPU dołączamy schematy narzędzi JSON wyłącznie wtedy,
  * gdy wiadomość jest jawnym poleceniem wykonawczym/mutującym (np. uruchom w powłoce, zapisz, włącz/wyłącz),
@@ -206,7 +203,7 @@ export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 
     // Zastąp 4,4k-znakowy przewodnik UI zwięzłą wersją dla lokalnych modeli Ollama
     .replace(
       /Interaktywny Czat SVL CoreOS 2 \(styl GitHub Copilot[\s\S]*?Przyciski nigdy nie uruchamiają poleceń powłoki \(`\/exec`\)\./,
-      OLLAMA_COMPACT_INTERACTIVE_GUIDE,
+      '',
     )
     // Usuń blok zmiennej telemetrii JEDI VM z per-turn ns/scenario/grid/pkt, który unieważnia KV-cache
     .replace(/\n*\[JEDI OMNI-OS v12 VM \(CZAS RZECZYWISTY[^\]]*\]/gi, '')

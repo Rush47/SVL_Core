@@ -278,9 +278,6 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             if isinstance(messages, list):
                 has_images = has_images or any(isinstance(m, dict) and bool(m.get("images")) for m in messages)
                 has_sys = any(isinstance(m, dict) and m.get("role") == "system" and str(m.get("content") or "").strip() for m in messages)
-                if not has_sys and DEFAULT_SYSTEM_PROMPT_PL:
-                    cleaned_msgs = [m for m in messages if not (isinstance(m, dict) and m.get("role") == "system")]
-                    messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT_PL}, *cleaned_msgs]
 
             installed_names = [str(m["name"]) for m in _fetch_upstream_models() if m.get("name")]
             candidates = _select_execution_candidates(requested_model, installed_names, has_images=has_images)

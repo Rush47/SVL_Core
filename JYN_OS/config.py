@@ -304,9 +304,7 @@ class JynOSConfig:
     connect_timeout: float = 3.5
     command_timeout: float = 30.0
     chat_stream_enabled: bool = DEFAULT_CHAT_STREAM
-    system_prompt: str = field(
-        default_factory=lambda: os.environ.get("SVL_SYSTEM_PROMPT", "").strip() or DEFAULT_SYSTEM_PROMPT_PL
-    )
+    system_prompt: str = DEFAULT_SYSTEM_PROMPT_PL
     chat_num_ctx: int = DEFAULT_CHAT_NUM_CTX
     chat_num_predict: int = DEFAULT_CHAT_NUM_PREDICT
     chat_timeout: float = DEFAULT_CHAT_TIMEOUT

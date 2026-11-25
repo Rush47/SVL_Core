@@ -135,10 +135,8 @@ def build_polish_chat_messages(
     b64_images: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Buduje listę wiadomości z niezmiennym polskim promptem systemowym i przyciętą historią."""
-    effective_sys = (system_prompt if system_prompt is not None else config.system_prompt).strip()
+    # Compatibility arguments are accepted but no behavior prompt is injected.
     messages: List[Dict[str, Any]] = []
-    if effective_sys:
-        messages.append({"role": "system", "content": effective_sys})
 
     if history and config.chat_history_turns > 0:
         max_chars = max(256, config.chat_history_max_chars)

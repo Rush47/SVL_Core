@@ -87,7 +87,7 @@ test('selectNextFreeSpeaker initiates on empty channels and respects manual trig
   );
 });
 
-test('buildProactiveStarterPrompt generates Polish initiation prompt with optional memory hint', () => {
+test('buildProactiveStarterPrompt identifies participants without prescribing response style', () => {
   const withoutMem = buildProactiveStarterPrompt('Jyn', 'Mateusz', '');
   assert.match(withoutMem, /Jyn/);
   assert.match(withoutMem, /Mateusz/);
@@ -95,4 +95,5 @@ test('buildProactiveStarterPrompt generates Polish initiation prompt with option
 
   const withMem = buildProactiveStarterPrompt('Jyn', 'Mateusz', 'fakty');
   assert.match(withMem, /trwałej pamięci/);
+  assert.doesNotMatch(withMem, /Przywitaj|zadaj|naturalnie|krótko|po polsku/);
 });

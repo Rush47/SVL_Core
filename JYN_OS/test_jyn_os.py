@@ -222,11 +222,12 @@ class TestRuntimeRegression(unittest.TestCase):
         self.assertEqual(cfg.active_ollama_target, "ship")
         self.assertEqual(cfg.get_active_ollama_url(), cfg.ship_ollama_url)
 
-    def test_build_polish_messages_preserves_custom_system_prompt(self):
-        cfg = JynOSConfig()
-        msgs = build_polish_chat_messages("Raport", cfg, system_prompt="Niestandardowa instrukcja PL")
-        self.assertEqual(msgs[0], {"role": "system", "content": "Niestandardowa instrukcja PL"})
-        self.assertEqual(DEFAULT_SYSTEM_PROMPT_PL, "")
+    def test_build_polish_messages_ignores_legacy_behavior_prompt(self):
+        cfg = JynOSConfig(system_prompt="Stara instrukcja")
+        messages = build_polish_chat_messages("Cześć", cfg, system_prompt="Niestandardowa instrukcja PL")
+        self.assertFalse(any(m.get("role") == "system" for m in messages))
+        self.assertEqual(messages[-1]["content"], "Cześć")
+
 
     def test_apex_rejects_small_base_without_network(self):
         client = SvlOllamaClient(JynOSConfig())
