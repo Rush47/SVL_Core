@@ -525,7 +525,7 @@ async function ollamaContinueRaw(
   const resolved = await resolveOllamaAcrossEndpoints(endpoints, parsed.modelName, {
     preferredEndpoint: parsed.preferredEndpoint,
     strictEndpoint: parsed.strictEndpoint,
-    allowSubstitution: !/^svl364-apex-uncensored(?::|$)/i.test(parsed.modelName),
+    allowSubstitution: false,
   });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const base = resolved.endpoint.host;
@@ -3259,7 +3259,7 @@ async function startServer() {
   }));
 
   // 2g. SVL Real Vision (Ollama 3.2 Vision · llama3.2-vision:11b + Gemini Vision Fallback)
-  const runRealVisionWithFallback = async (
+  const runRealVisionSelectedModel = async (
     params: {
       endpoint: '/api/py/vision/analyze' | '/api/py/vision/test';
       imageBase64?: string;
@@ -3326,138 +3326,6 @@ async function startServer() {
       return { status: 200, data: pyRes.data, provider: 'ollama' };
     }
 
-    const pyRecord = pyRes.data?.record;
-    const imagePreview = String(pyRecord?.imagePreview || params.imageBase64 || '').trim();
-    const ollamaError = String(pyRes.data?.error || pyRecord?.error || 'Ollama jest niedostępna').trim();
-    const ai = getGeminiClient();
-
-    if (ai && imagePreview) {
-      const mimeMatch = imagePreview.match(/^data:([^;]+);base64,/i);
-      const mimeType = mimeMatch?.[1] || pyRecord?.binaryMetrics?.mimeType || params.imageMimeType || 'image/jpeg';
-      const cleanB64 = imagePreview.replace(/^data:[^;]+;base64,/i, '').trim();
-
-      if (cleanB64) {
-        const visionPrompt =
-          rawPrompt ||
-          'Opisz dokładnie po polsku, co widać na tym obrazie (obiekty, osobę lub scenę, kolory, oświetlenie, kompozycję i istotne detale).';
-        const candidates = await geminiCandidatesFor(ai, 'gemini-4-hydrogen', 6);
-        const deadline = createGeminiDeadline(45000);
-        const geminiErrors: string[] = [];
-
-        for (const candidate of candidates) {
-          if (deadline.expired()) break;
-          const timeoutMs = deadline.attemptTimeout();
-          if (timeoutMs < 3000) break;
-          const attemptStarted = Date.now();
-          try {
-            const resp: GenerateContentResponse = await ai.models.generateContent({
-              model: candidate,
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    { inlineData: { mimeType, data: cleanB64 } },
-                    { text: visionPrompt },
-                  ],
-                },
-              ],
-              config: {
-                maxOutputTokens: 1200,
-                ...geminiThinkingConfig(candidate),
-                ...(params.systemInstruction ? { systemInstruction: params.systemInstruction } : {}),
-                abortSignal: AbortSignal.timeout(timeoutMs),
-              },
-            });
-            const replyText = String(resp.text || '').trim();
-            if (!replyText) {
-              geminiErrors.push(`${candidate}: pusta odpowiedź`);
-              continue;
-            }
-            noteGeminiSuccess(candidate, Date.now() - attemptStarted);
-            const totalMs = Date.now() - started;
-            const recorded = await callPythonBackend(
-              'POST',
-              '/api/py/vision/record',
-              {
-                recordId: pyRecord?.id || '',
-                model: candidate,
-                provider: 'gemini',
-                replyText,
-                source: pyRecord?.source || pyPayload.source,
-                prompt: visionPrompt,
-                binaryMetrics: pyRecord?.binaryMetrics,
-                imagePreview: imagePreview.startsWith('data:') ? imagePreview : `data:${mimeType};base64,${cleanB64}`,
-                durationMs: totalMs,
-                ollamaError,
-                emitToChat: wantsChatEmit,
-                conversationId: convId,
-                sender: params.sender || 'Real Vision',
-                agentId: params.agentId || 'real-vision',
-                origin: params.origin || 'real-vision-gemini',
-              },
-              corrId,
-            );
-            if (recorded.status === 200 && recorded.data?.ok) {
-              return { status: 200, data: recorded.data, provider: 'gemini' };
-            }
-            // Fallback response even if Python record persistence fails transiently
-            const fallbackRecord = {
-              ...(pyRecord || {}),
-              model: candidate,
-              provider: 'gemini',
-              fallbackUsed: true,
-              analysed: true,
-              error: null,
-              ollamaError,
-              ollamaHttpStatus: 200,
-              durationMs: totalMs,
-              ollamaReply: replyText,
-              reportMarkdown: `### 👁️ Analiza obrazu · model \`${candidate}\` (Gemini Vision · fallback po Ollamie)\n\n${replyText}`,
-            };
-            return {
-              status: 200,
-              data: {
-                ok: true,
-                error: null,
-                fallbackUsed: true,
-                provider: 'gemini',
-                record: fallbackRecord,
-                status: pyRes.data?.status,
-                serverRevision: pyRes.data?.serverRevision,
-              },
-              provider: 'gemini',
-            };
-          } catch (err: any) {
-            const msgStr = String(err?.message || err);
-            if (isThinkingConfigError(msgStr)) {
-              disableThinkingConfigFor(candidate);
-            } else if (isGeminiModelGoneError(msgStr)) {
-              markGeminiModelGone(candidate);
-            } else if (isGeminiQuotaExhaustedError(msgStr)) {
-              noteGeminiQuotaExhausted(candidate, msgStr);
-            } else if (isGeminiTimeoutError(msgStr)) {
-              noteGeminiTimeout(candidate);
-            } else if (isGeminiSlowOrBusyError(msgStr)) {
-              noteGeminiSlowOrBusy(candidate, msgStr);
-            }
-            geminiErrors.push(`${candidate}: ${describeGeminiError(msgStr, timeoutMs)}`);
-          }
-        }
-
-        if (geminiErrors.length > 0) {
-          return {
-            status: 503,
-            data: {
-              ...(pyRes.data || {}),
-              ok: false,
-              error: `Ollama niedostępna (${ollamaError}); fallback Gemini Vision również nie powiódł się (${summarizeGeminiFailures(geminiErrors)}).`,
-            },
-            provider: 'none',
-          };
-        }
-      }
-    }
-
     return { status: pyRes.status || 400, data: pyRes.data, provider: 'none' };
   };
 
@@ -3475,12 +3343,8 @@ async function startServer() {
         ollamaOnline = false;
       }
       data.ollamaOnline = ollamaOnline;
-      data.geminiVisionAvailable = Boolean(getGeminiClient());
-      data.activeEngineMode = ollamaOnline
-        ? 'ollama'
-        : data.geminiVisionAvailable
-          ? 'gemini-fallback'
-          : 'offline';
+      data.geminiVisionAvailable = false;
+      data.activeEngineMode = ollamaOnline ? 'ollama' : 'offline';
     }
     res.status(pyRes.status).json(data);
   }));
@@ -3492,7 +3356,7 @@ async function startServer() {
     }
     const corrId: string = (req as any).correlationId || '';
     const body = req.body || {};
-    const rv = await runRealVisionWithFallback(
+    const rv = await runRealVisionSelectedModel(
       {
         endpoint: '/api/py/vision/analyze',
         imageBase64: body.imageBase64 || body.image_base64 || '',
@@ -3521,7 +3385,7 @@ async function startServer() {
     }
     const corrId: string = (req as any).correlationId || '';
     const body = req.body || {};
-    const rv = await runRealVisionWithFallback(
+    const rv = await runRealVisionSelectedModel(
       {
         endpoint: '/api/py/vision/test',
         presetId: body.presetId || body.preset_id || 'operator_vault_portrait',
@@ -6466,20 +6330,14 @@ async function startServer() {
     }
 
     const isHybridRouter = model === 'svl-hybrid-router';
-    const effectiveModel =
-      isBielikAgent && isHybridRouter
-        ? String(selectedAgent === 'Jyn' ? 'ollama:svl364-apex-uncensored:latest' : agentConfig.preferred_model || 'ollama:svl364-apex-uncensored:latest')
-        : isHybridRouter && selectedAgent !== 'Jyn' && agentConfig.preferred_model && agentConfig.preferred_model !== 'svl-hybrid-router'
-          ? String(agentConfig.preferred_model)
-          : model;
-
+    const effectiveModel = isHybridRouter || !model ? 'ollama:svl364-apex-uncensored:latest' : String(model);
     const defaultPreferredOllamaModel =
       (isBielikAgent ? agentConfig.ollama_model : svl364Cfg.configured_ollama_model) ||
       agentConfig.ollama_model ||
       process.env.OLLAMA_PREFERRED_MODEL ||
       'svl364-apex-uncensored:latest';
     const parsedModelSpec = parseOllamaModelSpec(effectiveModel, defaultPreferredOllamaModel);
-    const isExplicitOllama = parsedModelSpec.kind === 'ollama' && (!isHybridRouter || selectedAgent === 'Jyn');
+    const isExplicitOllama = parsedModelSpec.kind !== 'gemini';
     const isExplicitGemini = parsedModelSpec.kind === 'gemini';
     const explicitGeminiModel = isExplicitGemini ? parsedModelSpec.modelName : '';
     const availableModels: Array<{ name: string; vision_supported?: boolean }> =
@@ -6725,7 +6583,7 @@ async function startServer() {
             `### ${icon} ${selectedDisplayName} · Diagnostyka Ollama (Lokalna + SVL-364 SSH) & SVL Python OS\n\n` +
             `${endpointSections}\n` +
             `- **Tunel SSH SVL-364:** ${shipStatus.description}\n` +
-            `- **Polityka jawnego modelu Ollama:** ${shouldAllowExplicitOllamaFallbackToGemini(process.env) ? 'fallback do Gemini dozwolony (env)' : '`STRICT OLLAMA` (wybrany model Ollama nie przełącza się po cichu na Gemini)'}\n` +
+            `- **Polityka modelu:** ścisły wybór, bez automatycznego fallbacku.\n` +
             `- **Worker ${selectedDisplayName}:** \`${activeLiveAgent.status || 'DEFINITION_READY'}\`${activeLiveAgent.pid ? ` (PID ${activeLiveAgent.pid})` : ''} · rola RBAC: \`${activeLiveAgent.config?.rbac_role || 'root'}\` · pamięć: \`${activeLiveAgent.memory_entries_count ?? 0}\` wpisów\n` +
             `- **Host Linux:** RAM wolne \`${tel.ram_available_mb ?? '?'} MB\` / \`${tel.ram_total_mb ?? '?'} MB\` · Dysk wolne \`${tel.disk_free_gb ?? '?'} GB\` · Rewizja SQLite \`rev ${latestActionSrvRev}\``,
         };
@@ -7282,9 +7140,9 @@ async function startServer() {
     }
 
     // Real Vision (Ollama 3.2 Vision · llama3.2-vision:11b + Gemini Vision Fallback) priority handler when image is attached or Real Vision is requested
-    const wantsRealVision = Boolean(imageBase64) || /^\/vision(?:\s|$)/i.test(cleanMsg);
+    const wantsRealVision = /^\/vision(?:\s|$)/i.test(cleanMsg);
     if (wantsRealVision && !wantsGitHubTools) {
-      const rv = await runRealVisionWithFallback(
+      const rv = await runRealVisionSelectedModel(
         {
           endpoint: '/api/py/vision/analyze',
           imageBase64,
@@ -7337,6 +7195,8 @@ async function startServer() {
         });
         return;
       }
+      res.status(503).json({ok:false,engineProvider:'none',error:rv.data?.error || 'Wybrany model Vision nie odpowiedział.'});
+      return;
     }
 
 
@@ -7357,12 +7217,8 @@ async function startServer() {
     const webSearchUnavailableNote =
       'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
       'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
-    const allowExplicitOllamaGeminiFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env);
-    const shouldTryOllama =
-      !isExplicitGemini &&
-      (isExplicitOllama ||
-        (!wantsGitHubTools && !(wantsWebSources && ai) && (isBielikAgent || isHybridRouter)));
+    const allowExplicitOllamaGeminiFallback = false;
+    const shouldTryOllama = !isExplicitGemini;
     let ollamaFailure = shouldTryOllama
       ? ''
       : wantsGitHubTools
@@ -7393,7 +7249,7 @@ async function startServer() {
           preferredEndpoint: parsedModelSpec.preferredEndpoint,
           strictEndpoint: parsedModelSpec.strictEndpoint,
           requireVision: Boolean(imageBase64),
-          allowSubstitution: !/^svl364-apex-uncensored(?::|$)/i.test(selectedOllamaModelName) || Boolean(imageBase64),
+          allowSubstitution: false,
         });
         if (!resolved.ok) {
           throw new Error(resolved.reason);
@@ -7616,12 +7472,9 @@ async function startServer() {
     if (shouldTryOllama && (await tryOllama())) return;
 
     // 2) Gemini: dla jawnie wybranego Gemini, Auto-Routera (svl-hybrid-router), albo fallbacku gdy żaden węzeł Ollama nie działa.
-    const canUseGemini = Boolean(ai) && (!isExplicitOllama || (!ollamaTimedOut && allowExplicitOllamaGeminiFallback));
+    const canUseGemini = Boolean(ai) && isExplicitGemini;
     if (canUseGemini && ai) {
-      const discoveredCandidates = await geminiCandidatesFor(ai, isExplicitGemini ? explicitGeminiModel : effectiveModel, 16);
-      const candidateModels = isExplicitGemini
-        ? [explicitGeminiModel, ...discoveredCandidates.filter((c) => c !== explicitGeminiModel)]
-        : discoveredCandidates;
+      const candidateModels = [explicitGeminiModel];
       const sanitizedGeminiTools = sanitizeGeminiToolDeclarations(chatToolDeclarations);
       const wantsSystemTool = sanitizedGeminiTools.length > 0;
 
@@ -7784,7 +7637,7 @@ async function startServer() {
         const geminiBadge = formatGeminiBadge({
           speakerName: selectedDisplayName,
           geminiModel: candidate,
-          isFallbackFromOllama: isHybridRouter || isExplicitOllama,
+          isFallbackFromOllama: false,
           vision: Boolean(imageBase64),
         });
         // Zapis epizodu pamięci w tle (nie blokuje odesłania odpowiedzi do użytkownika).
@@ -8093,12 +7946,7 @@ async function startServer() {
       geminiFailureDetails = geminiErrors.join(' | ');
     }
 
-    // Jeśli Gemini nie odpowiedziało (wyczerpanie kwoty, błąd 503 lub brak klucza), a zapytanie mogłoby użyć Ollamy, próbujemy jej.
-    if (!shouldTryOllama && !wantsGitHubTools && !isExplicitGemini) {
-      ollamaFailure = '';
-      if (await tryOllama()) return;
-    }
-    // Nie ponawiaj tej samej nieudanej próby Ollamy w ramach jednej wiadomości.
+    // Nie ma automatycznego przełączania silnika ani modelu.
 
     // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
     const explicitSystemReportAsked = /\b(?:pełny raport|pelny raport|raport svl_system|raport systemu|markdown-report)\b/i.test(effectiveCleanMsg);
@@ -8178,9 +8026,7 @@ async function startServer() {
       }
       failures.push(fromOllama.reason);
     }
-    const allowExplicitFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env);
-    if (useOllamaRequested && !allowExplicitFallback) {
+    if (!useGeminiOnly) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return { predicted: null, providerOnline: false };
     }
@@ -8191,10 +8037,7 @@ async function startServer() {
     }
     const choices = [...participants, 'Operator'].join(', ');
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8);
-    const candidates = useGeminiOnly
-      ? [requestedModel, ...discovered.filter((c) => c !== requestedModel)]
-      : discovered;
+    const candidates = [requestedModel];
     for (const candidate of candidates) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
       const startedAt = Date.now();
@@ -8278,9 +8121,7 @@ async function startServer() {
       }
       failures.push(fromOllama.reason);
     }
-    const allowExplicitFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env);
-    if (useOllamaRequested && !allowExplicitFallback) {
+    if (!useGeminiOnly) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return null;
     }
@@ -8312,10 +8153,7 @@ async function startServer() {
       contents.push({ role: 'user', parts: [{ text: '[Kontynuacja rozmowy]' }] });
     }
     const proactiveDeadline = createGeminiDeadline(Number(process.env.GEMINI_PROACTIVE_BUDGET_MS || 45000));
-    const discovered = await geminiCandidatesFor(gemini, requestedModel, 8);
-    const candidates = useGeminiOnly
-      ? [requestedModel, ...discovered.filter((c) => c !== requestedModel)]
-      : discovered;
+    const candidates = [requestedModel];
     for (const candidate of candidates) {
       if (proactiveDeadline.attemptTimeout() < 3000) break;
       const isFlashLite = /flash-lite/i.test(candidate);
@@ -8363,9 +8201,7 @@ async function startServer() {
         const text = (gen?.text || '').trim();
         if (text) {
           noteGeminiSuccess(candidate, Date.now() - startedAt);
-          const label = !useGeminiOnly
-            ? `Gemini (${candidate} · fallback, Ollama niedostępna)`
-            : `Gemini (${candidate})`;
+          const label = `Gemini (${candidate})`;
           return { text, label, provider: 'gemini', actualModel: candidate };
         }
       } catch (error) {
@@ -8397,7 +8233,7 @@ async function startServer() {
       autonomous = false,
     } = req.body || {};
     const convId = String(conversationId || 'conv-rodzina-mitek-wszyscy').slice(0, 120);
-    const requestedModel = String(model || '') === 'svl-hybrid-router' && convId === 'conv-jyn' ? 'ollama:svl364-apex-uncensored:latest' : String(model || '');
+    const requestedModel = !model || model === 'svl-hybrid-router' ? 'ollama:svl364-apex-uncensored:latest' : String(model);
     const isAutonomous = Boolean(autonomous);
 
     const skip = (reason: string, detail?: string, retryAfterMs?: number) => {

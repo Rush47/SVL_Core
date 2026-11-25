@@ -118,40 +118,8 @@ def _merged_ship_models() -> List[Dict[str, Any]]:
 
 
 def _select_execution_candidates(requested_model: str, installed_names: List[str], has_images: bool = False) -> List[str]:
-    """Zwraca listę kandydatów wykonania: najpierw żądany model (jeśli zainstalowany), potem aktywne modele z katalogu 13."""
-    if not has_images and requested_model.lower().split(':')[0] == 'svl364-apex-uncensored':
-        return [requested_model]
-    if not installed_names:
-        return [requested_model]
-    lower_map = {m.lower(): m for m in installed_names}
-    candidates: List[str] = []
-
-    req_clean = (requested_model or "svl364-apex-uncensored:latest").strip()
-    if req_clean.lower() in lower_map:
-        candidates.append(lower_map[req_clean.lower()])
-    elif f"{req_clean.lower()}:latest" in lower_map:
-        candidates.append(lower_map[f"{req_clean.lower()}:latest"])
-
-    if has_images:
-        for vis in ("llama3.2-vision:11b", "llama3.2-vision:90b"):
-            if vis.lower() in lower_map and lower_map[vis.lower()] not in candidates:
-                candidates.append(lower_map[vis.lower()])
-
-    for canon in CANONICAL_MODELS_PRIORITY:
-        c_low = canon.lower()
-        if c_low in lower_map and lower_map[c_low] not in candidates:
-            candidates.append(lower_map[c_low])
-            continue
-        base_prefix = c_low.split(":")[0] + ":"
-        for inst_low, inst_real in lower_map.items():
-            if inst_low.startswith(base_prefix) and inst_real not in candidates:
-                candidates.append(inst_real)
-
-    for inst in installed_names:
-        if inst not in candidates:
-            candidates.append(inst)
-
-    return candidates or [req_clean]
+    """Bez podmiany modelu na inny."""
+    return [(requested_model or 'svl364-apex-uncensored:latest').strip()]
 
 
 class Svl364OllamaHandler(BaseHTTPRequestHandler):
@@ -279,8 +247,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                 has_images = has_images or any(isinstance(m, dict) and bool(m.get("images")) for m in messages)
                 has_sys = any(isinstance(m, dict) and m.get("role") == "system" and str(m.get("content") or "").strip() for m in messages)
 
-            installed_names = [str(m["name"]) for m in _fetch_upstream_models() if m.get("name")]
-            candidates = _select_execution_candidates(requested_model, installed_names, has_images=has_images)
+            candidates = [requested_model]
 
             last_status = 502
             last_error = "Brak odpowiedzi z silnika Ollama."
@@ -304,9 +271,13 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                     with _open_upstream(proxy_req, timeout=DEFAULT_CHAT_TIMEOUT + 30) as upstream:
                         result = json.loads(upstream.read().decode("utf-8"))
                         if isinstance(result, dict):
-                            result["routed_model"] = exec_model
-                            result["model"] = exec_model
-                            result["substituted"] = exec_model != requested_model
+                            actual = str(result.get("routed_model") or result.get("model") or "")
+                            normalize = lambda name: name.lower() if ":" in name else name.lower() + ":latest"
+                            if result.get("error") or not actual or normalize(actual) != normalize(exec_model):
+                                self._send_json(502, {"error": result.get("error") or "Niepotwierdzony model Ollama"})
+                                return
+                            result["routed_model"] = actual
+                            result["substituted"] = False
                         self._send_json(200, result)
                         return
                 except urllib.error.HTTPError as exc:

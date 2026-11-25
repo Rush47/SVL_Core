@@ -108,6 +108,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
         reply = {
             "message": {"content": "Melduję pełną gotowość systemów pokładowych, Mateuszu."},
             "done": True,
+            "model": "svl364-apex-uncensored:latest",
             "eval_count": 14,
             "eval_duration": 700_000_000,
         }
@@ -236,16 +237,14 @@ class TestRuntimeRegression(unittest.TestCase):
         self.assertFalse(result["success"])
         request.assert_not_called()
 
-    def test_engine_allows_configured_endpoint_failover(self):
+    def test_engine_does_not_failover_to_other_endpoint(self):
         cfg = JynOSConfig(system_prompt="")
         client = SvlOllamaClient(cfg)
         engine = JynChatEngine(cfg, client)
-        reply = {"message": {"content": "Gotowe"}, "done": True}
-        with patch("JYN_OS.ollama_client.urllib.request.urlopen",
-                   side_effect=[OSError("offline"), io.BytesIO(json.dumps(reply).encode())]):
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen", side_effect=OSError("offline")) as request:
             result = engine.send("Test")
-        self.assertTrue(result.ok)
-        self.assertEqual(result.endpoint, cfg.get_fallback_ollama_url())
+        self.assertFalse(result.ok)
+        self.assertEqual(request.call_count, 1)
 
     def test_apex_is_not_silently_substituted(self):
         client = SvlOllamaClient(JynOSConfig())

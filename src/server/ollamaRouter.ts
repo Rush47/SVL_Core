@@ -510,8 +510,8 @@ export function readOllamaActualModel(data: unknown, expected: string): string {
   const actual = String(result.routed_model || result.model || '').trim();
   if (!actual) throw new Error('Ollama nie podała rzeczywistego modelu');
   const normalize = (name: string) => name.toLowerCase().includes(':') ? name.toLowerCase() : name.toLowerCase() + ':latest';
-  if (/^svl364-apex-uncensored(?::|$)/i.test(expected) && normalize(actual) !== normalize(expected)) {
-    throw new Error(`Ollama podmieniła model Apex: ${actual} zamiast ${expected}`);
+  if (normalize(actual) !== normalize(expected)) {
+    throw new Error(`Ollama podmieniła wybrany model: ${actual} zamiast ${expected}`);
   }
   return actual;
 }

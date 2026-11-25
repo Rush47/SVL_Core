@@ -229,7 +229,7 @@ test('selectBaseModelForApex i buildApexCreatePayload budują poprawny payload /
 });
 
 test('actual engine identity is taken from the Ollama response, not the requested label', () => {
-  assert.equal(readOllamaActualModel({model: 'alias', routed_model: 'qwen2.5:7b'}, 'alias'), 'qwen2.5:7b');
+  assert.throws(() => readOllamaActualModel({model: 'alias', routed_model: 'qwen2.5:7b'}, 'alias'));
   assert.equal(readOllamaActualModel({model: 'svl364-apex-uncensored:latest'}, 'svl364-apex-uncensored'), 'svl364-apex-uncensored:latest');
   assert.throws(() => readOllamaActualModel({model: 'svl364-apex-uncensored:latest', routed_model: 'qwen2.5:7b'}, 'svl364-apex-uncensored:latest'));
   assert.throws(() => readOllamaActualModel({}, 'alias'));

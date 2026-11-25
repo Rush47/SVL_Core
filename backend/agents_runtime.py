@@ -166,7 +166,7 @@ CANONICAL_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "default_config": {
             "preferred_model": os.environ.get("OLLAMA_PREFERRED_MODEL", "ollama:svl364-apex-uncensored:latest"),
             "ollama_model": os.environ.get("OLLAMA_MODEL", "svl364-apex-uncensored:latest"),
-            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_model": "",
             "vision_enabled": True,
             "temperature": 0.25,
             "max_context_turns": 24,
@@ -225,7 +225,7 @@ DYNAMIC_SVL_AGENTS: dict[str, dict[str, Any]] = {
         "default_config": {
             "preferred_model": "ollama:svl364-apex-uncensored:latest",
             "ollama_model": "svl364-apex-uncensored:latest",
-            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_model": "",
             "vision_enabled": True,
             "temperature": 0.25,
             "max_context_turns": 24,
@@ -332,6 +332,7 @@ def sanitize_agent_avatar(avatar: Any) -> dict[str, str] | None:
 def sanitize_agent_config(config: dict[str, Any]) -> dict[str, Any]:
     safe_config = dict(config)
     safe_config["system_prompt"] = ""  # clear legacy persisted persona instructions
+    safe_config["fallback_model"] = ""
     safe_config["root_nopasswd"] = False
     raw_role = str(safe_config.get("rbac_role") or "root").strip().lower()
     safe_config["rbac_role"] = raw_role if raw_role in {"root", "operator", "assistant"} else "root"
@@ -1366,7 +1367,7 @@ class SVLAgentOrchestrator:
     ) -> dict[str, Any]:
         applied = patch or {
             "ollama_model": "svl364-apex-uncensored:latest",
-            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_model": "",
             "vision_enabled": True,
             "auto_connect_on_boot": True,
         }

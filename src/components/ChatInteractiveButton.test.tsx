@@ -169,15 +169,9 @@ test('highlights, kbd shortcuts, sup/sub, action checkboxes, action checklists, 
   assert.match(html, /Synchronizuj teraz/);
 });
 
-test('buildAgentSystemContext includes factual grounding and table/interactive element instructions', () => {
-  const ctx = buildAgentSystemContext('');
-  assert.match(ctx, /ZASADY PRAWDOMÓWNOŚCI/);
-  assert.match(ctx, /Tabele Markdown/);
-  assert.match(ctx, /\[card:/);
-  assert.match(ctx, /\[details:/);
-  assert.match(ctx, /\[checkbox:/);
-  assert.match(ctx, /\[action-card:/);
-  assert.match(ctx, /KaTeX/);
+test('buildAgentSystemContext contains only supplied memory, no behavior or format instructions', () => {
+  assert.equal(buildAgentSystemContext(''), '');
+  assert.equal(buildAgentSystemContext('Fakt z pamięci', 'Jyn'), 'Fakt z pamięci');
 });
 
 test('enforceFactualExecutionGuard flags fabricated instant actions and allows honest negations', () => {

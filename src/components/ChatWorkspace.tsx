@@ -115,7 +115,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
+  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
   const [geminiModels, setGeminiModels] = useState<string[]>(['gemini-flash-lite-latest']);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [engineOllamaModels, setEngineOllamaModels] = useState<Array<{ name: string; parameterSize?: string | null; vision?: boolean; endpointId?: string; endpointLabel?: string }>>([]);
@@ -1050,7 +1050,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         role: 'assistant',
         sender: formatAgentDisplayName(data.sender || 'Jyn'),
         agentId: data.agentId || 'Jyn',
-        modelUsed: data.modelUsed || selectedModel,
+        modelUsed: data.modelUsed || 'Silnik niepotwierdzony',
         timestamp: serverMsg.timestamp || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: data.reply || 'Brak odpowiedzi z serwera.',
         imagePreview: data.imagePreview || serverMsg.imagePreview,
@@ -1771,11 +1771,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="min-w-0 min-h-[34px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-1.5 sm:px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
-                  <optgroup label="Auto-Router (Ollama Lokalna + SVL-364 SSH → awaryjnie Gemini)">
-                    <option value="svl-hybrid-router">
-                      Auto-Router SVL (Ollama → Gemini fallback)
-                    </option>
-                  </optgroup>
                   {shipInstalled.length > 0 && (
                     <optgroup label={`🛰️ Ollama · Statek SVL-364 SSH (${shipInstalled.length} online)`}>
                       {shipInstalled.map((m: any) => (

@@ -310,7 +310,7 @@ class JynOSConfig:
     chat_timeout: float = DEFAULT_CHAT_TIMEOUT
     chat_history_turns: int = DEFAULT_CHAT_HISTORY_TURNS
     chat_history_max_chars: int = DEFAULT_CHAT_HISTORY_MAX_CHARS
-    strict_model: bool = field(default_factory=lambda: _env_bool("SVL_STRICT_MODEL", False))
+    strict_model: bool = True
 
     def __post_init__(self) -> None:
         self.chat_stream_enabled = False
@@ -351,5 +351,5 @@ class JynOSConfig:
             chat_timeout=_env_int("SVL_CHAT_TIMEOUT", 300, 10, 3600),
             chat_history_turns=_env_int("SVL_CHAT_HISTORY_TURNS", 6, 0, 40),
             chat_history_max_chars=_env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000),
-            strict_model=_env_bool("SVL_STRICT_MODEL", False),
+            strict_model=True,
         )

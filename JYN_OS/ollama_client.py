@@ -323,42 +323,8 @@ class SvlOllamaClient:
         has_images: bool = False,
         installed: Optional[List[str]] = None,
     ) -> List[str]:
-        """Dobiera kolejność modeli z 13 kanonicznych modeli SVL-364 bez dodawania obcych małych modeli."""
-        req = (selected_model or self.config.get_active_model()).strip()
-        if self.config.strict_model or (not has_images and req.lower().split(":")[0] == "svl364-apex-uncensored"):
-            return [req]
-
-        if installed is None:
-            candidates = [req]
-            if has_images and self.config.vision_model not in candidates:
-                candidates.append(self.config.vision_model)
-            return candidates
-
-        if not installed:
-            return [req]
-
-        lower_map = {m.lower(): m for m in installed}
-        ordered: List[str] = []
-
-        if req.lower() in lower_map:
-            ordered.append(lower_map[req.lower()])
-        elif f"{req.lower()}:latest" in lower_map:
-            ordered.append(lower_map[f"{req.lower()}:latest"])
-
-        if has_images:
-            for vis in (self.config.vision_model, "llama3.2-vision:11b", "llama3.2-vision:90b"):
-                if vis.lower() in lower_map and lower_map[vis.lower()] not in ordered:
-                    ordered.append(lower_map[vis.lower()])
-
-        for canon in CANONICAL_MODELS_PRIORITY:
-            if canon.lower() in lower_map and lower_map[canon.lower()] not in ordered:
-                ordered.append(lower_map[canon.lower()])
-
-        for inst in installed:
-            if inst not in ordered:
-                ordered.append(inst)
-
-        return ordered or [req]
+        """Wyłącznie wybrany model, bez podmiany."""
+        return [(selected_model or self.config.get_active_model()).strip()]
 
     def _runtime_options(self, prompt: str, has_images: bool = False) -> Dict[str, Any]:
         return compute_turn_options(prompt=prompt, config=self.config, has_images=has_images)
@@ -376,10 +342,6 @@ class SvlOllamaClient:
         """Wykonuje szybkie zapytanie czatu po polsku z całkowicie wyłączonym strumieniowaniem (stream=False)."""
         primary_url = (url or self.config.get_active_ollama_url()).rstrip("/")
         endpoints = [primary_url]
-        if url is None:
-            fallback_url = self.config.get_fallback_ollama_url(primary_url)
-            if fallback_url and fallback_url not in endpoints:
-                endpoints.append(fallback_url)
 
         selected_model = (model or self.config.get_active_model()).strip()
         messages = self._build_messages(prompt, system_prompt=system_prompt, history=history, images=images)
@@ -389,8 +351,7 @@ class SvlOllamaClient:
         last_err = ""
         for ep_url in endpoints:
             chat_endpoint = f"{ep_url}/api/chat"
-            installed = self.get_installed_models_cached(ep_url)
-            candidates = self._candidate_models(selected_model, has_images=bool(images), installed=installed)
+            candidates = [selected_model]
 
             node_unreachable = False
             for cand_model in candidates:
@@ -426,7 +387,11 @@ class SvlOllamaClient:
                             if not cleaned_reply:
                                 last_err = f"Model {cand_model} nie zwrócił treści odpowiedzi"
                                 break
-                            routed_model = str(resp_json.get("routed_model") or cand_model)
+                            routed_model = str(resp_json.get("routed_model") or resp_json.get("model") or "")
+                            normalize = lambda name: name.lower() if ":" in name else name.lower() + ":latest"
+                            if not routed_model or normalize(routed_model) != normalize(cand_model):
+                                last_err = f"Niepotwierdzony lub inny model: {routed_model or '-'}; wybrano {cand_model}"
+                                break
                             return {
                                 "success": True,
                                 "model": cand_model,
