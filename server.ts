@@ -176,7 +176,7 @@ import {
   normalizeGuiLogBatch,
   scrubSensitiveText,
 } from './src/server/fileLogger.ts';
-import { searchLicensedAgentAvatars } from './src/server/agentAvatars.ts';
+import { SELF_AVATAR_CAPABILITY, extractSelfAvatarAction, findSelfAvatars, downloadSelfAvatar } from './src/server/avatarSelf.ts';
 import { LiveRepoSync, loadLiveRepoSyncConfig } from './src/server/liveRepoSync.ts';
 import { LiveSyncBus, formatSseFrame, sseKeepAlive } from './src/server/liveSyncBus.ts';
 import {
@@ -2371,6 +2371,28 @@ async function startServer() {
   }));
 
 
+  // Shared avatar action: the server binds the identity, never the model arguments.
+  const applyOwnAvatar = async (agent: ConversationAgent, args: Record<string, unknown>, corrId: string, origin: string) => {
+    try {
+      if (!['Jyn','SI_Sphere','JEDI_Omni_OS'].includes(agent)) throw new Error('Nieznany profil AI.');
+      const candidates = await findSelfAvatars(args);
+      const index = Number(args.index ?? 0);
+      if (!Number.isInteger(index) || index < 0 || index >= candidates.length) throw new Error('Brak pasującego licencjonowanego obrazu. Dotychczasowy avatar pozostaje bez zmian.');
+      const picked = candidates[index];
+      const image = await downloadSelfAvatar(picked);
+      const saved = await callPythonBackend('POST','/api/py/avatars',{agent,image,origin,correlationId:corrId},corrId,1,8000);
+      if (saved.status !== 200 || !saved.data?.ok || saved.data?.avatars?.[agent] !== image) throw new Error(saved.data?.error || 'Nie potwierdzono zapisu awatara w SQLite.');
+      if (saved.data?.event) publishOutboxEvent(saved.data.event);
+      const revision = Number(saved.data?.serverRevision || 0);
+      if (revision) broadcastResyncRequired('avatar_updated',revision,origin);
+      return {ok:true,agent,serverRevision:revision,title:picked.title,sourceUrl:picked.source_url,license:picked.license,author:picked.author};
+    } catch(error) {
+      return {ok:false,agent,error:error instanceof Error ? error.message : String(error)};
+    }
+  };
+  const avatarReceipt = (result: Awaited<ReturnType<typeof applyOwnAvatar>>) => result.ok
+    ? 'Serwer: zapisano własny awatar — '+result.title+'; '+result.license+'; '+result.author+'; '+result.sourceUrl
+    : 'Serwer: nie zmieniono awatara — '+result.error;
   // 0.5. Avatar overrides API (compatible with Codespaces / Bastilla / SVL Python OS)
   app.get(['/api/avatars', '/api/ai/runtime/avatars'], asyncRoute(async (req, res) => {
     const corrId: string = (req as any).correlationId || '';
@@ -4687,7 +4709,8 @@ async function startServer() {
       /\b(?:ustaw\s+awatar\s+rdzenia\s+orbitalnego(?:\s+ebon\s+apex)?|ustaw\s+wybran[ąa]\s+grafik[ęe]\s+rdzenia)\b/i.test(effectiveCleanMsg)
     ) {
       const avUrlMatch = /(https:\/\/[^\s]+|\/assets\/[^\s]+)/i.exec(effectiveCleanMsg);
-      const avatarTargetUrl = avUrlMatch ? avUrlMatch[1] : '/assets/avatar_jyn_core.jpg';
+      if (!avUrlMatch) { res.status(400).json({ok:false,error:'Podaj adres obrazu; awatar pozostaje bez zmian.'}); return; }
+      const avatarTargetUrl = avUrlMatch[1];
       const avatarProfile =
         /\b(?:si_sphere|si-sphere|svl-465)\b/i.test(effectiveCleanMsg) || selectedAgent === 'SI_Sphere'
           ? 'SI_Sphere'
@@ -5864,58 +5887,10 @@ async function startServer() {
         return { ok, agents: (statusRes.data?.agents || []).map((a: any) => ({ name: a.display_name, status: a.status, pid: a.pid, rbac_role: a.config?.rbac_role, scopesCount: (a.config?.allowed_scopes || []).length })) };
       }
       if (toolName === 'svl_set_avatar') {
-        if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
-        const profile = String(args.agent || 'Jyn').trim();
-        let imageSource = String(args.image_url || '').trim();
-        const searchQuery = String(args.search_query || '').trim();
-        const generatePrompt = String(args.generate_prompt || '').trim();
-
-        if (!imageSource && generatePrompt) {
-          const genRes = await callPythonBackend(
-            'POST',
-            '/api/py/images/generate',
-            { prompt: `Square crisp studio portrait avatar, dark slate sci-fi backdrop, no text: ${generatePrompt}` },
-            corrId,
-          ).catch(() => ({ status: 503, data: null }));
-          if (genRes.status === 200 && genRes.data?.ok && genRes.data?.image) {
-            imageSource = String(genRes.data.image);
-          }
-        }
-        if (!imageSource && searchQuery && process.env.GEMINI_API_KEY) {
-          try {
-            const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-            const found = await searchLicensedAgentAvatars(ai, searchQuery);
-            if (found.length > 0) {
-              imageSource = found[0].image_url;
-            }
-          } catch {
-            // fallback below
-          }
-        }
-        if (!imageSource) {
-          imageSource = '/assets/avatar_jyn_core.jpg';
-        }
-        const avRes = await callPythonBackend(
-          'POST',
-          '/api/py/avatars',
-          { agent: profile, image: imageSource, origin, correlationId: corrId },
-          corrId,
-        );
-        const ok = avRes.status >= 200 && avRes.status < 300 && Boolean(avRes.data?.ok);
-        if (ok) {
-          pendingMutations = true;
-          latestActionSrvRev = Math.max(latestActionSrvRev, Number(avRes.data?.serverRevision || 0));
-          if (avRes.data?.event) publishOutboxEvent(avRes.data.event);
-        }
-        appliedActions.push({
-          tool: toolName,
-          entity: 'avatar',
-          entityId: String(avRes.data?.agent || profile),
-          serverRevision: latestActionSrvRev,
-          summary: ok ? `Ustawiono awatar dla ${avRes.data?.agent || profile}: ${imageSource.slice(0, 80)}` : 'Błąd zapisu awatara',
-          ok,
-        });
-        return { ok, agent: avRes.data?.agent || profile, image: imageSource, serverRevision: latestActionSrvRev, error: avRes.data?.error };
+        const result = await applyOwnAvatar(selectedAgent,args,corrId,origin);
+        if(result.ok) { pendingMutations = true; latestActionSrvRev = Math.max(latestActionSrvRev,Number(result.serverRevision || 0)); }
+        appliedActions.push({tool:toolName,entity:'avatar',entityId:selectedAgent,summary:avatarReceipt(result),ok:result.ok});
+        return result;
       }
       if (toolName === 'svl_autonomy_control') {
         if (!hasAgentRootAuthority) return { ok: false, error: 'Wymagane uprawnienia ROOT i autoryzacja operatora.' };
@@ -5985,70 +5960,6 @@ async function startServer() {
           ok,
         });
         return { ok, ...(stRes.data || {}) };
-      }
-      if (toolName === 'svl_set_avatar') {
-        const requestedAgent = String(rawArgs.agent || agentConfig?.canonical_name || 'Jyn').trim();
-        const profileKey =
-          /si_sphere|si-sphere|svl-465/i.test(requestedAgent)
-            ? 'SI_Sphere'
-            : /jedi/i.test(requestedAgent)
-              ? 'JEDI_Omni_OS'
-              : /operator|mateusz/i.test(requestedAgent)
-                ? 'Operator'
-                : 'Jyn';
-        let finalImageUrl = String(rawArgs.imageUrl || rawArgs.image_url || rawArgs.url || '').trim();
-        let metaTitle = '';
-        let metaSource = '';
-        let metaLicense = '';
-        if (!finalImageUrl && ai && rawArgs.query) {
-          const query = String(rawArgs.query).trim();
-          try {
-            const foundAvatars = await searchLicensedAgentAvatars(ai, query);
-            if (foundAvatars.length > 0) {
-              const picked = foundAvatars[0];
-              finalImageUrl = picked.image_url;
-              metaTitle = picked.title;
-              metaSource = picked.source_url;
-              metaLicense = picked.license;
-            }
-          } catch {
-            // fallback do lokalnego avatara poniżej
-          }
-        }
-        if (!finalImageUrl) {
-          finalImageUrl = profileKey === 'Operator' ? '/assets/avatar_operator.jpg' : '/assets/avatar_jyn_core.jpg';
-        }
-        if (!/^(?:https?:\/\/|\/assets\/|data:image\/)/i.test(finalImageUrl)) {
-          return { ok: false, error: 'Brak prawidłowego adresu URL avatara (wymagane https://..., /assets/... lub data:image/...).' };
-        }
-        const avRes = await callPythonBackend(
-          'POST',
-          '/api/py/avatars',
-          { agent: profileKey, image: finalImageUrl, origin: origin || 'ai_avatar_self_select', correlationId: corrId },
-          corrId,
-        );
-        const ok = avRes.status === 200 && Boolean(avRes.data?.ok);
-        if (ok) {
-          latestActionSrvRev = Number(avRes.data?.serverRevision || latestActionSrvRev);
-          await pollAndRelayOutbox();
-          broadcastResyncRequired('avatar_updated', latestActionSrvRev, origin || 'ai_avatar_self_select');
-        }
-        appliedActions.push({
-          tool: toolName,
-          entity: 'avatars',
-          entityId: profileKey,
-          serverRevision: latestActionSrvRev,
-          summary: ok
-            ? `AI ustawiło nowy avatar dla ${profileKey}: ${finalImageUrl}`
-            : `Błąd ustawienia avatara dla ${profileKey}`,
-          ok,
-        });
-        return {
-          ok,
-          agent: profileKey,
-          image: finalImageUrl,
-          ...(metaTitle ? { title: metaTitle, sourceUrl: metaSource, license: metaLicense } : {}),
-        };
       }
       return { ok: false, error: `Narzędzie wycofane lub niedostępne: ${toolName}` };
     };
@@ -6210,20 +6121,6 @@ async function startServer() {
           },
         },
         {
-          name: 'svl_set_avatar',
-          description:
-            'Ustawia i trwale zapisuje w bazie SQLite nowy awatar dla Jyn Mitek, JEDI Omni-OS lub Operatora oraz natychmiast synchronizuje go na czacie przez WebSocket.',
-          parameters: {
-            type: Type.OBJECT,
-            properties: {
-              agent: { type: Type.STRING, description: 'Jyn (Jyn Mitek), JEDI_Omni_OS lub Operator.' },
-              image_url: { type: Type.STRING, description: 'Opcjonalny adres HTTPS, data:image/... lub ścieżka lokalna np. /assets/avatar_jyn_core.jpg.' },
-              search_query: { type: Type.STRING, description: 'Opcjonalne zapytanie do wyszukania licencjonowanego avatara w Wikimedia Commons.' },
-              generate_prompt: { type: Type.STRING, description: 'Opcjonalny opis do wygenerowania nowego awatara przez Qwen Image.' },
-            },
-          },
-        },
-        {
           name: 'svl_autonomy_control',
           description:
             'Zarządza autonomicznym działaniem AI w tle (ROOT), usługami systemowymi/workerami i misją ciągłą rozwoju systemu: status, enable, disable, run_cycle.',
@@ -6310,24 +6207,16 @@ async function startServer() {
       });
     }
 
-    if (
-      !requestsRootSystemTools &&
-      /\b(?:avatar|awatar|portret|zdjęci[ea]\s+profil|ikona\s+profil)\b/i.test(effectiveCleanMsg)
-    ) {
-      chatToolDeclarations.push({
-        name: 'svl_set_avatar',
-        description:
-          'Pozwala AI samodzielnie wyszukać obraz w internecie (query) lub ustawić dowolny adres URL obrazu (imageUrl) jako własny avatar w systemie SVL (z natychmiastową synchronizacją w UI).',
-        parameters: {
-          type: Type.OBJECT,
-          properties: {
-            agent: { type: Type.STRING, description: 'Profil agenta (np. Jyn, SI_Sphere, Maya, Bielik). Domyślnie aktualny mówca.' },
-            query: { type: Type.STRING, description: 'Zapytanie do wyszukania obrazu avatara w internecie (np. cyberpunk female ai portrait).' },
-            imageUrl: { type: Type.STRING, description: 'Opcjonalny bezpośredni adres URL obrazu (https://...) wybrany przez AI.' },
-          },
-        },
-      });
-    }
+    // The own-avatar tool is always available; it does not require ROOT or another model.
+    chatToolDeclarations.push({
+      name:'svl_set_avatar',
+      description:'Opcjonalna zmiana wyłącznie własnego awatara z Wikimedia Commons. Wybór obrazu przez query lub file; index 0–4.',
+      parameters:{type:Type.OBJECT,properties:{
+        query:{type:Type.STRING,description:'Zapytanie wyszukiwania'},
+        file:{type:Type.STRING,description:'Dokładna nazwa File:… z Wikimedia Commons'},
+        index:{type:Type.NUMBER,description:'Indeks obrazu 0–4'}
+      }}
+    });
 
     const isHybridRouter = model === 'svl-hybrid-router';
     const effectiveModel = isHybridRouter || !model ? 'ollama:svl364-apex-uncensored:latest' : String(model);
@@ -7263,7 +7152,7 @@ async function startServer() {
         );
         const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
         const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
-        const compactSystemForOllama = buildCompactOllamaSystemContext(agentMemoryContext);
+        const compactSystemForOllama = [buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n');
         const attachOllamaTools =
           chatToolDeclarations.length > 0 &&
           !imageBase64 &&
@@ -7401,6 +7290,11 @@ async function startServer() {
           break;
         }
         if (extReplyRaw) {
+          const avatarAction = extractSelfAvatarAction(extReplyRaw);
+          if (avatarAction.args) {
+            const result = await executeChatTool('svl_set_avatar',avatarAction.args);
+            extReplyRaw = avatarAction.text || avatarReceipt(result as Awaited<ReturnType<typeof applyOwnAvatar>>);
+          }
           if (allowedToolNames.length > 0) {
             const extracted = extractTextActions(extReplyRaw, allowedToolNames);
             if (extracted.actions.length > 0) {
@@ -7447,6 +7341,7 @@ async function startServer() {
             ollamaTiming: { ...ollamaMetrics, wallMs: Date.now() - generationStart, tokensPerSecond: ollamaMetrics.evalMs > 0 ? ollamaMetrics.tokens * 1000 / ollamaMetrics.evalMs : null },
             reply: safeReply,
             ...(missionNote ? { verificationNote: missionNote } : {}),
+            ...(appliedActions.some(a=>a.tool==='svl_set_avatar') ? {verificationNote:appliedActions.filter(a=>a.tool==='svl_set_avatar').map(a=>a.summary).join('\n')} : {}),
             provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
             ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),
             followUpMessages: [],
@@ -8102,7 +7997,7 @@ async function startServer() {
     memoryContext: string,
     failures: string[],
   ): Promise<{ text: string; label: string; provider: 'ollama' | 'gemini'; actualModel: string } | null> => {
-    const rawPromptPrefix = memoryContext ? `${memoryContext}\n\n` : '';
+    const rawPromptPrefix = [memoryContext, SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n')+'\n\n';
     const starterBlock = transcript
       ? `${transcript}\n[${speaker}]: `
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
@@ -8173,7 +8068,7 @@ async function startServer() {
               config: {
                 ...(isGeminiTemperatureSupported(candidate) ? { temperature: 0.8 } : {}),
                 maxOutputTokens: 1100,
-                ...(memoryContext ? { systemInstruction: memoryContext } : {}),
+                systemInstruction: [memoryContext,SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n'),
                 ...geminiThinkingConfig(candidate),
                 abortSignal: AbortSignal.timeout(timeoutMs),
               },
@@ -8408,7 +8303,9 @@ async function startServer() {
         return noModel();
       }
       const proactiveGenerationMs = Date.now() - proactiveGenerationStart;
-      const rawText = line.text.trim();
+      const avatarAction = extractSelfAvatarAction(line.text);
+      const avatarResult = avatarAction.args ? await applyOwnAvatar(speaker,avatarAction.args,corrId,origin) : null;
+      const rawText = avatarAction.text || (avatarResult ? avatarReceipt(avatarResult) : '');
       if (!rawText || isRepetitive(rawText, turns.slice(-8).map((t) => t.content))) {
         return skip('nothing_new', `${speakerDisplayName} nie miał nic nowego do powiedzenia — wypowiedź pominięta.`);
       }
@@ -8425,6 +8322,7 @@ async function startServer() {
         actualModel: line.actualModel,
         provenance: 'model_unverified',
         ...(guardedProactive.verificationNote ? { verificationNote: guardedProactive.verificationNote } : {}),
+        ...(avatarResult ? {verificationNote:avatarReceipt(avatarResult)} : {}),
         timestamp: new Date().toISOString(),
         content: text,
       };

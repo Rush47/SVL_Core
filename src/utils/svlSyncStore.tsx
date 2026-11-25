@@ -873,7 +873,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
 
-      if (evt.entity === 'avatar') {
+      if (evt.entity === 'avatar' || evt.entity === 'avatars') {
         scheduleDomainRefresh(['avatars']);
         return;
       }

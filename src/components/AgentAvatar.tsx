@@ -66,7 +66,7 @@ export const SvlAvatar: React.FC<{
   className?: string;
 }> = ({ sender, agentId, profileKey, avatars, size = 32, className = '' }) => {
   const syncCtx = useSvlSync();
-  const effectiveAvatars = avatars || syncCtx.avatars || {};
+  const effectiveAvatars = syncCtx.avatars ?? avatars ?? {};
   const resolvedKey = profileKey ?? resolveAvatarProfileKey(sender, agentId);
   const meta = resolvedKey
     ? PROFILE_META[resolvedKey]
@@ -111,6 +111,7 @@ export const SvlAvatar: React.FC<{
     >
       {activeSrc ? (
         <img
+          key={activeSrc}
           src={activeSrc}
           alt={`Awatar: ${meta.label}`}
           referrerPolicy="no-referrer"
