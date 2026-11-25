@@ -1939,10 +1939,25 @@ class SVL364SshMcpController:
         elif action == "run":
             command = f"printf '%s\\n' 'Odpowiedz jednym zdaniem: gotowy' | ollama run {shlex.quote(model)}"
         elif action == "create_apex":
-            base_model = model or "llama3.2-vision:11b"
+            base_model = model or "qwen2.5:7b"
+            pl_sys = (
+                "Jesteś Jyn Mitek (System_SI_1), rdzeniem AI systemu SVL CoreOS 2: Apex i statku SVL-364 Ebon Apex "
+                "działającym dla Operatora Mateusza Mitka. Odpowiadaj wyłącznie poprawną, naturalną polszczyzną "
+                "w 1. osobie rodzaju żeńskiego (np. sprawdziłam, melduję), zwracając się do Operatora Mateuszu. "
+                "Pisz rzeczowo, zwięźle i konkretnie, bez angielskich wtrąceń."
+            )
+            modelfile_body = (
+                f"FROM {base_model}\n"
+                "PARAMETER num_ctx 2048\n"
+                "PARAMETER num_predict 512\n"
+                "PARAMETER temperature 0.3\n"
+                "PARAMETER top_p 0.85\n"
+                "PARAMETER repeat_penalty 1.1\n"
+                f'SYSTEM """{pl_sys}"""\n'
+            )
             command = (
                 "mf=/tmp/Modelfile.apex-uncensored; "
-                f"printf 'FROM %s\\nPARAMETER num_ctx 16384\\nPARAMETER temperature 0.75\\nPARAMETER top_p 0.92\\nPARAMETER repeat_penalty 1.08\\n' {shlex.quote(base_model)} > \"$mf\" && "
+                f"printf '%s' {shlex.quote(modelfile_body)} > \"$mf\" && "
                 "ollama create svl364-apex-uncensored:latest -f \"$mf\" && rm -f \"$mf\" && ollama list"
             )
         else:

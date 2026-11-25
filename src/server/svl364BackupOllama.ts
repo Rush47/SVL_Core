@@ -423,33 +423,7 @@ export function startSvl364BackupOllamaServer(
         replyText = buildDefaultShipModelReply(model, userText, hasImages);
       }
 
-      if (body?.stream === true) {
-        res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
-        if (url === '/api/chat') {
-          res.write(
-            `${JSON.stringify({
-              model,
-              created_at: nowIso,
-              message: { role: 'assistant', content: replyText },
-              done: false,
-            })}\n`,
-          );
-          res.end(
-            `${JSON.stringify({
-              model,
-              created_at: nowIso,
-              message: { role: 'assistant', content: '' },
-              done: true,
-              done_reason: 'stop',
-            })}\n`,
-          );
-        } else {
-          res.write(`${JSON.stringify({ model, created_at: nowIso, response: replyText, done: false })}\n`);
-          res.end(`${JSON.stringify({ model, created_at: nowIso, response: '', done: true, done_reason: 'stop' })}\n`);
-        }
-        return;
-      }
-
+      // Strumieniowanie odpowiedzi jest wyłączone — zawsze zwracamy jedną kompletną odpowiedź JSON.
       res.writeHead(200);
       if (url === '/api/chat') {
         res.end(

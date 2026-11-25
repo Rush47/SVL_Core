@@ -1,14 +1,14 @@
-"""Interaktywna powłoka systemowa JYN_OS (JYN_OS Interactive Shell) dla statku SVL-364."""
+"""Interaktywna powłoka systemowa JYN_OS v3.0 dla statku SVL-364 z nowym modułem czatu bez strumieniowania."""
 
 from __future__ import annotations
 
 import cmd
 import json
 import os
-import sys
 import urllib.request
-from typing import Optional
+from typing import Dict, List, Optional
 
+from .chat_engine import JynChatEngine
 from .config import JynOSConfig, resolve_auth_token
 from .mcp_client import SvlMcpClient
 from .ollama_client import SvlOllamaClient
@@ -32,9 +32,9 @@ class JynOSShell(cmd.Cmd):
 
     intro = f"""
 {CYAN}{BOLD}================================================================================{RESET}
-{MAGENTA}{BOLD}   ✦ JYN_OS · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
-{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Operator: Mateusz Mitek{RESET}
-{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' aby wyświetlić komendy lub '{BOLD}status{RESET}{DIM}' dla stanu połączeń.{RESET}
+{MAGENTA}{BOLD}   ✦ JYN_OS v3.0 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
+{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Operator: Mateusz Mitek · Czat PL (stream=OFF){RESET}
+{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}status{RESET}{DIM}' dla audytu lub pisz bezpośrednio do Jyn.{RESET}
 {CYAN}{BOLD}================================================================================{RESET}
 """
     prompt = f"{CYAN}{BOLD}JYN_OS [SVL-364]{RESET}{BOLD}❯{RESET} "
@@ -46,10 +46,18 @@ class JynOSShell(cmd.Cmd):
         self.mcp = SvlMcpClient(self.config)
         self.ollama = SvlOllamaClient(self.config)
         self.telemetry = SvlShipTelemetry(self.config, self.ssh)
-        self.chat_history: list[dict[str, str]] = []
+        self.chat_engine = JynChatEngine(config=self.config, ollama=self.ollama)
+
+    @property
+    def chat_history(self) -> List[Dict[str, str]]:
+        return self.chat_engine.history
+
+    @chat_history.setter
+    def chat_history(self, value: List[Dict[str, str]]) -> None:
+        self.chat_engine.history = list(value)
 
     def do_status(self, arg: str) -> None:
-        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11435)."""
+        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435)."""
         print(f"\n{BOLD}🔍 [AUDYT INFRASTRUKTURY SVL-364 / JYN_OS]{RESET}\n")
 
         # 1. SSH
@@ -59,8 +67,7 @@ class JynOSShell(cmd.Cmd):
         print(f"   • Profil docelowy : {BOLD}{self.config.ssh_profile}{RESET} (port: {self.config.ssh_port})")
         print(f"   • Klucz Ed25519   : {key_info['key_path']} [{'Zainstalowany' if key_info['private_key_exists'] else 'Brak pliku'}]")
         print(f"   • Konfiguracja SSH: {profile_info['config_file']} [{'Skonfigurowany' if profile_info['configured'] else 'Nieskonfigurowany'}]")
-        
-        # Szybki test SSH
+
         probe = self.ssh.execute_command("uname -r", timeout=2.5)
         if probe.success:
             print(f"   • Połączenie SSH  : {GREEN}ONLINE{RESET} (Kernel: {probe.stdout.strip()})")
@@ -75,26 +82,26 @@ class JynOSShell(cmd.Cmd):
             print(f"   • {name:38}: {st_color}{info['status']}{RESET} ({info['url']})")
 
         # 3. Silnik Ollama
-        print(f"\n{CYAN}{BOLD}3. Jednostka Obliczeniowa AI Ollama:{RESET}")
+        print(f"\n{CYAN}{BOLD}3. Jednostka Obliczeniowa AI Ollama (Strumieniowanie: WYŁĄCZONE):{RESET}")
         ship_ollama = self.ollama.check_node_status(self.config.ship_ollama_url)
         st_color = GREEN if ship_ollama["online"] else RED
         status_txt = f"ONLINE (v{ship_ollama['version']})" if ship_ollama["online"] else "OFFLINE"
-        print(f"   • Pokładowa Ollama (:11435)        : {st_color}{status_txt}{RESET}")
+        print(f"   • Pokładowa Ollama SVL-364 (:11435): {st_color}{status_txt}{RESET}")
         print(f"     └─ Model domyślny                : {BOLD}{self.config.ship_model}{RESET} [{'OBECNY' if ship_ollama['apex_present'] else 'Brak'}]")
         if ship_ollama["installed_models"]:
-            print(f"     └─ Zainstalowane modele          : {', '.join(ship_ollama['installed_models'][:6])}")
+            print(f"     └─ Modele pokładowe ({len(ship_ollama['installed_models']):2d})         : {', '.join(ship_ollama['installed_models'][:6])}...")
 
         local_ollama = self.ollama.check_node_status(self.config.local_ollama_url)
         loc_color = GREEN if local_ollama["online"] else YELLOW
         loc_txt = f"ONLINE (v{local_ollama['version']})" if local_ollama["online"] else "OFFLINE"
         print(f"   • Lokalna Ollama (:11434)          : {loc_color}{loc_txt}{RESET}")
         if local_ollama["installed_models"]:
-            print(f"     └─ Dostępne modele               : {', '.join(local_ollama['installed_models'])}")
-            print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY I GOTOWY' if local_ollama['vision_present'] else 'Brak'}")
+            print(f"     └─ Zainstalowane wagi            : {', '.join(local_ollama['installed_models'])}")
+            print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY' if local_ollama['vision_present'] else 'Dostępny na żądanie'}")
         print()
 
     def do_ssh(self, arg: str) -> None:
-        """ssh [polecenie] — Wykonuje polecenie na statku SVL-364 lub otwiera interaktywną powłokę (gdy bez argumentu)."""
+        """ssh [polecenie] — Wykonuje polecenie na statku SVL-364 lub otwiera interaktywną powłokę."""
         cmd_text = arg.strip()
         if not cmd_text:
             print(f"{YELLOW}Uruchamianie bezpośredniej sesji terminalowej SSH ze statkiem...{RESET}")
@@ -140,14 +147,14 @@ class JynOSShell(cmd.Cmd):
         print()
 
     def do_ollama(self, arg: str) -> None:
-        """ollama [status|target|model|vision|pull|install|chat|list|catalog] [argumenty] — Zarządzanie lokalną i pokładową Ollamą."""
+        """ollama [status|target|model|vision|pull|install|fix|warmup|chat|list|catalog|clear] — Zarządzanie Ollamą."""
         parts = arg.strip().split(maxsplit=1)
         subcmd = parts[0].lower() if parts else "status"
         extra = parts[1] if len(parts) > 1 else ""
 
         if subcmd == "status":
             target = extra.strip().lower() if extra else ""
-            print(f"\n{CYAN}{BOLD}--- Stan węzłów obliczeniowych Ollama ---{RESET}")
+            print(f"\n{CYAN}{BOLD}--- Stan węzłów obliczeniowych Ollama (Strumieniowanie: WYŁĄCZONE) ---{RESET}")
             print(f"Aktywny cel JYN_OS: {BOLD}{self.config.active_ollama_target.upper()}{RESET} (domyślny model: {BOLD}{self.config.get_active_model()}{RESET})\n")
 
             if target in ("", "local", "11434"):
@@ -157,9 +164,9 @@ class JynOSShell(cmd.Cmd):
                 if loc_st["online"]:
                     print(f"   └─ Wersja        : v{loc_st['version']}")
                     print(f"   └─ Modele        : {', '.join(loc_st['installed_models']) or 'brak zainstalowanych modeli'}")
-                    print(f"   └─ Model Vision  : {'✅ Dostępny' if loc_st['vision_present'] else 'Brak (uruchom: ollama pull llama3.2-vision:11b)'}")
+                    print(f"   └─ Model Apex    : {'✅ Dostępny' if loc_st['apex_present'] else 'Brak (uruchom: ollama fix)'}")
                 else:
-                    print(f"   └─ Diagnostyka   : {loc_st['error']} (uruchom: ollama install)")
+                    print(f"   └─ Diagnostyka   : {loc_st['error']} (uruchom: ollama fix)")
                 print()
 
             if target in ("", "ship", "11435"):
@@ -180,7 +187,7 @@ class JynOSShell(cmd.Cmd):
                 self.config.set_active_target("local")
                 print(f"\n{GREEN}✔ Przełączono aktywny węzeł Ollama na: LOKALNY (:11434){RESET}")
                 print(f"Aktywny model: {self.config.get_active_model()}\n")
-            elif tgt in ("ship", "11435", "remote"):
+            elif tgt in ("ship", "11435", "remote", "svl364"):
                 self.config.set_active_target("ship")
                 print(f"\n{GREEN}✔ Przełączono aktywny węzeł Ollama na: POKŁADOWY SVL-364 (:11435){RESET}")
                 print(f"Aktywny model: {self.config.get_active_model()}\n")
@@ -191,7 +198,7 @@ class JynOSShell(cmd.Cmd):
             chosen = extra.strip()
             if not chosen:
                 print(f"Bieżący aktywny model: {BOLD}{self.config.get_active_model()}{RESET}")
-                print(f"Użycie: ollama model <nazwa_modelu> (np. ollama model llama3.2-vision:11b)")
+                print("Użycie: ollama model <nazwa_modelu> (np. ollama model qwen2.5:7b)")
                 return
             if self.config.active_ollama_target == "local":
                 self.config.local_model = chosen
@@ -199,22 +206,30 @@ class JynOSShell(cmd.Cmd):
                 self.config.ship_model = chosen
             print(f"\n{GREEN}✔ Ustawiono aktywny model na: {BOLD}{chosen}{RESET}\n")
 
-        elif subcmd == "install":
-            print(f"\n{CYAN}⚡ Weryfikacja i instalacja lokalnego silnika Ollama...{RESET}")
-            res = self.ollama.install_local_ollama()
+        elif subcmd in ("install", "fix", "repair"):
+            print(f"\n{CYAN}⚡ Naprawa i optymalizacja silnika Ollama oraz profilu Apex...{RESET}")
+            res = self.ollama.install_local_ollama(ensure_models=True)
             if res.get("success"):
-                print(f"{GREEN}✔ Lokalny silnik Ollama jest aktywny i odpowiada na porcie 11434.{RESET}")
+                print(f"{GREEN}✔ Lokalny silnik Ollama jest aktywny, rozgrzany i gotowy (:11434).{RESET}")
                 print(f"Wersja: v{res.get('version')} | Plik binarny: {res.get('binary')}")
                 print(f"Zainstalowane modele: {', '.join(res.get('models', [])) or 'brak'}\n")
             else:
-                print(f"{RED}❌ Błąd podczas uruchamiania/instalacji lokalnej Ollamy:{RESET} {res.get('error')}\n")
+                print(f"{RED}❌ Błąd podczas uruchamiania/naprawy Ollamy:{RESET} {res.get('error')}\n")
+
+        elif subcmd in ("warmup", "rozgrzej"):
+            print(f"\n{CYAN}🔥 Ładowanie modelu do pamięci RAM (keep_alive=-1)...{RESET}")
+            res = self.ollama.warm_up()
+            if res.get("success"):
+                print(f"{GREEN}✔ Model {res.get('model')} zablokowany w RAM na węźle {res.get('endpoint')}.{RESET}\n")
+            else:
+                print(f"{RED}❌ Błąd rozgrzewania:{RESET} {res.get('error')}\n")
 
         elif subcmd == "pull":
-            model_to_pull = extra.strip() or self.config.vision_model
+            model_to_pull = extra.strip() or self.config.get_active_model()
             print(f"\n{CYAN}⏳ Pobieranie modelu '{model_to_pull}' do lokalnego węzła Ollama (:11434)...{RESET}")
             res = self.ollama.pull_model(model_to_pull, url=self.config.local_ollama_url)
             if res.get("success"):
-                print(f"{GREEN}✔ Model {model_to_pull} został pomyślnie zainstalowany i jest gotowy do pracy!{RESET}\n")
+                print(f"{GREEN}✔ Model {model_to_pull} został pomyślnie zainstalowany!{RESET}\n")
             else:
                 print(f"{RED}❌ Błąd pobierania:{RESET} {res.get('error')}\n")
 
@@ -222,20 +237,18 @@ class JynOSShell(cmd.Cmd):
             vparts = extra.strip().split(maxsplit=1)
             if not vparts:
                 print(f"{YELLOW}Użycie: ollama vision <ścieżka_do_obrazka> [pytanie]{RESET}")
-                print(f"Przykład: ollama vision /home/antigravity/foto.jpg 'Co znajduje się na zdjęciu?'")
                 return
             img_path = vparts[0]
             vprompt = vparts[1] if len(vparts) > 1 else "Przeanalizuj ten obraz ze statku i opisz szczegółowo co na nim widać."
-
-            print(f"\n{CYAN}👁️ [Analiza multimodalna modelem: {self.config.vision_model} przez port 11434...]{RESET}\n")
-            res = self.ollama.chat_vision(prompt=vprompt, image_path=img_path, url=self.config.local_ollama_url)
+            print(f"\n{CYAN}👁️ [Analiza multimodalna modelem: {self.config.vision_model}...]{RESET}\n")
+            res = self.ollama.chat_vision(prompt=vprompt, image_path=img_path)
             if res.get("success"):
                 print(f"{GREEN}{BOLD}✦ Raport Wizyjny [{res['model']}]:{RESET}\n{res['response']}\n")
             else:
                 print(f"{RED}❌ Błąd analizy wizyjnej:{RESET} {res.get('error')}\n")
 
         elif subcmd in ("catalog", "models"):
-            print(f"\n{CYAN}{BOLD}Katalog 13 modeli pokładowych statku SVL-364:{RESET}\n")
+            print(f"\n{CYAN}{BOLD}Katalog 13 kanonicznych modeli pokładowych statku SVL-364:{RESET}\n")
             catalog = self.ollama.get_ship_models_catalog()
             for i, m in enumerate(catalog, 1):
                 flag = f"{GREEN}★ GŁÓWNY{RESET}" if m.get("primary") else ("👁️ VISION" if "vision" in m["name"] else "  ")
@@ -246,17 +259,17 @@ class JynOSShell(cmd.Cmd):
         elif subcmd in ("chat", "ask"):
             prompt = extra.strip()
             if not prompt:
-                print(f"{YELLOW}Podaj treść zapytania, np.: ollama chat 'Raport gotowości statku'{RESET}")
+                print(f"{YELLOW}Podaj treść zapytania, np.: ollama chat 'Melduj gotowość systemów'{RESET}")
                 return
             self._run_complete_chat(prompt)
 
         elif subcmd in ("clear", "reset-chat"):
-            self.chat_history.clear()
+            self.chat_engine.clear_history()
             print(f"\n{GREEN}✔ Wyczyszczono historię rozmowy sesji JYN_OS.{RESET}\n")
 
         elif subcmd == "list":
             target = extra.strip().lower() or self.config.active_ollama_target
-            if target not in ("local", "11434", "ship", "11435", "remote"):
+            if target not in ("local", "11434", "ship", "11435", "remote", "svl364"):
                 print(f"{YELLOW}Użycie: ollama list [local|ship]{RESET}")
                 return
             local = target in ("local", "11434")
@@ -272,7 +285,7 @@ class JynOSShell(cmd.Cmd):
                 print(f"{RED}Węzeł Ollama {label} nie odpowiada: {st['error']}{RESET}")
 
         else:
-            print(f"{YELLOW}Dostępne polecenia: status, target [local|ship], model [nazwa], vision <obraz> [tekst], install, pull [model], list, catalog, chat <tekst>, clear{RESET}")
+            print(f"{YELLOW}Dostępne polecenia: status, target [local|ship], model [nazwa], fix, warmup, vision <obraz> [tekst], install, pull [model], list, catalog, chat <tekst>, clear{RESET}")
 
     def do_mcp(self, arg: str) -> None:
         """mcp [ping|list|call <nazwa_narzędzia>] — Diagnostyka i sterowanie federacją serwerów MCP."""
@@ -353,7 +366,7 @@ class JynOSShell(cmd.Cmd):
             print(f" • Status           : {res_data.get('status')}")
             print(f" • Nowa rewizja     : {res_data.get('serverRevision')}")
             print(f" • Zainicjalizowane : {res_data.get('modulesCount', 'komplet')} modułów systemowych")
-            print(f"\nUruchamiam automatyczny audyt stanu po resecie:")
+            print("\nUruchamiam automatyczny audyt stanu po resecie:")
             self.do_status("")
         else:
             print(f"{RED}❌ Błąd podczas wykonywania Factory Reset przez API. Sprawdź działanie bramy i jądra.{RESET}")
@@ -402,51 +415,55 @@ class JynOSShell(cmd.Cmd):
         """clean — Alias do polecenia purge_buffer."""
         self.do_purge_buffer(arg)
 
-
     def do_clear(self, arg: str) -> None:
         """clear — Czyści ekran terminala."""
         os.system("clear" if os.name == "posix" else "cls")
 
     def do_exit(self, arg: str) -> bool:
         """exit — Zamyka powłokę klienta JYN_OS."""
-        print(f"{CYAN}Rozłączono sesję klienta JYN_OS. Do usłyszenia, Operatorze Mateuszu.{RESET}")
+        print(f"{CYAN}Rozłączono sesję klienta JYN_OS. Do usłyszenia, Mateuszu.{RESET}")
         return True
 
     def do_quit(self, arg: str) -> bool:
         """quit — Zamyka powłokę klienta JYN_OS."""
         return self.do_exit(arg)
 
-    def _run_complete_chat(self, prompt: str) -> bool:
-        cleaned = prompt.strip()
+    def _run_complete_chat(self, prompt: str, model: Optional[str] = None) -> bool:
+        cleaned = (prompt or "").strip()
         if not cleaned:
             return False
         active_url = self.config.get_active_ollama_url()
-        active_mod = self.config.get_active_model()
-        print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url}) — generowanie odpowiedzi]{RESET}", flush=True)
+        active_mod = model or self.config.get_active_model()
+        if not cleaned.startswith("/"):
+            print(f"\n{CYAN}[Jyn Mitek · {active_mod} ({active_url}) · tryb bez strumieniowania]{RESET}", flush=True)
         try:
-            result = self.ollama.chat(cleaned, model=active_mod, url=active_url, history=self.chat_history)
+            turn = self.chat_engine.send(cleaned, model=model)
         except KeyboardInterrupt:
             print(f"\n{YELLOW}Przerwano oczekiwanie na odpowiedź.{RESET}")
             return False
-        if not result.get("success"):
-            print(f"\n{RED}❌ Błąd komunikacji z modelem:{RESET} {result.get('error')}\n")
+
+        if not turn.ok:
+            print(f"\n{RED}❌ Błąd czatu:{RESET} {turn.error}\n")
             return False
-        full_reply = result["response"]
-        used_model = result["model"]
-        print(f"{GREEN}{BOLD}✦ Jyn [{used_model}]:{RESET} {full_reply}\n", flush=True)
-        if result.get("truncated"):
-            print(f"{YELLOW}[Ollama osiągnęła limit generowania; odpowiedź może być niepełna. Możesz poprosić o kontynuację.]{RESET}")
-        self.chat_history.extend([
-            {"role": "user", "content": cleaned},
-            {"role": "assistant", "content": full_reply},
-        ])
-        self.chat_history = self.chat_history[-20:]
+
+        timing = ""
+        if not turn.local_command and turn.duration_sec > 0:
+            tps_part = f", {turn.tokens_per_sec:.1f} tok/s" if turn.tokens_per_sec > 0 else ""
+            timing = f" {DIM}({turn.duration_sec:.2f}s{tps_part}){RESET}"
+
+        badge_model = turn.model or active_mod
+        if turn.routed_model and turn.routed_model != badge_model:
+            badge_model = f"{badge_model} → {turn.routed_model}"
+
+        print(f"{GREEN}{BOLD}✦ Jyn [{badge_model}]:{RESET}{timing} {turn.reply}\n", flush=True)
+        if turn.truncated:
+            print(f"{YELLOW}[Osiągnięto limit długości odpowiedzi; wpisz „kontynuuj”, aby dokończyć wypowiedź.]{RESET}")
         return True
 
     def do_chat(self, arg: str) -> None:
-        """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek (pełna odpowiedź bez strumieniowania + pamięć sesji)."""
+        """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek po polsku (bez strumieniowania + pamięć sesji)."""
         if not arg.strip():
-            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn>{RESET}")
+            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /wyczysc){RESET}")
             return
         self._run_complete_chat(arg)
 
@@ -455,7 +472,7 @@ class JynOSShell(cmd.Cmd):
         self.do_chat(arg)
 
     def default(self, line: str) -> None:
-        """Kieruje wypowiedzi w języku naturalnym bezpośrednio do czatu Jyn Mitek."""
+        """Kieruje wypowiedzi w języku naturalnym oraz komendy /... bezpośrednio do modułu czatu Jyn Mitek."""
         cleaned = line.strip()
         if not cleaned:
             return
@@ -468,4 +485,3 @@ class JynOSShell(cmd.Cmd):
     def emptyline(self) -> bool:
         """Nie powtarzaj ostatniego polecenia po wciśnięciu Enter."""
         return False
-

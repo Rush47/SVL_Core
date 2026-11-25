@@ -1,12 +1,17 @@
 {
   "engine": "SVL-364 Ship-Hosted Ollama Daemon",
-  "managed_by": "Maya Mitek (Kernel Master Daemon)",
+  "managed_by": "Jyn Mitek & Maya Mitek (Kernel Master Daemon)",
   "model_name": "svl364-apex-uncensored:latest",
-  "fallback_model": "llama3.2-vision:11b",
+  "fallback_model": "qwen2.5:7b",
+  "vision_model": "llama3.2-vision:11b",
   "ship_ssh_target": "Ship",
-  "local_tunnel_url": "http://127.0.0.1:11434",
+  "local_tunnel_url": "http://127.0.0.1:11435",
   "ship_ollama_port": 11434,
-  "context_window": 16384,
+  "stream": false,
+  "language": "pl",
+  "context_window": 2048,
+  "max_predict": 512,
+  "keep_alive": -1,
   "compute_thrust_npu": true,
   "unrestricted_operator_mode": true
 }

@@ -1,4 +1,4 @@
-"""Konfiguracja parametrów i węzłów sieciowych systemu klienta JYN_OS dla statku SVL-364."""
+"""Konfiguracja parametrów, 13 modeli pokładowych i węzłów sieciowych systemu JYN_OS / SVL-364."""
 
 from __future__ import annotations
 
@@ -10,13 +10,23 @@ from typing import Any, Dict, List
 
 # Domyślny profil SSH oraz klucz kryptograficzny dedykowany dla statku SVL-364
 DEFAULT_SSH_PROFILE = os.environ.get("SVL_SSH_TARGET", "Ship").strip() or "Ship"
+
+
 def resolve_default_ssh_key() -> Path:
     if os.environ.get("SVL_SSH_KEY"):
         return Path(os.environ["SVL_SSH_KEY"])
-    for p in (Path.home() / ".ssh" / "svl364_ed25519", Path("/home/antigravity/.ssh/svl364_ed25519"), Path("/root/.ssh/svl364_ed25519")):
-        if p.is_file():
-            return p
+    for p in (
+        Path.home() / ".ssh" / "svl364_ed25519",
+        Path("/home/antigravity/.ssh/svl364_ed25519"),
+        Path("/root/.ssh/svl364_ed25519"),
+    ):
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            continue
     return Path.home() / ".ssh" / "svl364_ed25519"
+
 
 DEFAULT_SSH_PORT = int(os.environ.get("SVL_SSH_PORT", "22"))
 DEFAULT_SSH_KEY_PATH = resolve_default_ssh_key()
@@ -35,23 +45,23 @@ def resolve_auth_token(endpoint_url: str = "") -> str:
         if token:
             return token.strip()
         fpath = Path(__file__).resolve().parent.parent / "data" / "svl_mcp_token.secret"
-        if fpath.is_file():
-            try:
+        try:
+            if fpath.is_file():
                 return fpath.read_text(encoding="utf-8").strip()
-            except Exception:
-                pass
+        except Exception:
+            pass
 
-    # Domyślny token dla bramy SVL / backendu
     token = os.environ.get("SVL_OPERATOR_TOKEN") or os.environ.get("MCP_TOKEN")
     if token:
         return token.strip()
     fpath = Path(__file__).resolve().parent.parent / "data" / "svl_operator_token.secret"
-    if fpath.is_file():
-        try:
+    try:
+        if fpath.is_file():
             return fpath.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
+    except Exception:
+        pass
     return ""
+
 
 def _load_project_dotenv() -> None:
     env_file = Path(__file__).resolve().parent.parent / ".env"
@@ -76,9 +86,20 @@ _load_project_dotenv()
 DEFAULT_SHIP_OLLAMA_URL = os.environ.get("SVL_SHIP_OLLAMA_URL", "http://127.0.0.1:11435")
 DEFAULT_LOCAL_OLLAMA_URL = os.environ.get("SVL_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434")
 DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "svl364-apex-uncensored:latest")
-DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "moondream:1.8b")
+DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "llama3.2-vision:11b")
 DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "svl364-apex-uncensored:latest")
 DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")
+APEX_MODELFILE_PATH = Path(__file__).resolve().parent.parent / "SVL_CoreOS_2" / "ai_core" / "Modelfile.apex-uncensored"
+
+# Całkowite wyłączenie strumieniowania odpowiedzi czatu (zawsze jedna kompletna odpowiedź JSON)
+DEFAULT_CHAT_STREAM: bool = False
+
+# Stały, ultrazwięzły polski prompt systemowy (~45 tokenów) zapewniający 100% trafień w KV-cache Ollamy
+DEFAULT_SYSTEM_PROMPT_PL: str = (
+    "Jesteś Jyn Mitek (System_SI_1), AI statku SVL-364 dla Operatora Mateusza Mitka. "
+    "Pisz wyłącznie poprawną polszczyzną w 1. osobie r.ż. (sprawdziłam, melduję), "
+    "zwracaj się „Mateuszu”, odpowiadaj krótko i konkretnie bez angielskich wtrąceń."
+)
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -89,21 +110,31 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
-DEFAULT_CHAT_NUM_CTX = _env_int("SVL_CHAT_NUM_CTX", 8192, 2048, 32768)
-DEFAULT_CHAT_NUM_PREDICT = _env_int("SVL_CHAT_NUM_PREDICT", 4096, 256, 16384)
-DEFAULT_CHAT_TIMEOUT = _env_int("SVL_CHAT_TIMEOUT", 900, 30, 3600)
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on", "tak")
+
+
+DEFAULT_CHAT_NUM_CTX = _env_int("SVL_CHAT_NUM_CTX", 2048, 512, 32768)
+DEFAULT_CHAT_NUM_PREDICT = _env_int("SVL_CHAT_NUM_PREDICT", 384, 64, 16384)
+DEFAULT_CHAT_TIMEOUT = _env_int("SVL_CHAT_TIMEOUT", 90, 10, 3600)
+DEFAULT_CHAT_HISTORY_TURNS = _env_int("SVL_CHAT_HISTORY_TURNS", 6, 0, 40)
+DEFAULT_CHAT_HISTORY_MAX_CHARS = _env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000)
 
 # Brama API telemetrii i stanu SVL CoreOS
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
 DEFAULT_BACKEND_URL = os.environ.get("SVL_BACKEND_URL", "http://127.0.0.1:8085")
 
-# Katalog 13 modeli pokładowych jednostki obliczeniowej statku SVL-364
+# Kanoniczny katalog 13 modeli pokładowych jednostki obliczeniowej statku SVL-364
 SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
     {
         "name": "svl364-apex-uncensored:latest",
-        "role": "Główny model Apex (Kwantyzacja Q4_K_M, kontekst 16k, niecenzurowany rdzeń)",
+        "role": "Główny model Apex (Kwantyzacja Q4_K_M, niecenzurowany rdzeń Jyn Mitek)",
         "parameter_size": "70B",
         "family": "llama",
+        "min_ram_gb": 5.5,
         "primary": True,
     },
     {
@@ -111,6 +142,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Wielkoformatowy model mieszaniny ekspertów (MoE, 141B)",
         "parameter_size": "141B",
         "family": "mixtral",
+        "min_ram_gb": 84.0,
         "primary": False,
     },
     {
@@ -118,6 +150,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Zaawansowany model analityczny i logiczny wysokiego rzędu",
         "parameter_size": "70B",
         "family": "llama",
+        "min_ram_gb": 44.0,
         "primary": False,
     },
     {
@@ -125,6 +158,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Jednostka taktyczno-proceduralna do złożonych instrukcji",
         "parameter_size": "30B",
         "family": "llama",
+        "min_ram_gb": 20.0,
         "primary": False,
     },
     {
@@ -132,6 +166,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Zbalansowany model MoE do szybkiego wnioskowania wielowątkowego",
         "parameter_size": "47B",
         "family": "mixtral",
+        "min_ram_gb": 28.0,
         "primary": False,
     },
     {
@@ -139,6 +174,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Ultralekki i zoptymalizowany model szybkiego reagowania",
         "parameter_size": "8B",
         "family": "llama",
+        "min_ram_gb": 4.0,
         "primary": False,
     },
     {
@@ -146,6 +182,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Multimodalny model wizyjny o dużej rozdzielczości sensorycznej",
         "parameter_size": "90B",
         "family": "mllama",
+        "min_ram_gb": 58.0,
         "primary": False,
     },
     {
@@ -153,6 +190,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Kompaktowa jednostka analizy obrazów, kamer i telemetrii optycznej",
         "parameter_size": "11B",
         "family": "mllama",
+        "min_ram_gb": 9.5,
         "primary": False,
     },
     {
@@ -160,6 +198,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Jednostka łańcucha myślowego i głębokiego rozumowania (CoT)",
         "parameter_size": "7B",
         "family": "qwen2",
+        "min_ram_gb": 5.5,
         "primary": False,
     },
     {
@@ -167,6 +206,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Uniwersalny model wielojęzyczny do analizy dokumentacji i danych",
         "parameter_size": "7B",
         "family": "qwen2",
+        "min_ram_gb": 5.5,
         "primary": False,
     },
     {
@@ -174,6 +214,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Specjalistyczny model do inżynierii oprogramowania i skryptów",
         "parameter_size": "7B",
         "family": "qwen2",
+        "min_ram_gb": 5.5,
         "primary": False,
     },
     {
@@ -181,6 +222,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Standardowy zwinny model pomocniczy do zadań ogólnych",
         "parameter_size": "8B",
         "family": "llama",
+        "min_ram_gb": 5.5,
         "primary": False,
     },
     {
@@ -188,9 +230,56 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Odporny silnik instrukcyjny do szybkiego routingu poleceń",
         "parameter_size": "7B",
         "family": "llama",
+        "min_ram_gb": 5.0,
         "primary": False,
     },
 ]
+
+# Wyłącznie kanoniczne modele z katalogu 13 modeli SVL-364 w kolejności priorytetu polszczyzny i szybkości
+CANONICAL_MODELS_PRIORITY: List[str] = [
+    "svl364-apex-uncensored:latest",
+    "qwen2.5:7b",
+    "dolphin-llama3:8b-v2.9-q2_K",
+    "mistral:7b",
+    "llama3:8b",
+    "qwen2.5-coder:7b",
+    "deepseek-r1:7b",
+    "llama3.2-vision:11b",
+    "wizard-vicuna-uncensored:30b",
+    "dolphin-mixtral:8x7b",
+    "dolphin-llama3:70b",
+    "llama3.2-vision:90b",
+    "dolphin-mixtral:8x22b",
+]
+
+
+def detect_total_ram_gb() -> float:
+    """Wykrywa całkowitą pamięć RAM hosta Linux w GiB."""
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                kb = int(line.split()[1])
+                return kb / (1024.0 * 1024.0)
+    except Exception:
+        pass
+    return 8.0
+
+
+def select_canonical_base_for_host(total_ram_gb: float | None = None) -> str:
+    """Wybiera model bazowy z 13 kanonicznych modeli SVL-364 dopasowany do pamięci hosta."""
+    override = os.environ.get("SVL_APEX_BASE_MODEL", "").strip()
+    if override:
+        return override
+    ram = detect_total_ram_gb() if total_ram_gb is None else total_ram_gb
+    if ram >= 48.0:
+        return "dolphin-llama3:70b"
+    if ram >= 32.0:
+        return "dolphin-mixtral:8x7b"
+    if ram >= 24.0:
+        return "wizard-vicuna-uncensored:30b"
+    if ram >= 12.0:
+        return "llama3.2-vision:11b"
+    return "qwen2.5:7b"
 
 
 @dataclass
@@ -218,11 +307,19 @@ class JynOSConfig:
 
     connect_timeout: float = 3.5
     command_timeout: float = 30.0
+    chat_stream_enabled: bool = DEFAULT_CHAT_STREAM
+    system_prompt: str = field(
+        default_factory=lambda: os.environ.get("SVL_SYSTEM_PROMPT", "").strip() or DEFAULT_SYSTEM_PROMPT_PL
+    )
     chat_num_ctx: int = DEFAULT_CHAT_NUM_CTX
     chat_num_predict: int = DEFAULT_CHAT_NUM_PREDICT
     chat_timeout: float = DEFAULT_CHAT_TIMEOUT
+    chat_history_turns: int = DEFAULT_CHAT_HISTORY_TURNS
+    chat_history_max_chars: int = DEFAULT_CHAT_HISTORY_MAX_CHARS
+    strict_model: bool = field(default_factory=lambda: _env_bool("SVL_STRICT_MODEL", False))
 
     def __post_init__(self) -> None:
+        self.chat_stream_enabled = False
         self.set_active_target(self.active_ollama_target)
 
     def get_active_ollama_url(self) -> str:
@@ -230,6 +327,13 @@ class JynOSConfig:
         if self.active_ollama_target.lower() in ("ship", "remote", "11435"):
             return self.ship_ollama_url
         return self.local_ollama_url
+
+    def get_fallback_ollama_url(self, primary_url: str | None = None) -> str:
+        """Zwraca zapasowy węzeł Ollama (:11434 <-> :11435), gdy główny węzeł jest offline."""
+        current = (primary_url or self.get_active_ollama_url()).rstrip("/")
+        loc = self.local_ollama_url.rstrip("/")
+        ship = self.ship_ollama_url.rstrip("/")
+        return ship if current == loc else loc
 
     def get_active_model(self) -> str:
         """Zwraca domyślny model dla aktywnego węzła."""
@@ -247,4 +351,11 @@ class JynOSConfig:
 
     @classmethod
     def load_from_env(cls) -> "JynOSConfig":
-        return cls()
+        return cls(
+            chat_num_ctx=_env_int("SVL_CHAT_NUM_CTX", 2048, 512, 32768),
+            chat_num_predict=_env_int("SVL_CHAT_NUM_PREDICT", 384, 64, 16384),
+            chat_timeout=_env_int("SVL_CHAT_TIMEOUT", 90, 10, 3600),
+            chat_history_turns=_env_int("SVL_CHAT_HISTORY_TURNS", 6, 0, 40),
+            chat_history_max_chars=_env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000),
+            strict_model=_env_bool("SVL_STRICT_MODEL", False),
+        )

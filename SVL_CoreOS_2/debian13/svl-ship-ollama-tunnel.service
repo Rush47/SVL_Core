@@ -1,12 +1,15 @@
 [Unit]
-Description=SVL CoreOS 2 — tunel SSH do Ollamy statku SVL-364 (local port-forward 11434)
+Description=SVL CoreOS 2 — tunel SSH do Ollamy statku SVL-364 (local port-forward 11435 -> 11434)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/svl-coreos2/svl.env
-# Tunel: lokalny port <- Ollama na statku. Klucze i alias z konfiguracji OpenSSH użytkownika svl.
+Environment=SVL_SHIP_OLLAMA_LOCAL_PORT=11435
+Environment=SVL_SHIP_OLLAMA_PORT=11434
+Environment=SVL_SSH_TARGET=Ship
+EnvironmentFile=-/etc/svl-coreos2/svl.env
+# Tunel: lokalny port 11435 <- Ollama na statku (:11434). Klucze i alias z konfiguracji OpenSSH.
 User=svl
 ExecStart=/usr/bin/ssh -N -T -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -L 127.0.0.1:${SVL_SHIP_OLLAMA_LOCAL_PORT}:127.0.0.1:${SVL_SHIP_OLLAMA_PORT} ${SVL_SSH_TARGET}
 Restart=always

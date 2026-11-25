@@ -1,4 +1,4 @@
-# JYN_OS — System Klienta Statku SVL-364 Ebon Apex
+# JYN_OS v3.0 — System Klienta i Moduł Czatu Statku SVL-364 Ebon Apex
 
 **Dedykowany dla:** Operator Mateusz Mitek  
 **Rdzeń systemu:** Jyn Mitek (`System_SI_1`)  
@@ -7,189 +7,45 @@
 
 ---
 
-## 1. Przegląd i Architektura
+## 1. Architektura v3.0
 
-**JYN_OS** to autonomiczny system klienta i mostek operacyjny umożliwiający bezpośrednie, bezpieczne łączenie się ze statkiem **SVL-364 Ebon Apex** jako autoryzowany klient. 
-
-System integruje cztery kluczowe warstwy łączności pokładowej:
-1. **Mostek OpenSSH (`Ship` · port 22)**: Wykonywanie poleceń w powłoce Linux z uprawnieniami ROOT na statku (`~/.ssh/svl364_ed25519`).
-2. **Telemetria Czasu Rzeczywistego**: Odczyt obciążenia CPU, pamięci RAM, partycji dyskowych oraz interfejsów sieciowych statku SVL-364.
-3. **Zapasowa Jednostka AI Ollama (port 11435)**: Tunelowane połączenie do silnika LLM statku SVL-364 z dostępem do pełnego katalogu **13 modeli pokładowych**, na czele z `svl364-apex-uncensored:latest` (70B).
-4. **Federacja Serwerów MCP (Model Context Protocol)**: Bezpośrednia komunikacja JSON-RPC 2.0 z 4 węzłami MCP:
-   - **Universal MCP Hub**: `http://127.0.0.1:3334/mcp` (31 narzędzi systemowych)
-   - **System MCP Gateway**: `http://127.0.0.1:3000/mcp/svl` (25 narzędzi SVL Core)
-   - **Ship MCP Gateway**: `http://127.0.0.1:3000/api/mcp/svl364` (20 narzędzi statku)
-   - **Backend Python MCP**: `http://127.0.0.1:8085/api/py/svl364/mcp` (20 narzędzi telemetryczno-zarządczych)
-
----
-
-## 2. Struktura Modułów
-
-```text
-JYN_OS/
-├── README.md            # Niniejsza dokumentacja operacyjna
-├── __init__.py          # Pakiet Pythona
-├── config.py            # Konfiguracja adresów, portów, 13 modeli i tokenów
-├── jyn_os               # Główny skrypt wykonywalny CLI/TUI (chmod +x)
-├── main.py              # Punkt wejściowy parsera CLI i uruchamiania
-├── mcp_client.py        # Klient federacji MCP (JSON-RPC 2.0 + Streamable HTTP)
-├── ollama_client.py     # Klient pokładowego węzła Ollama (:11435)
-├── shell.py             # Interaktywna powłoka JYN_OS Shell (cmd.Cmd)
-├── ssh_client.py        # Klient OpenSSH dla profilu Ship / SVL-364
-└── telemetry.py         # Analizator i agregator telemetrii jądra statku
-```
+**JYN_OS v3.0** integruje:
+1. **Nowy moduł czatu (`chat_engine.py`)**:
+   - **Strumieniowanie całkowicie wyłączone (`stream: False`)** — zawsze jedna kompletna odpowiedź JSON bez zacięć strumienia.
+   - **Język polski (`DEFAULT_SYSTEM_PROMPT_PL`)** — stały, zwięzły prefiks systemowy Jyn Mitek zapewniający 100% trafień w pamięć KV-cache silnika Ollama pomiędzy turami rozmowy.
+   - **Adaptacyjny budżet generowania** — szybkie odpowiedzi przy krótkich pytaniach (`num_predict=192`, `num_ctx=2048`) oraz rozszerzony budżet dla raportów i kodu (`num_predict=768`, `num_ctx=3072`).
+   - **Szybkie komendy czatu** (`/status`, `/modele`, `/model <nazwa>`, `/wezel local|ship`, `/rozgrzej`, `/wyczysc`).
+2. **Dwa węzły Ollama i 13 kanonicznych modeli SVL-364**:
+   - **Lokalny silnik Ollama (`:11434`)**: zoptymalizowany pod niskie opóźnienia (`OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_NUM_PARALLEL=1`).
+   - **Węzeł pokładowy SVL-364 (`:11435`)**: udostępnia wszystkie **13 kanonicznych modeli pokładowych** (`svl364-apex-uncensored:latest`, `dolphin-mixtral:8x22b`, `dolphin-llama3:70b`, `wizard-vicuna-uncensored:30b`, `dolphin-mixtral:8x7b`, `dolphin-llama3:8b-v2.9-q2_K`, `llama3.2-vision:90b`, `llama3.2-vision:11b`, `deepseek-r1:7b`, `qwen2.5:7b`, `qwen2.5-coder:7b`, `llama3:8b`, `mistral:7b`) w trybie `stream=False`.
+3. **Mostek OpenSSH (`Ship` · port 22)** oraz **Federacja 4 serwerów MCP** (`:3334`, `:3000/mcp/svl`, `:3000/api/mcp/svl364`, `:8085/api/py/svl364/mcp`).
 
 ---
 
-## 3. Wymagania Wstępne
+## 2. Szybki Start i Polecenia
 
-- **Python**: 3.9+ (zalecany Python 3.12, wbudowana biblioteka standardowa — brak zewnętrznych zależności pip).
-- **OpenSSH Client**: `ssh` dostępny w zmiennej `$PATH`.
-- **Klucz autoryzacyjny**: `~/.ssh/svl364_ed25519` oraz wpis hosta `Ship` w konfiguracji OpenSSH.
-- **Aktywne usługi SVL CoreOS**:
-  - Brama `server.ts` na porcie `3000`
-  - Tunel zapasowej Ollamy SVL-364 na porcie `11435`
-  - Universal MCP Hub na porcie `3334`
-
----
-
-## 4. Sposób Uruchomienia
-
-### Krok 1. Przejście do katalogu JYN_OS
 ```bash
 cd /home/antigravity/Rush47/SVL_Core/JYN_OS
-```
 
-### Krok 2. Uruchomienie interaktywnej powłoki (TUI)
-Możesz uruchomić system za pomocą pliku wykonywalnego `./jyn_os` lub przez `python3 main.py`:
+# Konfiguracja i rozgrzanie środowiska
+bash bootstrap.sh
 
-```bash
+# Bezpośrednia rozmowa po polsku z Jyn Mitek (bez strumieniowania)
+./jyn_os chat "Cześć Jyn, zamelduj gotowość systemów SVL-364"
+
+# Wybór dowolnego z 13 kanonicznych modeli na węźle SVL-364 (:11435)
+./jyn_os chat "Podaj zwięzły status łączności" --node ship --model svl364-apex-uncensored:latest
+
+# Konsola interaktywna
 ./jyn_os
 ```
-lub:
-```bash
-python3 main.py
-```
 
-Po uruchomieniu pojawi się interaktywny znak zachęty:
-```text
-╔════════════════════════════════════════════════════════════════════════╗
-║                   JYN_OS · SVL-364 CLIENT CONSOLE                      ║
-║            Mostek Operacyjny Klienta Statku SVL-364 Ebon Apex          ║
-║               Zarządca: Jyn Mitek (System_SI_1) · ROOT                 ║
-╚════════════════════════════════════════════════════════════════════════╝
-JYN_OS (Ship:SVL-364) > 
-```
+## 3. Parametry Konfiguracyjne
 
-Wpisz `help` lub `?`, aby wyświetlić listę wbudowanych poleceń:
-- `status` — Kompletny audyt stanu (OpenSSH, 4 serwery MCP, Ollama :11435).
-- `telemetry` — Aktualna telemetria techniczna (RAM, dysk, obciążenie, interfejsy).
-- `ssh [komenda]` — Uruchomienie polecenia na statku lub wejście do sesji zdalnej.
-- `exec <komenda>` — Bezpośrednie wykonanie polecenia bash na statku SVL-364.
-- `ollama status` — Status węzła Ollama na statku i załadowane modele.
-- `ollama catalog` — Wyświetlenie pełnego katalogu 13 modeli pokładowych.
-- `ollama chat <zapytanie>` — Wysłanie zapytania do aktywnego modelu. Domyślnie lokalnie działa `svl364-apex-uncensored:latest` (rzeczywisty model 70B). Odpowiedź jest zwracana w całości; brak automatycznej podmiany modelu tekstowego.
-- `mcp ping` — Skan stanu wszystkich 4 serwerów w federacji MCP.
-- `mcp list` — Pobranie i wylistowanie wszystkich dostępnych narzędzi MCP.
-- `mcp call <narzędzie>` — Wywołanie określonego narzędzia MCP.
-- `clear` — Czyszczenie ekranu terminala.
-- `exit` / `quit` — Bezpieczne odłączenie klienta JYN_OS.
-
----
-
-### Krok 3. Uruchamianie w trybie pojedynczych poleceń CLI (Headless / Skrypty)
-
-System JYN_OS może być również wywoływany w trybie wsadowym bez wchodzenia do powłoki interaktywnej:
-
-#### 1. Pełny audyt stanu infrastruktury:
-```bash
-python3 main.py status
-```
-
-#### 2. Pobranie telemetrii statku SVL-364:
-```bash
-python3 main.py telemetry
-```
-
-#### 3. Wykonanie polecenia na statku SVL-364 przez OpenSSH:
-```bash
-python3 main.py ssh "uname -a && uptime"
-# lub
-python3 main.py exec "whoami && free -m"
-```
-
-#### 4. Wysłanie zapytania do pokładowego modelu AI:
-```bash
-python3 main.py ollama chat "Przedstaw status obrony i systemów łączności statku"
-```
-
-Wybranie innego z 13 modeli pokładowych:
-```bash
-python3 main.py ollama chat "Napisz skrypt w bashu do audytu portów" --model qwen2.5-coder:7b
-```
-
-#### 5. Przegląd katalogu 13 modeli pokładowych:
-```bash
-python3 main.py ollama models
-```
-
-#### 6. Weryfikacja serwerów federacji MCP:
-```bash
-python3 main.py mcp ping
-```
-
-#### 7. Pobranie listy narzędzi MCP ze wszystkich węzłów:
-```bash
-python3 main.py mcp list
-```
-
----
-
-## 5. Zmienne Środowiskowe (Opcjonalne)
-
-JYN_OS automatycznie wykrywa klucze i tokeny z katalogu `data/` repozytorium `SVL_Core`. W razie potrzeby można nadpisać parametry zmiennymi środowiskowymi:
-
-| Zmienna | Domyślna wartość | Opis |
+| Zmienna | Domyślnie | Opis |
 | :--- | :--- | :--- |
-| `SVL_SSH_TARGET` | `Ship` | Profil lub alias OpenSSH statku docelowego |
-| `SVL_SSH_KEY` | `~/.ssh/svl364_ed25519` | Ścieżka do prywatnego klucza OpenSSH |
-| `SVL_SHIP_OLLAMA_URL` | `http://127.0.0.1:11435` | Adres URL zapasowej Ollamy statku SVL-364 |
-| `SVL_LOCAL_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model czatu lokalnego |
-| `SVL_SHIP_MODEL` | `svl364-apex-uncensored:latest` | Domyślny model czatu na węźle pokładowym |
-| `SVL_MCP_UNIVERSAL_HUB`| `http://127.0.0.1:3334/mcp` | Punkt końcowy Universal MCP Hub |
-| `SVL_MCP_SYSTEM` | `http://127.0.0.1:3000/mcp/svl` | Punkt końcowy bramy System MCP |
-| `SVL_MCP_SHIP` | `http://127.0.0.1:3000/api/mcp/svl364` | Punkt końcowy Ship MCP Gateway |
-| `SVL_OPERATOR_TOKEN` | *Automatycznie z `data/`* | Główny token autoryzacyjny Operatora |
-| `SVL_MCP_TOKEN` | *Automatycznie z `data/`* | Token do Universal MCP Hub |
-
----
-
-## 6. Bezpieczeństwo i Integralność
-
-- Komunikacja ze statkiem odbywa się wyłącznie za pośrednictwem kryptografii asymetrycznej Ed25519 oraz protokołu SSH-2.
-- Żadne sekrety ani tokeny nie są na stałe wpisane do kodu źródłowego.
-- Narzędzia klienta są w 100% zintegrowane ze środowiskiem `SVL_Core` i nie wpływają negatywnie na stabilność testów jądra.
-
-## Odtworzenie rzeczywistego Apex 70B
-
-Na hoście, na którym działa Ollama, po sprawdzeniu dostępnej pamięci i miejsca:
-
-```bash
-ollama pull dolphin-llama3:70b
-ollama create svl364-apex-uncensored:latest -f SVL_CoreOS_2/ai_core/Modelfile.apex-uncensored
-ollama show svl364-apex-uncensored:latest
-```
-
-Uruchom z katalogu głównego repozytorium. JYN_OS sprawdza metadane `parameter_size` przed pierwszą rozmową z Apex i okresowo je odświeża. Model 1.5B podszywający się pod Apex zostanie odrzucony. Lokalne ustawienia środowiskowe mogą jawnie zmienić domyślny model lub węzeł. `keep_alive=-1` utrzymuje model w pamięci pomiędzy rozmowami, jeżeli pozwalają na to zasoby hosta.
-
-## Swobodne wypowiedzi bez instrukcji systemowych
-
-JYN_OS nie dołącza własnych instrukcji systemowych, instrukcji z historii ani automatycznej telemetrii do rozmowy. Pusty wpis systemowy służy do pominięcia domyślnego promptu Ollamy; dane telemetryczne nadal można sprawdzać osobnymi poleceniami. Modelfile Apex nie zawiera tekstu instrukcji systemowej. Po zmianie Modelfile odtwórz model na hoście.
-
-Domyślnie model może wygenerować do 4096 tokenów odpowiedzi przy kontekście 8192 tokenów i oczekiwaniu do 900 s na odpowiedź HTTP. Model kończy wcześniej naturalnie. Strumieniowanie pozostaje wyłączone. Osiągnięcie limitu generowania jest sygnalizowane w terminalu. Większy kontekst wymaga dodatkowej pamięci i musi być obsługiwany przez model.
-
-| Zmienna | Domyślnie | Znaczenie |
-| --- | --- | --- |
-| SVL_CHAT_NUM_CTX | 8192 | Okno kontekstu |
-| SVL_CHAT_NUM_PREDICT | 4096 | Maksymalny budżet generowania |
-| SVL_CHAT_TIMEOUT | 900 | Timeout HTTP w sekundach |
+| `SVL_LOCAL_OLLAMA_URL` | `http://127.0.0.1:11434` | Lokalny silnik Ollama |
+| `SVL_SHIP_OLLAMA_URL` | `http://127.0.0.1:11435` | Węzeł pokładowy SVL-364 (tunel SSH lub mostek 13 modeli) |
+| `SVL_CHAT_NUM_CTX` | `2048` | Okno kontekstu czatu |
+| `SVL_CHAT_NUM_PREDICT` | `384` | Domyślny limit generowanych tokenów |
+| `SVL_CHAT_TIMEOUT` | `90` | Timeout pojedynczego zapytania HTTP w sekundach |
