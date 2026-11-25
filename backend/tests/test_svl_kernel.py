@@ -576,12 +576,13 @@ class TestSVLKernelSuite(unittest.TestCase):
             self.assertEqual(orchestrator.agent_states["Jyn"]["worker_phase"], "BUSY")
             self.assertEqual(orchestrator.agent_logs["Jyn"][-1]["level"], "TOOL_COMPLETED")
 
-    def test_worker_mission_completion_claim_is_blocked_without_verified_state(self) -> None:
+    def test_worker_mission_completion_claim_preserves_answer_with_verification_note(self) -> None:
         guarded = guard_unverified_mission_completion(
             "Prowadzę misję, sprawdź status procedury.",
             "Cała procedura misji dobiegła już końca.",
         )
-        self.assertIn("Status misji: NIEZWERYFIKOWANY", guarded)
+        self.assertTrue(guarded.startswith("Cała procedura misji dobiegła już końca."))
+        self.assertIn("status misji nie został potwierdzony", guarded)
         planned = "Procedurę można uznać za zakończoną dopiero po weryfikacji każdego kroku."
         self.assertEqual(
             guard_unverified_mission_completion("Opisz procedurę misji.", planned),
