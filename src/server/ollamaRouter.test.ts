@@ -117,14 +117,14 @@ test('resolveOllamaAcrossEndpoints wybiera drugą Ollamę (SSH), gdy ma dokładn
       return new Response(JSON.stringify({ version: '0.6.5' }), { status: 200 });
     }
     if (u.startsWith('http://127.0.0.1:11434/api/tags')) {
-      return new Response(JSON.stringify({ models: [{ name: 'qwen2.5:7b' }] }), { status: 200 });
+      return new Response(JSON.stringify({ models: [{ name: 'svl364-apex-uncensored:latest', details: { parameter_size: '3.1B' } }] }), { status: 200 });
     }
     if (u.startsWith('http://127.0.0.1:11435/api/version')) {
       return new Response(JSON.stringify({ version: '0.6.8' }), { status: 200 });
     }
     if (u.startsWith('http://127.0.0.1:11435/api/tags')) {
       return new Response(
-        JSON.stringify({ models: [{ name: 'svl364-apex-uncensored:latest' }, { name: 'dolphin-llama3:70b' }] }),
+        JSON.stringify({ models: [{ name: 'svl364-apex-uncensored:latest', details: { parameter_size: '70.6B' } }, { name: 'dolphin-llama3:70b' }] }),
         { status: 200 },
       );
     }
@@ -164,16 +164,23 @@ test('resolveOllamaAcrossEndpoints spada na lokalną Ollamę z jawnym substitute
     if (u.endsWith('/api/version')) {
       return new Response(JSON.stringify({ version: '0.6.5' }), { status: 200 });
     }
-    return new Response(JSON.stringify({ models: [{ name: 'dolphin-llama3:8b-v2.9-q2_K' }] }), { status: 200 });
+    return new Response(JSON.stringify({ models: [{ name: 'svl364-apex-uncensored:latest', details: { parameter_size: '3.1B' } }, { name: 'qwen2.5:14b', details: { parameter_size: '14.8B' } }] }), { status: 200 });
   }) as unknown as typeof fetch;
 
   const res = await resolveOllamaAcrossEndpoints(endpoints, 'svl364-apex-uncensored:latest', {
     fetchImpl: mockFetch,
+    allowSubstitution: false,
+    local14bForDefault: true,
   });
+  const explicit = await resolveOllamaAcrossEndpoints(endpoints, 'svl364-apex-uncensored:latest', {
+    fetchImpl: mockFetch, allowSubstitution: false,
+  });
+  assert.equal(explicit.ok, false);
+  assert.match(explicit.reason, /Brak zweryfikowanego Apex 70B/);
   assert.equal(res.ok, true);
   if (res.ok) {
     assert.equal(res.endpoint.id, 'local');
-    assert.equal(res.model, 'dolphin-llama3:8b-v2.9-q2_K');
+    assert.equal(res.model, 'qwen2.5:14b');
     assert.equal(res.substituted, true);
   }
 });

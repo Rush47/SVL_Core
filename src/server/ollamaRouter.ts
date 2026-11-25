@@ -304,6 +304,7 @@ export async function resolveOllamaAcrossEndpoints(
     strictEndpoint?: boolean;
     requireVision?: boolean;
     allowSubstitution?: boolean;
+    local14bForDefault?: boolean;
     forceRefresh?: boolean;
     probeTimeoutMs?: number;
     fetchImpl?: typeof fetch;
@@ -312,12 +313,11 @@ export async function resolveOllamaAcrossEndpoints(
   const allowSubstitution = opts.allowSubstitution !== false;
   const preferred = opts.preferredEndpoint ?? (isShipPreferredModel(requestedModel) ? 'ship' : null);
 
+  const isApex = /^svl364-apex-uncensored(?::latest)?$/i.test(requestedModel);
+  const allowLocal14b = isApex && opts.local14bForDefault && !opts.strictEndpoint && !opts.requireVision;
   let candidates = [...endpoints];
   if (opts.strictEndpoint && preferred) {
-    const filtered = candidates.filter((ep) => ep.id === preferred);
-    if (filtered.length > 0) {
-      candidates = filtered;
-    }
+    candidates = candidates.filter((ep) => ep.id === preferred);
   }
 
   // Sortujemy tak, żeby preferowany węzeł był pierwszy przy równych dopasowaniach.
@@ -333,7 +333,9 @@ export async function resolveOllamaAcrossEndpoints(
     return {
       ok: false,
       requestedModel,
-      reason: 'Brak skonfigurowanych węzłów Ollama.',
+      reason: opts.strictEndpoint && preferred
+        ? `Wybrany węzeł Ollamy (${preferred}) nie jest skonfigurowany.`
+        : 'Brak skonfigurowanych węzłów Ollama.',
       attempts: [],
     };
   }
@@ -341,7 +343,7 @@ export async function resolveOllamaAcrossEndpoints(
   const probeResults = await Promise.all(
     candidates.map(async (endpoint): Promise<EndpointProbeAttempt> => {
       const isLoopback = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(endpoint.host);
-      const defaultProbeMs = endpoint.explicit ? (isLoopback ? 900 : 1500) : 500;
+      const defaultProbeMs = endpoint.explicit ? (isLoopback ? 2000 : 3500) : 1500;
       const effectiveProbeTimeoutMs =
         opts.probeTimeoutMs !== undefined
           ? endpoint.explicit
@@ -359,6 +361,16 @@ export async function resolveOllamaAcrossEndpoints(
         },
       );
       if (res.ok) {
+        const sizeMatches = (model: string, size: RegExp) => size.test(res.modelSizes[model] || '');
+        if (isApex && res.exactMatch && sizeMatches(res.model, /^7[01](?:\.\d+)?\s*B$/i)) {
+          return { endpoint, ...res };
+        }
+        if (allowLocal14b && endpoint.id === 'local') {
+          const local14b = res.installedModels.find(model => /^qwen2\.5:14b(?:$|-instruct)/i.test(model) && sizeMatches(model, /^14(?:\.\d+)?\s*B$/i))
+            ?? res.installedModels.find(model => sizeMatches(model, /^14(?:\.\d+)?\s*B$/i));
+          if (local14b) return { endpoint, ...res, model: local14b, exactMatch: false, substituted: true };
+        }
+        if (isApex) return { endpoint, ok: false, reason: 'Brak zweryfikowanego Apex 70B.' };
         return {
           endpoint,
           ok: true,
@@ -379,7 +391,7 @@ export async function resolveOllamaAcrossEndpoints(
 
   // 1) Najpierw dokładne dopasowanie: preferuj lokalną Ollamę dla bezpośredniej inferencji,
   // chyba że użytkownik zażądał ścisłego węzła (strictEndpoint).
-  const localExact = !opts.strictEndpoint ? probeResults.find((a) => a.ok && a.exactMatch && a.endpoint.id === 'local') : null;
+  const localExact = !preferred && !opts.strictEndpoint ? probeResults.find((a) => a.ok && a.exactMatch && a.endpoint.id === 'local') : null;
   const exactWinner = localExact || probeResults.find((a) => a.ok && a.exactMatch && a.model);
   if (exactWinner && exactWinner.model) {
     return {
@@ -396,7 +408,7 @@ export async function resolveOllamaAcrossEndpoints(
   }
 
   // 2) Jeśli dokładnego modelu nie ma na żadnym węźle, a dozwolony jest zamiennik w ramach Ollamy:
-  if (allowSubstitution) {
+  if ((allowSubstitution && !isApex) || allowLocal14b) {
     const fallbackOllama = probeResults.find((a) => a.ok && a.model);
     if (fallbackOllama && fallbackOllama.model) {
       return {

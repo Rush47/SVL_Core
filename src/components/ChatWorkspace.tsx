@@ -115,7 +115,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const handleInputEmptyChange = useCallback((isEmpty: boolean) => setHasInput(!isEmpty), []);
   const getInput = () => composerRef.current?.getValue() ?? '';
   const setInput = (value: string) => composerRef.current?.setValue(value);
-  const [selectedModel, setSelectedModel] = useState('ollama:svl364-apex-uncensored:latest');
+  const [selectedModel, setSelectedModel] = useState('svl-hybrid-router');
   const [geminiModels, setGeminiModels] = useState<string[]>(['gemini-flash-lite-latest']);
   const [geminiConfigured, setGeminiConfigured] = useState(false);
   const [engineOllamaModels, setEngineOllamaModels] = useState<Array<{ name: string; parameterSize?: string | null; vision?: boolean; endpointId?: string; endpointLabel?: string }>>([]);
@@ -677,7 +677,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const ollamaReachable = Boolean(healthData?.ollama?.daemon_reachable) || engineOllamaReachable;
   const ollamaModels: any[] = engineOllamaModels.length > 0 ? engineOllamaModels : (healthData?.ollama?.models || []);
   const selectedModelSupportsVision =
-    selectedModel === 'svl-hybrid-router' ||
     selectedModel.includes('llama3.2-vision') ||
     selectedModel.includes('vl') ||
     selectedModel.includes('vision');
@@ -1736,34 +1735,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               Silnik AI
             </label>
             {(() => {
-              const shipInstalled = ollamaModels.length > 0 ? ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) === 'ship') : [
-                { name: 'svl364-apex-uncensored:latest', parameterSize: '14B', endpointId: 'ship' },
-                { name: 'dolphin-mixtral:8x22b', parameterSize: '141B MoE', endpointId: 'ship' },
-                { name: 'dolphin-llama3:70b', parameterSize: '70B', endpointId: 'ship' },
-                { name: 'wizard-vicuna-uncensored:30b', parameterSize: '30B', endpointId: 'ship' },
-                { name: 'deepseek-r1:7b', parameterSize: '7B', endpointId: 'ship' },
-                { name: 'qwen2.5:7b', parameterSize: '7B', endpointId: 'ship' },
-                { name: 'llama3.2-vision:11b', parameterSize: '11B', endpointId: 'ship' },
-                { name: 'llama3.2-vision:90b', parameterSize: '90B', endpointId: 'ship' },
-              ];
-              const localInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) !== 'ship');
-              const installedNames = new Set(ollamaModels.map((m: any) => String(m?.name || '').toLowerCase()));
-              const statusSuffix = (name: string) => {
-                return '● SVL-364 SSH (online · zainstalowany)';
-              };
-              const presetModels: Array<{ value: string; label: string }> = [
-                { value: 'svl364-apex-uncensored:latest', label: 'SVL CoreOS 2 · Apex-Uncensored [Statek SVL-364]' },
-                { value: 'dolphin-llama3:8b-v2.9-q2_K', label: 'dolphin-llama3:8b (Uncensored) [Statek SVL-364]' },
-                { value: 'dolphin-mixtral:8x22b', label: 'dolphin-mixtral:8x22b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
-                { value: 'dolphin-llama3:70b', label: 'dolphin-llama3:70b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
-                { value: 'deepseek-r1:7b', label: 'deepseek-r1:7b (Reasoning) [Statek SVL-364]' },
-                { value: 'qwen2.5:7b', label: 'qwen2.5:7b (Multilingual) [Statek SVL-364]' },
-                { value: 'llama3.2-vision:11b', label: 'llama3.2-vision:11b (Vision) [Statek SVL-364]' },
-                { value: 'llama3.2-vision:90b', label: 'llama3.2-vision:90b (Vision GPU) [Statek SVL-364]' },
-                { value: 'llama3:8b', label: 'llama3:8b [Statek SVL-364]' },
-                { value: 'mistral:7b', label: 'mistral:7b [Statek SVL-364]' },
-                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Coder) [Statek SVL-364]' },
-              ];
               return (
                 <select
                   id="openwebui-model-select"
@@ -1771,37 +1742,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="min-w-0 min-h-[34px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-1.5 sm:px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
-                  {shipInstalled.length > 0 && (
-                    <optgroup label={`🛰️ Ollama · Statek SVL-364 SSH (${shipInstalled.length} online)`}>
-                      {shipInstalled.map((m: any) => (
-                        <option key={`ship:${m.name}`} value={`ollama:ship:${m.name}`}>
-                          🛰️ SVL-364: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
+                  <option value="svl-hybrid-router">Ollama automatycznie · Apex 70B lub lokalny 14B</option>
+                  <optgroup label="Wykryte modele Ollamy">
+                    {ollamaModels.map((m) => {
+                      const endpoint = m.endpointId || 'local';
+                      const size = m.parameterSize || 'rozmiar nieznany';
+                      const invalidApex = /^svl364-apex-uncensored(?::latest)?$/i.test(m.name) &&
+                        !/^7[01](?:\.\d+)?\s*B$/i.test(size);
+                      return (
+                        <option key={`${endpoint}:${m.name}`} value={`ollama:${endpoint}:${m.name}`} disabled={invalidApex}>
+                          {m.endpointLabel || endpoint}: {m.name} ({size}{invalidApex ? ' · niezweryfikowany Apex' : ''})
                         </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {localInstalled.length > 0 && (
-                    <optgroup label={`💻 Ollama · Lokalna (${localInstalled.length} online)`}>
-                      {localInstalled.map((m: any) => (
-                        <option key={`local:${m.name}`} value={`ollama:local:${m.name}`}>
-                          💻 Lokalna: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <optgroup label={`Ollama · Ścisły wybór (bez podmiany na Gemini · ${ollamaReachable ? 'online' : 'offline'})`}>
-                    {presetModels.map((p) => (
-                      <option key={p.value} value={`ollama:${p.value}`}>
-                        {p.label} ({statusSuffix(p.value)})
-                      </option>
-                    ))}
-                    {ollamaModels
-                      .filter((m: any) => !presetModels.some((p) => p.value.toLowerCase() === String(m?.name || '').toLowerCase()) && installedNames.has(String(m?.name || '').toLowerCase()))
-                      .map((m: any) => (
-                        <option key={`extra:${m.endpointId || 'local'}:${m.name}`} value={`ollama:${m.name}`}>
-                          Ollama: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
-                        </option>
-                      ))}
+                      );
+                    })}
                   </optgroup>
                   <optgroup label={`Gemini${geminiConfigured ? ' · serwer AI Studio' : ' · brak GEMINI_API_KEY'}`}>
                     {geminiModels.map((name) => (

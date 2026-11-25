@@ -89,8 +89,8 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
   };
 
   return {
-    num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 2048, 512, 32768),
-    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 768, 64, 4096),
+    num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 8192, 512, 32768),
+    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 2048, 64, 4096),
     keep_alive: parseKeepAlive(env.OLLAMA_KEEP_ALIVE),
     historyTurns: parsePosInt(env.OLLAMA_HISTORY_TURNS, 12, 2, 48),
     maxTurnChars: parsePosInt(env.OLLAMA_MAX_TURN_CHARS, 2000, 200, 12000),
@@ -331,6 +331,7 @@ export type ResolveCachedOllamaResult =
       exactMatch: boolean;
       substituted: boolean;
       installedModels: string[];
+      modelSizes: Record<string, string>;
       version: string;
     }
   | { ok: false; reason: string; cached?: boolean };
@@ -357,6 +358,9 @@ export async function resolveCachedOllamaModel(
   const extractNames = (list: Array<{ name?: string; model?: string }>): string[] =>
     list.map((m) => String(m?.name || m?.model || '').trim()).filter(Boolean);
 
+  const extractSizes = (list: Array<{ name?: string; model?: string; details?: { parameter_size?: string }; parameter_size?: string }>) =>
+    Object.fromEntries(list.map(m => [String(m?.name || m?.model || '').trim(), String(m?.details?.parameter_size || m?.parameter_size || '')]));
+
   const cached = ollamaTagsCache.get(base);
   if (!opts.forceRefresh && cached && Date.now() - cached.checkedAt < ttlMs) {
     const resolved = resolveInstalledOllamaModel(
@@ -372,6 +376,7 @@ export async function resolveCachedOllamaModel(
         exactMatch: !resolved.substituted,
         substituted: resolved.substituted,
         installedModels: extractNames(cached.models),
+        modelSizes: extractSizes(cached.models),
         version: cached.version,
       };
     }
@@ -395,9 +400,11 @@ export async function resolveCachedOllamaModel(
     }
     const version: any = await versionRes.json();
     const versionStr = String(version?.version || '');
-    // Wbudowane endpointy ze statku SVL-364 są traktowane jako w pełni wspierane i błyskawiczne (High-Speed Edge Bridge)
     if (versionStr.includes('svl-364')) {
-      // akceptujemy wersję statku SVL-364 jako poprawny punkt końcowy
+      ollamaTagsCache.delete(base);
+      const reason = 'Wbudowany zastępnik SVL-364 nie wykonuje inferencji Ollamy.';
+      ollamaOfflineCache.set(base, { checkedAt: Date.now(), reason });
+      return { ok: false, reason };
     }
     if (!tagsRes.ok) {
       ollamaTagsCache.delete(base);
@@ -427,6 +434,7 @@ export async function resolveCachedOllamaModel(
       exactMatch: !resolved.substituted,
       substituted: resolved.substituted,
       installedModels: extractNames(models),
+      modelSizes: extractSizes(models),
       version: versionStr,
     };
   } catch (error) {

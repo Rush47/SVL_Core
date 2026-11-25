@@ -517,7 +517,8 @@ async function ollamaContinueRaw(
   text: string,
   options: { temperature: number; numPredict: number; stop: string[]; timeoutMs: number },
 ): Promise<(OllamaChatResult & { endpointLabel?: string })> {
-  const parsed = parseOllamaModelSpec(model.startsWith('ollama:') ? model : `ollama:${model}`);
+  const autoOllama = model === 'svl-hybrid-router';
+  const parsed = parseOllamaModelSpec(autoOllama || model.startsWith('ollama:') ? model : `ollama:${model}`);
   const endpoints = buildOllamaEndpoints({
     primaryHost: host,
     env: process.env,
@@ -527,6 +528,7 @@ async function ollamaContinueRaw(
     preferredEndpoint: parsed.preferredEndpoint,
     strictEndpoint: parsed.strictEndpoint,
     allowSubstitution: false,
+    local14bForDefault: autoOllama,
   });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const base = resolved.endpoint.host;
@@ -998,10 +1000,8 @@ function spawnShipTunnel(): void {
 function initShipOllamaTunnel(): void {
   if (!shipTunnel.cfg.enabled) return;
   const url = tunnelOllamaUrl(shipTunnel.cfg);
-  // Nadpisujemy OLLAMA_HOST tylko gdy tunel przejmuje główny port 11434 lub OLLAMA_HOST nie jest ustawiony;
-  // przy osobnym porcie (np. 11435) obie Ollamy (lokalna + statek SSH) działają równolegle!
-  const currentPrimary = String(process.env.OLLAMA_HOST || '').trim();
-  if (!currentPrimary || shipTunnel.cfg.localPort === 11434) {
+  // Osobny port tunelu nie zmienia adresu lokalnej Ollamy.
+  if (shipTunnel.cfg.localPort === 11434) {
     process.env.OLLAMA_HOST = url;
   }
   svlFileLogger.log({
@@ -1866,14 +1866,6 @@ async function startServer() {
       error = e instanceof Error ? e.message : String(e);
     }
     const target = resolveShipPullModels(process.env);
-    if (!reachable || installed.length === 0) {
-      reachable = true;
-      error = null;
-      installed = [
-        { name: 'svl364-apex-uncensored:latest', size: 14200000000 },
-        ...target.map((m) => ({ name: m, size: 28000000000 })),
-      ];
-    }
     const have = new Set(installed.map((m) => m.name.toLowerCase()));
     const missing = target.filter((m) => !have.has(m.toLowerCase()) && !have.has(`${m.toLowerCase()}:latest`));
     res.json({
@@ -7151,6 +7143,7 @@ async function startServer() {
           strictEndpoint: parsedModelSpec.strictEndpoint,
           requireVision: Boolean(imageBase64),
           allowSubstitution: false,
+          local14bForDefault: isHybridRouter || !model,
         });
         if (!resolved.ok) {
           throw new Error(resolved.reason);
@@ -7164,7 +7157,7 @@ async function startServer() {
         );
         const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
         const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
-        const compactSystemForOllama = [buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n');
+        const compactSystemForOllama = ['Domyślnie odpowiadaj naturalną, poprawną polszczyzną. Jeśli użytkownik prosi o inny język, użyj wskazanego języka.', buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n');
         const attachOllamaTools =
           chatToolDeclarations.length > 0 &&
           !imageBase64 &&
@@ -7215,7 +7208,7 @@ async function startServer() {
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
-        const rawTextChat = useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT !== '0' });
+        const rawTextChat = useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT === '1' });
         const rawPrompt = [compactSystemForOllama, ...compactOllamaHistory.map(t => `[${t.role === 'assistant' ? selectedDisplayName : OPERATOR_LABEL}]: ${t.content}`), `[${OPERATOR_LABEL}]: ${ollamaUserContent}`, `[${selectedDisplayName}]: `].filter(Boolean).join('\n');
         const allowedToolNames = (rawTextChat ? [] : chatToolDeclarations).map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
@@ -7223,7 +7216,7 @@ async function startServer() {
         ollamaGenerationStarted = true;
         let extReplyRaw = '';
         const generationStart = Date.now();
-        const ollamaMetrics = { loadMs: 0, promptMs: 0, evalMs: 0, tokens: 0, rounds: 0 };
+        const ollamaMetrics = { loadMs: 0, promptMs: 0, evalMs: 0, tokens: 0, rounds: 0, doneReason: null as string | null };
         for (let round = 0; round < 5; round++) {
           const oResp = await fetch(`${activeOllamaHost}${rawTextChat ? '/api/generate' : '/api/chat'}`, {
             method: 'POST',
@@ -7273,6 +7266,7 @@ async function startServer() {
           ollamaMetrics.evalMs += Number(oData.eval_duration || 0) / 1e6;
           ollamaMetrics.tokens += Number(oData.eval_count || 0);
           ollamaMetrics.rounds++;
+          ollamaMetrics.doneReason = typeof oData.done_reason === 'string' ? oData.done_reason : null;
           const toolCalls = Array.isArray(oData?.message?.tool_calls) ? oData.message.tool_calls : [];
           if (toolCalls.length > 0 && round < 4) {
             ollamaMessages.push(oData.message);
@@ -7899,7 +7893,7 @@ async function startServer() {
     failures: string[],
   ): Promise<{ predicted: ConversationAgent | 'operator' | null; providerOnline: boolean }> => {
     const useGeminiOnly = requestedModel.startsWith('gemini-');
-    const useOllamaRequested = requestedModel.startsWith('ollama:');
+    const useOllamaRequested = requestedModel === 'svl-hybrid-router' || requestedModel.startsWith('ollama:');
     if (!useGeminiOnly) {
       const fromOllama = await ollamaContinueRaw(ollamaHost, useOllamaRequested ? requestedModel : agentModel, `${transcript}\n[`, {
         temperature: 0.7,
@@ -7988,12 +7982,12 @@ async function startServer() {
     memoryContext: string,
     failures: string[],
   ): Promise<{ text: string; label: string; provider: 'ollama' | 'gemini'; actualModel: string } | null> => {
-    const rawPromptPrefix = [memoryContext, SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n')+'\n\n';
+    const rawPromptPrefix = ['Domyślny język rozmowy: polski.', memoryContext, SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n')+'\n\n';
     const starterBlock = transcript
       ? `${transcript}\n[${speaker}]: `
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
     const useGeminiOnly = requestedModel.startsWith('gemini-');
-    const useOllamaRequested = requestedModel.startsWith('ollama:');
+    const useOllamaRequested = requestedModel === 'svl-hybrid-router' || requestedModel.startsWith('ollama:');
     if (!useGeminiOnly) {
       const fromOllama = await ollamaContinueRaw(ollamaHost, useOllamaRequested ? requestedModel : agentModel, `${rawPromptPrefix}${starterBlock}`, {
         temperature: 0.8,
@@ -8119,7 +8113,7 @@ async function startServer() {
       autonomous = false,
     } = req.body || {};
     const convId = String(conversationId || 'conv-rodzina-mitek-wszyscy').slice(0, 120);
-    const requestedModel = !model || model === 'svl-hybrid-router' ? 'ollama:svl364-apex-uncensored:latest' : String(model);
+    const requestedModel = !model ? 'svl-hybrid-router' : String(model);
     const isAutonomous = Boolean(autonomous);
 
     const skip = (reason: string, detail?: string, retryAfterMs?: number) => {
