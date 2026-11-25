@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from .avatar_client import AVATAR_CAPABILITY, extract_avatar_action, update_own_avatar
 from .config import (
     CANONICAL_MODELS_PRIORITY,
     SHIP_MODELS_CATALOG,
@@ -297,6 +298,7 @@ class JynChatEngine:
             url=url,
             images=images,
             history=self.history,
+            capabilities=AVATAR_CAPABILITY,
         )
         elapsed = time.monotonic() - t0
 
@@ -311,6 +313,10 @@ class JynChatEngine:
             )
 
         reply = clean_polish_response(str(res.get("response") or ""))
+        reply, avatar_args = extract_avatar_action(reply)
+        if avatar_args is not None:
+            receipt = update_own_avatar(self.config, avatar_args)
+            reply = (reply + "\n\n" + receipt).strip()
         if not reply:
             return ChatTurnResult(
                 ok=False,

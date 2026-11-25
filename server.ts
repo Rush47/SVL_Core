@@ -2393,6 +2393,14 @@ async function startServer() {
   const avatarReceipt = (result: Awaited<ReturnType<typeof applyOwnAvatar>>) => result.ok
     ? 'Serwer: zapisano własny awatar — '+result.title+'; '+result.license+'; '+result.author+'; '+result.sourceUrl
     : 'Serwer: nie zmieniono awatara — '+result.error;
+  app.post('/api/avatars/jyn-self', asyncRoute(async (req,res)=>{
+    if (!hasOperatorAuthorization(req.headers['x-svl-operator-token'])) {
+      res.status(401).json({ok:false,error:'Wymagana autoryzacja operatora.'}); return;
+    }
+    const result = await applyOwnAvatar('Jyn',req.body || {},String((req as any).correlationId || ''),'jyn-os');
+    res.json(result);
+  }));
+
   // 0.5. Avatar overrides API (compatible with Codespaces / Bastilla / SVL Python OS)
   app.get(['/api/avatars', '/api/ai/runtime/avatars'], asyncRoute(async (req, res) => {
     const corrId: string = (req as any).correlationId || '';
@@ -4705,8 +4713,7 @@ async function startServer() {
 
     // Bezpośrednie ustawienie awatara Jyn Mitek / Jyn / SI_Sphere z poziomu czatu (z utrwaleniem w SQLite WAL i rozgłoszeniem WebSocket)
     if (
-      /^\/avatar\b/i.test(effectiveCleanMsg) ||
-      /\b(?:ustaw\s+awatar\s+rdzenia\s+orbitalnego(?:\s+ebon\s+apex)?|ustaw\s+wybran[ąa]\s+grafik[ęe]\s+rdzenia)\b/i.test(effectiveCleanMsg)
+      /^\/avatar\b/i.test(effectiveCleanMsg)
     ) {
       const avUrlMatch = /(https:\/\/[^\s]+|\/assets\/[^\s]+)/i.exec(effectiveCleanMsg);
       if (!avUrlMatch) { res.status(400).json({ok:false,error:'Podaj adres obrazu; awatar pozostaje bez zmian.'}); return; }
@@ -7563,6 +7570,7 @@ async function startServer() {
           engineProvider: 'gemini',
           reply: replyText,
           ...(missionNote ? { verificationNote: missionNote } : {}),
+          ...(appliedActions.some(a=>a.tool==='svl_set_avatar') ? {verificationNote:appliedActions.filter(a=>a.tool==='svl_set_avatar').map(a=>a.summary).join('\n')} : {}),
           provenance: hasVerifiedToolAction
             ? 'server_verified'
             : webSources.length > 0

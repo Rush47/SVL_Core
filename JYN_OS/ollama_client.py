@@ -338,6 +338,7 @@ class SvlOllamaClient:
         images: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
         timeout: Optional[float] = None,
+        capabilities: str = "",
     ) -> Dict[str, Any]:
         """Wykonuje szybkie zapytanie czatu po polsku z całkowicie wyłączonym strumieniowaniem (stream=False)."""
         primary_url = (url or self.config.get_active_ollama_url()).rstrip("/")
@@ -345,6 +346,8 @@ class SvlOllamaClient:
 
         selected_model = (model or self.config.get_active_model()).strip()
         messages = self._build_messages(prompt, system_prompt=system_prompt, history=history, images=images)
+        if capabilities:
+            messages.insert(0, {"role": "system", "content": capabilities})
         options = self._runtime_options(prompt, has_images=bool(images))
         effective_timeout = self.config.chat_timeout if timeout is None else timeout
 

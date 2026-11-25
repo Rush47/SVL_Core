@@ -560,7 +560,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         }
         setDuplexStatus(null);
         notifyLocalMutation('chat', activeConv.id, res.data.serverRevision);
-        await refreshDomainModules(['chat', 'agents']);
+        await refreshDomainModules(['chat', 'agents', 'avatars']);
       } else if (res.data?.skipped && res.data.reason) {
         // 'busy' = inna karta właśnie pisze; jej wiadomość przyjdzie przez synchronizację.
         const retryAfterMs = Number((res.data as { retryAfterMs?: number }).retryAfterMs || 0);
@@ -1013,7 +1013,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
       if (!res.ok || !data || data.ok === false) {
         if (Array.isArray(data?.appliedActions) && data.appliedActions.length > 0) {
-          void refreshDomainModules(['modules', 'agents', 'kernel', 'health']);
+          void refreshDomainModules(['modules', 'agents', 'kernel', 'health', 'avatars']);
         }
         if (res.status === 0 && !data) {
           // Przekroczony czas lub zerwane połączenie: serwer kończy generowanie i sam zapisuje
@@ -1074,7 +1074,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       }
 
       if (appliedActions && appliedActions.some((a: { tool?: string }) => a.tool !== 'jedi_omni_os_vm')) {
-        void refreshDomainModules(['modules', 'agents', 'health']);
+        void refreshDomainModules(['modules', 'agents', 'health', 'avatars']);
       }
       if (isFamilyDuplex && !isSlashCmd && data.provenance !== 'error' && hasSvlOperatorAccessToken()) {
         const nextFamilyAgent = data.agentId === 'SI_Sphere' ? 'Jyn' : 'SI_Sphere';
