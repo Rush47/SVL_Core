@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { isLegacyChatFallback } from './svlLogic';
 import {
   AvatarProfileKey,
   SvlAvatarMap,
@@ -114,7 +115,7 @@ function normalizeConversationsFromServer(rawList: any[]): SyncableConversation[
     .filter((c: any) => !REMOVED_AGENT_CONVERSATION_IDS.has(String(c?.id || '')))
     .map((c: any) => {
       const cleaned = stripObsoleteDiagnosticMessages(c.messages).filter(
-        (m: any) => !isForbiddenAgentSender(m?.sender) && !isForbiddenAgentSender(m?.agentId),
+        (m: any) => !isLegacyChatFallback(m) && !isForbiddenAgentSender(m?.sender) && !isForbiddenAgentSender(m?.agentId),
       );
       return {
         id: String(c.id),

@@ -32,6 +32,17 @@ _T = TypeVar("_T")
 
 MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verified", "error"})
 
+
+def is_legacy_chat_fallback(role: Any, metadata: Any) -> bool:
+    if str(role or "").lower() != "assistant":
+        return False
+    try:
+        meta = json.loads(metadata) if isinstance(metadata, str) else metadata
+        return isinstance(meta, dict) and bool(re.search(r"SQLite\s+WAL\s+Fallback", str(meta.get("modelUsed") or ""), re.I))
+    except (ValueError, TypeError):
+        return False
+
+
 # --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
 ALLOWED_AI_SENDERS = {
@@ -1003,10 +1014,35 @@ class SVLSystemKernel:
         self._remove_fictional_ship_controls()
         self._revert_commands_and_remove_agata_once()
         self._purge_decommissioned_agents_v1()
+        self._purge_legacy_chat_fallbacks()
         self._restore_from_durable_backup_if_empty()
+        self._purge_legacy_chat_fallbacks()
         self._purge_decommissioned_agents_v2()
         self._migrate_legacy_system_si_1_to_jyn()
         self._reconcile_chat_modules_on_boot()
+
+    def _purge_legacy_chat_fallbacks(self) -> None:
+        def _purge(conn: sqlite3.Connection) -> int:
+            rows = conn.execute("SELECT id, role, metadata_json FROM chat_messages WHERE role = 'assistant'").fetchall()
+            ids = [(r["id"],) for r in rows if is_legacy_chat_fallback(r["role"], r["metadata_json"])]
+            if ids:
+                conn.executemany("DELETE FROM chat_messages WHERE id = ?", ids)
+            return len(ids)
+        self.run_db(_purge, write=True)
+        # Sanitize the backup in place even when SQLite contains no other messages.
+        try:
+            if self.durable_backup_path.is_file():
+                raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("chat_messages"), list):
+                    original = raw["chat_messages"]
+                    clean = [m for m in original if not isinstance(m, dict) or not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
+                    if len(clean) != len(original):
+                        raw["chat_messages"] = clean
+                        tmp = self.durable_backup_path.with_suffix(".json.tmp")
+                        tmp.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+                        os.replace(tmp, self.durable_backup_path)
+        except (OSError, ValueError, TypeError):
+            pass
 
     @property
     def durable_backup_path(self) -> Path:
@@ -1030,6 +1066,7 @@ class SVLSystemKernel:
             def _dump(conn: sqlite3.Connection) -> dict[str, Any]:
                 convs = [dict(r) for r in conn.execute("SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC").fetchall()]
                 msgs = [dict(r) for r in conn.execute("SELECT id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at FROM chat_messages ORDER BY created_at ASC, rowid ASC").fetchall()]
+                msgs = [m for m in msgs if not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
                 mems = []
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone():
                     mems = [dict(r) for r in conn.execute("SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory ORDER BY created_at ASC").fetchall()]
@@ -1063,7 +1100,7 @@ class SVLSystemKernel:
             raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict) or raw.get("explicitly_cleared"):
                 return False
-            backup_msgs = raw.get("chat_messages") or []
+            backup_msgs = [m for m in (raw.get("chat_messages") or []) if isinstance(m, dict) and not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
             backup_mems = raw.get("agent_memory") or []
             backup_convs = raw.get("conversations") or []
             if not backup_msgs and not backup_mems:
@@ -2915,6 +2952,8 @@ class SVLSystemKernel:
             conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         msgs_by_conv: dict[str, list[dict[str, Any]]] = {}
         for mr in msg_rows:
+            if is_legacy_chat_fallback(mr["role"], mr["metadata_json"]):
+                continue
             try:
                 meta = json.loads(mr["metadata_json"] or "{}")
             except Exception:
@@ -3006,6 +3045,8 @@ class SVLSystemKernel:
             return {"ok": False, "error": block_reason, "blocked": True, "serverRevision": self.get_server_revision()}
         if clean_sender is not None and clean_sender != msg.get("sender"):
             msg = {**msg, "sender": clean_sender}
+        if is_legacy_chat_fallback(msg.get("role"), msg):
+            return {"ok": False, "error": "Odrzucono dawną syntetyczną odpowiedź SQLite WAL.", "blocked": True, "serverRevision": self.get_server_revision()}
         display_ts = str(msg.get("timestamp") or datetime.now(timezone.utc).strftime("%H:%M"))
         msg_id = str(msg.get("id") or f"msg-{int(time.time() * 1000)}")
         meta_json = json.dumps({
@@ -3176,6 +3217,8 @@ class SVLSystemKernel:
                     conv_changed = True
 
                 for m in th.get("messages") or []:
+                    if is_legacy_chat_fallback(m.get("role"), m):
+                        continue
                     mid = str(m.get("id") or "").strip()
                     if not mid:
                         continue
@@ -3248,7 +3291,7 @@ class SVLSystemKernel:
             return {"ok": False, "error": "Kopia oznaczona jako wyczyszczona (użyj force=true, aby odblokować)."}
 
         backup_convs = raw.get("conversations") or []
-        backup_msgs = raw.get("chat_messages") or []
+        backup_msgs = [m for m in (raw.get("chat_messages") or []) if isinstance(m, dict) and not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
         backup_mems = raw.get("agent_memory") or []
 
         def _restore(conn: sqlite3.Connection) -> dict[str, int]:
@@ -5055,18 +5098,11 @@ class SVLSystemKernel:
         - rejestruje/aktualizuje `alliance-defense-grid`, `solar-defense-read-bridge`, `svl-ultima-core` oraz zapisuje rekord synchronizacji GitHub z czatu.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
-        si2_prompt = (
-            "TOŻSAMOŚĆ: Jesteś SI_Sphere — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
-            "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
-            "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), "
-            "działasz w ścisłej kooperacji z Jyn (Jyn Mitek) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
-            "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), odciążasz Jyn w zadaniach infrastrukturalnych "
-            "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
-        )
+        si2_prompt = ""
         si2_default_cfg = {
             "preferred_model": "ollama:svl364-apex-uncensored:latest",
             "ollama_model": "svl364-apex-uncensored:latest",
-            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_model": "",
             "vision_enabled": True,
             "temperature": 0.25,
             "max_context_turns": 24,

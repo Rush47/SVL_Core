@@ -920,14 +920,18 @@ export function validateOllamaHostUrl(raw: string): {
   }
 }
 
+export function isLegacyChatFallback(message: { role?: string; modelUsed?: string }): boolean {
+  return message?.role === "assistant" && /SQLite\s+WAL\s+Fallback/i.test(String(message.modelUsed || ""));
+}
+
 export function buildChatHistoryPayload(
-  messages: Array<{ role: string; content: string; sender?: string; provenance?: string }>,
+  messages: Array<{ role: string; content: string; sender?: string; provenance?: string; modelUsed?: string }>,
   limit = 48,
 ): Array<{ role: 'user' | 'assistant'; content: string; sender?: string }> {
   return (messages || [])
     .filter((m) => {
       if ((m.role !== 'user' && m.role !== 'assistant') || !m.content?.trim()) return false;
-      if (m.provenance === 'error') return false;
+      if (m.provenance === 'error' || isLegacyChatFallback(m)) return false;
       const txt = m.content.trim();
       if (m.role === 'assistant') {
         const senderLow = String(m.sender || '').trim().toLowerCase();
@@ -1123,7 +1127,7 @@ export function mergeConversationThreads(
     const seen = new Set<string>();
     const out: SyncableMessage[] = [];
     for (const m of msgs) {
-      if (!m || !m.id || seen.has(m.id)) continue;
+      if (!m || !m.id || seen.has(m.id) || isLegacyChatFallback(m)) continue;
       seen.add(m.id);
       out.push(m);
     }

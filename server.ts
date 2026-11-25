@@ -1628,7 +1628,7 @@ async function startServer() {
     process.env.GEMINI_API_KEY = rawKey;
     process.env.GEMINI_TIER = tier;
     process.env.SVL_GEMINI_ALL_SERVICES = '1';
-    process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK = '1';
+    process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK = '0';
     if (tier === 'paid_pro') {
       process.env.GEMINI_MODEL = chosenModel;
       process.env.GEMINI_THINKING_LEVEL = 'MEDIUM';
@@ -1645,7 +1645,7 @@ async function startServer() {
       GEMINI_TIER: tier,
       GEMINI_MODEL: process.env.GEMINI_MODEL || '',
       SVL_GEMINI_ALL_SERVICES: '1',
-      SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK: '1',
+      SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK: '0',
       ...(tier === 'paid_pro'
         ? {
             GEMINI_THINKING_LEVEL: 'MEDIUM',
@@ -4053,22 +4053,26 @@ async function startServer() {
           ...body,
           sender: 'JEDI Omni-OS v12',
           agentId: 'JEDI_Omni_OS',
-          modelUsed: body?.modelUsed || 'JEDI Omni-OS v12 · Maszyna Wirtualna (ROOT_UNRESTRICTED)',
+          modelUsed: body?.modelUsed || 'Serwer SVL (silnik niepotwierdzony)',
         };
       } else if (normBodyAgent === 'SI_Sphere') {
         body = {
           ...body,
           sender: 'SI_Sphere',
           agentId: 'SI_Sphere',
-          modelUsed: body?.modelUsed || 'SI_Sphere Fleet Core (SVL-465 · ROOT)',
+          modelUsed: body?.modelUsed || 'Serwer SVL (silnik niepotwierdzony)',
         };
       } else {
         body = {
           ...body,
           sender: 'Jyn',
           agentId: 'Jyn',
-          modelUsed: body?.modelUsed || 'Jyn Infrastructure Core (ROOT)',
+          modelUsed: body?.modelUsed || 'Serwer SVL (silnik niepotwierdzony)',
         };
+      }
+      if (/SQLite\s+WAL\s+Fallback/i.test(String(body?.modelUsed || ''))) {
+        res.status(503);
+        body = {ok:false, engineProvider:'none', provenance:'error', error:'Zablokowano dawną syntetyczną odpowiedź. Wybrany model nie zwrócił potwierdzonej wypowiedzi.'};
       }
       // Każda odpowiedź czatu trafia do logi/: agent, model, pochodzenie treści, czas, błąd.
       const failed = !body || body.ok !== true || body.provenance === 'error';
@@ -7852,29 +7856,7 @@ async function startServer() {
 
     // Nie ma automatycznego przełączania silnika ani modelu.
 
-    // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
-    const explicitSystemReportAsked = /\b(?:pełny raport|pelny raport|raport svl_system|raport systemu|markdown-report)\b/i.test(effectiveCleanMsg);
-    if (explicitSystemReportAsked) {
-      const repFallback = await callPythonBackend(
-        'POST',
-        '/api/py/kernel/markdown-report',
-        { directive: effectiveCleanMsg || 'raport systemu SVL_System', origin, correlationId: corrId },
-        corrId,
-      );
-      const kernelReply = String(repFallback.data?.report || '').trim();
-      res.json({
-        ok: true,
-        sender: selectedDisplayName,
-        agentId: selectedAgent,
-        modelUsed: `${selectedDisplayName} · raport SVL_System (wynik serwera)`,
-        reply: withDirectiveReceipts(kernelReply),
-        provenance: 'server_verified',
-        followUpMessages: [],
-        appliedActions,
-        latestServerRevision: Math.max(latestActionSrvRev, Number(repFallback.data?.serverRevision || 0)),
-      });
-      return;
-    }
+    // Explicit reports remain available via the dedicated kernel API, never as an inference fallback.
 
     // A failed inference must not be replaced with a simulated conversation or success report.
     res.status(503).json({
