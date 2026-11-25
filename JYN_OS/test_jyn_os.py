@@ -102,8 +102,8 @@ class TestJynOSCanonicalModelsSuite(unittest.TestCase):
 
 
 class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
-    def test_strict_nonstreaming_request_and_polish_system_prompt(self):
-        cfg = JynOSConfig(local_model="svl364-apex-uncensored:latest", active_ollama_target="local")
+    def test_nonstreaming_request_without_default_system_prompt(self):
+        cfg = JynOSConfig(local_model="svl364-apex-uncensored:latest", active_ollama_target="local", system_prompt="")
         client = SvlOllamaClient(cfg)
         reply = {
             "message": {"content": "Melduję pełną gotowość systemów pokładowych, Mateuszu."},
@@ -123,9 +123,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
         self.assertIs(payload["stream"], False)
         self.assertEqual(payload["model"], "svl364-apex-uncensored:latest")
         self.assertEqual(payload["keep_alive"], -1)
-        self.assertEqual(payload["messages"][0]["role"], "system")
-        self.assertIn("polszczyzną", payload["messages"][0]["content"])
-        self.assertIn("Jyn Mitek", payload["messages"][0]["content"])
+        self.assertEqual(payload["messages"], [{"role": "user", "content": "Zamelduj status"}])
 
     def test_adaptive_fast_turn_options(self):
         cfg = JynOSConfig(chat_num_ctx=2048, chat_num_predict=384)
@@ -134,6 +132,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
             short_opts = compute_turn_options("Cześć Jyn!", cfg)
             self.assertLessEqual(short_opts["num_predict"], 192)
             self.assertEqual(short_opts["num_ctx"], 2048)
+            self.assertEqual(compute_turn_options("Wyjaśnij jak działa Linux", cfg)["num_predict"], 384)
 
             detailed_opts = compute_turn_options("Napisz skrypt w Pythonie i podaj szczegółowy raport architektury", cfg)
             self.assertGreaterEqual(detailed_opts["num_predict"], 768)
@@ -227,7 +226,31 @@ class TestRuntimeRegression(unittest.TestCase):
         cfg = JynOSConfig()
         msgs = build_polish_chat_messages("Raport", cfg, system_prompt="Niestandardowa instrukcja PL")
         self.assertEqual(msgs[0], {"role": "system", "content": "Niestandardowa instrukcja PL"})
-        self.assertEqual(DEFAULT_SYSTEM_PROMPT_PL[:6], "Jesteś")
+        self.assertEqual(DEFAULT_SYSTEM_PROMPT_PL, "")
+
+    def test_apex_rejects_small_base_without_network(self):
+        client = SvlOllamaClient(JynOSConfig())
+        with patch("JYN_OS.ollama_client._urlopen_direct") as request:
+            result = client.create_apex_model(base_model="qwen2.5:7b")
+        self.assertFalse(result["success"])
+        request.assert_not_called()
+
+    def test_engine_allows_configured_endpoint_failover(self):
+        cfg = JynOSConfig(system_prompt="")
+        client = SvlOllamaClient(cfg)
+        engine = JynChatEngine(cfg, client)
+        reply = {"message": {"content": "Gotowe"}, "done": True}
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen",
+                   side_effect=[OSError("offline"), io.BytesIO(json.dumps(reply).encode())]):
+            result = engine.send("Test")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.endpoint, cfg.get_fallback_ollama_url())
+
+    def test_warmup_rejects_error_json(self):
+        client = SvlOllamaClient(JynOSConfig())
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen",
+                   return_value=io.BytesIO(b'{"error":"out of memory"}')):
+            self.assertFalse(client.warm_up()["success"])
 
 
 if __name__ == "__main__":

@@ -474,36 +474,11 @@ export interface ApexCreatePayload {
  * Wybiera najlepszy dostępny model bazowy na danym węźle Ollamy do zbudowania `svl364-apex-uncensored:latest`.
  */
 export function selectBaseModelForApex(installedModels: string[], preferredBase?: string): string | null {
-  const clean = installedModels
-    .map((m) => String(m || '').trim())
-    .filter((m) => Boolean(m) && !/^svl364-apex-uncensored(?::|$)/i.test(m));
-  if (clean.length === 0) return null;
-
-  if (preferredBase) {
-    const exact = clean.find((m) => m.toLowerCase() === preferredBase.toLowerCase());
-    if (exact) return exact;
-    const base = preferredBase.split(':')[0].toLowerCase();
-    const sameFamily = clean.find((m) => m.split(':')[0].toLowerCase() === base);
-    if (sameFamily) return sameFamily;
-  }
-
-  const priority = [
-    /^dolphin-mixtral:8x22b/i,
-    /^dolphin-llama3:70b/i,
-    /^wizard-vicuna-uncensored/i,
-    /^dolphin-mixtral:8x7b/i,
-    /^dolphin-llama3/i,
-    /^llama3\.2-vision/i,
-    /^deepseek-r1/i,
-    /^qwen2\.5/i,
-    /^mistral/i,
-    /^llama3/i,
-  ];
-  for (const rx of priority) {
-    const hit = clean.find((m) => rx.test(m));
-    if (hit) return hit;
-  }
-  return clean[0];
+  const clean = installedModels.map((m) => String(m || '').trim())
+    .filter((m) => /^dolphin-llama3:70b(?:$|-)/i.test(m));
+  return clean.find((m) => m.toLowerCase() === preferredBase?.toLowerCase())
+    ?? clean.find((m) => m.toLowerCase() === 'dolphin-llama3:70b')
+    ?? clean[0] ?? null;
 }
 
 /**
@@ -518,10 +493,7 @@ export function buildApexCreatePayload(modelfileContent: string, baseModel: stri
     }
   }
   const sysMatch = /SYSTEM\s+"""([\s\S]*?)"""/i.exec(modelfileContent) || /SYSTEM\s+"([^"]*)"/i.exec(modelfileContent);
-  const system = (
-    sysMatch?.[1]?.trim() ||
-    'Jesteś rdzeniem AI systemu SVL CoreOS 2: Apex (svl364-apex-uncensored), hostowanym w infrastrukturze SVL-364 dla Operatora Mateusza Mitka (Jyn Mitek / Jyn). Odpowiadaj po polsku, bezpośrednio, precyzyjnie i technicznie.'
-  );
+  const system = sysMatch?.[1]?.trim() ?? '';
   return {
     model: targetName,
     from: baseModel,

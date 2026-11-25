@@ -457,19 +457,11 @@ async function warmConfiguredOllamaModels(): Promise<void> {
   if (ollamaWarmupRunning) return;
   ollamaWarmupRunning = true;
   try {
-    const [healthRes, agentsRes] = await Promise.all([
-      callPythonBackend('GET', '/api/py/health?fast=1'),
-      callPythonBackend('GET', '/api/py/agents/status'),
-    ]);
+    const healthRes = await callPythonBackend('GET', '/api/py/health?fast=1');
     const host = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434').replace(/\/$/, '');
-    const modules: any[] = Array.isArray(healthRes.data?.system_modules) ? healthRes.data.system_modules : [];
-    const agents: any[] = Array.isArray(agentsRes.data?.agents) ? agentsRes.data.agents : [];
     const wanted = [
-      process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b',
-      process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
+      process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest',
       ...String(process.env.OLLAMA_WARM_MODELS || '').split(','),
-      ...agents.map((a) => a?.config?.ollama_model),
-      modules.find((m) => m?.id === 'svl-364')?.config?.configured_ollama_model,
     ].map((m) => String(m || '').trim()).filter(Boolean);
     const installed: string[] = [];
     for (const name of wanted) {
@@ -481,11 +473,12 @@ async function warmConfiguredOllamaModels(): Promise<void> {
         }
         continue;
       }
-      if (!installed.includes(ready.model)) installed.push(ready.model);
+      if (!ready.substituted && !installed.includes(ready.model)) installed.push(ready.model);
+      if (installed.length >= Math.max(1, Number(process.env.OLLAMA_WARM_MODEL_LIMIT) || 1)) break;
     }
     if (installed.length === 0) return;
     const opts = getOllamaRuntimeOptions(process.env);
-    const results = await warmOllamaModels(host, installed, { keepAlive: opts.keep_alive, perf: opts.perf });
+    const results = await warmOllamaModels(host, installed, { keepAlive: opts.keep_alive, perf: { num_ctx: opts.num_ctx, num_batch: 512, ...opts.perf } });
     svlFileLogger.log({
       layer: 'GATEWAY',
       level: results.every((r) => r.ok) ? 'INFO' : 'WARN',
@@ -1528,7 +1521,7 @@ async function startServer() {
           models: ollamaModels,
           loadedModels: mergedLoadedModels,
           visionModels: mergedVisionModels,
-          preferredModel: ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b',
+          preferredModel: ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest',
           visionModel: process.env.OLLAMA_VISION_MODEL || 'llama3.2-vision:11b',
           visionAliases: ['llama3.2-vision:11b', 'llama3.2-vision:90b', 'llama3.2-vision:latest'],
           visionConfig: {
@@ -1710,7 +1703,7 @@ async function startServer() {
       ollama: {
         host: String(ollama.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434'),
         reachable: Boolean(ollama.daemon_reachable),
-        defaultModel: String(ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b'),
+        defaultModel: String(ollama.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest'),
         models: ollamaModels,
       },
       tools: ['list_workspace_files', 'read_workspace_file', 'run_linux_command', 'google_search', 'url_context'],
@@ -1731,7 +1724,7 @@ async function startServer() {
       ? await callPythonBackend('GET', '/api/py/health', undefined, corrId)
       : { data: {} };
     const ollamaHostUrl = String(healthRes.data?.ollama?.ollama_host || process.env.OLLAMA_HOST || 'http://127.0.0.1:11434');
-    const ollamaDefault = String(healthRes.data?.ollama?.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'llama3.2-vision:11b');
+    const ollamaDefault = String(healthRes.data?.ollama?.preferred_14b_vision_model || process.env.OLLAMA_PREFERRED_MODEL || 'svl364-apex-uncensored:latest');
 
     const result = await runAntigravityTask(
       {
@@ -7503,7 +7496,7 @@ async function startServer() {
           ? ''
           : 'brak klucza GEMINI_API_KEY';
     let geminiFailureDetails = '';
-    const ollamaChatTimeoutMs = Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 75000);
+    const ollamaChatTimeoutMs = Math.max(1000, Number(process.env.OLLAMA_CHAT_TIMEOUT_MS) || 300000);
     let ollamaGenerationStarted = false;
     let ollamaTimedOut = false;
     // Ollama: sprawdza wszystkie węzły (lokalna + druga Ollama ze statku SVL-364 przez SSH/URL).
@@ -7605,7 +7598,7 @@ async function startServer() {
                 top_p: 0.85,
                 repeat_penalty: 1.12,
                 num_ctx: ollamaTurnOpts.num_ctx,
-                num_predict: Math.min(ollamaTurnOpts.num_predict, 320),
+                num_predict: ollamaTurnOpts.num_predict,
                 ...ollamaTurnOpts.perf,
               },
               messages: ollamaMessages,
@@ -9455,7 +9448,7 @@ async function startServer() {
     const warmupOff = ['0', 'false', 'no'].includes(String(process.env.OLLAMA_WARMUP || '').trim().toLowerCase());
     if (!warmupOff) {
       setTimeout(() => void warmConfiguredOllamaModels(), 8000).unref();
-      setInterval(() => void warmConfiguredOllamaModels(), 10 * 60_000).unref();
+      // Nie przeładowuj modelu okresowo: aktywne modele pozostają w pamięci przez keep_alive.
     }
   });
 }

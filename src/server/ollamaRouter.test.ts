@@ -209,7 +209,7 @@ test('formatOllamaBadge i formatGeminiBadge uczciwie rozróżniają Ollamę od G
 test('selectBaseModelForApex i buildApexCreatePayload budują poprawny payload /api/create', () => {
   assert.equal(
     selectBaseModelForApex(['svl364-apex-uncensored:latest', 'qwen2.5:7b', 'dolphin-llama3:8b-v2.9-q2_K']),
-    'dolphin-llama3:8b-v2.9-q2_K',
+    null,
   );
   assert.equal(
     selectBaseModelForApex(['llama3.2-vision:11b', 'dolphin-llama3:70b']),

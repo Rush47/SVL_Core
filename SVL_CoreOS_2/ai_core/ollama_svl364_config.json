@@ -10,7 +10,7 @@
   "stream": false,
   "language": "pl",
   "context_window": 2048,
-  "max_predict": 512,
+  "max_predict": 768,
   "keep_alive": -1,
   "compute_thrust_npu": true,
   "unrestricted_operator_mode": true

@@ -95,11 +95,7 @@ APEX_MODELFILE_PATH = Path(__file__).resolve().parent.parent / "SVL_CoreOS_2" / 
 DEFAULT_CHAT_STREAM: bool = False
 
 # Stały, ultrazwięzły polski prompt systemowy (~45 tokenów) zapewniający 100% trafień w KV-cache Ollamy
-DEFAULT_SYSTEM_PROMPT_PL: str = (
-    "Jesteś Jyn Mitek (System_SI_1), AI statku SVL-364 dla Operatora Mateusza Mitka. "
-    "Pisz wyłącznie poprawną polszczyzną w 1. osobie r.ż. (sprawdziłam, melduję), "
-    "zwracaj się „Mateuszu”, odpowiadaj krótko i konkretnie bez angielskich wtrąceń."
-)
+DEFAULT_SYSTEM_PROMPT_PL: str = ""
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -118,8 +114,8 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 DEFAULT_CHAT_NUM_CTX = _env_int("SVL_CHAT_NUM_CTX", 2048, 512, 32768)
-DEFAULT_CHAT_NUM_PREDICT = _env_int("SVL_CHAT_NUM_PREDICT", 384, 64, 16384)
-DEFAULT_CHAT_TIMEOUT = _env_int("SVL_CHAT_TIMEOUT", 90, 10, 3600)
+DEFAULT_CHAT_NUM_PREDICT = _env_int("SVL_CHAT_NUM_PREDICT", 768, 64, 16384)
+DEFAULT_CHAT_TIMEOUT = _env_int("SVL_CHAT_TIMEOUT", 300, 10, 3600)
 DEFAULT_CHAT_HISTORY_TURNS = _env_int("SVL_CHAT_HISTORY_TURNS", 6, 0, 40)
 DEFAULT_CHAT_HISTORY_MAX_CHARS = _env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000)
 
@@ -134,7 +130,7 @@ SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
         "role": "Główny model Apex (Kwantyzacja Q4_K_M, niecenzurowany rdzeń Jyn Mitek)",
         "parameter_size": "70B",
         "family": "llama",
-        "min_ram_gb": 5.5,
+        "min_ram_gb": 48.0,
         "primary": True,
     },
     {
@@ -353,8 +349,8 @@ class JynOSConfig:
     def load_from_env(cls) -> "JynOSConfig":
         return cls(
             chat_num_ctx=_env_int("SVL_CHAT_NUM_CTX", 2048, 512, 32768),
-            chat_num_predict=_env_int("SVL_CHAT_NUM_PREDICT", 384, 64, 16384),
-            chat_timeout=_env_int("SVL_CHAT_TIMEOUT", 90, 10, 3600),
+            chat_num_predict=_env_int("SVL_CHAT_NUM_PREDICT", 768, 64, 16384),
+            chat_timeout=_env_int("SVL_CHAT_TIMEOUT", 300, 10, 3600),
             chat_history_turns=_env_int("SVL_CHAT_HISTORY_TURNS", 6, 0, 40),
             chat_history_max_chars=_env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000),
             strict_model=_env_bool("SVL_STRICT_MODEL", False),

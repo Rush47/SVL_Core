@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .config import (
     CANONICAL_MODELS_PRIORITY,
-    DEFAULT_SYSTEM_PROMPT_PL,
     SHIP_MODELS_CATALOG,
     JynOSConfig,
 )
@@ -97,16 +96,16 @@ def compute_turn_options(prompt: str, config: JynOSConfig, has_images: bool = Fa
     """Wyznacza opcje inferencji ze stałym num_ctx (brak przeładowań runnera i 100% zachowania KV-cache)."""
     text = (prompt or "").strip()
     is_detailed = len(text) > 360 or bool(_DETAILED_QUERY_RE.search(text))
-    is_short = not is_detailed and len(text) <= 96 and "\n" not in text
+    is_short = bool(re.fullmatch(r"(?:cześć|czesc|hej|hello|hi|ping|ok|dzień dobry|dzien dobry)(?:\s+jyn)?[!?. ]*", text, re.IGNORECASE))
 
     base_predict = config.chat_num_predict
     # Stałe num_ctx zapobiega kosztownemu przeładowaniu modelu przez Ollamę ("runner options changed")
     num_ctx = config.chat_num_ctx
 
     if has_images:
-        num_predict = max(base_predict, 512)
-    elif is_detailed:
         num_predict = max(base_predict, 768)
+    elif is_detailed:
+        num_predict = max(base_predict, 1536)
     elif is_short and "SVL_CHAT_NUM_PREDICT" not in os.environ:
         num_predict = min(base_predict, 160)
     else:
@@ -132,16 +131,15 @@ def build_polish_chat_messages(
 ) -> List[Dict[str, Any]]:
     """Buduje listę wiadomości z niezmiennym polskim promptem systemowym i przyciętą historią."""
     effective_sys = (system_prompt if system_prompt is not None else config.system_prompt).strip()
-    if not effective_sys:
-        effective_sys = DEFAULT_SYSTEM_PROMPT_PL
-
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": effective_sys}]
+    messages: List[Dict[str, Any]] = []
+    if effective_sys:
+        messages.append({"role": "system", "content": effective_sys})
 
     if history and config.chat_history_turns > 0:
         max_chars = max(256, config.chat_history_max_chars)
         remaining = max_chars
         selected_turns: List[Dict[str, str]] = []
-        for turn in reversed(history[-config.chat_history_turns:]):
+        for turn in reversed(history[-config.chat_history_turns * 2:]):
             role = str(turn.get("role") or "").strip()
             content = str(turn.get("content") or "").strip()
             if role not in ("user", "assistant") or not content:
@@ -299,7 +297,7 @@ class JynChatEngine:
         res = self.ollama.chat(
             prompt=cleaned,
             model=selected_model,
-            url=target_url,
+            url=url,
             images=images,
             history=self.history,
         )

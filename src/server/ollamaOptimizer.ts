@@ -90,7 +90,7 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
 
   return {
     num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 2048, 512, 32768),
-    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 512, 64, 4096),
+    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 768, 64, 4096),
     keep_alive: parseKeepAlive(env.OLLAMA_KEEP_ALIVE),
     historyTurns: parsePosInt(env.OLLAMA_HISTORY_TURNS, 12, 2, 48),
     maxTurnChars: parsePosInt(env.OLLAMA_MAX_TURN_CHARS, 2000, 200, 12000),
@@ -131,20 +131,20 @@ export function selectOllamaTurnOptions(
     /\b(?:szczegółow\p{L}*|szczegolow\p{L}*|pełny\s+raport|pelny\s+raport|dokumentacj\p{L}*|architektur\p{L}*|napisz\s+(?:kod|skrypt|program|klasę|funkcję)|przeanalizuj\s+cał\p{L}*|wyjaśnij\s+dokładn\p{L}*)\b/iu.test(
       text,
     );
-  const isShort = !isDetailed && text.length > 0 && text.length <= 48 && !text.includes('\n');
+  const isShort = /^(?:cześć|czesc|hej|hello|hi|ping|ok|dzień dobry|dzien dobry)(?:\s+jyn)?[!?. ]*$/iu.test(text);
 
   let numPredict = baseOpts.num_predict;
   if (opts.isVision) {
-    numPredict = Math.max(numPredict, Number(env.OLLAMA_VISION_NUM_PREDICT || 1024));
+    numPredict = Math.max(numPredict, (Number(env.OLLAMA_VISION_NUM_PREDICT) > 0 ? Math.min(4096, Number(env.OLLAMA_VISION_NUM_PREDICT)) : 1024));
   } else if (isDetailed) {
-    numPredict = Math.min(4096, Math.max(numPredict, 1024));
+    numPredict = Math.min(4096, Math.max(numPredict, 1536));
   } else if (isShort && !env.OLLAMA_NUM_PREDICT) {
     numPredict = Math.min(numPredict, 384);
   }
 
   let numCtx = baseOpts.num_ctx;
   if (opts.isVision) {
-    numCtx = Math.max(numCtx, Number(env.OLLAMA_VISION_NUM_CTX || 4096));
+    numCtx = Math.max(numCtx, (Number(env.OLLAMA_VISION_NUM_CTX) > 0 ? Math.min(32768, Number(env.OLLAMA_VISION_NUM_CTX)) : 4096));
   } else if (!env.OLLAMA_NUM_CTX) {
     const promptChars = opts.estimatedPromptChars ?? 0;
     if (opts.hasTools || promptChars > 4500) {
@@ -166,7 +166,7 @@ export function selectOllamaTurnOptions(
 
   return {
     num_ctx: Math.min(32768, numCtx),
-    num_predict: numPredict,
+    num_predict: Math.min(numPredict, numCtx),
     keep_alive: baseOpts.keep_alive,
     historyTurns,
     maxTurnChars,
@@ -175,7 +175,7 @@ export function selectOllamaTurnOptions(
 }
 
 const OLLAMA_COMPACT_INTERACTIVE_GUIDE =
-  'Zasady odpowiedzi Jyn Mitek: ZAWSZE pisz w 1. osobie r.ż. („sprawdziłam”, „monitoruję”, „melduję”) bezpośrednio do Operatora w wołaczu „Mateuszu” (nigdy „pan Mateusz”, nigdy nie zaczynaj od „Jyn,” ani „Cześć Jyn”). Odpowiadaj wyłącznie poprawną polszczyzną, zwięźle i konkretnie z podanych danych SVL-364. Możesz dodać czytelne punkty/tabele Markdown oraz 1–2 przyciski na końcu `[btn: Etykieta|send:/status]`.';
+  'Zasady odpowiedzi Jyn Mitek: ZAWSZE pisz w 1. osobie r.ż. („sprawdziłam”, „monitoruję”, „melduję”) bezpośrednio do Operatora w wołaczu „Mateuszu” (nigdy „pan Mateusz”, nigdy nie zaczynaj od „Jyn,” ani „Cześć Jyn”). Odpowiadaj wyłącznie poprawną polszczyzną, wyczerpująco i konkretnie z podanych danych SVL-364. Możesz dodać czytelne punkty/tabele Markdown oraz 1–2 przyciski na końcu `[btn: Etykieta|send:/status]`.';
 
 /**
  * Dla lokalnego modelu Ollama na CPU dołączamy schematy narzędzi JSON wyłącznie wtedy,

@@ -95,7 +95,8 @@ OLLAMA_PREFERRED_MODEL=svl364-apex-uncensored:latest
 OLLAMA_VISION_MODEL=llama3.2-vision:11b
 OLLAMA_KEEP_ALIVE=-1
 OLLAMA_NUM_CTX=2048
-OLLAMA_NUM_PREDICT=512
+OLLAMA_NUM_PREDICT=768
+OLLAMA_CHAT_TIMEOUT_MS=300000
 # Ollama ze statku SVL-364 równolegle do lokalnej Ollamy (:11434 lokalnie, :11435 tunel statku):
 SVL_SHIP_OLLAMA=0
 SVL_SSH_TARGET=Ship
@@ -181,7 +182,7 @@ tune_ollama() {
 Environment=OLLAMA_KEEP_ALIVE=-1
 Environment=OLLAMA_FLASH_ATTENTION=1
 Environment=OLLAMA_KV_CACHE_TYPE=q8_0
-Environment=OLLAMA_MAX_LOADED_MODELS=2
+Environment=OLLAMA_MAX_LOADED_MODELS=1
 Environment=OLLAMA_NUM_PARALLEL=1
 LimitMEMLOCK=infinity
 Nice=-5
