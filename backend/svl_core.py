@@ -4136,23 +4136,42 @@ class SVLSystemKernel:
 
     def get_persisted_avatars(self) -> dict[str, str]:
         def _read(conn: sqlite3.Connection) -> dict[str, str]:
+            out: dict[str, str] = {}
             row = conn.execute(
                 "SELECT value FROM runtime_settings WHERE key = 'avatars_map_json'"
             ).fetchone()
-            if not row or not row["value"]:
-                return {}
             try:
-                parsed = json.loads(row["value"])
-                if not isinstance(parsed, dict):
-                    return {}
-                out: dict[str, str] = {}
-                for k, v in parsed.items():
-                    norm_k = self._normalize_avatar_profile_key(str(k))
-                    if norm_k and isinstance(v, str) and v.strip():
-                        out[norm_k] = v.strip()
-                return out
-            except Exception:
-                return {}
+                parsed = json.loads(row["value"]) if row and row["value"] else {}
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        norm_k = self._normalize_avatar_profile_key(str(k))
+                        if norm_k and isinstance(v, str) and v.strip():
+                            out[norm_k] = v.strip()
+            except (ValueError, TypeError):
+                pass
+            # Older agents stored their licensed portrait only in agent_configs.
+            # A canonical avatar update/reset always wins, including a reset to the default.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_configs'").fetchone():
+                from urllib.parse import urlsplit
+                tracked = {r["entity_id"] for r in conn.execute("SELECT entity_id FROM sync_entities WHERE entity='avatar'")}
+                for legacy in conn.execute("SELECT canonical_name, config_json FROM agent_configs"):
+                    key = self._normalize_avatar_profile_key(legacy["canonical_name"])
+                    if not key or key in out or key in tracked or key == "Operator":
+                        continue
+                    try:
+                        avatar = json.loads(legacy["config_json"]).get("avatar")
+                        if not isinstance(avatar, dict):
+                            continue
+                        image = str(avatar.get("image_url") or "")
+                        url = urlsplit(image)
+                        license_name = str(avatar.get("license") or "")
+                        if (url.scheme == "https" and url.hostname == "upload.wikimedia.org"
+                                and not url.username and not url.password
+                                and re.match(r"^(?:public domain\b|cc0\b|cc by(?:-sa)?\s+[1-4](?:\.\d)?\b)", license_name, re.I)):
+                            out[key] = image
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+            return out
 
         return self.run_db(_read, write=False)
 

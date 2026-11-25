@@ -218,6 +218,14 @@ class TestRuntimeRegression(unittest.TestCase):
             ):
                 self.assertFalse(client.chat("test", model="qwen2.5:7b", url="http://127.0.0.1:11434")["success"])
 
+    def test_avatar_action_requires_explicit_own_profile_request(self):
+        from JYN_OS.avatar_client import extract_avatar_action
+        text, args = extract_avatar_action('Cześć\n<svl_avatar>{"query":"portrait"}</svl_avatar>')
+        self.assertEqual(text, "Cześć")
+        self.assertEqual(args, {"query": "portrait"})
+        _, invalid = extract_avatar_action('<svl_avatar>{"query":"portrait","agent":"Operator"}</svl_avatar>')
+        self.assertIsNone(invalid)
+
     def test_chat_rejects_model_substitution(self):
         client = SvlOllamaClient(JynOSConfig())
         reply = {"message": {"content": "test"}, "done": True, "model": "qwen2.5:7b"}
