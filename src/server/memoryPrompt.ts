@@ -32,7 +32,7 @@ export function formatMemoryPromptContext(
   if (!Array.isArray(memories) || memories.length === 0) return '';
   const seen = new Set<string>();
   const cleaned = memories
-    .filter((m) => m && typeof m.content === 'string')
+    .filter((m) => m && typeof m.content === 'string' && !/SQLite\s+WAL\s+Fallback|bufor jądra SVL|Słyszę Cię doskonale,\s*Mateuszu\.\s*Jestem z Tobą przy konsoli/i.test(m.content))
     .map((m) => ({
       kind: String(m.kind || 'fact').toLowerCase(),
       content: m.content.trim().replace(/\s+/g, ' ').slice(0, 320),

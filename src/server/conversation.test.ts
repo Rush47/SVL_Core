@@ -5,6 +5,8 @@ import {
   cleanAgentReply,
   consecutiveAiTurns,
   isRepetitive,
+  isNaturalPrivateChat,
+  toPrivateChatHistory,
   parsePredictedSpeaker,
   toAgentPerspective,
   type DialogueTurn,
@@ -141,3 +143,12 @@ test('canned automated fallback templates and System SVL error notices are exclu
 });
 
 
+
+test('private AI chat keeps natural messages and does not treat them as console commands', () => {
+  assert.equal(isNaturalPrivateChat('conv-ai-jyn-20261125', 'Cześć Jyn, jak się masz?'), true);
+  assert.equal(isNaturalPrivateChat('conv-ai-si-sphere-20261125', ' /status'), false);
+  assert.equal(isNaturalPrivateChat('conv-svl364-mcp-root', 'status'), false);
+  assert.deepEqual(toPrivateChatHistory([op('Cześć Jyn!'), si1('Cześć!'), op('Co myślisz?')], 'Jyn'), [
+    {role:'user',content:'Cześć Jyn!'}, {role:'assistant',content:'Cześć!'}, {role:'user',content:'Co myślisz?'}
+  ]);
+});

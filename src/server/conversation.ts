@@ -221,3 +221,19 @@ export function cleanAgentReply(text: string, speaker: ConversationAgent): strin
   if (match) out = out.slice(0, match.index);
   return out.trim();
 }
+
+/** Private AI chat is not a command console. Slash commands remain explicitly opt-in. */
+export function isNaturalPrivateChat(conversationId: unknown, message: unknown): boolean {
+  return ['conv-ai-jyn-20261125', 'conv-ai-si-sphere-20261125'].includes(String(conversationId || '').trim()) &&
+    !String(message || '').trimStart().startsWith('/');
+}
+
+/** A private dialogue uses the model's native roles without adding speaker/console prefixes. */
+export function toPrivateChatHistory(turns: DialogueTurn[], speaker: ConversationAgent, limit = 24): ChatTurn[] {
+  return toAgentPerspective(turns, speaker, limit).map(turn => ({
+    ...turn,
+    content: turn.role === 'user'
+      ? turn.content.replace(/^\[Mateusz \(Operator\)\]: /gm, '')
+      : turn.content,
+  }));
+}
