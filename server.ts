@@ -7228,7 +7228,7 @@ async function startServer() {
           : 'nie użyto dla tego zapytania';
     let geminiFailure =
       isExplicitOllama && !allowExplicitOllamaGeminiFallback
-        ? 'pominięta — wybrano konkretny model Ollama bez fallbacku do Gemini (ustaw SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK=1 lub wybierz Auto-Router)'
+        ? 'pominięta — wybrano Ollamę; automatyczny fallback wyłączony'
         : ai
           ? ''
           : 'brak klucza GEMINI_API_KEY';
@@ -7341,7 +7341,7 @@ async function startServer() {
                 num_ctx: ollamaTurnOpts.num_ctx,
                 num_predict: ollamaTurnOpts.num_predict,
                 ...ollamaTurnOpts.perf,
-                ...(rawTextChat ? { stop: ['\n['] } : {}),
+                ...(rawTextChat ? { stop: ['\n[Mateusz (Operator)]:', '\n[Operator]:'] } : {}),
               },
               ...(rawTextChat ? { prompt: rawPrompt, raw: true } : { messages: ollamaMessages }),
               ...(ollamaToolsPayload.length > 0 ? { tools: ollamaToolsPayload } : {}),
@@ -8112,7 +8112,7 @@ async function startServer() {
       const fromOllama = await ollamaContinueRaw(ollamaHost, useOllamaRequested ? requestedModel : agentModel, `${rawPromptPrefix}${starterBlock}`, {
         temperature: 0.8,
         numPredict: 400,
-        stop: ['\n['],
+        stop: ['\n[Mateusz (Operator)]:', '\n[Operator]:', '\n[Jyn]:', '\n[SI_Sphere]:', '\n[JEDI_Omni_OS]:'],
         timeoutMs: Math.max(1000, Number(process.env.OLLAMA_CHAT_TIMEOUT_MS) || 300000),
       });
       if (fromOllama.ok) {

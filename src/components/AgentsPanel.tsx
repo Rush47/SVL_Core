@@ -108,9 +108,8 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
         ? activeAgentCfg.revision
         : undefined;
 
-  const [cfgPreferredModel, setCfgPreferredModel] = useState('svl-hybrid-router');
-  const [cfgOllamaModel, setCfgOllamaModel] = useState('dolphin-llama3:8b-v2.9-q2_K');
-  const [cfgFallbackModel, setCfgFallbackModel] = useState('gemini-3.1-flash-lite');
+  const [cfgPreferredModel, setCfgPreferredModel] = useState('ollama:svl364-apex-uncensored:latest');
+  const [cfgOllamaModel, setCfgOllamaModel] = useState('svl364-apex-uncensored:latest');
   const [cfgTemperature, setCfgTemperature] = useState('0.7');
   const [cfgRbacRole, setCfgRbacRole] = useState('');
   const [cfgVisionEnabled, setCfgVisionEnabled] = useState(true);
@@ -120,9 +119,8 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
   const loadedRevisionRef = useRef<{ agent: string; rev?: number }>({ agent: selectedAgent, rev: undefined });
 
   const hydrateConfigFormFromServer = () => {
-    setCfgPreferredModel(activeAgentCfg.preferred_model || 'svl-hybrid-router');
-    setCfgOllamaModel(activeAgentCfg.ollama_model || 'dolphin-llama3:8b-v2.9-q2_K');
-    setCfgFallbackModel(activeAgentCfg.fallback_model || 'gemini-3.1-flash-lite');
+    setCfgPreferredModel(activeAgentCfg.preferred_model || 'ollama:svl364-apex-uncensored:latest');
+    setCfgOllamaModel(activeAgentCfg.ollama_model || 'svl364-apex-uncensored:latest');
     setCfgTemperature(String(activeAgentCfg.temperature ?? 0.7));
     setCfgRbacRole(activeAgentCfg.rbac_role || '');
     setCfgVisionEnabled(activeAgentCfg.vision_enabled !== false);
@@ -152,7 +150,6 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
     currentConfigRevision,
     activeAgentCfg.preferred_model,
     activeAgentCfg.ollama_model,
-    activeAgentCfg.fallback_model,
     activeAgentCfg.temperature,
     activeAgentCfg.rbac_role,
     activeAgentCfg.vision_enabled,
@@ -289,7 +286,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
           config: {
             preferred_model: cfgPreferredModel,
             ollama_model: cfgOllamaModel,
-            fallback_model: cfgFallbackModel,
+            fallback_model: '',
             temperature: Number(cfgTemperature) || 0.7,
             rbac_role: cfgRbacRole,
             vision_enabled: cfgVisionEnabled,
@@ -745,7 +742,7 @@ export const AgentsPanel: React.FC<AgentsPanelProps> = ({ onNavigateToChat }) =>
                 <div className="flex flex-wrap justify-between gap-2">
                   <span>Silnik / Ollama:</span>
                   <span className="text-emerald-300 truncate max-w-[170px]">
-                    {live.config?.ollama_model || 'dolphin-llama3:8b-v2.9-q2_K'}
+                    {live.config?.ollama_model || 'svl364-apex-uncensored:latest'}
                   </span>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2">

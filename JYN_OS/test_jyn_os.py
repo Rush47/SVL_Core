@@ -157,6 +157,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
         reply = {
             "message": {"content": "Wszystkie 13 modeli pokładowych jest aktywnych, Mateuszu."},
             "done": True,
+            "model": cfg.get_active_model(),
             "eval_count": 12,
             "eval_duration": 500_000_000,
         }
@@ -172,7 +173,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
         self.assertTrue(clr.ok)
         self.assertEqual(engine.history, [])
 
-    def test_svl364_ship_node_exposes_all_13_models_and_routes_to_installed(self):
+    def test_svl364_ship_catalog_never_substitutes_requested_model(self):
         with patch(
             "JYN_OS.svl364_standalone_ollama._fetch_upstream_models",
             return_value=[{"name": "svl364-apex-uncensored:latest"}, {"name": "qwen2.5:7b"}],
@@ -183,8 +184,7 @@ class TestRebuiltNonStreamingPolishChatModule(unittest.TestCase):
             "dolphin-mixtral:8x22b",
             ["svl364-apex-uncensored:latest", "qwen2.5:7b"],
         )
-        self.assertEqual(cands[0], "svl364-apex-uncensored:latest")
-        self.assertIn("qwen2.5:7b", cands)
+        self.assertEqual(cands, ["dolphin-mixtral:8x22b"])
 
 
 class TestRuntimeRegression(unittest.TestCase):
@@ -217,6 +217,14 @@ class TestRuntimeRegression(unittest.TestCase):
                 return_value=io.BytesIO(json.dumps(reply).encode()),
             ):
                 self.assertFalse(client.chat("test", model="qwen2.5:7b", url="http://127.0.0.1:11434")["success"])
+
+    def test_chat_rejects_model_substitution(self):
+        client = SvlOllamaClient(JynOSConfig())
+        reply = {"message": {"content": "test"}, "done": True, "model": "qwen2.5:7b"}
+        with patch("JYN_OS.ollama_client.urllib.request.urlopen", return_value=io.BytesIO(json.dumps(reply).encode())) as request:
+            result = client.chat("Test", model="svl364-apex-uncensored:latest")
+        self.assertFalse(result["success"])
+        self.assertEqual(request.call_count, 1)
 
     def test_target_alias_normalized(self):
         cfg = JynOSConfig(active_ollama_target=" SVL364 ")
