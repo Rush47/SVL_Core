@@ -12,6 +12,8 @@ import {
   resolveShipOllamaBaseUrl,
   selectBaseModelForApex,
   shouldAllowExplicitOllamaFallbackToGemini,
+  readOllamaActualModel,
+  useRawOllamaTextChat,
 } from './ollamaRouter.ts';
 import { parseShipOllamaTunnelEnv } from './shipOllamaTunnel.ts';
 
@@ -224,4 +226,18 @@ test('selectBaseModelForApex i buildApexCreatePayload budują poprawny payload /
   assert.equal(payload.parameters.num_ctx, 16384);
   assert.equal(payload.parameters.temperature, 0.75);
   assert.equal(payload.system, 'Rdzeń Apex.');
+});
+
+test('actual engine identity is taken from the Ollama response, not the requested label', () => {
+  assert.equal(readOllamaActualModel({model: 'alias', routed_model: 'qwen2.5:7b'}, 'alias'), 'qwen2.5:7b');
+  assert.equal(readOllamaActualModel({model: 'svl364-apex-uncensored:latest'}, 'svl364-apex-uncensored'), 'svl364-apex-uncensored:latest');
+  assert.throws(() => readOllamaActualModel({model: 'svl364-apex-uncensored:latest', routed_model: 'qwen2.5:7b'}, 'svl364-apex-uncensored:latest'));
+  assert.throws(() => readOllamaActualModel({}, 'alias'));
+});
+test('plain text uses the same raw generation transport as duplex, while tools and vision stay on chat', () => {
+  assert.equal(useRawOllamaTextChat({hasImage:false,hasTools:false,systemCommand:false}),true);
+  for (const key of ['hasImage','hasTools','systemCommand'] as const) {
+    assert.equal(useRawOllamaTextChat({hasImage:false,hasTools:false,systemCommand:false,[key]:true}),false);
+  }
+  assert.equal(shouldAllowExplicitOllamaFallbackToGemini({}),false);
 });

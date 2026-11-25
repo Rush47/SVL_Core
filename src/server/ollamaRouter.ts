@@ -502,3 +502,20 @@ export function buildApexCreatePayload(modelfileContent: string, baseModel: stri
     stream: false,
   };
 }
+
+/** Model rzeczywiście użyty przez API Ollama lub most (nie model wybrany w GUI). */
+export function readOllamaActualModel(data: unknown, expected: string): string {
+  if (!data || typeof data !== 'object') throw new Error('Niepoprawna odpowiedź Ollamy');
+  const result = data as Record<string, unknown>;
+  const actual = String(result.routed_model || result.model || '').trim();
+  if (!actual) throw new Error('Ollama nie podała rzeczywistego modelu');
+  const normalize = (name: string) => name.toLowerCase().includes(':') ? name.toLowerCase() : name.toLowerCase() + ':latest';
+  if (/^svl364-apex-uncensored(?::|$)/i.test(expected) && normalize(actual) !== normalize(expected)) {
+    throw new Error(`Ollama podmieniła model Apex: ${actual} zamiast ${expected}`);
+  }
+  return actual;
+}
+
+export function useRawOllamaTextChat(opts: { hasImage: boolean; hasTools: boolean; systemCommand: boolean; enabled?: boolean }): boolean {
+  return opts.enabled !== false && !opts.hasImage && !opts.hasTools && !opts.systemCommand;
+}

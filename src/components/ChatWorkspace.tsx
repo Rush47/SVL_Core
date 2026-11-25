@@ -532,7 +532,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         method: 'POST',
         // Serwer może czekać na zimny start modelu Ollama (predykcja + wypowiedź);
         // 30 s kończyło się błędem w karcie, choć wypowiedź i tak trafiała do SQLite.
-        timeoutMs: 200000,
+        timeoutMs: 330000,
         maxRetries: 0,
         body: JSON.stringify({
           conversationId: activeConv.id,
@@ -985,7 +985,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
         // Musi pokrywać budżety silników (Ollama 75 s, Gemini do 150 s) plus zapas na przełączenie.
-        timeoutMs: 210000,
+        timeoutMs: 330000,
+        maxRetries: 0,
         body: JSON.stringify({
           message: fullPrompt,
           model: selectedModel,

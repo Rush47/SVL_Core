@@ -119,6 +119,8 @@ def _merged_ship_models() -> List[Dict[str, Any]]:
 
 def _select_execution_candidates(requested_model: str, installed_names: List[str], has_images: bool = False) -> List[str]:
     """Zwraca listę kandydatów wykonania: najpierw żądany model (jeśli zainstalowany), potem aktywne modele z katalogu 13."""
+    if not has_images and requested_model.lower().split(':')[0] == 'svl364-apex-uncensored':
+        return [requested_model]
     if not installed_names:
         return [requested_model]
     lower_map = {m.lower(): m for m in installed_names}

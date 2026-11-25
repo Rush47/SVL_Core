@@ -81,6 +81,8 @@ import {
   resolveShipOllamaBaseUrl,
   selectBaseModelForApex,
   shouldAllowExplicitOllamaFallbackToGemini,
+  readOllamaActualModel,
+  useRawOllamaTextChat,
   type OllamaEndpointConfig,
 } from './src/server/ollamaRouter.ts';
 import {
@@ -524,7 +526,7 @@ async function ollamaContinueRaw(
   const resolved = await resolveOllamaAcrossEndpoints(endpoints, parsed.modelName, {
     preferredEndpoint: parsed.preferredEndpoint,
     strictEndpoint: parsed.strictEndpoint,
-    allowSubstitution: true,
+    allowSubstitution: !/^svl364-apex-uncensored(?::|$)/i.test(parsed.modelName),
   });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   const base = resolved.endpoint.host;
@@ -546,6 +548,7 @@ async function ollamaContinueRaw(
           num_predict: Math.min(options.numPredict, runtimeOpts.num_predict),
           stop: options.stop,
           num_ctx: runtimeOpts.num_ctx,
+          num_batch: 512,
           ...runtimeOpts.perf,
         },
       }),
@@ -555,7 +558,8 @@ async function ollamaContinueRaw(
       return { ok: false, reason: `Ollama (${resolved.endpoint.label} · ${base}) /api/generate zwróciła kod ${res.status}` };
     }
     const data: any = await res.json();
-    return { ok: true, text: String(data?.response || ''), model: installedModel, endpointLabel: resolved.endpoint.label };
+    if (data?.error || data?.done !== true || !String(data?.response || '').trim()) return { ok: false, reason: String(data?.error || 'Pusta lub niedokończona odpowiedź Ollamy') };
+    return { ok: true, text: String(data.response), model: readOllamaActualModel(data, installedModel), endpointLabel: resolved.endpoint.label };
   } catch (error) {
     clearOllamaReadyCache(base);
     return { ok: false, reason: `Ollama (${resolved.endpoint.label} · ${base}) niedostępna: ${error instanceof Error ? error.message : String(error)}` };
@@ -4216,6 +4220,8 @@ async function startServer() {
         sender: formatAgentDisplayName(String(body.sender || 'Jyn')),
         agentId: String(body.agentId || 'Jyn'),
         modelUsed: String(body.modelUsed || model || ''),
+        ...(body.engineProvider ? { engineProvider: body.engineProvider } : {}),
+        ...(body.ollamaModelActual ? { actualModel: body.ollamaModelActual } : {}),
         timestamp: new Date().toISOString(),
         content: body.reply,
         ...(body.imagePreview ? { imagePreview: body.imagePreview } : {}),
@@ -6526,8 +6532,8 @@ async function startServer() {
     const isHybridRouter = model === 'svl-hybrid-router';
     const effectiveModel =
       isBielikAgent && isHybridRouter
-        ? String(agentConfig.preferred_model || 'ollama:svl364-apex-uncensored:latest')
-        : isHybridRouter && agentConfig.preferred_model && agentConfig.preferred_model !== 'svl-hybrid-router'
+        ? String(selectedAgent === 'Jyn' ? 'ollama:svl364-apex-uncensored:latest' : agentConfig.preferred_model || 'ollama:svl364-apex-uncensored:latest')
+        : isHybridRouter && selectedAgent !== 'Jyn' && agentConfig.preferred_model && agentConfig.preferred_model !== 'svl-hybrid-router'
           ? String(agentConfig.preferred_model)
           : model;
 
@@ -6537,7 +6543,7 @@ async function startServer() {
       process.env.OLLAMA_PREFERRED_MODEL ||
       'svl364-apex-uncensored:latest';
     const parsedModelSpec = parseOllamaModelSpec(effectiveModel, defaultPreferredOllamaModel);
-    const isExplicitOllama = !isHybridRouter && parsedModelSpec.kind === 'ollama';
+    const isExplicitOllama = parsedModelSpec.kind === 'ollama' && (!isHybridRouter || selectedAgent === 'Jyn');
     const isExplicitGemini = parsedModelSpec.kind === 'gemini';
     const explicitGeminiModel = isExplicitGemini ? parsedModelSpec.modelName : '';
     const availableModels: Array<{ name: string; vision_supported?: boolean }> =
@@ -7474,10 +7480,7 @@ async function startServer() {
       'Pytanie dotyczy aktualnych informacji, ale wyszukiwanie w internecie jest niedostępne (brak GEMINI_API_KEY). ' +
       'Odpowiedź pochodzi wyłącznie z wiedzy modelu i może być nieaktualna lub błędna.';
     const allowExplicitOllamaGeminiFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
-      !['0', 'false', 'off', 'no'].includes(
-        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
-      );
+      shouldAllowExplicitOllamaFallbackToGemini(process.env);
     const shouldTryOllama =
       !isExplicitGemini &&
       (isExplicitOllama ||
@@ -7577,6 +7580,8 @@ async function startServer() {
             ...(imageBase64 ? { images: [imageBase64.replace(/^data:[^;]+;base64,/, '')] } : {}),
           },
         ];
+        const rawTextChat = useRawOllamaTextChat({ hasImage: Boolean(imageBase64), hasTools: ollamaToolsPayload.length > 0, systemCommand: requestsRootSystemTools || directiveReceipts.length > 0, enabled: process.env.SVL_OLLAMA_RAW_CHAT !== '0' });
+        const rawPrompt = [compactSystemForOllama, ...compactOllamaHistory.map(t => `[${t.role === 'assistant' ? selectedDisplayName : OPERATOR_LABEL}]: ${t.content}`), `[${OPERATOR_LABEL}]: ${ollamaUserContent}`, `[${selectedDisplayName}]: `].filter(Boolean).join('\n');
         const allowedToolNames = chatToolDeclarations.map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
         const ollamaDeadline = Date.now() + ollamaChatTimeoutMs;
@@ -7585,7 +7590,7 @@ async function startServer() {
         const generationStart = Date.now();
         const ollamaMetrics = { loadMs: 0, promptMs: 0, evalMs: 0, tokens: 0, rounds: 0 };
         for (let round = 0; round < 5; round++) {
-          const oResp = await fetch(`${activeOllamaHost}/api/chat`, {
+          const oResp = await fetch(`${activeOllamaHost}${rawTextChat ? '/api/generate' : '/api/chat'}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             signal: AbortSignal.timeout(Math.max(1, ollamaDeadline - Date.now())),
@@ -7602,8 +7607,9 @@ async function startServer() {
                 num_ctx: ollamaTurnOpts.num_ctx,
                 num_predict: ollamaTurnOpts.num_predict,
                 ...ollamaTurnOpts.perf,
+                ...(rawTextChat ? { stop: ['\n['] } : {}),
               },
-              messages: ollamaMessages,
+              ...(rawTextChat ? { prompt: rawPrompt, raw: true } : { messages: ollamaMessages }),
               ...(ollamaToolsPayload.length > 0 ? { tools: ollamaToolsPayload } : {}),
             }),
           });
@@ -7625,6 +7631,8 @@ async function startServer() {
           const oRaw = await oResp.text();
           const oData: any = oRaw && !oRaw.trim().startsWith('<') ? JSON.parse(oRaw) : {};
           if (oData?.error || oData?.done !== true) throw new Error(String(oData?.error || 'Niedokończona odpowiedź Ollamy'));
+          selectedOllamaModelName = readOllamaActualModel(oData, selectedOllamaModelName);
+          displayModelBadge = formatOllamaBadge({ speakerName: selectedDisplayName, endpointLabel: resolved.endpoint.label, actualModel: selectedOllamaModelName, requestedModel: configuredOllamaModelName, substituted: resolved.substituted || Boolean(oData.substituted), roleTag: roleTagForAgent, vision: Boolean(imageBase64) });
           ollamaMetrics.loadMs += Number(oData.load_duration || 0) / 1e6;
           ollamaMetrics.promptMs += Number(oData.prompt_eval_duration || 0) / 1e6;
           ollamaMetrics.evalMs += Number(oData.eval_duration || 0) / 1e6;
@@ -7700,7 +7708,7 @@ async function startServer() {
             ollamaEndpointId: resolved.endpoint.id,
             ollamaEndpointLabel: resolved.endpoint.label,
             ollamaModelActual: selectedOllamaModelName,
-            ollamaSubstituted: resolved.substituted,
+            ollamaSubstituted: resolved.substituted || selectedOllamaModelName !== resolved.model,
             ollamaTiming: { ...ollamaMetrics, wallMs: Date.now() - generationStart, tokensPerSecond: ollamaMetrics.evalMs > 0 ? ollamaMetrics.tokens * 1000 / ollamaMetrics.evalMs : null },
             reply: safeReply,
             provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
@@ -8210,9 +8218,7 @@ async function startServer() {
       ollamaFailure = '';
       if (await tryOllama()) return;
     }
-    if (shouldTryOllama && !ollamaGenerationStarted) {
-      if (await tryOllama()) return;
-    }
+    // Nie ponawiaj tej samej nieudanej próby Ollamy w ramach jednej wiadomości.
 
     // 3) Intelligent local conversational & command fallback (never dumps unsolicited raw system reports)
     const explicitSystemReportAsked = /\b(?:pełny raport|pelny raport|raport svl_system|raport systemu|markdown-report)\b/i.test(effectiveCleanMsg);
@@ -8323,10 +8329,7 @@ async function startServer() {
       failures.push(fromOllama.reason);
     }
     const allowExplicitFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
-      !['0', 'false', 'off', 'no'].includes(
-        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
-      );
+      shouldAllowExplicitOllamaFallbackToGemini(process.env);
     if (useOllamaRequested && !allowExplicitFallback) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return { predicted: null, providerOnline: false };
@@ -8405,7 +8408,7 @@ async function startServer() {
     requestedModel: string,
     memoryContext: string,
     failures: string[],
-  ): Promise<{ text: string; label: string } | null> => {
+  ): Promise<{ text: string; label: string; provider: 'ollama' | 'gemini'; actualModel: string } | null> => {
     const rawPromptPrefix = memoryContext ? `${memoryContext}\n\n` : '';
     const starterBlock = transcript
       ? `${transcript}\n[${speaker}]: `
@@ -8421,15 +8424,12 @@ async function startServer() {
       });
       if (fromOllama.ok) {
         const epTag = fromOllama.endpointLabel ? ` [${fromOllama.endpointLabel}]` : '';
-        return { text: fromOllama.text, label: `Ollama${epTag} (${fromOllama.model})` };
+        return { text: fromOllama.text, label: `Ollama${epTag} (${fromOllama.model})`, provider: 'ollama', actualModel: fromOllama.model };
       }
       failures.push(fromOllama.reason);
     }
     const allowExplicitFallback =
-      shouldAllowExplicitOllamaFallbackToGemini(process.env) ||
-      !['0', 'false', 'off', 'no'].includes(
-        String(process.env.SVL_ALLOW_EXPLICIT_OLLAMA_GEMINI_FALLBACK || '').trim().toLowerCase(),
-      );
+      shouldAllowExplicitOllamaFallbackToGemini(process.env);
     if (useOllamaRequested && !allowExplicitFallback) {
       failures.push('Gemini pominięty — wybrano konkretny model Ollama bez fallbacku');
       return null;
@@ -8516,7 +8516,7 @@ async function startServer() {
           const label = !useGeminiOnly
             ? `Gemini (${candidate} · fallback, Ollama niedostępna)`
             : `Gemini (${candidate})`;
-          return { text, label };
+          return { text, label, provider: 'gemini', actualModel: candidate };
         }
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
@@ -8546,7 +8546,7 @@ async function startServer() {
       autonomous = false,
     } = req.body || {};
     const convId = String(conversationId || 'conv-rodzina-mitek-wszyscy').slice(0, 120);
-    const requestedModel = String(model || '');
+    const requestedModel = String(model || '') === 'svl-hybrid-router' && convId === 'conv-jyn' ? 'ollama:svl364-apex-uncensored:latest' : String(model || '');
     const isAutonomous = Boolean(autonomous);
 
     const skip = (reason: string, detail?: string, retryAfterMs?: number) => {
@@ -8688,8 +8688,8 @@ async function startServer() {
         'POST',
         '/api/py/agents/memory/search',
         { agent: speakerMemAgent, query: lastDialogueTurn?.content || '', limit: 14 },
-        corrId,
-      );
+        corrId, 1, 1500,
+      ).catch(() => ({status: 503, data: null}));
       if (memSearch.status === 200 && Array.isArray(memSearch.data?.memories)) {
         speakerMemories = memSearch.data.memories;
       } else if (Array.isArray(agentsRes.data?.agent_memories?.[speakerMemAgent])) {
@@ -8738,6 +8738,8 @@ async function startServer() {
         sender: speakerDisplayName,
         agentId: speakerAgentId,
         modelUsed: `${line.label} · rozmowa obustronna`,
+        engineProvider: line.provider,
+        actualModel: line.actualModel,
         provenance: 'model_unverified',
         ...(guardedProactive.verificationNote ? { verificationNote: guardedProactive.verificationNote } : {}),
         timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
@@ -8795,6 +8797,8 @@ async function startServer() {
         sender: speaker,
         agentId: speaker,
         modelUsed: assistantMsg.modelUsed,
+        engineProvider: line.provider,
+        actualModel: line.actualModel,
         message: assistantMsg,
         serverRevision: pySave.data?.serverRevision,
       });
