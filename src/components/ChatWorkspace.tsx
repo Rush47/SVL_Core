@@ -122,6 +122,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [engineOllamaReachable, setEngineOllamaReachable] = useState<boolean>(false);
   const [isSending, setIsSending] = useState(false);
   const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
+  const [chatLatency, setChatLatency] = useState<{ normal?: string; duplex?: string }>({});
   const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Jyn');
   const [jediVmStatus, setJediVmStatus] = useState<any>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -518,8 +519,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         sender: m.sender,
         content: m.content,
       }));
+      const duplexStartedAt = performance.now();
       const res = await safeFetchJson<{
         ok: boolean;
+        serverWallMs?: number;
+        generationWallMs?: number;
+        engineProvider?: string;
+        actualModel?: string;
         message?: ChatMessage;
         sender?: string;
         agentId?: string;
@@ -546,6 +552,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       });
 
       if (res.data?.ok && res.data.message) {
+        const total = ((performance.now() - duplexStartedAt) / 1000).toFixed(2);
+        const gen = typeof res.data.generationWallMs === 'number' ? `; generacja + routing ${(res.data.generationWallMs / 1000).toFixed(2)} s` : '';
+        setChatLatency(prev => ({ ...prev, duplex: `${total} s${gen} · ${res.data?.engineProvider || 'silnik nieustalony'}` }));
         if (autonomous) {
           autoTurnsRef.current += 1;
         }
@@ -883,6 +892,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       }
       return;
     }
+    const normalStartedAt = performance.now();
     autoTurnsRef.current = 0;
     sendingRef.current = true;
     setIsSending(true);
@@ -1018,6 +1028,10 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         return;
       }
 
+      const total = ((performance.now() - normalStartedAt) / 1000).toFixed(2);
+      const metrics = data.ollamaTiming;
+      const details = metrics && typeof metrics.wallMs === 'number' ? `; generacja ${(metrics.evalMs / 1000).toFixed(2)} s, prompt ${(metrics.promptMs / 1000).toFixed(2)} s, ładowanie ${(metrics.loadMs / 1000).toFixed(2)} s` : '';
+      setChatLatency(prev => ({ ...prev, normal: `${total} s${details} · ${data.engineProvider || 'silnik nieustalony'}` }));
       if (data.connectionReport) {
         void refreshDomainModules(['agents', 'health']);
       }
@@ -2412,6 +2426,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </div>
               )}
               {messageListNode}
+              {(chatLatency.normal || chatLatency.duplex) && (
+                <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300 font-mono" role="status">
+                  <div className="text-slate-400">Ostatnie pomiary w tej sesji (od wysłania do odbioru)</div>
+                  {chatLatency.normal && <div>Czat: {chatLatency.normal}</div>}
+                  {chatLatency.duplex && <div>Obustronna: {chatLatency.duplex}</div>}
+                </div>
+              )}
               {isSending && (
                 <div
                   role="status"

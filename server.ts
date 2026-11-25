@@ -3812,8 +3812,8 @@ async function startServer() {
     ).catch(() => ({ status: 503, data: null }));
 
     const [healthRes, agentsRes, modsRes, kernelRes, chatRes, apexRes, ghSync] = await Promise.all([
-      callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
-      callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
+      callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId, 1, 2000),
+      callPythonBackend('GET', '/api/py/agents/status', undefined, corrId, 1, 2000),
       callPythonBackend('GET', '/api/py/modules', undefined, corrId),
       callPythonBackend('GET', '/api/py/kernel/report', undefined, corrId),
       callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId),
@@ -4056,8 +4056,9 @@ async function startServer() {
       callPythonBackend('GET', '/api/py/health?fast=1', undefined, corrId),
       callPythonBackend('GET', '/api/py/agents/status', undefined, corrId),
     ]);
-    cachedChatContextMeta = { at: Date.now(), healthRes, agentsRes };
-    return cachedChatContextMeta;
+    const meta = { at: Date.now(), healthRes, agentsRes };
+    if (healthRes.status === 200 && agentsRes.status === 200) cachedChatContextMeta = meta;
+    return meta;
   }
 
   // Ekstrakcja czystego tekstu z załączników .docx (bez surowych bajtów ZIP PK... w czacie)
@@ -4244,7 +4245,8 @@ async function startServer() {
           eventId: `evt-reply-${replyMessage.id}`,
         },
         corrId,
-        3,
+        1,
+        4000,
       )
         .then((saved) => {
           const ok = saved.status === 200 && saved.data?.ok;
@@ -4259,6 +4261,7 @@ async function startServer() {
             ...body,
             message: replyMessage,
             persisted: Boolean(ok),
+            serverWallMs: Date.now() - chatStartedAt,
             ...(ok ? { serverRevision: latestRev } : {}),
           });
           // Asynchroniczna kompilacja zmian wprowadzonych przez czat do jądra OS (SQLite WAL) w tle
@@ -8260,6 +8263,10 @@ async function startServer() {
         `*(Model językowy dla komentarza tekstowego JEDI Omni-OS v12 nie był dostępny — Ollama: ${ollamaFailure || 'niedostępna'}; Gemini: ${geminiFailure || 'brak odpowiedzi'}.)*\n\n` +
         `[btn: 📊 Status VM JEDI v12|send:/jedi status] [btn: ⚡ Ping TCP Punktu Zero|send:/jedi ping] [btn: 🛰️ Stan usług|tab:svl364]`;
     } else {
+      if (isExplicitOllama && !allowExplicitOllamaGeminiFallback) {
+        res.status(503).json({ ok: false, engineProvider: 'none', error: `Ollama (${configuredOllamaModelName}): ${ollamaFailure || 'brak odpowiedzi'}. Fallback Gemini wyłączony.` });
+        return;
+      }
       // Jeśli modele AI (Ollama i Gemini) zawiodą (np. wyczerpanie limitu 429 lub brak sieci),
       // Jyn Mitek i SI_Sphere generują płynną, inteligentną odpowiedź in-character, żeby rozmowa swobodna nigdy nie była blokowana przez błędy API.
       const fallback = generateJynConversationalFallback(effectiveCleanMsg, selectedAgent);
@@ -8420,7 +8427,7 @@ async function startServer() {
         temperature: 0.8,
         numPredict: 400,
         stop: ['\n['],
-        timeoutMs: Number(process.env.OLLAMA_CHAT_TIMEOUT_MS || 120000),
+        timeoutMs: Math.max(1000, Number(process.env.OLLAMA_CHAT_TIMEOUT_MS) || 300000),
       });
       if (fromOllama.ok) {
         const epTag = fromOllama.endpointLabel ? ` [${fromOllama.endpointLabel}]` : '';
@@ -8537,6 +8544,7 @@ async function startServer() {
       return;
     }
     const corrId: string = (req as any).correlationId || '';
+    const proactiveStartedAt = Date.now();
     const {
       conversationId = 'conv-rodzina-mitek-wszyscy',
       targetAgent = '',
@@ -8574,7 +8582,7 @@ async function startServer() {
     proactiveInFlight.add(convId);
     try {
       // Źródłem prawdy jest SQLite (zawiera nadawców); historia z klienta tylko awaryjnie.
-      const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId);
+      const convSnap = await callPythonBackend('GET', '/api/py/chat/conversations', undefined, corrId, 1, 2000);
       const stored = (Array.isArray(convSnap.data?.conversations) ? convSnap.data.conversations : [])
         .find((c: any) => c.id === convId);
       const source: any[] = Array.isArray(stored?.messages) && stored.messages.length > 0
@@ -8709,6 +8717,7 @@ async function startServer() {
       );
 
       // 2) Wskazana AI dopisuje swoją kwestię własnym modelem (lub inicjuje rozmowę na pustym kanale).
+      const proactiveGenerationStart = Date.now();
       const line = await generateAgentProactiveLine(
         modelFor(speaker), ollamaHost, turns, transcript, speaker, requestedModel, speakerMemoryContext, failures,
       );
@@ -8725,6 +8734,7 @@ async function startServer() {
         }
         return noModel();
       }
+      const proactiveGenerationMs = Date.now() - proactiveGenerationStart;
       const rawText = normalizeAiInteractiveMarkup(cleanAgentReply(line.text, speaker));
       if (!rawText || isRepetitive(rawText, turns.slice(-8).map((t) => t.content))) {
         return skip('nothing_new', `${speakerDisplayName} nie miał nic nowego do powiedzenia — wypowiedź pominięta.`);
@@ -8742,7 +8752,7 @@ async function startServer() {
         actualModel: line.actualModel,
         provenance: 'model_unverified',
         ...(guardedProactive.verificationNote ? { verificationNote: guardedProactive.verificationNote } : {}),
-        timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: new Date().toISOString(),
         content: text,
       };
       const pySave = await callPythonBackend(
@@ -8756,7 +8766,7 @@ async function startServer() {
           origin,
           eventId: `evt-proact-${assistantMsg.id}`,
         },
-        corrId,
+        corrId, 1, 4000,
       );
       if (pySave.status !== 200 || !pySave.data?.ok) {
         res.status(pySave.status >= 400 ? pySave.status : 503).json({
@@ -8799,6 +8809,8 @@ async function startServer() {
         modelUsed: assistantMsg.modelUsed,
         engineProvider: line.provider,
         actualModel: line.actualModel,
+        generationWallMs: proactiveGenerationMs,
+        serverWallMs: Date.now() - proactiveStartedAt,
         message: assistantMsg,
         serverRevision: pySave.data?.serverRevision,
       });
