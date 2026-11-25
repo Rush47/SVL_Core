@@ -325,7 +325,7 @@ class SvlOllamaClient:
     ) -> List[str]:
         """Dobiera kolejność modeli z 13 kanonicznych modeli SVL-364 bez dodawania obcych małych modeli."""
         req = (selected_model or self.config.get_active_model()).strip()
-        if self.config.strict_model:
+        if self.config.strict_model or (not has_images and req.lower().split(":")[0] == "svl364-apex-uncensored"):
             return [req]
 
         if installed is None:
@@ -416,7 +416,7 @@ class SvlOllamaClient:
                             raise ValueError("Niepoprawny format odpowiedzi JSON z Ollamy")
                         if resp_json.get("error"):
                             last_err = str(resp_json["error"])
-                            if not self.config.strict_model and len(candidates) > 1:
+                            if not self.config.strict_model and len(candidates) > 1 and "not found" in last_err.lower():
                                 continue
                             break
                         message = resp_json.get("message") or {}
@@ -431,7 +431,7 @@ class SvlOllamaClient:
                                 "success": True,
                                 "model": cand_model,
                                 "routed_model": routed_model,
-                                "substituted": cand_model != selected_model,
+                                "substituted": routed_model != selected_model,
                                 "endpoint": ep_url,
                                 "response": cleaned_reply,
                                 "total_duration": resp_json.get("total_duration"),
@@ -451,7 +451,7 @@ class SvlOllamaClient:
                     except Exception:
                         parsed_err = str(he)
                     last_err = f"HTTP {he.code}: {parsed_err}"
-                    if he.code in (404, 500) and not self.config.strict_model and len(candidates) > 1:
+                    if he.code == 404 and not self.config.strict_model and len(candidates) > 1:
                         self.invalidate_cache(ep_url)
                         continue
                     if he.code in (404, 502, 503, 504):

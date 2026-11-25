@@ -167,7 +167,7 @@ test('warmOllamaModels ładuje każdy model raz z keep_alive i raportuje błędy
 test('selectOllamaTurnOptions tunes short, normal, detailed and tool turns while keeping num_batch fast', () => {
   const base = getOllamaRuntimeOptions({});
   const shortOpts = selectOllamaTurnOptions('Cześć Jyn!', base, { env: {} });
-  assert.equal(shortOpts.num_predict, 384);
+  assert.equal(shortOpts.num_predict, 160);
   assert.equal(shortOpts.historyTurns, 8);
   assert.equal(shortOpts.maxTurnChars, 1200);
   assert.equal(shortOpts.perf.num_batch, 512);
@@ -176,7 +176,8 @@ test('selectOllamaTurnOptions tunes short, normal, detailed and tool turns while
   assert.equal(detailedOpts.num_predict, 1536);
 
   const toolOpts = selectOllamaTurnOptions('Sprawdź status', base, { env: {}, hasTools: true });
-  assert.equal(toolOpts.num_ctx, 4096);
+  assert.equal(toolOpts.num_ctx, 2048);
+  assert.equal(selectOllamaTurnOptions('Raport', base, { env: {}, estimatedPromptChars: 9000 }).num_ctx, 2048);
 });
 
 test('buildCompactOllamaSystemContext strips volatile per-turn telemetry so Ollama KV cache prefix hits', () => {

@@ -138,19 +138,15 @@ export function selectOllamaTurnOptions(
     numPredict = Math.max(numPredict, (Number(env.OLLAMA_VISION_NUM_PREDICT) > 0 ? Math.min(4096, Number(env.OLLAMA_VISION_NUM_PREDICT)) : 1024));
   } else if (isDetailed) {
     numPredict = Math.min(4096, Math.max(numPredict, 1536));
-  } else if (isShort && !env.OLLAMA_NUM_PREDICT) {
-    numPredict = Math.min(numPredict, 384);
+  } else if (isShort) {
+    numPredict = Math.min(numPredict, 160);
   }
 
   let numCtx = baseOpts.num_ctx;
   if (opts.isVision) {
     numCtx = Math.max(numCtx, (Number(env.OLLAMA_VISION_NUM_CTX) > 0 ? Math.min(32768, Number(env.OLLAMA_VISION_NUM_CTX)) : 4096));
-  } else if (!env.OLLAMA_NUM_CTX) {
-    const promptChars = opts.estimatedPromptChars ?? 0;
-    if (opts.hasTools || promptChars > 4500) {
-      numCtx = Math.max(numCtx, 4096);
-    }
   }
+  // Stałe okno tekstowe nie przeładowuje runnera przy kolejnych turach.
 
   const perf: Record<string, number | boolean> = {
     ...(baseOpts.perf.num_batch === undefined ? { num_batch: 512 } : {}),

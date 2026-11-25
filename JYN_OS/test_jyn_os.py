@@ -246,6 +246,23 @@ class TestRuntimeRegression(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.endpoint, cfg.get_fallback_ollama_url())
 
+    def test_apex_is_not_silently_substituted(self):
+        client = SvlOllamaClient(JynOSConfig())
+        self.assertEqual(client._candidate_models("svl364-apex-uncensored:latest",
+            installed=["qwen2.5:7b"]), ["svl364-apex-uncensored:latest"])
+
+    def test_turn_metrics_separate_generation_from_overhead(self):
+        cfg = JynOSConfig()
+        client = SvlOllamaClient(cfg)
+        engine = JynChatEngine(cfg, client)
+        with patch.object(client, "chat", return_value={"success": True, "response": "OK",
+                "eval_count": 20, "eval_duration": 2000000000,
+                "load_duration": 1000000000, "prompt_eval_duration": 500000000,
+                "total_duration": 3500000000}):
+            turn = engine.send("Test")
+        self.assertEqual((turn.load_sec, turn.prompt_eval_sec, turn.eval_sec, turn.tokens_per_sec),
+                         (1.0, 0.5, 2.0, 10.0))
+
     def test_warmup_rejects_error_json(self):
         client = SvlOllamaClient(JynOSConfig())
         with patch("JYN_OS.ollama_client.urllib.request.urlopen",

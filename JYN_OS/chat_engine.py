@@ -74,6 +74,10 @@ class ChatTurnResult:
     duration_sec: float = 0.0
     eval_count: int = 0
     tokens_per_sec: float = 0.0
+    load_sec: float = 0.0
+    prompt_eval_sec: float = 0.0
+    eval_sec: float = 0.0
+    overhead_sec: float = 0.0
     truncated: bool = False
     local_command: bool = False
     error: str = ""
@@ -117,6 +121,7 @@ def compute_turn_options(prompt: str, config: JynOSConfig, has_images: bool = Fa
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": num_ctx,
+        "num_batch": 512,
         "num_predict": min(num_predict, num_ctx),
         "stop": list(STOP_SEQUENCES),
     }
@@ -326,6 +331,9 @@ class JynChatEngine:
 
         eval_count = int(res.get("eval_count") or 0)
         eval_ns = int(res.get("eval_duration") or 0)
+        load_sec = (res.get("load_duration") or 0) / 1e9
+        prompt_eval_sec = (res.get("prompt_eval_duration") or 0) / 1e9
+        total_sec = (res.get("total_duration") or 0) / 1e9
         tps = (eval_count / (eval_ns / 1e9)) if (eval_count > 0 and eval_ns > 0) else (eval_count / elapsed if elapsed > 0 else 0.0)
 
         self.history.append({"role": "user", "content": cleaned})
@@ -345,6 +353,10 @@ class JynChatEngine:
             duration_sec=elapsed,
             eval_count=eval_count,
             tokens_per_sec=tps,
+            load_sec=load_sec,
+            prompt_eval_sec=prompt_eval_sec,
+            eval_sec=eval_ns / 1e9,
+            overhead_sec=max(0.0, elapsed - total_sec) if total_sec else 0.0,
             truncated=bool(res.get("truncated")),
         )
 

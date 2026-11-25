@@ -7512,7 +7512,7 @@ async function startServer() {
           preferredEndpoint: parsedModelSpec.preferredEndpoint,
           strictEndpoint: parsedModelSpec.strictEndpoint,
           requireVision: Boolean(imageBase64),
-          allowSubstitution: true,
+          allowSubstitution: !/^svl364-apex-uncensored(?::|$)/i.test(selectedOllamaModelName) || Boolean(imageBase64),
         });
         if (!resolved.ok) {
           throw new Error(resolved.reason);
@@ -7579,14 +7579,16 @@ async function startServer() {
         ];
         const allowedToolNames = chatToolDeclarations.map((fn) => fn.name).filter((n): n is string => Boolean(n));
         let textActionProtocolInjected = false;
-        const ollamaTimeoutMs = ollamaChatTimeoutMs;
+        const ollamaDeadline = Date.now() + ollamaChatTimeoutMs;
         ollamaGenerationStarted = true;
         let extReplyRaw = '';
+        const generationStart = Date.now();
+        const ollamaMetrics = { loadMs: 0, promptMs: 0, evalMs: 0, tokens: 0, rounds: 0 };
         for (let round = 0; round < 5; round++) {
           const oResp = await fetch(`${activeOllamaHost}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(ollamaTimeoutMs),
+            signal: AbortSignal.timeout(Math.max(1, ollamaDeadline - Date.now())),
             body: JSON.stringify({
               model: selectedOllamaModelName,
               stream: false,
@@ -7622,6 +7624,12 @@ async function startServer() {
           }
           const oRaw = await oResp.text();
           const oData: any = oRaw && !oRaw.trim().startsWith('<') ? JSON.parse(oRaw) : {};
+          if (oData?.error || oData?.done !== true) throw new Error(String(oData?.error || 'Niedokończona odpowiedź Ollamy'));
+          ollamaMetrics.loadMs += Number(oData.load_duration || 0) / 1e6;
+          ollamaMetrics.promptMs += Number(oData.prompt_eval_duration || 0) / 1e6;
+          ollamaMetrics.evalMs += Number(oData.eval_duration || 0) / 1e6;
+          ollamaMetrics.tokens += Number(oData.eval_count || 0);
+          ollamaMetrics.rounds++;
           const toolCalls = Array.isArray(oData?.message?.tool_calls) ? oData.message.tool_calls : [];
           if (toolCalls.length > 0 && round < 4) {
             ollamaMessages.push(oData.message);
@@ -7693,6 +7701,7 @@ async function startServer() {
             ollamaEndpointLabel: resolved.endpoint.label,
             ollamaModelActual: selectedOllamaModelName,
             ollamaSubstituted: resolved.substituted,
+            ollamaTiming: { ...ollamaMetrics, wallMs: Date.now() - generationStart, tokensPerSecond: ollamaMetrics.evalMs > 0 ? ollamaMetrics.tokens * 1000 / ollamaMetrics.evalMs : null },
             reply: safeReply,
             provenance: hasVerifiedToolAction ? 'server_verified' : 'model_unverified',
             ...(wantsWebSources ? { verificationNote: webSearchUnavailableNote } : {}),

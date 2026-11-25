@@ -449,7 +449,9 @@ class JynOSShell(cmd.Cmd):
         timing = ""
         if not turn.local_command and turn.duration_sec > 0:
             tps_part = f", {turn.tokens_per_sec:.1f} tok/s" if turn.tokens_per_sec > 0 else ""
-            timing = f" {DIM}({turn.duration_sec:.2f}s{tps_part}){RESET}"
+            timing = (f" {DIM}({turn.duration_sec:.2f}s{tps_part}; "
+                      f"load {turn.load_sec:.2f}s; prompt {turn.prompt_eval_sec:.2f}s; "
+                      f"gen {turn.eval_sec:.2f}s; narzut {turn.overhead_sec:.2f}s){RESET}")
 
         badge_model = turn.model or active_mod
         if turn.routed_model and turn.routed_model != badge_model:

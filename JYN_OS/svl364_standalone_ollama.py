@@ -189,11 +189,15 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             try:
                 with _open_upstream(f"{UPSTREAM_URL}/api/version", timeout=3.0):
                     pass
-                self._send_json(200, {"models": _merged_ship_models()})
+                self._send_json(200, {"models": _fetch_upstream_models()})
             except urllib.error.HTTPError as exc:
                 self._send_json(exc.code, {"error": str(exc)})
             except (OSError, ValueError) as exc:
                 self._send_json(502, {"error": f"Ollama :11434 niedostępna: {exc}"})
+            return
+
+        if path == "/api/catalog":
+            self._send_json(200, {"models": _merged_ship_models()})
             return
 
         if path == "/api/ps":
@@ -265,13 +269,14 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             merged_options = dict(options)
             merged_options.setdefault("num_predict", DEFAULT_CHAT_NUM_PREDICT)
             merged_options.setdefault("num_ctx", DEFAULT_CHAT_NUM_CTX)
+            merged_options.setdefault("num_batch", 512)
 
             messages = body.get("messages")
             has_images = bool(body.get("images"))
             if isinstance(messages, list):
                 has_images = has_images or any(isinstance(m, dict) and bool(m.get("images")) for m in messages)
                 has_sys = any(isinstance(m, dict) and m.get("role") == "system" and str(m.get("content") or "").strip() for m in messages)
-                if not has_sys:
+                if not has_sys and DEFAULT_SYSTEM_PROMPT_PL:
                     cleaned_msgs = [m for m in messages if not (isinstance(m, dict) and m.get("role") == "system")]
                     messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT_PL}, *cleaned_msgs]
 
@@ -301,7 +306,8 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                         result = json.loads(upstream.read().decode("utf-8"))
                         if isinstance(result, dict):
                             result["routed_model"] = exec_model
-                            result["model"] = requested_model
+                            result["model"] = exec_model
+                            result["substituted"] = exec_model != requested_model
                         self._send_json(200, result)
                         return
                 except urllib.error.HTTPError as exc:
@@ -312,7 +318,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                         except Exception:
                             last_error = str(exc)
                     # Próbuj kolejny zainstalowany model z katalogu przy 404 (niepobrany) lub 500 (brak RAM dla 70B/141B)
-                    if exc.code in (404, 500) and len(candidates) > 1:
+                    if exc.code == 404 and len(candidates) > 1:
                         continue
                     break
                 except (OSError, ValueError) as exc:
@@ -336,22 +342,6 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                     self._send_json(200, json.loads(upstream.read().decode("utf-8")))
                     return
             except urllib.error.HTTPError as exc:
-                if exc.code == 404:
-                    matched: Optional[Dict[str, Any]] = next(
-                        (m for m in SHIP_MODELS_CATALOG if m["name"].lower() == req_model.lower()),
-                        None,
-                    )
-                    if matched:
-                        tag = _catalog_entry_to_ollama_tag(matched)
-                        self._send_json(
-                            200,
-                            {
-                                "modelfile": f"FROM {matched['name']}\nPARAMETER num_ctx 2048",
-                                "parameters": "num_ctx 2048\nnum_predict 384",
-                                "details": tag["details"],
-                            },
-                        )
-                        return
                 self._send_json(exc.code, {"error": str(exc)})
             except (OSError, ValueError) as exc:
                 self._send_json(502, {"error": str(exc)})
