@@ -176,6 +176,7 @@ import {
   normalizeGuiLogBatch,
   scrubSensitiveText,
 } from './src/server/fileLogger.ts';
+import { OPENAI_UI_CAPABILITY } from './src/utils/openaiUi.ts';
 import { SELF_AVATAR_CAPABILITY, extractSelfAvatarAction, findSelfAvatars, downloadSelfAvatar } from './src/server/avatarSelf.ts';
 import { LiveRepoSync, loadLiveRepoSyncConfig } from './src/server/liveRepoSync.ts';
 import { LiveSyncBus, formatSseFrame, sseKeepAlive } from './src/server/liveSyncBus.ts';
@@ -7159,7 +7160,7 @@ async function startServer() {
         );
         const baseOllamaOpts = getOllamaRuntimeOptions(process.env);
         const isVisionOllama = selectedOllamaModelName.toLowerCase().includes('vision') && Boolean(imageBase64);
-        const compactSystemForOllama = [buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n');
+        const compactSystemForOllama = [buildCompactOllamaSystemContext(agentMemoryContext),SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n');
         const attachOllamaTools =
           chatToolDeclarations.length > 0 &&
           !imageBase64 &&
@@ -7464,7 +7465,7 @@ async function startServer() {
                 ...tempCfg,
                 maxOutputTokens: chatMaxOutputTokens,
                 ...geminiThinkingConfig(candidate),
-                ...(agentMemoryContext ? { systemInstruction: agentMemoryContext } : {}),
+                systemInstruction: [agentMemoryContext,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n'),
                 ...(includeTools && sanitizedGeminiTools.length > 0 && !isGemma
                   ? { tools: [{ functionDeclarations: sanitizedGeminiTools }] }
                   : useSearchGrounding && !isGemma
@@ -8005,7 +8006,7 @@ async function startServer() {
     memoryContext: string,
     failures: string[],
   ): Promise<{ text: string; label: string; provider: 'ollama' | 'gemini'; actualModel: string } | null> => {
-    const rawPromptPrefix = [memoryContext, SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n')+'\n\n';
+    const rawPromptPrefix = [memoryContext, SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n')+'\n\n';
     const starterBlock = transcript
       ? `${transcript}\n[${speaker}]: `
       : `${buildProactiveStarterPrompt(speaker, 'Mateusz', memoryContext)}\n[${speaker}]: `;
@@ -8076,7 +8077,7 @@ async function startServer() {
               config: {
                 ...(isGeminiTemperatureSupported(candidate) ? { temperature: 0.8 } : {}),
                 maxOutputTokens: 1100,
-                systemInstruction: [memoryContext,SELF_AVATAR_CAPABILITY].filter(Boolean).join('\n'),
+                systemInstruction: [memoryContext,SELF_AVATAR_CAPABILITY,OPENAI_UI_CAPABILITY].filter(Boolean).join('\n'),
                 ...geminiThinkingConfig(candidate),
                 abortSignal: AbortSignal.timeout(timeoutMs),
               },

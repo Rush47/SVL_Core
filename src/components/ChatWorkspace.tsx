@@ -56,7 +56,7 @@ import {
 import { useSvlSync, getCanonicalConversationTitle } from '../utils/svlSyncStore';
 import { AvatarSettingsModal, SvlAvatar } from './AgentAvatar';
 import { RealVisionPanel } from './RealVisionPanel';
-import { renderFormattedContent, renderFormattedLine } from './ChatContentRenderer';
+import { renderFormattedContent, renderFormattedLine } from './OpenAIChatRenderer';
 import { ChatInputField, type ChatInputHandle } from './ChatInputField';
 import { ChatMessageRow } from './ChatMessageRow';
 import { ChatCanvasDrawer } from './ChatCanvasDrawer';
