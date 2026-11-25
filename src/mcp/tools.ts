@@ -54,10 +54,10 @@ export const SVL_KNOWN_SERVICES = [
 const CHAT_AGENTS = ['Jyn', 'SI_Sphere', 'JEDI_Omni_OS'] as const;
 const CHAT_CHANNELS: Record<string, string> = {
   wszyscy: 'conv-rodzina-mitek-wszyscy',
-  jyn: 'conv-jyn',
+  jyn: 'conv-ai-jyn-20261125',
   svl364_root: 'conv-svl364-mcp-root',
   svl364: 'conv-svl364-mcp-root',
-  si_sphere: 'conv-si-sphere',
+  si_sphere: 'conv-ai-si-sphere-20261125',
   jedi: 'conv-jedi-omni-os',
 };
 const TERMINALS = ['linux', 'python', 'ssh', 'github', 'hyperspace', 'agents'] as const;

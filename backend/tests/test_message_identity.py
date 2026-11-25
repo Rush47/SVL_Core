@@ -90,7 +90,7 @@ class MessageIdentityGuardTests(unittest.TestCase):
             )
             self.assertFalse(blocked.get("ok"), blocked)
             saved = kernel.save_chat_message(
-                "conv-jyn",
+                "conv-ai-jyn-20261125",
                 "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "jedi-omni-os-v11.5-vm",
                 {
@@ -107,12 +107,12 @@ class MessageIdentityGuardTests(unittest.TestCase):
                 "Pełny raport SVL_System test",
                 model_label="Jyn · raport SVL_System (wynik serwera)",
                 message_prefix="msg-report",
-                conversation_id="conv-jyn",
+                conversation_id="conv-ai-jyn-20261125",
             )
             self.assertTrue(rep.get("ok"), rep)
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
             self.assertNotIn("conv-svl364-komputer-pokladowy", convs)
-            msgs = convs["conv-jyn"]["messages"]
+            msgs = convs["conv-ai-jyn-20261125"]["messages"]
             senders = {m["id"]: m["sender"] for m in msgs}
             self.assertEqual(senders.get("asst-si1-1"), "Jyn")
             self.assertTrue(any(m["sender"] == "Jyn" and "Pełny raport SVL_System test" in m["content"] for m in msgs))
@@ -135,18 +135,22 @@ class MessageIdentityGuardTests(unittest.TestCase):
                 operator_token="test_operator_token_with_more_than_32_chars_abcdef",
             )
             convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            self.assertIn("conv-jyn", convs)
-            self.assertEqual(convs["conv-jyn"]["title"], "Jyn — Zarządzanie Infrastrukturą (ROOT)")
+            self.assertIn("conv-ai-jyn-20261125", convs)
+            self.assertNotIn("conv-jyn", convs)
+            self.assertEqual(convs["conv-ai-jyn-20261125"]["messages"], [])
+            self.assertFalse(kernel.create_empty_conversation("conv-jyn", "Old Jyn", "jyn-core")["ok"])
+            self.assertFalse(kernel.save_chat_message("conv-jyn", "Old Jyn", "jyn-core", {"id": "retired-message", "role": "user", "sender": "Operator", "content": "test"})["ok"])
+            self.assertEqual(convs["conv-ai-jyn-20261125"]["title"], "Jyn — Zarządzanie Infrastrukturą (ROOT)")
 
             rep = kernel.post_maya_report(
                 "Raport infrastruktury floty",
                 model_label="Jyn · raport floty",
                 message_prefix="msg-si1-report",
-                conversation_id="conv-jyn",
+                conversation_id="conv-ai-jyn-20261125",
             )
             self.assertTrue(rep.get("ok"), rep)
             convs_after = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-            msgs = convs_after["conv-jyn"]["messages"]
+            msgs = convs_after["conv-ai-jyn-20261125"]["messages"]
             self.assertTrue(any(m["sender"] == "Jyn" for m in msgs))
 
     def test_si_sphere_identity_and_aliases(self) -> None:

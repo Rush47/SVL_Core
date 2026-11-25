@@ -623,7 +623,7 @@ class SVLRealVisionEngine:
     def _resolve_chat_sender(self, conversation_id: str, requested_sender: str = "", requested_agent_id: str = "") -> tuple[str, str]:
         raw = f"{requested_sender} {requested_agent_id}".lower()
         cid = (conversation_id or "").strip().lower()
-        if "si_sphere" in raw or "si-sphere" in raw or cid == "conv-si-sphere":
+        if "si_sphere" in raw or "si-sphere" in raw or cid == "conv-ai-si-sphere-20261125":
             return "SI_Sphere", "SI_Sphere"
         if "jedi" in raw:
             return "JEDI Omni-OS v12", "JEDI_Omni_OS"
@@ -633,8 +633,8 @@ class SVLRealVisionEngine:
         cid = (conversation_id or "conv-rodzina-mitek-wszyscy").strip()
         defaults = {
             "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
-            "conv-jyn": "Jyn — Zarządzanie Infrastrukturą (ROOT)",
-            "conv-si-sphere": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
+            "conv-ai-jyn-20261125": "Jyn — Zarządzanie Infrastrukturą (ROOT)",
+            "conv-ai-si-sphere-20261125": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
         }
         if cid in defaults:
             return defaults[cid]
