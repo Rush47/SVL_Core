@@ -1030,7 +1030,13 @@ class SVLSystemKernel:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _rotate(conn: sqlite3.Connection) -> None:
+            # Old conversations are retired, not silently erased from the user's data.
+            # These archive tables are not queried or restored by active chat synchronization.
+            conn.execute("CREATE TABLE IF NOT EXISTS retired_ai_conversations AS SELECT * FROM conversations WHERE 0")
+            conn.execute("CREATE TABLE IF NOT EXISTS retired_ai_messages AS SELECT * FROM chat_messages WHERE 0")
             for cid in retired:
+                conn.execute("INSERT INTO retired_ai_conversations SELECT * FROM conversations WHERE id=? AND id NOT IN (SELECT id FROM retired_ai_conversations)", (cid,))
+                conn.execute("INSERT INTO retired_ai_messages SELECT * FROM chat_messages WHERE conversation_id=? AND id NOT IN (SELECT id FROM retired_ai_messages)", (cid,))
                 conn.execute("DELETE FROM chat_messages WHERE conversation_id = ?", (cid,))
                 conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
                 row = conn.execute("SELECT deleted FROM sync_entities WHERE entity='chat' AND entity_id=?", (cid,)).fetchone()
