@@ -10,7 +10,6 @@ from typing import Dict, List, Optional
 
 from .chat_engine import JynChatEngine
 from .config import JynOSConfig, resolve_auth_token
-from .google_services_hub import GoogleServicesHub
 from .mcp_client import SvlMcpClient
 from .ollama_client import SvlOllamaClient
 from .ssh_client import Svl364SshClient
@@ -33,9 +32,9 @@ class JynOSShell(cmd.Cmd):
 
     intro = f"""
 {CYAN}{BOLD}================================================================================{RESET}
-{MAGENTA}{BOLD}   ✦ JYN_OS v3.1 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
-{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Google Hub ($1000 USD) · Czat PL (stream=OFF){RESET}
-{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}google{RESET}{DIM}' dla usług Google lub pisz bezpośrednio do Jyn.{RESET}
+{MAGENTA}{BOLD}   ✦ JYN_OS v3.0 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
+{CYAN}   Rdzeń AI: Jyn Mitek · Operator: Mateusz Mitek · Czat PL (stream=OFF){RESET}
+{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}status{RESET}{DIM}' dla audytu lub pisz bezpośrednio do Jyn.{RESET}
 {CYAN}{BOLD}================================================================================{RESET}
 """
     prompt = f"{CYAN}{BOLD}JYN_OS [SVL-364]{RESET}{BOLD}❯{RESET} "
@@ -47,8 +46,7 @@ class JynOSShell(cmd.Cmd):
         self.mcp = SvlMcpClient(self.config)
         self.ollama = SvlOllamaClient(self.config)
         self.telemetry = SvlShipTelemetry(self.config, self.ssh)
-        self.google_hub = GoogleServicesHub(config=self.config, ollama=self.ollama)
-        self.chat_engine = JynChatEngine(config=self.config, ollama=self.ollama, google_hub=self.google_hub)
+        self.chat_engine = JynChatEngine(config=self.config, ollama=self.ollama)
 
     @property
     def chat_history(self) -> List[Dict[str, str]]:
@@ -59,8 +57,10 @@ class JynOSShell(cmd.Cmd):
         self.chat_engine.history = list(value)
 
     def do_status(self, arg: str) -> None:
-        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435, Google Hub)."""
+        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435)."""
         print(f"\n{BOLD}🔍 [AUDYT INFRASTRUKTURY SVL-364 / JYN_OS]{RESET}\n")
+
+        print(f"   Konto AI: {self.chat_engine.identity.account_id} · kanał: {self.chat_engine.identity.channel_id}")
 
         # 1. SSH
         key_info = self.ssh.get_key_status()
@@ -100,14 +100,6 @@ class JynOSShell(cmd.Cmd):
         if local_ollama["installed_models"]:
             print(f"     └─ Zainstalowane wagi            : {', '.join(local_ollama['installed_models'])}")
             print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY' if local_ollama['vision_present'] else 'Dostępny na żądanie'}")
-
-        # 4. Google Services & AI Hub
-        g_rep = self.google_hub.get_full_status_report()
-        g_wal = g_rep["wallet"]
-        print(f"\n{CYAN}{BOLD}4. Google Services & AI Integration Hub (Projekt: {g_rep['project_id']}):{RESET}")
-        print(f"   • Zakupione pakiety usług          : {GREEN}{g_rep['services_count']}/8 AKTYWNE{RESET}")
-        print(f"   • Saldo kluczy API                 : {GREEN}${g_wal['balance_usd']:.2f} USD{RESET} (doładowano: ${g_wal['total_topped_up_usd']:.2f} USD)")
-        print(f"   • Domyślny model Google AI         : {BOLD}{g_rep['default_model']}{RESET} (fallback: SVL-364 Ollama)")
         print()
 
     def do_ssh(self, arg: str) -> None:
@@ -459,7 +451,9 @@ class JynOSShell(cmd.Cmd):
         timing = ""
         if not turn.local_command and turn.duration_sec > 0:
             tps_part = f", {turn.tokens_per_sec:.1f} tok/s" if turn.tokens_per_sec > 0 else ""
-            timing = f" {DIM}({turn.duration_sec:.2f}s{tps_part}){RESET}"
+            timing = (f" {DIM}({turn.duration_sec:.2f}s{tps_part}; "
+                      f"load {turn.load_sec:.2f}s; prompt {turn.prompt_eval_sec:.2f}s; "
+                      f"gen {turn.eval_sec:.2f}s; narzut {turn.overhead_sec:.2f}s){RESET}")
 
         badge_model = turn.model or active_mod
         if turn.routed_model and turn.routed_model != badge_model:
@@ -470,104 +464,10 @@ class JynOSShell(cmd.Cmd):
             print(f"{YELLOW}[Osiągnięto limit długości odpowiedzi; wpisz „kontynuuj”, aby dokończyć wypowiedź.]{RESET}")
         return True
 
-    def do_google(self, arg: str) -> None:
-        """google [status|buy|topup [kwota]|set-key <klucz>|gemini <tekst>|translate <tekst>|tts <tekst>|search <tekst>|workspace|maps|sync|ledger] — Zarządzanie Google Services Hub ($1000 USD)."""
-        parts = arg.strip().split(maxsplit=1)
-        subcmd = parts[0].lower() if parts else "status"
-        extra = parts[1].strip() if len(parts) > 1 else ""
-
-        if subcmd in ("status", "list", "services"):
-            print(f"\n{CYAN}{BOLD}{self.google_hub.format_polish_summary()}{RESET}\n")
-
-        elif subcmd in ("buy", "purchase", "zakup", "provision"):
-            res = self.google_hub.provision_and_topup_1000_usd()
-            w = res["wallet"]
-            print(f"\n{GREEN}{BOLD}✅ Zakupiono i zintegrowano wszystkie {res['services_active']} pakietów usług Google z JYN_OS!{RESET}")
-            print(f" • Projekt Google Cloud : {res['project_id']} ({res['region']})")
-            print(f" • Saldo kluczy API     : {GREEN}${w['balance_usd']:.2f} USD{RESET} (doładowano łącznie: ${w['total_topped_up_usd']:.2f} USD)\n")
-
-        elif subcmd in ("topup", "doladuj", "recharge"):
-            try:
-                amount = float(extra) if extra else 1000.0
-            except ValueError:
-                amount = 1000.0
-            w = self.google_hub.topup_wallet(amount)
-            print(f"\n{GREEN}{BOLD}✅ Doładowano kluczy API Google w JYN_OS kwotą +${amount:.2f} USD!{RESET}")
-            print(f" • Nowe saldo portfela  : {GREEN}${w['balance_usd']:.2f} USD{RESET}\n")
-
-        elif subcmd in ("set-key", "key"):
-            if not extra:
-                print(f"{YELLOW}Użycie: google set-key <TWÓJ_KLUCZ_GOOGLE_API>{RESET}")
-                return
-            kres = self.google_hub.set_api_key(extra)
-            if kres.get("ok"):
-                print(f"\n{GREEN}✔ Zapisano klucz API ({kres['masked_key']}) dla {len(kres['updated_services'])} usług Google w JYN_OS Vault.{RESET}\n")
-            else:
-                print(f"{RED}❌ Błąd: {kres.get('error')}{RESET}\n")
-
-        elif subcmd in ("gemini", "vertex", "ai"):
-            if not extra:
-                print(f"{YELLOW}Użycie: google gemini <zapytanie po polsku>{RESET}")
-                return
-            res = self.google_hub.generate_gemini(extra, use_vertex=(subcmd == "vertex"))
-            if res.ok:
-                print(f"\n{GREEN}{BOLD}✦ Google AI [{res.model} · ${res.remaining_balance_usd:.2f} USD]:{RESET} {res.output}\n")
-            else:
-                print(f"\n{RED}❌ Błąd Google AI:{RESET} {res.error}\n")
-
-        elif subcmd in ("translate", "tlumacz"):
-            if not extra:
-                print(f"{YELLOW}Użycie: google translate <tekst>{RESET}")
-                return
-            res = self.google_hub.translate_text(extra, target_lang="pl")
-            print(f"\n{GREEN}{BOLD}✦ Cloud Translation [{res.model}]:{RESET} {res.output}\n")
-
-        elif subcmd == "tts":
-            if not extra:
-                print(f"{YELLOW}Użycie: google tts <tekst do syntezy mowy>{RESET}")
-                return
-            res = self.google_hub.synthesize_speech_tts(extra)
-            print(f"\n{GREEN}{BOLD}✦ Cloud TTS:{RESET} {res.output}\n")
-
-        elif subcmd in ("search", "grounding"):
-            if not extra:
-                print(f"{YELLOW}Użycie: google search <zapytanie faktograficzne>{RESET}")
-                return
-            res = self.google_hub.search_grounding(extra)
-            print(f"\n{GREEN}{BOLD}✦ Google Grounding Search:{RESET} {res.output}\n")
-
-        elif subcmd == "workspace":
-            res = self.google_hub.workspace_status()
-            print(f"\n{GREEN}{BOLD}✦ Google Workspace Bridge:{RESET} {res.output}\n")
-
-        elif subcmd in ("maps", "earth"):
-            res = self.google_hub.maps_telemetry(extra or "SVL-364 Orbital Sector Alpha")
-            print(f"\n{GREEN}{BOLD}✦ Google Maps/Earth Telemetry:{RESET} {res.output}\n")
-
-        elif subcmd in ("sync", "bigquery", "gcs"):
-            res = self.google_hub.sync_telemetry_to_gcs_bigquery()
-            print(f"\n{GREEN}{BOLD}✦ GCS & BigQuery Sync:{RESET} {res.output}\n")
-
-        elif subcmd in ("ledger", "billing", "historia"):
-            entries = self.google_hub.get_recent_ledger(10)
-            print(f"\n{CYAN}{BOLD}Ostatnie operacje w księdze rozliczeniowej Google Hub:{RESET}")
-            for e in entries:
-                print(
-                    f" • #{e['entry_id']:03d} [{e['service_id']}] {e['operation']} | "
-                    f"koszt: ${e['cost_usd']:.4f} | saldo: ${e['balance_after_usd']:.2f} | {e['summary']}"
-                )
-            print()
-
-        else:
-            print(
-                f"{YELLOW}Dostępne opcje google: status, buy, topup [kwota], set-key <klucz>, "
-                f"gemini <tekst>, translate <tekst>, tts <tekst>, search <tekst>, workspace, maps, sync, ledger{RESET}"
-            )
-
     def do_chat(self, arg: str) -> None:
         """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek po polsku (bez strumieniowania + pamięć sesji)."""
         if not arg.strip():
-            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /google, /wyczysc){RESET}")
+            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /wyczysc){RESET}")
             return
         self._run_complete_chat(arg)
 
@@ -585,6 +485,75 @@ class JynOSShell(cmd.Cmd):
     def do_EOF(self, arg: str) -> bool:
         """Zakończ sesję po Ctrl-D lub zamknięciu wejścia."""
         return self.do_exit(arg)
+
+    def do_google(self, arg: str) -> None:
+        """google [status|buy|topup|key|gemini|translate|tts|vision|search|workspace|maps|gcs|ledger] — Zarządzanie Google Services Hub ($1000.00 USD)."""
+        hub = self.chat_engine._get_google_hub()
+        parts = (arg or "status").strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else "status"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if sub in ("status", "stan", "info", ""):
+            print(f"\n{CYAN}{hub.format_polish_summary()}{RESET}\n")
+            return
+        if sub in ("buy", "zakup", "provision"):
+            res = hub.provision_and_topup_1000_usd()
+            print(f"\n{GREEN}✔ Zakupiono i aktywowano wszystkie 8 pakietów usług Google. Saldo: ${res['wallet']['balance_usd']:.2f} USD.{RESET}")
+            print(f"{CYAN}{hub.format_polish_summary()}{RESET}\n")
+            return
+        if sub in ("topup", "doladuj"):
+            amount = float(rest) if rest else 1000.0
+            w = hub.topup_wallet(amount_usd=amount, note="Doładowanie CLI JYN_OS")
+            print(f"\n{GREEN}✔ Doładowano portfel Google API o ${amount:.2f} USD. Aktualne saldo: ${w['balance_usd']:.2f} USD.{RESET}\n")
+            return
+        if sub == "key":
+            kv = rest.split(maxsplit=1)
+            if len(kv) < 2:
+                print(f"{YELLOW}Użycie: google key <GEMINI_API_KEY|GOOGLE_API_KEY|...> <wartość>{RESET}")
+                return
+            hub.set_api_key(kv[0], kv[1])
+            print(f"{GREEN}✔ Zapisano klucz {kv[0]} w skarbcu Google API Vault.{RESET}")
+            return
+        if sub == "gemini":
+            res = hub.generate_gemini(prompt=rest or "Zamelduj status integracji Google Gemini z JYN_OS.")
+            print(f"\n{GREEN}✦ Gemini [{res.model} · {res.provider_mode} · -${res.cost_usd:.4f} USD]:{RESET} {res.output}\n")
+            return
+        if sub == "translate":
+            res = hub.translate_text(text=rest or "System JYN_OS działa z pełną integracją Google Cloud.", target_lang="en")
+            print(f"\n{GREEN}✦ Cloud Translation (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub == "tts":
+            res = hub.synthesize_speech_tts(text=rest or "Melduję pełną gotowość systemu JYN_OS.")
+            print(f"\n{GREEN}✦ Cloud TTS (-${res.cost_usd:.4f} USD):{RESET} {res.output} (bajtów audio: {res.data.get('audio_bytes', 0)})\n")
+            return
+        if sub == "vision":
+            res = hub.analyze_vision(prompt=rest or "Analiza telemetrii wizyjnej pokładu SVL-364.")
+            print(f"\n{GREEN}✦ Cloud Vision (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub == "search":
+            res = hub.search_grounding(query=rest or "SVL-364 JYN_OS Google Cloud Architecture")
+            print(f"\n{GREEN}✦ Google Search Grounding (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub == "workspace":
+            res = hub.workspace_status()
+            print(f"\n{GREEN}✦ Google Workspace Bridge (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub == "maps":
+            res = hub.maps_telemetry(location_query=rest or "Warsaw, Poland — SVL-364 Command Center")
+            print(f"\n{GREEN}✦ Google Maps & Earth Telemetry (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub in ("gcs", "bigquery", "sync"):
+            res = hub.sync_telemetry_to_gcs_bigquery()
+            print(f"\n{GREEN}✦ GCS & BigQuery Telemetry Sync (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub == "ledger":
+            rows = hub.get_recent_ledger(15)
+            print(f"\n{CYAN}=== KSIĘGA ROZLICZEŃ GOOGLE API VAULT (ostatnie {len(rows)} operacji) ==={RESET}")
+            for r in rows:
+                print(f"  #{r['entry_id']:03d} | {r['service_id']} ({r['operation']}) | -${r['cost_usd']:.4f} USD | Saldo: ${r['balance_after_usd']:.2f} USD | {r['summary']}")
+            print()
+            return
+        print(f"\n{CYAN}{hub.format_polish_summary()}{RESET}\n")
 
     def emptyline(self) -> bool:
         """Nie powtarzaj ostatniego polecenia po wciśnięciu Enter."""

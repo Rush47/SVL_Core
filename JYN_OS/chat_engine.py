@@ -21,9 +21,9 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from .avatar_client import AVATAR_CAPABILITY, extract_avatar_action, update_own_avatar
 from .config import (
     CANONICAL_MODELS_PRIORITY,
-    DEFAULT_SYSTEM_PROMPT_PL,
     SHIP_MODELS_CATALOG,
     JynOSConfig,
 )
@@ -36,11 +36,6 @@ STOP_SEQUENCES: List[str] = [
     "<|im_end|>",
     "<|eot_id|>",
     "</s>",
-    "\nUżytkownik:",
-    "\nUser:",
-    "\nOperator:",
-    "\nMateusz Mitek:",
-    "\n[Operator]:",
 ]
 
 _DETAILED_QUERY_RE = re.compile(
@@ -75,6 +70,10 @@ class ChatTurnResult:
     duration_sec: float = 0.0
     eval_count: int = 0
     tokens_per_sec: float = 0.0
+    load_sec: float = 0.0
+    prompt_eval_sec: float = 0.0
+    eval_sec: float = 0.0
+    overhead_sec: float = 0.0
     truncated: bool = False
     local_command: bool = False
     error: str = ""
@@ -86,9 +85,8 @@ def clean_polish_response(raw_text: str) -> str:
         return ""
     cleaned = _THINK_BLOCK_RE.sub("", str(raw_text)).strip()
     if _UNCLOSED_THINK_RE.match(cleaned):
-        cleaned = re.sub(r"^<think>", "", cleaned, flags=re.IGNORECASE).strip()
+        return ""
     cleaned = _ROLE_PREFIX_RE.sub("", cleaned).strip()
-    cleaned = _TRAILING_TURN_RE.sub("", cleaned).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned
 
@@ -97,16 +95,16 @@ def compute_turn_options(prompt: str, config: JynOSConfig, has_images: bool = Fa
     """Wyznacza opcje inferencji ze stałym num_ctx (brak przeładowań runnera i 100% zachowania KV-cache)."""
     text = (prompt or "").strip()
     is_detailed = len(text) > 360 or bool(_DETAILED_QUERY_RE.search(text))
-    is_short = not is_detailed and len(text) <= 96 and "\n" not in text
+    is_short = bool(re.fullmatch(r"(?:cześć|czesc|hej|hello|hi|ping|ok|dzień dobry|dzien dobry)(?:\s+jyn)?[!?. ]*", text, re.IGNORECASE))
 
     base_predict = config.chat_num_predict
     # Stałe num_ctx zapobiega kosztownemu przeładowaniu modelu przez Ollamę ("runner options changed")
     num_ctx = config.chat_num_ctx
 
     if has_images:
-        num_predict = max(base_predict, 512)
-    elif is_detailed:
         num_predict = max(base_predict, 768)
+    elif is_detailed:
+        num_predict = max(base_predict, 1536)
     elif is_short and "SVL_CHAT_NUM_PREDICT" not in os.environ:
         num_predict = min(base_predict, 160)
     else:
@@ -118,6 +116,7 @@ def compute_turn_options(prompt: str, config: JynOSConfig, has_images: bool = Fa
         "top_k": 40,
         "repeat_penalty": 1.1,
         "num_ctx": num_ctx,
+        "num_batch": 512,
         "num_predict": min(num_predict, num_ctx),
         "stop": list(STOP_SEQUENCES),
     }
@@ -131,17 +130,14 @@ def build_polish_chat_messages(
     b64_images: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Buduje listę wiadomości z niezmiennym polskim promptem systemowym i przyciętą historią."""
-    effective_sys = (system_prompt if system_prompt is not None else config.system_prompt).strip()
-    if not effective_sys:
-        effective_sys = DEFAULT_SYSTEM_PROMPT_PL
-
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": effective_sys}]
+    # Compatibility arguments are accepted but no behavior prompt is injected.
+    messages: List[Dict[str, Any]] = []
 
     if history and config.chat_history_turns > 0:
         max_chars = max(256, config.chat_history_max_chars)
         remaining = max_chars
         selected_turns: List[Dict[str, str]] = []
-        for turn in reversed(history[-config.chat_history_turns:]):
+        for turn in reversed(history[-config.chat_history_turns * 2:]):
             role = str(turn.get("role") or "").strip()
             content = str(turn.get("content") or "").strip()
             if role not in ("user", "assistant") or not content:
@@ -161,19 +157,21 @@ def build_polish_chat_messages(
     return messages
 
 
+from .identity import JynIdentity, load_identity
+
 @dataclass
 class JynChatEngine:
-    """Silnik rozmowy JYN_OS (bez strumieniowania, język polski, obsługa 13 modeli SVL-364 oraz Google Hub)."""
+    """Silnik rozmowy JYN_OS (bez strumieniowania, język polski, obsługa 13 modeli SVL-364 oraz Google Services Hub)."""
 
     config: JynOSConfig
     ollama: "SvlOllamaClient"
+    google_hub: Optional[Any] = None
     history: List[Dict[str, str]] = field(default_factory=list)
-    google_hub: Any = None
+    identity: JynIdentity = field(default_factory=load_identity)
 
     def _get_google_hub(self) -> Any:
         if self.google_hub is None:
             from .google_services_hub import GoogleServicesHub
-
             self.google_hub = GoogleServicesHub(config=self.config, ollama=self.ollama)
         return self.google_hub
 
@@ -186,6 +184,53 @@ class JynChatEngine:
         parts = raw.split(maxsplit=1)
         cmd = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if cmd == "/google":
+            hub = self._get_google_hub()
+            sub_parts = arg.split(maxsplit=1) if arg else ["status"]
+            sub_cmd = sub_parts[0].lower()
+            sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+            if sub_cmd in ("status", "stan", "info", ""):
+                return ChatTurnResult(
+                    ok=True,
+                    reply=hub.format_polish_summary(),
+                    model=self.config.google_default_model,
+                    endpoint="google_services_hub",
+                    local_command=True,
+                )
+            if sub_cmd in ("buy", "zakup", "provision"):
+                res = hub.provision_and_topup_1000_usd()
+                return ChatTurnResult(
+                    ok=True,
+                    reply=(
+                        f"Zakupiono i aktywowano wszystkie 8 pakietów usług Google w JYN_OS. "
+                        f"Portfel kluczy API zasilony: ${res['wallet']['balance_usd']:.2f} USD.\n\n"
+                        f"{hub.format_polish_summary()}"
+                    ),
+                    model=self.config.google_default_model,
+                    endpoint="google_services_hub",
+                    local_command=True,
+                )
+            if sub_cmd in ("topup", "doladuj"):
+                amount = float(sub_arg) if sub_arg else 1000.0
+                w = hub.topup_wallet(amount_usd=amount, note="Doładowanie z poziomu czatu /google topup")
+                return ChatTurnResult(
+                    ok=True,
+                    reply=f"Doładowano portfel Google API o ${amount:.2f} USD. Aktualne saldo: ${w['balance_usd']:.2f} USD.",
+                    model=self.config.google_default_model,
+                    endpoint="google_services_hub",
+                    local_command=True,
+                )
+            return ChatTurnResult(
+                ok=True,
+                reply=hub.format_polish_summary(),
+                model=self.config.google_default_model,
+                endpoint="google_services_hub",
+                local_command=True,
+            )
+
+        if cmd == "/identity":
+            return ChatTurnResult(ok=True, reply=f"Konto: {self.identity.account_id}\nKanał: {self.identity.channel_id}", model=self.config.get_active_model(), endpoint=self.config.get_active_ollama_url(), local_command=True)
 
         if cmd in ("/clear", "/wyczysc", "/reset"):
             self.clear_history()
@@ -262,69 +307,9 @@ class JynChatEngine:
                 )
             return ChatTurnResult(ok=False, error=str(warm.get("error") or "Błąd rozgrzewania modelu."), local_command=True)
 
-        if cmd in ("/google", "/gservices"):
-            hub = self._get_google_hub()
-            subparts = arg.split(maxsplit=1) if arg else []
-            sub = subparts[0].lower() if subparts else "status"
-            subarg = subparts[1].strip() if len(subparts) > 1 else ""
-
-            if sub in ("topup", "doladuj"):
-                amt = float(subarg) if subarg else 1000.0
-                w = hub.topup_wallet(amt)
-                return ChatTurnResult(
-                    ok=True,
-                    reply=f"Doładowałam klucze Google API w JYN_OS kwotą +${amt:.2f} USD. Aktualne saldo portfela: ${w['balance_usd']:.2f} USD.",
-                    model=self.config.google_default_model,
-                    endpoint="google_services_hub",
-                    local_command=True,
-                )
-            if sub in ("buy", "purchase", "zakup"):
-                res = hub.provision_and_topup_1000_usd()
-                w = res["wallet"]
-                return ChatTurnResult(
-                    ok=True,
-                    reply=f"Zakupiłam i zintegrowałam wszystkie {res['services_active']} pakietów usług Google z JYN_OS. Saldo kluczy API: ${w['balance_usd']:.2f} USD.",
-                    model=self.config.google_default_model,
-                    endpoint="google_services_hub",
-                    local_command=True,
-                )
-            return ChatTurnResult(
-                ok=True,
-                reply=hub.format_polish_summary(),
-                model=self.config.google_default_model,
-                endpoint="google_services_hub",
-                local_command=True,
-            )
-
-        if cmd == "/gemini":
-            if not arg:
-                return ChatTurnResult(
-                    ok=False,
-                    error="Użycie: /gemini <zapytanie po polsku>",
-                    local_command=True,
-                )
-            hub = self._get_google_hub()
-            gres = hub.generate_gemini(arg)
-            if not gres.ok:
-                return ChatTurnResult(ok=False, error=gres.error, local_command=True)
-            reply = clean_polish_response(gres.output)
-            self.history.append({"role": "user", "content": arg})
-            self.history.append({"role": "assistant", "content": reply})
-            return ChatTurnResult(
-                ok=True,
-                reply=reply,
-                requested_model=self.config.google_default_model,
-                model=gres.model,
-                routed_model=gres.model,
-                endpoint=gres.provider_mode,
-                duration_sec=gres.duration_sec,
-            )
-
         if cmd == "/status":
             loc = self.ollama.check_node_status(self.config.local_ollama_url)
             ship = self.ollama.check_node_status(self.config.ship_ollama_url)
-            hub = self._get_google_hub()
-            w = hub.get_wallet_status()
             loc_str = f"ONLINE (v{loc['version']}, modeli: {len(loc['installed_models'])})" if loc["online"] else "OFFLINE"
             ship_str = f"ONLINE (v{ship['version']}, modeli: {len(ship['installed_models'])})" if ship["online"] else "OFFLINE"
             return ChatTurnResult(
@@ -335,7 +320,6 @@ class JynChatEngine:
                     f"• Aktywny model : {self.config.get_active_model()}\n"
                     f"• Lokalna Ollama (:11434) : {loc_str}\n"
                     f"• Statek SVL-364 (:11435) : {ship_str}\n"
-                    f"• Google Services Hub     : AKTYWNY (8/8 usług, saldo API: ${w['balance_usd']:.2f} USD)\n"
                     f"• Historia sesji: {len(self.history) // 2} tur"
                 ),
                 model=self.config.get_active_model(),
@@ -352,7 +336,7 @@ class JynChatEngine:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
     ) -> ChatTurnResult:
-        """Wysyła wiadomość do silnika Ollama lub Google Hub bez strumieniowania i zwraca pełną polską odpowiedź."""
+        """Wysyła wiadomość do silnika Ollama lub Google Services Hub bez strumieniowania i zwraca pełną polską odpowiedź."""
         cleaned = (message or "").strip()
         if not cleaned:
             return ChatTurnResult(ok=False, error="Pusta wiadomość.")
@@ -362,34 +346,41 @@ class JynChatEngine:
             return slash_res
 
         selected_model = (model or self.config.get_active_model()).strip()
-        if selected_model.lower().startswith(("gemini-", "vertex/", "google/")):
+        target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
+
+        if selected_model.lower().startswith(("gemini-", "vertex-", "imagen-", "veo-")):
             hub = self._get_google_hub()
-            use_vertex = selected_model.lower().startswith("vertex/")
-            gres = hub.generate_gemini(cleaned, model=selected_model, use_vertex=use_vertex)
-            if not gres.ok:
-                return ChatTurnResult(ok=False, requested_model=selected_model, error=gres.error)
-            reply = clean_polish_response(gres.output)
+            g_res = hub.generate_gemini(prompt=cleaned, model=selected_model)
+            if not g_res.ok:
+                return ChatTurnResult(
+                    ok=False,
+                    requested_model=selected_model,
+                    model=g_res.model,
+                    endpoint=g_res.provider_mode,
+                    duration_sec=g_res.duration_sec,
+                    error=g_res.error or "Błąd wywołania Google Gemini API.",
+                )
+            reply = clean_polish_response(g_res.output)
             self.history.append({"role": "user", "content": cleaned})
             self.history.append({"role": "assistant", "content": reply})
             return ChatTurnResult(
                 ok=True,
                 reply=reply,
                 requested_model=selected_model,
-                model=gres.model,
-                routed_model=gres.model,
-                endpoint=gres.provider_mode,
-                duration_sec=gres.duration_sec,
+                model=g_res.model,
+                routed_model=g_res.model,
+                endpoint=g_res.provider_mode,
+                duration_sec=g_res.duration_sec,
             )
-
-        target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
 
         t0 = time.monotonic()
         res = self.ollama.chat(
             prompt=cleaned,
             model=selected_model,
-            url=target_url,
+            url=url,
             images=images,
             history=self.history,
+            capabilities=AVATAR_CAPABILITY,
         )
         elapsed = time.monotonic() - t0
 
@@ -404,6 +395,10 @@ class JynChatEngine:
             )
 
         reply = clean_polish_response(str(res.get("response") or ""))
+        reply, avatar_args = extract_avatar_action(reply)
+        if avatar_args is not None:
+            receipt = update_own_avatar(self.config, avatar_args)
+            reply = (reply + "\n\n" + receipt).strip()
         if not reply:
             return ChatTurnResult(
                 ok=False,
@@ -416,6 +411,9 @@ class JynChatEngine:
 
         eval_count = int(res.get("eval_count") or 0)
         eval_ns = int(res.get("eval_duration") or 0)
+        load_sec = (res.get("load_duration") or 0) / 1e9
+        prompt_eval_sec = (res.get("prompt_eval_duration") or 0) / 1e9
+        total_sec = (res.get("total_duration") or 0) / 1e9
         tps = (eval_count / (eval_ns / 1e9)) if (eval_count > 0 and eval_ns > 0) else (eval_count / elapsed if elapsed > 0 else 0.0)
 
         self.history.append({"role": "user", "content": cleaned})
@@ -435,6 +433,10 @@ class JynChatEngine:
             duration_sec=elapsed,
             eval_count=eval_count,
             tokens_per_sec=tps,
+            load_sec=load_sec,
+            prompt_eval_sec=prompt_eval_sec,
+            eval_sec=eval_ns / 1e9,
+            overhead_sec=max(0.0, elapsed - total_sec) if total_sec else 0.0,
             truncated=bool(res.get("truncated")),
         )
 
