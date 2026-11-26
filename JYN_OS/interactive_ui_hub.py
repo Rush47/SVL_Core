@@ -82,19 +82,23 @@ DEFAULT_CHAT_MODULE_BUTTONS: List[Dict[str, str]] = [
     {"button_id": "btn_workspace_sync", "label": "Google Workspace (Drive/Docs)", "module_id": "workspace_bridge", "action": "sync_workspace", "icon": "📁", "variant": "success"},
     {"button_id": "btn_maps_nav", "label": "Nawigacja Maps & Earth 3D", "module_id": "maps_earth_telemetry", "action": "locate_ship", "icon": "🛰️", "variant": "primary"},
     {"button_id": "btn_gcs_bigquery", "label": "Telemetria GCS & BigQuery", "module_id": "gcs_bigquery_telemetry", "action": "sync_telemetry", "icon": "📊", "variant": "info"},
+    {"button_id": "btn_exo_infra", "label": "Infrastruktura SVL-364 (3145 MW)", "module_id": "exo_infrastructure_grid", "action": "calibrate_grid", "icon": "🏗️", "variant": "primary"},
+    {"button_id": "btn_exo_missions", "label": "Misje Pozaziemskie & Orbita", "module_id": "exo_missions_command", "action": "advance_missions", "icon": "🚀", "variant": "warning"},
+    {"button_id": "btn_exo_botany", "label": "Botanika & Biokopuły O2", "module_id": "exo_botany_biodome", "action": "adjust_climate", "icon": "🌿", "variant": "success"},
     {"button_id": "btn_sec_shield", "label": "Tarcza Chronicle & Armor", "module_id": "security_chronicle_shield", "action": "audit_security", "icon": "🛡️", "variant": "success"},
-    {"button_id": "btn_topup_all", "label": "Doładuj Wszystkie Moduły ($1000/moduł)", "module_id": "all", "action": "topup_all_1000", "icon": "💳", "variant": "success"},
+    {"button_id": "btn_topup_all", "label": "Doładuj Wszystkie 15 Modułów ($1000/moduł)", "module_id": "all", "action": "topup_all_1000", "icon": "💳", "variant": "success"},
 ]
 
 
 class InteractiveUIEngine:
     """
-    Silnik Generative UI dla czatu Jyn Mitek.
-    Zastępuje tekstowe komendy interaktywnymi modułami, przyciskami, wykresami i kartami Vision.
+    Silnik Generative UI dla dwustronnego dobrowolnego czatu Jyn Mitek (Aetheria Off-World Design).
+    Zastępuje tekstowe komendy i wymuszone prompty interaktywnymi modułami, przyciskami, wykresami,
+    Infrastrukturą, Misjami, Botaniką i kartami Vision.
     """
 
-    LIBRARY_NAME = "JYN Generative UI Pro Suite (CopilotKit + Vercel AI SDK UI + Google A2UI + AG-UI)"
-    LIBRARY_VERSION = "3.2.0-enterprise"
+    LIBRARY_NAME = "Aetheria Off-World Generative UI Suite (CopilotKit + Vercel AI SDK UI + Google A2UI + AG-UI)"
+    LIBRARY_VERSION = "4.0.0-offworld-duplex"
 
     def __init__(self, google_hub: Optional[Any] = None) -> None:
         self.google_hub = google_hub
@@ -119,8 +123,7 @@ class InteractiveUIEngine:
         vision_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Automatycznie dobiera interaktywne widżety i przyciski akcji na podstawie kontekstu rozmowy
-        (bez wymagania jakichkolwiek komend od użytkownika).
+        Automatycznie dobiera interaktywne widżety i przyciski akcji dla dwustronnego czatu (AI <-> Operator).
         """
         lower_q = f"{user_text} {reply_text}".lower()
         buttons = self.get_default_buttons()
@@ -143,32 +146,51 @@ class InteractiveUIEngine:
                 )
             )
 
-        # 2. Wykres telemetrii i budżetu modułów ($1000.00 USD / moduł)
+        # 2. Widżet Pozaziemskiej Infrastruktury, Misji i Botaniki SVL-364
+        widgets.append(
+            InteractiveWidget(
+                widget_id="w_exo_biosphere_deck",
+                widget_type="exo_biosphere_deck",
+                title="Aetheria Off-World: Infrastruktura (3145 MW) · Misje (4) · Biokopuły Botaniki (316.7 kg O2/d)",
+                module_id="exo_botany_biodome",
+                state={
+                    "contractor": "AETHERIA OFF-WORLD ARCHITECTS & XENO-SYSTEMS CORP.",
+                    "prompt_free_voluntary_chat": True,
+                    "duplex_ai": True,
+                    "infrastructure_mw": 3145.0,
+                    "missions_active": 4,
+                    "botany_o2_kg_day": 316.7,
+                },
+                buttons=[b for b in buttons if b.module_id.startswith("exo_")],
+            )
+        )
+
+        # 3. Wykres telemetrii i budżetu modułów ($1000.00 USD / moduł · 15 modułów = $15,000.00 USD)
         widgets.append(
             InteractiveWidget(
                 widget_id="w_modules_budget_chart",
                 widget_type="telemetry_chart",
-                title="Alokacja Budżetu Modułów ($1000.00 USD / moduł · 12 Modułów Aktywnych)",
+                title="Alokacja Budżetu Modułów ($1000.00 USD / moduł · 15 Modułów = $15,000.00 USD)",
                 module_id="interactive_ai_ui_kit",
                 state={
                     "chart_tag": "[chart:models]",
                     "telemetry_tag": "[chart:telemetry]",
                     "per_module_budget_usd": 1000.0,
-                    "total_modules": 12,
-                    "total_budget_usd": 12000.0,
+                    "total_modules": 15,
+                    "total_budget_usd": 15000.0,
                 },
                 buttons=buttons[2:8],
             )
         )
 
-        # 3. Panel szybkich akcji modułowych (Action Deck)
+        # 4. Panel szybkich akcji modułowych (Duplex Action Deck)
         widgets.append(
             InteractiveWidget(
                 widget_id="w_action_deck",
                 widget_type="action_deck",
-                title="Sterowanie Modułami JYN_OS (Kliknij przycisk akcji)",
+                title="Dwustronne Sterowanie Modułami JYN_OS (Operator <-> Jyn Mitek)",
                 module_id="interactive_ai_ui_kit",
-                state={"library": self.LIBRARY_NAME, "version": self.LIBRARY_VERSION},
+                state={"library": self.LIBRARY_NAME, "version": self.LIBRARY_VERSION, "voluntary_chat": True},
                 buttons=buttons,
             )
         )
@@ -176,9 +198,11 @@ class InteractiveUIEngine:
         return {
             "library": self.LIBRARY_NAME,
             "version": self.LIBRARY_VERSION,
+            "voluntary_chat": True,
+            "prompt_injected": False,
             "widgets": [w.to_dict() for w in widgets],
             "buttons": [b.to_dict() for b in buttons],
-            "inline_tags": [b.to_tag() for b in buttons[:6]] + ["[chart:telemetry]", "[chart:models]"],
+            "inline_tags": [b.to_tag() for b in buttons[:8]] + ["[chart:telemetry]", "[chart:models]"],
         }
 
 

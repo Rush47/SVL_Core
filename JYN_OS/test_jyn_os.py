@@ -290,24 +290,24 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp_dir.name) / "test_google_hub.sqlite3"
-        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=12000.0)
+        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=15000.0)
         self.ollama = SvlOllamaClient(self.cfg)
 
     def tearDown(self):
         self.tmp_dir.cleanup()
 
-    def test_initial_provisioning_purchases_all_12_modules_and_loads_1000_usd_each(self):
+    def test_initial_provisioning_purchases_all_15_modules_and_loads_1000_usd_each(self):
         from JYN_OS.google_services_hub import GOOGLE_SERVICES_CATALOG, GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 12)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 12)
+        self.assertEqual(rep["services_count"], 15)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 15)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 12000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 12000.0)
-        self.assertEqual(len(rep["ai_channels"]), 12)
+        self.assertEqual(rep["wallet"]["balance_usd"], 15000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 15000.0)
+        self.assertEqual(len(rep["ai_channels"]), 15)
         for s in rep["services"]:
             self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
@@ -325,6 +325,9 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "agentic_swarm_adk",
             "vector_rag_engine",
             "security_chronicle_shield",
+            "exo_infrastructure_grid",
+            "exo_missions_command",
+            "exo_botany_biodome",
         }
         self.assertEqual(service_ids, expected_ids)
 
@@ -333,18 +336,19 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 13000.0)
-        self.assertEqual(w["total_topped_up_usd"], 13000.0)
+        self.assertEqual(w["balance_usd"], 16000.0)
+        self.assertEqual(w["total_topped_up_usd"], 16000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 12)
+        self.assertEqual(len(kres["updated_services"]), 15)
 
-    def test_all_integrated_google_services_execute_and_account_usage(self):
+    def test_all_integrated_google_and_offworld_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         reply = {
+            "model": "svl364-apex-uncensored:latest",
             "message": {"content": "Melduję odpowiedź z mostka Gemini/SVL-364, Mateuszu."},
             "done": True,
             "eval_count": 10,
@@ -393,7 +397,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         ui_kit = hub.render_interactive_ui_kit("Panel JYN_OS")
         self.assertTrue(ui_kit.ok)
-        self.assertGreaterEqual(len(ui_kit.data["buttons"]), 12)
+        self.assertGreaterEqual(len(ui_kit.data["buttons"]), 15)
 
         swarm = hub.deploy_agentic_swarm("Patrol SVL-364")
         self.assertTrue(swarm.ok)
@@ -404,11 +408,23 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         sec = hub.audit_security_shield()
         self.assertTrue(sec.ok)
 
+        infra = hub.operate_exo_infrastructure("ALL")
+        self.assertTrue(infra.ok)
+        self.assertEqual(infra.data["nodes_count"], 5)
+
+        missions = hub.operate_exo_missions()
+        self.assertTrue(missions.ok)
+        self.assertGreaterEqual(len(missions.data["missions"]), 4)
+
+        botany = hub.operate_exo_botany("BIO-DOME-ALPHA")
+        self.assertTrue(botany.ok)
+        self.assertEqual(len(botany.data["biodomes"]), 3)
+
         wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 12000.0)
+        self.assertLess(wallet_after["balance_usd"], 15000.0)
         self.assertGreater(wallet_after["total_spent_usd"], 0.0)
-        ledger = hub.get_recent_ledger(20)
-        self.assertGreaterEqual(len(ledger), 14)
+        ledger = hub.get_recent_ledger(25)
+        self.assertGreaterEqual(len(ledger), 17)
 
     def test_chat_engine_buttons_channels_vision_and_autonomous_jyn_modules(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -416,23 +432,23 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
 
-        # 1. Kliknięcie przycisku w czacie bez wpisywania komendy
-        btn_turn = engine.click_button("module:cloud_vision_docai:analyze_camera")
+        # 1. Kliknięcie przycisku Botaniki i Vision w czacie bez wpisywania komendy
+        btn_turn = engine.click_button("module:exo_botany_biodome:adjust_climate")
         self.assertTrue(btn_turn.ok)
-        self.assertEqual(len(btn_turn.ai_channels), 12)
-        self.assertGreaterEqual(len(btn_turn.buttons), 12)
-        self.assertGreaterEqual(len(btn_turn.widgets), 2)
+        self.assertEqual(len(btn_turn.ai_channels), 15)
+        self.assertGreaterEqual(len(btn_turn.buttons), 15)
+        self.assertGreaterEqual(len(btn_turn.widgets), 3)
 
-        # 2. Doładowanie wszystkich modułów przyciskiem
+        # 2. Doładowanie wszystkich 15 modułów przyciskiem
         top_turn = engine.send("module:all:topup_all_1000")
         self.assertTrue(top_turn.ok)
         self.assertIn("$1000.00 USD", top_turn.reply)
 
-        # 3. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie
+        # 3. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie (bez wymuszonych promptów)
         reply = {
             "model": "svl364-apex-uncensored:latest",
             "message": {
-                "content": "Analizuję obraz z kamery mostka [JYN_MODULE:cloud_vision_docai:analyze_camera] i melduję pełną sprawność."
+                "content": "Optymalizuję biokopułę [JYN_MODULE:exo_botany_biodome:adjust_climate] i kamerę [JYN_MODULE:cloud_vision_docai:analyze_camera]."
             },
             "done": True,
             "eval_count": 14,
@@ -442,11 +458,10 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "JYN_OS.ollama_client.urllib.request.urlopen",
             return_value=io.BytesIO(json.dumps(reply, ensure_ascii=False).encode("utf-8")),
         ):
-            jyn_turn = engine.send("Sprawdź obraz z kamery mostka")
+            jyn_turn = engine.send("Sprawdź biokopuły i kamerę mostka")
         self.assertTrue(jyn_turn.ok)
-        self.assertEqual(len(jyn_turn.ai_channels), 12)
-        self.assertGreaterEqual(len(jyn_turn.invoked_modules), 1)
-        self.assertEqual(jyn_turn.invoked_modules[0]["service_id"], "cloud_vision_docai")
+        self.assertEqual(len(jyn_turn.ai_channels), 15)
+        self.assertGreaterEqual(len(jyn_turn.invoked_modules), 2)
 
 
 if __name__ == "__main__":

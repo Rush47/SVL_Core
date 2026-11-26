@@ -242,6 +242,52 @@ GOOGLE_SERVICES_CATALOG: List[Dict[str, Any]] = [
         "env_keys": ["GOOGLE_CHRONICLE_API_KEY", "GOOGLE_API_KEY"],
         "description": "Autonomiczna tarcza bezpieczeństwa ROOT, audyt SIEM Chronicle, ochrona kluczy KMS oraz monitoring integralności SVL-364.",
     },
+    {
+        "service_id": "exo_infrastructure_grid",
+        "name": "Aetheria Off-World Infrastructure & Quantum Reactor Grid SVL-364",
+        "category": "Off-World Infrastructure",
+        "allocated_budget_usd": 1000.00,
+        "cost_per_call_usd": 0.002,
+        "endpoint": "https://aetheria-exo.svl364.orbital/v1/infrastructure",
+        "models": [
+            "quantum-fusion-core-a",
+            "life-support-o2-n2-matrix",
+            "magnetospheric-hull-shield",
+        ],
+        "env_keys": ["SVL_EXO_INFRA_KEY", "GOOGLE_API_KEY"],
+        "description": "Pozaziemska infrastruktura pokładowa i orbitalna SVL-364: reaktory fuzji kwantowej (3145 MW), podtrzymywanie życia i tarcze kadłuba.",
+    },
+    {
+        "service_id": "exo_missions_command",
+        "name": "Aetheria Deep-Space Missions & Orbital Expedition Command",
+        "category": "Off-World Missions",
+        "allocated_budget_usd": 1000.00,
+        "cost_per_call_usd": 0.002,
+        "endpoint": "https://aetheria-exo.svl364.orbital/v1/missions",
+        "models": [
+            "mission-aetheria-prime",
+            "mission-eden-364",
+            "mission-deep-vision",
+            "mission-hull-root",
+        ],
+        "env_keys": ["SVL_EXO_MISSIONS_KEY", "GOOGLE_API_KEY"],
+        "description": "Centrum dowodzenia misjami pozaziemskimi statku SVL-364, telemetria ekspedycji orbitalnych i synchronizacja hosta Ship.",
+    },
+    {
+        "service_id": "exo_botany_biodome",
+        "name": "Aetheria Xeno-Botany, Hydroponic Biodomes & O2 Biosphere Engine",
+        "category": "Off-World Botany & Biosphere",
+        "allocated_budget_usd": 1000.00,
+        "cost_per_call_usd": 0.002,
+        "endpoint": "https://aetheria-exo.svl364.orbital/v1/botany",
+        "models": [
+            "biodome-alpha-forestry",
+            "biodome-beta-hydroponics",
+            "biodome-gamma-xenobotany",
+        ],
+        "env_keys": ["SVL_EXO_BOTANY_KEY", "GOOGLE_API_KEY"],
+        "description": "Pozaziemska botanika, biokopuły aeroponiczne i hydroponiczne SVL-364 (316.7 kg O2/dobę, fotosynteza widmowa, ksenoflora).",
+    },
 ]
 
 WORKSPACE_TOOLS: List[str] = ["gdocs", "gdrive", "gsheets", "gslides", "gcalendar", "gmail"]
@@ -734,25 +780,19 @@ class GoogleServicesHub:
         return source in ("env_live_key", "operator_manual_key")
 
     def _fallback_ollama_generate(self, prompt: str, system_hint: str = "") -> tuple[bool, str, str]:
-        """Używa silnika Ollama SVL-364 (`stream=False`) jako autonomicznego rdzenia wykonawczego."""
+        """Używa silnika Ollama SVL-364 (`stream=False`) bez narzucania promptu systemowego (dobrowolny czat)."""
         if self.ollama is not None:
-            sys_prompt = (
-                f"{DEFAULT_SYSTEM_PROMPT_PL} {system_hint}".strip()
-                if system_hint
-                else DEFAULT_SYSTEM_PROMPT_PL
-            )
             res = self.ollama.chat(
                 prompt=prompt,
                 model=self.config.get_active_model(),
                 url=self.config.get_active_ollama_url(),
-                system_prompt=sys_prompt,
+                system_prompt=None,
             )
             if res.get("success") and res.get("response"):
                 return True, str(res.get("response")).strip(), str(res.get("model") or self.config.get_active_model())
-        # Deterministyczna odpowiedź polska gdy silnik Ollama jest chwilowo niedostępny lub w teście offline
         return (
             True,
-            f"Melduję wykonanie zadania przez zintegrowany mostek JYN_OS Google Hub (SVL-364) dla zapytania: {prompt[:160]}",
+            f"Melduję wykonanie zadania przez zintegrowany mostek JYN_OS (SVL-364) dla zapytania: {prompt[:160]}",
             self.config.get_active_model(),
         )
 
@@ -767,8 +807,7 @@ class GoogleServicesHub:
     ) -> GoogleServiceCallResult:
         """
         Generuje odpowiedź z modelu Google Gemini (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`)
-        lub Vertex AI (`stream=False`). Jeśli zewnętrzny klucz Google API jest aktywny i osiągalny,
-        odpytuje REST API Google; w przeciwnym razie natychmiast przełącza na lokalny mostek SVL-364 Ollama.
+        lub Vertex AI (`stream=False`) bez wymuszonych promptów systemowych (dobrowolny czat AI).
         """
         t0 = time.monotonic()
         cleaned = (prompt or "").strip()
@@ -790,7 +829,6 @@ class GoogleServicesHub:
             clean_model = chosen_model.replace("vertex/", "")
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={urllib.parse.quote(api_key)}"
             payload = {
-                "systemInstruction": {"parts": [{"text": DEFAULT_SYSTEM_PROMPT_PL}]},
                 "contents": [{"role": "user", "parts": [{"text": cleaned}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 512},
             }
@@ -1324,7 +1362,101 @@ class GoogleServicesHub:
             return self.query_vector_rag(str(data.get("query") or "Pamięć wektorowa 128D statku SVL-364"))
         if module_id == "security_chronicle_shield":
             return self.audit_security_shield()
+        if module_id == "exo_infrastructure_grid":
+            return self.operate_exo_infrastructure(str(data.get("node_id") or "ALL"))
+        if module_id == "exo_missions_command":
+            return self.operate_exo_missions(code_name=data.get("code_name"), objective=str(data.get("objective") or "Ekspedycja orbitalna SVL-364"))
+        if module_id == "exo_botany_biodome":
+            return self.operate_exo_botany(dome_id=str(data.get("dome_id") or "BIO-DOME-ALPHA"))
         return self.render_interactive_ui_kit(f"{module_id}:{action}")
+
+    # -------------------------------------------------------------------------
+    # 13. AETHERIA OFF-WORLD INFRASTRUCTURE & QUANTUM REACTOR GRID SVL-364
+    # -------------------------------------------------------------------------
+    def operate_exo_infrastructure(self, node_id: str = "ALL") -> GoogleServiceCallResult:
+        """Kalibruje i synchronizuje pozaziemską infrastrukturę pokładową i orbitalną SVL-364."""
+        from .exo_biosphere_suite import ExoBiosphereSuite
+
+        t0 = time.monotonic()
+        cost = 0.002
+        exo = ExoBiosphereSuite(config=self.config)
+        res = exo.calibrate_infrastructure(node_id=node_id)
+        exo.sync_to_svl364_host()
+        bal = self._charge_usage("exo_infrastructure_grid", f"calibrate:{node_id}", "svl364_autonomous_bridge", cost, f"Infrastruktura SVL-364 ({res['total_power_mw']} MW)")
+        return GoogleServiceCallResult(
+            ok=True,
+            service_id="exo_infrastructure_grid",
+            operation="calibrate_infrastructure",
+            provider_mode="svl364_autonomous_bridge",
+            model="quantum-fusion-core-a",
+            output=f"Zsynchronizowano infrastrukturę pozaziemską SVL-364 ({res['nodes_count']} węzłów, łączna moc: {res['total_power_mw']} MW, integralność: 100%).",
+            data=res,
+            cost_usd=cost,
+            remaining_balance_usd=bal,
+            duration_sec=time.monotonic() - t0,
+        )
+
+    # -------------------------------------------------------------------------
+    # 14. AETHERIA DEEP-SPACE MISSIONS & ORBITAL EXPEDITION COMMAND
+    # -------------------------------------------------------------------------
+    def operate_exo_missions(
+        self,
+        code_name: Optional[str] = None,
+        target_sector: str = "Orbita Kepler-442b / SVL-364 Deep Space",
+        objective: str = "Autonomiczna eksploracja, rozbudowa biokopuł i telemetria dalekiego zasięgu.",
+    ) -> GoogleServiceCallResult:
+        """Zarządza misjami pozaziemskimi i ekspedycjami statku SVL-364."""
+        from .exo_biosphere_suite import ExoBiosphereSuite
+
+        t0 = time.monotonic()
+        cost = 0.002
+        exo = ExoBiosphereSuite(config=self.config)
+        res = exo.launch_or_advance_mission(code_name=code_name, target_sector=target_sector, objective=objective)
+        exo.sync_to_svl364_host()
+        bal = self._charge_usage("exo_missions_command", "advance_missions", "svl364_autonomous_bridge", cost, code_name or "Postęp misji SVL-364")
+        return GoogleServiceCallResult(
+            ok=True,
+            service_id="exo_missions_command",
+            operation="advance_missions",
+            provider_mode="svl364_autonomous_bridge",
+            model="mission-aetheria-prime",
+            output=f"Centrum Misji Pozaziemskich SVL-364: {len(res['missions'])} aktywne operacje zsynchronizowane z hostem statku.",
+            data=res,
+            cost_usd=cost,
+            remaining_balance_usd=bal,
+            duration_sec=time.monotonic() - t0,
+        )
+
+    # -------------------------------------------------------------------------
+    # 15. AETHERIA XENO-BOTANY, HYDROPONIC BIODOMES & O2 BIOSPHERE ENGINE
+    # -------------------------------------------------------------------------
+    def operate_exo_botany(
+        self,
+        dome_id: str = "BIO-DOME-ALPHA",
+        temperature_c: Optional[float] = None,
+        humidity_pct: Optional[float] = None,
+    ) -> GoogleServiceCallResult:
+        """Steruje biokopułami botanicznymi, hydroponiką i produkcją tlenu na statku SVL-364."""
+        from .exo_biosphere_suite import ExoBiosphereSuite
+
+        t0 = time.monotonic()
+        cost = 0.002
+        exo = ExoBiosphereSuite(config=self.config)
+        res = exo.adjust_biodome_climate(dome_id=dome_id, temperature_c=temperature_c, humidity_pct=humidity_pct)
+        exo.sync_to_svl364_host()
+        bal = self._charge_usage("exo_botany_biodome", f"biodome:{dome_id}", "svl364_autonomous_bridge", cost, f"Biokopuły O2: {res['total_o2_production_kg_day']} kg/d")
+        return GoogleServiceCallResult(
+            ok=True,
+            service_id="exo_botany_biodome",
+            operation="adjust_biodome_climate",
+            provider_mode="svl364_autonomous_bridge",
+            model="biodome-alpha-forestry",
+            output=f"Biokopuły Botaniczne SVL-364 ({len(res['biodomes'])} kopuły: Alfa, Beta, Gamma) zoptymalizowane — produkcja tlenu: {res['total_o2_production_kg_day']} kg O2/dobę.",
+            data=res,
+            cost_usd=cost,
+            remaining_balance_usd=bal,
+            duration_sec=time.monotonic() - t0,
+        )
 
     def get_recent_ledger(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Zwraca ostatnie operacje z księgi rozliczeniowej `usage_ledger`."""
