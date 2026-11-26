@@ -118,38 +118,8 @@ def _merged_ship_models() -> List[Dict[str, Any]]:
 
 
 def _select_execution_candidates(requested_model: str, installed_names: List[str], has_images: bool = False) -> List[str]:
-    """Zwraca listę kandydatów wykonania: najpierw żądany model (jeśli zainstalowany), potem aktywne modele z katalogu 13."""
-    if not installed_names:
-        return [requested_model]
-    lower_map = {m.lower(): m for m in installed_names}
-    candidates: List[str] = []
-
-    req_clean = (requested_model or "svl364-apex-uncensored:latest").strip()
-    if req_clean.lower() in lower_map:
-        candidates.append(lower_map[req_clean.lower()])
-    elif f"{req_clean.lower()}:latest" in lower_map:
-        candidates.append(lower_map[f"{req_clean.lower()}:latest"])
-
-    if has_images:
-        for vis in ("llama3.2-vision:11b", "llama3.2-vision:90b"):
-            if vis.lower() in lower_map and lower_map[vis.lower()] not in candidates:
-                candidates.append(lower_map[vis.lower()])
-
-    for canon in CANONICAL_MODELS_PRIORITY:
-        c_low = canon.lower()
-        if c_low in lower_map and lower_map[c_low] not in candidates:
-            candidates.append(lower_map[c_low])
-            continue
-        base_prefix = c_low.split(":")[0] + ":"
-        for inst_low, inst_real in lower_map.items():
-            if inst_low.startswith(base_prefix) and inst_real not in candidates:
-                candidates.append(inst_real)
-
-    for inst in installed_names:
-        if inst not in candidates:
-            candidates.append(inst)
-
-    return candidates or [req_clean]
+    """Bez podmiany modelu na inny."""
+    return [(requested_model or 'svl364-apex-uncensored:latest').strip()]
 
 
 class Svl364OllamaHandler(BaseHTTPRequestHandler):
@@ -189,11 +159,15 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             try:
                 with _open_upstream(f"{UPSTREAM_URL}/api/version", timeout=3.0):
                     pass
-                self._send_json(200, {"models": _merged_ship_models()})
+                self._send_json(200, {"models": _fetch_upstream_models()})
             except urllib.error.HTTPError as exc:
                 self._send_json(exc.code, {"error": str(exc)})
             except (OSError, ValueError) as exc:
                 self._send_json(502, {"error": f"Ollama :11434 niedostępna: {exc}"})
+            return
+
+        if path == "/api/catalog":
+            self._send_json(200, {"models": _merged_ship_models()})
             return
 
         if path == "/api/ps":
@@ -265,18 +239,15 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
             merged_options = dict(options)
             merged_options.setdefault("num_predict", DEFAULT_CHAT_NUM_PREDICT)
             merged_options.setdefault("num_ctx", DEFAULT_CHAT_NUM_CTX)
+            merged_options.setdefault("num_batch", 512)
 
             messages = body.get("messages")
             has_images = bool(body.get("images"))
             if isinstance(messages, list):
                 has_images = has_images or any(isinstance(m, dict) and bool(m.get("images")) for m in messages)
                 has_sys = any(isinstance(m, dict) and m.get("role") == "system" and str(m.get("content") or "").strip() for m in messages)
-                if not has_sys:
-                    cleaned_msgs = [m for m in messages if not (isinstance(m, dict) and m.get("role") == "system")]
-                    messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT_PL}, *cleaned_msgs]
 
-            installed_names = [str(m["name"]) for m in _fetch_upstream_models() if m.get("name")]
-            candidates = _select_execution_candidates(requested_model, installed_names, has_images=has_images)
+            candidates = [requested_model]
 
             last_status = 502
             last_error = "Brak odpowiedzi z silnika Ollama."
@@ -300,8 +271,13 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                     with _open_upstream(proxy_req, timeout=DEFAULT_CHAT_TIMEOUT + 30) as upstream:
                         result = json.loads(upstream.read().decode("utf-8"))
                         if isinstance(result, dict):
-                            result["routed_model"] = exec_model
-                            result["model"] = requested_model
+                            actual = str(result.get("routed_model") or result.get("model") or "")
+                            normalize = lambda name: name.lower() if ":" in name else name.lower() + ":latest"
+                            if result.get("error") or not actual or normalize(actual) != normalize(exec_model):
+                                self._send_json(502, {"error": result.get("error") or "Niepotwierdzony model Ollama"})
+                                return
+                            result["routed_model"] = actual
+                            result["substituted"] = False
                         self._send_json(200, result)
                         return
                 except urllib.error.HTTPError as exc:
@@ -312,7 +288,7 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                         except Exception:
                             last_error = str(exc)
                     # Próbuj kolejny zainstalowany model z katalogu przy 404 (niepobrany) lub 500 (brak RAM dla 70B/141B)
-                    if exc.code in (404, 500) and len(candidates) > 1:
+                    if exc.code == 404 and len(candidates) > 1:
                         continue
                     break
                 except (OSError, ValueError) as exc:
@@ -336,22 +312,6 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                     self._send_json(200, json.loads(upstream.read().decode("utf-8")))
                     return
             except urllib.error.HTTPError as exc:
-                if exc.code == 404:
-                    matched: Optional[Dict[str, Any]] = next(
-                        (m for m in SHIP_MODELS_CATALOG if m["name"].lower() == req_model.lower()),
-                        None,
-                    )
-                    if matched:
-                        tag = _catalog_entry_to_ollama_tag(matched)
-                        self._send_json(
-                            200,
-                            {
-                                "modelfile": f"FROM {matched['name']}\nPARAMETER num_ctx 2048",
-                                "parameters": "num_ctx 2048\nnum_predict 384",
-                                "details": tag["details"],
-                            },
-                        )
-                        return
                 self._send_json(exc.code, {"error": str(exc)})
             except (OSError, ValueError) as exc:
                 self._send_json(502, {"error": str(exc)})

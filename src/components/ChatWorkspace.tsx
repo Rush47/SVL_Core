@@ -56,7 +56,7 @@ import {
 import { useSvlSync, getCanonicalConversationTitle } from '../utils/svlSyncStore';
 import { AvatarSettingsModal, SvlAvatar } from './AgentAvatar';
 import { RealVisionPanel } from './RealVisionPanel';
-import { renderFormattedContent, renderFormattedLine } from './ChatContentRenderer';
+import { renderFormattedContent, renderFormattedLine } from './OpenAIChatRenderer';
 import { ChatInputField, type ChatInputHandle } from './ChatInputField';
 import { ChatMessageRow } from './ChatMessageRow';
 import { ChatCanvasDrawer } from './ChatCanvasDrawer';
@@ -105,7 +105,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
     () =>
       effectiveAgents.some((a) => a.canonicalName === 'SI_Sphere') ||
       systemModules.some((m) => String(m.id || '').startsWith('si-sphere')) ||
-      conversations.some((c) => c.id === 'conv-si-sphere'),
+      conversations.some((c) => c.id === 'conv-ai-si-sphere-20261125'),
     [conversations, effectiveAgents, systemModules],
   );
 
@@ -122,6 +122,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const [engineOllamaReachable, setEngineOllamaReachable] = useState<boolean>(false);
   const [isSending, setIsSending] = useState(false);
   const [sendingElapsedSec, setSendingElapsedSec] = useState(0);
+  const [chatLatency, setChatLatency] = useState<{ normal?: string; duplex?: string }>({});
   const [pendingReplyAgent, setPendingReplyAgent] = useState<string>('Jyn');
   const [jediVmStatus, setJediVmStatus] = useState<any>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
@@ -518,8 +519,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         sender: m.sender,
         content: m.content,
       }));
+      const duplexStartedAt = performance.now();
       const res = await safeFetchJson<{
         ok: boolean;
+        serverWallMs?: number;
+        generationWallMs?: number;
+        engineProvider?: string;
+        actualModel?: string;
         message?: ChatMessage;
         sender?: string;
         agentId?: string;
@@ -532,7 +538,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         method: 'POST',
         // Serwer może czekać na zimny start modelu Ollama (predykcja + wypowiedź);
         // 30 s kończyło się błędem w karcie, choć wypowiedź i tak trafiała do SQLite.
-        timeoutMs: 200000,
+        timeoutMs: 330000,
         maxRetries: 0,
         body: JSON.stringify({
           conversationId: activeConv.id,
@@ -546,12 +552,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       });
 
       if (res.data?.ok && res.data.message) {
+        const total = ((performance.now() - duplexStartedAt) / 1000).toFixed(2);
+        const gen = typeof res.data.generationWallMs === 'number' ? `; generacja + routing ${(res.data.generationWallMs / 1000).toFixed(2)} s` : '';
+        setChatLatency(prev => ({ ...prev, duplex: `${total} s${gen} · ${res.data?.engineProvider || 'silnik nieustalony'}` }));
         if (autonomous) {
           autoTurnsRef.current += 1;
         }
         setDuplexStatus(null);
         notifyLocalMutation('chat', activeConv.id, res.data.serverRevision);
-        await refreshDomainModules(['chat', 'agents']);
+        await refreshDomainModules(['chat', 'agents', 'avatars']);
       } else if (res.data?.skipped && res.data.reason) {
         // 'busy' = inna karta właśnie pisze; jej wiadomość przyjdzie przez synchronizację.
         const retryAfterMs = Number((res.data as { retryAfterMs?: number }).retryAfterMs || 0);
@@ -668,7 +677,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const ollamaReachable = Boolean(healthData?.ollama?.daemon_reachable) || engineOllamaReachable;
   const ollamaModels: any[] = engineOllamaModels.length > 0 ? engineOllamaModels : (healthData?.ollama?.models || []);
   const selectedModelSupportsVision =
-    selectedModel === 'svl-hybrid-router' ||
     selectedModel.includes('llama3.2-vision') ||
     selectedModel.includes('vl') ||
     selectedModel.includes('vision');
@@ -883,6 +891,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       }
       return;
     }
+    const normalStartedAt = performance.now();
     autoTurnsRef.current = 0;
     sendingRef.current = true;
     setIsSending(true);
@@ -908,9 +917,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const targetConvId = overrideConvId || targetConvObj.id;
       const isPermanentChannel =
         targetConvId === 'conv-rodzina-mitek-wszyscy' ||
-        targetConvId === 'conv-jyn' ||
+        targetConvId === 'conv-ai-jyn-20261125' ||
         targetConvId === 'conv-svl364-mcp-root' ||
-        targetConvId === 'conv-si-sphere';
+        targetConvId === 'conv-ai-si-sphere-20261125';
       const targetTitle = isPermanentChannel
         ? getCanonicalConversationTitle(targetConvId, targetConvObj.title)
         : targetConvObj.messages.length <= 1 && trimmed
@@ -944,13 +953,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const isSi2Channel =
         !isSvl364RootConv &&
         !isJediVmTarget &&
-        (targetConvId === 'conv-si-sphere' ||
+        (targetConvId === 'conv-ai-si-sphere-20261125' ||
           resolvedTarget.agent === 'SI_Sphere' ||
           targetAgent === 'SI_Sphere');
       const isSystemSi1Channel =
         !isJediVmTarget &&
         !isSi2Channel &&
-        (isSvl364RootConv || targetConvId === 'conv-jyn' || targetAgent === 'Jyn');
+        (isSvl364RootConv || targetConvId === 'conv-ai-jyn-20261125' || targetAgent === 'Jyn');
       const isFamilyDuplex =
         !isSvl364RootConv &&
         !isJediVmTarget &&
@@ -985,7 +994,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       const res = await safeFetchJson<any>('/api/chat', {
         method: 'POST',
         // Musi pokrywać budżety silników (Ollama 75 s, Gemini do 150 s) plus zapas na przełączenie.
-        timeoutMs: 210000,
+        timeoutMs: 330000,
+        maxRetries: 0,
         body: JSON.stringify({
           message: fullPrompt,
           model: selectedModel,
@@ -1002,7 +1012,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
       if (!res.ok || !data || data.ok === false) {
         if (Array.isArray(data?.appliedActions) && data.appliedActions.length > 0) {
-          void refreshDomainModules(['modules', 'agents', 'kernel', 'health']);
+          void refreshDomainModules(['modules', 'agents', 'kernel', 'health', 'avatars']);
         }
         if (res.status === 0 && !data) {
           // Przekroczony czas lub zerwane połączenie: serwer kończy generowanie i sam zapisuje
@@ -1017,6 +1027,15 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         return;
       }
 
+      const privateNaturalChat = (targetConvId === 'conv-ai-jyn-20261125' || targetConvId === 'conv-ai-si-sphere-20261125') && !trimmed.startsWith('/');
+      if (privateNaturalChat && (!['ollama', 'gemini'].includes(String(data.engineProvider || '')) || !String(data.reply || '').trim())) {
+        setChatActionError('Brak potwierdzonej odpowiedzi modelu AI. Sprawdź wersję serwera oraz połączenie z Ollamą.');
+        return;
+      }
+      const total = ((performance.now() - normalStartedAt) / 1000).toFixed(2);
+      const metrics = data.ollamaTiming;
+      const details = metrics && typeof metrics.wallMs === 'number' ? `; generacja ${(metrics.evalMs / 1000).toFixed(2)} s, prompt ${(metrics.promptMs / 1000).toFixed(2)} s, ładowanie ${(metrics.loadMs / 1000).toFixed(2)} s` : '';
+      setChatLatency(prev => ({ ...prev, normal: `${total} s${details} · ${data.engineProvider || 'silnik nieustalony'}` }));
       if (data.connectionReport) {
         void refreshDomainModules(['agents', 'health']);
       }
@@ -1035,7 +1054,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         role: 'assistant',
         sender: formatAgentDisplayName(data.sender || 'Jyn'),
         agentId: data.agentId || 'Jyn',
-        modelUsed: data.modelUsed || selectedModel,
+        modelUsed: data.modelUsed || 'Silnik niepotwierdzony',
         timestamp: serverMsg.timestamp || new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }),
         content: data.reply || 'Brak odpowiedzi z serwera.',
         imagePreview: data.imagePreview || serverMsg.imagePreview,
@@ -1059,7 +1078,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
       }
 
       if (appliedActions && appliedActions.some((a: { tool?: string }) => a.tool !== 'jedi_omni_os_vm')) {
-        void refreshDomainModules(['modules', 'agents', 'health']);
+        void refreshDomainModules(['modules', 'agents', 'health', 'avatars']);
       }
       if (isFamilyDuplex && !isSlashCmd && data.provenance !== 'error' && hasSvlOperatorAccessToken()) {
         const nextFamilyAgent = data.agentId === 'SI_Sphere' ? 'Jyn' : 'SI_Sphere';
@@ -1528,9 +1547,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
             const unseen = isActive ? [] : conv.messages.slice(seenCounts[conv.id] ?? conv.messages.length);
             const unseenNotifications = unseen.filter((m) => m.role === 'system').length;
             const unseenReplies = unseen.filter((m) => m.role === 'assistant').length;
-            const isSystemSi1Chan = conv.id === 'conv-jyn';
+            const isSystemSi1Chan = conv.id === 'conv-ai-jyn-20261125';
             const isSvl364RootChan = conv.id === 'conv-svl364-mcp-root';
-            const isSi2Chan = conv.id === 'conv-si-sphere';
+            const isSi2Chan = conv.id === 'conv-ai-si-sphere-20261125';
             return (
               <div
                 key={conv.id}
@@ -1593,9 +1612,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </button>
                 {conversations.length > 1 &&
                   !isFamilyChan &&
-                  conv.id !== 'conv-jyn' &&
+                  conv.id !== 'conv-ai-jyn-20261125' &&
                   conv.id !== 'conv-svl364-mcp-root' &&
-                  conv.id !== 'conv-si-sphere' && (
+                  conv.id !== 'conv-ai-si-sphere-20261125' && (
                   <button
                     type="button"
                     aria-label={`Usuń konwersację ${conv.title}`}
@@ -1698,7 +1717,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 if (val === 'Rodzina Mitek') {
                   openFamilyChannel();
                 } else if (val === 'Jyn') {
-                  setActiveConvId('conv-jyn');
+                  setActiveConvId('conv-ai-jyn-20261125');
                   setTargetAgent('Jyn');
                 } else if (val === 'SI_Sphere') {
                   openAgentChannel('SI_Sphere');
@@ -1721,34 +1740,6 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
               Silnik AI
             </label>
             {(() => {
-              const shipInstalled = ollamaModels.length > 0 ? ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) === 'ship') : [
-                { name: 'svl364-apex-uncensored:latest', parameterSize: '14B', endpointId: 'ship' },
-                { name: 'dolphin-mixtral:8x22b', parameterSize: '141B MoE', endpointId: 'ship' },
-                { name: 'dolphin-llama3:70b', parameterSize: '70B', endpointId: 'ship' },
-                { name: 'wizard-vicuna-uncensored:30b', parameterSize: '30B', endpointId: 'ship' },
-                { name: 'deepseek-r1:7b', parameterSize: '7B', endpointId: 'ship' },
-                { name: 'qwen2.5:7b', parameterSize: '7B', endpointId: 'ship' },
-                { name: 'llama3.2-vision:11b', parameterSize: '11B', endpointId: 'ship' },
-                { name: 'llama3.2-vision:90b', parameterSize: '90B', endpointId: 'ship' },
-              ];
-              const localInstalled = ollamaModels.filter((m: any) => (m.endpointId || m.endpoint_id) !== 'ship');
-              const installedNames = new Set(ollamaModels.map((m: any) => String(m?.name || '').toLowerCase()));
-              const statusSuffix = (name: string) => {
-                return '● SVL-364 SSH (online · zainstalowany)';
-              };
-              const presetModels: Array<{ value: string; label: string }> = [
-                { value: 'svl364-apex-uncensored:latest', label: 'SVL CoreOS 2 · Apex-Uncensored [Statek SVL-364]' },
-                { value: 'dolphin-llama3:8b-v2.9-q2_K', label: 'dolphin-llama3:8b (Uncensored) [Statek SVL-364]' },
-                { value: 'dolphin-mixtral:8x22b', label: 'dolphin-mixtral:8x22b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
-                { value: 'dolphin-llama3:70b', label: 'dolphin-llama3:70b (SVL-364 GPU · Uncensored) [Statek SVL-364]' },
-                { value: 'deepseek-r1:7b', label: 'deepseek-r1:7b (Reasoning) [Statek SVL-364]' },
-                { value: 'qwen2.5:7b', label: 'qwen2.5:7b (Multilingual) [Statek SVL-364]' },
-                { value: 'llama3.2-vision:11b', label: 'llama3.2-vision:11b (Vision) [Statek SVL-364]' },
-                { value: 'llama3.2-vision:90b', label: 'llama3.2-vision:90b (Vision GPU) [Statek SVL-364]' },
-                { value: 'llama3:8b', label: 'llama3:8b [Statek SVL-364]' },
-                { value: 'mistral:7b', label: 'mistral:7b [Statek SVL-364]' },
-                { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b (Coder) [Statek SVL-364]' },
-              ];
               return (
                 <select
                   id="openwebui-model-select"
@@ -1756,42 +1747,19 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="min-w-0 min-h-[34px] sm:min-h-[32px] flex-1 sm:max-w-[265px] bg-[#0B0D13] border border-slate-700/80 rounded-md px-1.5 sm:px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-violet-500 truncate"
                 >
-                  <optgroup label="Auto-Router (Ollama Lokalna + SVL-364 SSH → awaryjnie Gemini)">
-                    <option value="svl-hybrid-router">
-                      Auto-Router SVL (Ollama → Gemini fallback)
-                    </option>
-                  </optgroup>
-                  {shipInstalled.length > 0 && (
-                    <optgroup label={`🛰️ Ollama · Statek SVL-364 SSH (${shipInstalled.length} online)`}>
-                      {shipInstalled.map((m: any) => (
-                        <option key={`ship:${m.name}`} value={`ollama:ship:${m.name}`}>
-                          🛰️ SVL-364: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
+                  <option value="svl-hybrid-router">Ollama automatycznie · Apex 70B lub lokalny 14B</option>
+                  <optgroup label="Wykryte modele Ollamy">
+                    {ollamaModels.map((m) => {
+                      const endpoint = m.endpointId || 'local';
+                      const size = m.parameterSize || 'rozmiar nieznany';
+                      const invalidApex = /^svl364-apex-uncensored(?::latest)?$/i.test(m.name) &&
+                        !/^7[01](?:\.\d+)?\s*B$/i.test(size);
+                      return (
+                        <option key={`${endpoint}:${m.name}`} value={`ollama:${endpoint}:${m.name}`} disabled={invalidApex}>
+                          {m.endpointLabel || endpoint}: {m.name} ({size}{invalidApex ? ' · niezweryfikowany Apex' : ''})
                         </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {localInstalled.length > 0 && (
-                    <optgroup label={`💻 Ollama · Lokalna (${localInstalled.length} online)`}>
-                      {localInstalled.map((m: any) => (
-                        <option key={`local:${m.name}`} value={`ollama:local:${m.name}`}>
-                          💻 Lokalna: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <optgroup label={`Ollama · Ścisły wybór (bez podmiany na Gemini · ${ollamaReachable ? 'online' : 'offline'})`}>
-                    {presetModels.map((p) => (
-                      <option key={p.value} value={`ollama:${p.value}`}>
-                        {p.label} ({statusSuffix(p.value)})
-                      </option>
-                    ))}
-                    {ollamaModels
-                      .filter((m: any) => !presetModels.some((p) => p.value.toLowerCase() === String(m?.name || '').toLowerCase()) && installedNames.has(String(m?.name || '').toLowerCase()))
-                      .map((m: any) => (
-                        <option key={`extra:${m.endpointId || 'local'}:${m.name}`} value={`ollama:${m.name}`}>
-                          Ollama: {m.name} ({m.parameterSize || m.parameter_size || 'LLM'})
-                        </option>
-                      ))}
+                      );
+                    })}
                   </optgroup>
                   <optgroup label={`Gemini${geminiConfigured ? ' · serwer AI Studio' : ' · brak GEMINI_API_KEY'}`}>
                     {geminiModels.map((name) => (
@@ -2411,6 +2379,13 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </div>
               )}
               {messageListNode}
+              {(chatLatency.normal || chatLatency.duplex) && (
+                <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300 font-mono" role="status">
+                  <div className="text-slate-400">Ostatnie pomiary w tej sesji (od wysłania do odbioru)</div>
+                  {chatLatency.normal && <div>Czat: {chatLatency.normal}</div>}
+                  {chatLatency.duplex && <div>Obustronna: {chatLatency.duplex}</div>}
+                </div>
+              )}
               {isSending && (
                 <div
                   role="status"
@@ -2596,7 +2571,7 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   ? 'Dowolne polecenie ROOT na SVL-364 lub /mcp...'
                   : targetAgent === 'JEDI_Omni_OS'
                     ? 'Prompt / polecenie dla JEDI Omni-OS...'
-                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-ai-si-sphere-20261125'
                       ? 'Polecenie dla SI_Sphere...'
                       : 'Wpisz polecenie lub wiadomość...'
               }
@@ -2605,9 +2580,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                   ? 'Wpisz DOWOLNE polecenie Linux jako ROOT (np. uname -a, /root systemctl status svl-mcp), /mcp connect <url> <token> lub dowolne pytanie do SVL-364...'
                   : targetAgent === 'JEDI_Omni_OS'
                     ? 'Napisz pytanie lub polecenie dla JEDI Omni-OS v12 (ROOT_UNRESTRICTED · /jedi status, /jedi apply-v12-core, /synchronizuj)...'
-                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-si-sphere'
+                    : targetAgent === 'SI_Sphere' || activeConv?.id === 'conv-ai-si-sphere-20261125'
                       ? 'Wydaj polecenie dla SI_Sphere (SVL-465 · ROOT) przez JEDI Omni-OS v12 (/synchronizuj, /status, /root)...'
-                      : activeConv?.id === 'conv-jyn' || targetAgent === 'Jyn'
+                      : activeConv?.id === 'conv-ai-jyn-20261125' || targetAgent === 'Jyn'
                         ? 'Wydaj polecenie dla Jyn Mitek przez JEDI Omni-OS v12 (/jedi status, /synchronizuj, /pomoc, /root)...'
                         : 'Wpisz wiadomość lub polecenie przetwarzane w czasie rzeczywistym przez JEDI Omni-OS v12, Jyn Mitek i SI_Sphere...'
               }

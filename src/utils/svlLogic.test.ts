@@ -47,8 +47,9 @@ test('GitHub agent scopes: read, sync-branch writes and admin', () => {
   assert.deepEqual(getGitHubAgentPermissions(['github.admin']), { read: true, writeSync: true, admin: true });
   assert.deepEqual(getGitHubAgentPermissions(undefined), { read: false, writeSync: false, admin: false });
 });
-test('mission completion claims are blocked when no mission status can be verified', () => {
+test('mission completion claims retain original content with verification warning', () => {
   const context = 'Prowadzę misję, sprawdź czy cała procedura się zakończyła.';
+  assert.ok(guardUnverifiedMissionCompletion(context, 'The mission has been completed.').startsWith('The mission has been completed.'));
   assert.match(
     guardUnverifiedMissionCompletion(context, 'Cała procedura misji dobiegła już końca.'),
     /Status misji: NIEZWERYFIKOWANY/,
@@ -132,7 +133,7 @@ test('CANONICAL_AGENTS contains only Jyn and blocks removed agents', () => {
   assert.equal(normalizeAgentCanonicalName('conv-agent-maya'), null);
   assert.equal(normalizeAgentCanonicalName('KomputerPokladowy'), null);
   assert.equal(normalizeAgentCanonicalName('jyn'), 'Jyn');
-  assert.equal(normalizeAgentCanonicalName('conv-jyn'), 'Jyn');
+  assert.equal(normalizeAgentCanonicalName('conv-ai-jyn-20261125'), 'Jyn');
   assert.equal(normalizeAgentCanonicalName('Iris AI'), null);
   assert.equal(normalizeAgentCanonicalName('codex'), null);
   assert.equal(formatAgentDisplayName('jyn'), 'Jyn Mitek');
@@ -165,7 +166,7 @@ test('resolveChatTargetAgent routes commands between Jyn and JEDI_Omni_OS', () =
   assert.equal(
     resolveChatTargetAgent({
       message: '/jedi status',
-      conversationId: 'conv-jyn',
+      conversationId: 'conv-ai-jyn-20261125',
       targetAgent: 'Auto',
       hasSlashCommand: true,
     }).agent,
@@ -182,7 +183,7 @@ test('resolveChatTargetAgent routes commands between Jyn and JEDI_Omni_OS', () =
   assert.equal(
     resolveChatTargetAgent({
       message: '/status',
-      conversationId: 'conv-jyn',
+      conversationId: 'conv-ai-jyn-20261125',
       targetAgent: 'Jyn',
       hasSlashCommand: true,
     }).agent,
@@ -191,7 +192,7 @@ test('resolveChatTargetAgent routes commands between Jyn and JEDI_Omni_OS', () =
   assert.equal(
     resolveChatTargetAgent({
       message: 'Sprawdź połączenie SSH statku',
-      conversationId: 'conv-jyn',
+      conversationId: 'conv-ai-jyn-20261125',
       targetAgent: 'Auto',
     }).agent,
     'Jyn',
@@ -642,7 +643,7 @@ test('formatAgentDisplayName nie przepuszcza podszywania ani usuniętych agentó
 
 test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolution', () => {
   assert.equal(normalizeAgentCanonicalName('SI_Sphere'), 'SI_Sphere');
-  assert.equal(normalizeAgentCanonicalName('conv-si-sphere'), 'SI_Sphere');
+  assert.equal(normalizeAgentCanonicalName('conv-ai-si-sphere-20261125'), 'SI_Sphere');
   assert.equal(formatAgentDisplayName('SI_Sphere'), 'SI_Sphere (SVL-465 · ROOT)');
 
   assert.deepEqual(
@@ -663,7 +664,7 @@ test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolutio
   assert.equal(
     resolveChatTargetAgent({
       message: 'Cześć JEDI, opisz architekturę systemu',
-      conversationId: 'conv-jyn',
+      conversationId: 'conv-ai-jyn-20261125',
       targetAgent: 'JEDI_Omni_OS',
     }).agent,
     'JEDI_Omni_OS',
@@ -671,7 +672,7 @@ test('SI_Sphere dynamic canonical agents, os_sync commands, and target resolutio
   assert.equal(
     resolveChatTargetAgent({
       message: 'Sprawdź rdzeń kwantowy SVL-465',
-      conversationId: 'conv-si-sphere',
+      conversationId: 'conv-ai-si-sphere-20261125',
       targetAgent: 'Auto',
     }).agent,
     'SI_Sphere',

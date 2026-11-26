@@ -19,7 +19,7 @@ export interface CanonicalAgentMeta {
 
 export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
   {
-    id: 'jyn',
+    id: 'jyn-ai-20261125',
     canonicalName: 'Jyn',
     displayName: 'Jyn Mitek',
     slug: 'jyn',
@@ -34,7 +34,7 @@ export const CANONICAL_AGENTS: CanonicalAgentMeta[] = [
 
 export const DYNAMIC_AGENT_TEMPLATES: CanonicalAgentMeta[] = [
   {
-    id: 'si-sphere',
+    id: 'si-sphere-ai-20261125',
     canonicalName: 'SI_Sphere',
     displayName: 'SI_Sphere (SVL-465 · ROOT)',
     slug: 'si-sphere',
@@ -189,7 +189,7 @@ export function guardUnverifiedMissionCompletion(context: string, answer: string
   ) {
     return answer;
   }
-  return UNVERIFIED_MISSION_STATUS_REPLY;
+  return answer + '\n\n' + UNVERIFIED_MISSION_STATUS_REPLY;
 }
 
 /**
@@ -486,6 +486,7 @@ export function normalizeAgentCanonicalName(
   const clean = String(rawName || '').trim().toLowerCase();
   if (!clean) return null;
   if (
+    clean === 'jyn-ai-20261125' ||
     clean === 'jyn' ||
     clean === 'jyn' ||
     clean === 'jyn' ||
@@ -493,7 +494,7 @@ export function normalizeAgentCanonicalName(
     clean === 'system_si' ||
     clean === 'system-si' ||
     clean === 'system si' ||
-    clean === 'conv-jyn' ||
+    clean === 'conv-ai-jyn-20261125' ||
     clean === 'jyn mitek' ||
     clean === 'jyn mitek (jyn)' ||
     /^jyn(?:\s+mitek)?(?:\s*\(jyn\))?$/.test(clean)
@@ -502,6 +503,7 @@ export function normalizeAgentCanonicalName(
   }
   if (
     clean === 'si_sphere' ||
+    clean === 'si-sphere-ai-20261125' ||
     clean === 'si-sphere' ||
     clean === 'si sphere' ||
     clean === 'sisphere' ||
@@ -509,7 +511,7 @@ export function normalizeAgentCanonicalName(
     clean === 'system-si-2' ||
     clean === 'system si 2' ||
     clean === 'si2' ||
-    clean === 'conv-si-sphere' ||
+    clean === 'conv-ai-si-sphere-20261125' ||
     clean === 'si_sphere (root)' ||
     clean === 'si_sphere (svl-465 · root)'
   ) {
@@ -566,11 +568,11 @@ export function resolveChatTargetAgent(params: {
   if (mentionsJedi || normTarget === 'JEDI_Omni_OS') {
     return { agent: 'JEDI_Omni_OS', mentionsJedi, explicit: true };
   }
-  if (normTarget === 'SI_Sphere' || (convId === 'conv-si-sphere' && normTarget !== 'Jyn')) {
+  if (normTarget === 'SI_Sphere' || (convId === 'conv-ai-si-sphere-20261125' && normTarget !== 'Jyn')) {
     return { agent: 'SI_Sphere', mentionsJedi: false, explicit: true };
   }
   if (
-    convId === 'conv-jyn' ||
+    convId === 'conv-ai-jyn-20261125' ||
     convId === 'conv-svl364-mcp-root' ||
     normTarget === 'Jyn' ||
     params.hasSlashCommand
@@ -920,14 +922,18 @@ export function validateOllamaHostUrl(raw: string): {
   }
 }
 
+export function isLegacyChatFallback(message: { role?: string; modelUsed?: string }): boolean {
+  return message?.role === "assistant" && /SQLite\s+WAL\s+Fallback/i.test(String(message.modelUsed || ""));
+}
+
 export function buildChatHistoryPayload(
-  messages: Array<{ role: string; content: string; sender?: string; provenance?: string }>,
+  messages: Array<{ role: string; content: string; sender?: string; provenance?: string; modelUsed?: string }>,
   limit = 48,
 ): Array<{ role: 'user' | 'assistant'; content: string; sender?: string }> {
   return (messages || [])
     .filter((m) => {
       if ((m.role !== 'user' && m.role !== 'assistant') || !m.content?.trim()) return false;
-      if (m.provenance === 'error') return false;
+      if (m.provenance === 'error' || isLegacyChatFallback(m)) return false;
       const txt = m.content.trim();
       if (m.role === 'assistant') {
         const senderLow = String(m.sender || '').trim().toLowerCase();
@@ -1123,7 +1129,7 @@ export function mergeConversationThreads(
     const seen = new Set<string>();
     const out: SyncableMessage[] = [];
     for (const m of msgs) {
-      if (!m || !m.id || seen.has(m.id)) continue;
+      if (!m || !m.id || seen.has(m.id) || isLegacyChatFallback(m)) continue;
       seen.add(m.id);
       out.push(m);
     }
@@ -1159,7 +1165,7 @@ export function mergeConversationThreads(
   for (const lt of localThreads) {
     if (seenIds.has(lt.id) || deletedConversationIds.has(lt.id)) continue;
     const isCanonical =
-      lt.id === 'conv-jyn' ||
+      lt.id === 'conv-ai-jyn-20261125' ||
       lt.id === 'conv-svl364-mcp-root' ||
       lt.id === 'conv-rodzina-mitek-wszyscy';
     const hasPending = (lt.messages || []).some((m) => pendingMessageIds.has(m.id));
@@ -1175,14 +1181,14 @@ export function mergeConversationThreads(
   );
   if (hasAnyCanonical) {
     const mandatoryCanonicalIds = [
-      'conv-jyn',
+      'conv-ai-jyn-20261125',
       'conv-svl364-mcp-root',
       'conv-rodzina-mitek-wszyscy',
     ];
     for (const cid of mandatoryCanonicalIds) {
       if (!merged.some((c) => c.id === cid)) {
         const canonicalTitle =
-          cid === 'conv-jyn'
+          cid === 'conv-ai-jyn-20261125'
             ? 'Jyn — Zarządzanie Infrastrukturą (ROOT)'
             : cid === 'conv-svl364-mcp-root'
               ? 'SVL-364 — Komputer Pokładowy (MCP · ROOT)'

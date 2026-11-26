@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { isLegacyChatFallback } from './svlLogic';
 import {
   AvatarProfileKey,
   SvlAvatarMap,
@@ -50,7 +51,7 @@ const DEFAULT_TERMINAL_LOGS: Record<TerminalTabId, TerminalLogLine[]> = {
 };
 
 export const INITIAL_WELCOME_CONVERSATIONS: SyncableConversation[] = [
-  { id: 'conv-jyn', title: 'Jyn — Zarządzanie Infrastrukturą (ROOT)', updatedAt: '', revision: 1, messages: [] },
+  { id: 'conv-ai-jyn-20261125', title: 'Jyn — Zarządzanie Infrastrukturą (ROOT)', updatedAt: '', revision: 1, messages: [] },
   { id: 'conv-svl364-mcp-root', title: 'SVL-364 — Komputer Pokładowy (MCP · ROOT)', updatedAt: '', revision: 1, messages: [] },
   { id: 'conv-rodzina-mitek-wszyscy', title: 'Rodzina Mitek (wszyscy)', updatedAt: '', revision: 1, messages: [] },
 ];
@@ -102,9 +103,9 @@ const REMOVED_AGENT_CONVERSATION_IDS = new Set([
 ]);
 
 export function getCanonicalConversationTitle(id: string, fallbackTitle?: string): string {
-  if (id === 'conv-jyn') return 'Jyn — Zarządzanie Infrastrukturą (ROOT)';
+  if (id === 'conv-ai-jyn-20261125') return 'Jyn — Zarządzanie Infrastrukturą (ROOT)';
   if (id === 'conv-svl364-mcp-root') return 'SVL-364 — Komputer Pokładowy (MCP · ROOT)';
-  if (id === 'conv-si-sphere') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
+  if (id === 'conv-ai-si-sphere-20261125') return 'SI_Sphere — Rdzeń Floty SVL-465 (ROOT)';
   if (id === 'conv-rodzina-mitek-wszyscy') return 'Rodzina Mitek (wszyscy)';
   return fallbackTitle || 'Sesja SVL Python OS';
 }
@@ -114,7 +115,7 @@ function normalizeConversationsFromServer(rawList: any[]): SyncableConversation[
     .filter((c: any) => !REMOVED_AGENT_CONVERSATION_IDS.has(String(c?.id || '')))
     .map((c: any) => {
       const cleaned = stripObsoleteDiagnosticMessages(c.messages).filter(
-        (m: any) => !isForbiddenAgentSender(m?.sender) && !isForbiddenAgentSender(m?.agentId),
+        (m: any) => !isLegacyChatFallback(m) && !isForbiddenAgentSender(m?.sender) && !isForbiddenAgentSender(m?.agentId),
       );
       return {
         id: String(c.id),
@@ -244,9 +245,9 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
     } catch {
       // ignore storage unavailable
     }
-    if (!list.some((c) => c.id === 'conv-jyn')) {
+    if (!list.some((c) => c.id === 'conv-ai-jyn-20261125')) {
       list = [
-        { id: 'conv-jyn', title: 'Jyn — Zarządzanie Infrastrukturą (ROOT)', updatedAt: '', revision: 1, messages: [] },
+        { id: 'conv-ai-jyn-20261125', title: 'Jyn — Zarządzanie Infrastrukturą (ROOT)', updatedAt: '', revision: 1, messages: [] },
         ...list,
       ];
     }
@@ -298,7 +299,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   const [activeConvIdState, setActiveConvIdState] = useState<string>(
-    () => conversations[0]?.id || 'conv-jyn',
+    () => conversations[0]?.id || 'conv-ai-jyn-20261125',
   );
   const activeConvIdRef = useRef<string>(activeConvIdState);
   activeConvIdRef.current = activeConvIdState;
@@ -873,7 +874,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
 
-      if (evt.entity === 'avatar') {
+      if (evt.entity === 'avatar' || evt.entity === 'avatars') {
         scheduleDomainRefresh(['avatars']);
         return;
       }
@@ -1359,10 +1360,10 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (convId === 'conv-rodzina-mitek-wszyscy') {
         setTargetAgentState('Rodzina Mitek');
         void persistWorkspaceKey('selected_target_agent', 'Rodzina Mitek');
-      } else if (convId === 'conv-jyn' || convId === 'conv-svl364-mcp-root') {
+      } else if (convId === 'conv-ai-jyn-20261125' || convId === 'conv-svl364-mcp-root') {
         setTargetAgentState('Jyn');
         void persistWorkspaceKey('selected_target_agent', 'Jyn');
-      } else if (convId === 'conv-si-sphere') {
+      } else if (convId === 'conv-ai-si-sphere-20261125') {
         setTargetAgentState('SI_Sphere');
         void persistWorkspaceKey('selected_target_agent', 'SI_Sphere');
       }
@@ -1441,7 +1442,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         low === 'si_1' ||
         low === 'si'
       ) {
-        const sysConvId = 'conv-jyn';
+        const sysConvId = 'conv-ai-jyn-20261125';
         deletedConvIdsRef.current.delete(sysConvId);
         const exists = conversationsRef.current.some((c) => c.id === sysConvId);
         if (!exists) {
@@ -1469,7 +1470,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         low === 'system-si-2' ||
         low === 'si2'
       ) {
-        const si2ConvId = 'conv-si-sphere';
+        const si2ConvId = 'conv-ai-si-sphere-20261125';
         deletedConvIdsRef.current.delete(si2ConvId);
         const exists = conversationsRef.current.some((c) => c.id === si2ConvId);
         if (!exists) {
@@ -1491,7 +1492,7 @@ export const SvlSyncProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
       if (low === 'jedi_omni_os' || low === 'jedi' || low === 'vm') {
-        const sysConvId = 'conv-jyn';
+        const sysConvId = 'conv-ai-jyn-20261125';
         deletedConvIdsRef.current.delete(sysConvId);
         setActiveConvIdState(sysConvId);
         setTargetAgentState('JEDI_Omni_OS');

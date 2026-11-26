@@ -100,7 +100,9 @@ class SVLLocalOllamaDaemon:
         env.setdefault("OLLAMA_HOST", f"{self.host}:{self.port}")
         env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
         env.setdefault("OLLAMA_NUM_PARALLEL", "1")
-        env.setdefault("OLLAMA_KEEP_ALIVE", "15m")
+        env.setdefault("OLLAMA_KEEP_ALIVE", "-1")
+        env.setdefault("OLLAMA_FLASH_ATTENTION", "1")
+        env.setdefault("OLLAMA_KV_CACHE_TYPE", "q8_0")
         env.setdefault("GODEBUG", "netdns=cgo")
         try:
             with log_file.open("ab") as log_handle:

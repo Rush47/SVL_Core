@@ -89,8 +89,8 @@ export function getOllamaRuntimeOptions(env: Record<string, string | undefined> 
   };
 
   return {
-    num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 2048, 512, 32768),
-    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 512, 64, 4096),
+    num_ctx: parsePosInt(env.OLLAMA_NUM_CTX, 8192, 512, 32768),
+    num_predict: parsePosInt(env.OLLAMA_NUM_PREDICT, 2048, 64, 4096),
     keep_alive: parseKeepAlive(env.OLLAMA_KEEP_ALIVE),
     historyTurns: parsePosInt(env.OLLAMA_HISTORY_TURNS, 12, 2, 48),
     maxTurnChars: parsePosInt(env.OLLAMA_MAX_TURN_CHARS, 2000, 200, 12000),
@@ -131,26 +131,22 @@ export function selectOllamaTurnOptions(
     /\b(?:szczegółow\p{L}*|szczegolow\p{L}*|pełny\s+raport|pelny\s+raport|dokumentacj\p{L}*|architektur\p{L}*|napisz\s+(?:kod|skrypt|program|klasę|funkcję)|przeanalizuj\s+cał\p{L}*|wyjaśnij\s+dokładn\p{L}*)\b/iu.test(
       text,
     );
-  const isShort = !isDetailed && text.length > 0 && text.length <= 48 && !text.includes('\n');
+  const isShort = /^(?:cześć|czesc|hej|hello|hi|ping|ok|dzień dobry|dzien dobry)(?:\s+jyn)?[!?. ]*$/iu.test(text);
 
   let numPredict = baseOpts.num_predict;
   if (opts.isVision) {
-    numPredict = Math.max(numPredict, Number(env.OLLAMA_VISION_NUM_PREDICT || 1024));
+    numPredict = Math.max(numPredict, (Number(env.OLLAMA_VISION_NUM_PREDICT) > 0 ? Math.min(4096, Number(env.OLLAMA_VISION_NUM_PREDICT)) : 1024));
   } else if (isDetailed) {
-    numPredict = Math.min(4096, Math.max(numPredict, 1024));
-  } else if (isShort && !env.OLLAMA_NUM_PREDICT) {
-    numPredict = Math.min(numPredict, 384);
+    numPredict = Math.min(4096, Math.max(numPredict, 1536));
+  } else if (isShort) {
+    numPredict = Math.min(numPredict, 160);
   }
 
   let numCtx = baseOpts.num_ctx;
   if (opts.isVision) {
-    numCtx = Math.max(numCtx, Number(env.OLLAMA_VISION_NUM_CTX || 4096));
-  } else if (!env.OLLAMA_NUM_CTX) {
-    const promptChars = opts.estimatedPromptChars ?? 0;
-    if (opts.hasTools || promptChars > 4500) {
-      numCtx = Math.max(numCtx, 4096);
-    }
+    numCtx = Math.max(numCtx, (Number(env.OLLAMA_VISION_NUM_CTX) > 0 ? Math.min(32768, Number(env.OLLAMA_VISION_NUM_CTX)) : 4096));
   }
+  // Stałe okno tekstowe nie przeładowuje runnera przy kolejnych turach.
 
   const perf: Record<string, number | boolean> = {
     ...(baseOpts.perf.num_batch === undefined ? { num_batch: 512 } : {}),
@@ -166,16 +162,13 @@ export function selectOllamaTurnOptions(
 
   return {
     num_ctx: Math.min(32768, numCtx),
-    num_predict: numPredict,
+    num_predict: Math.min(numPredict, numCtx),
     keep_alive: baseOpts.keep_alive,
     historyTurns,
     maxTurnChars,
     perf,
   };
 }
-
-const OLLAMA_COMPACT_INTERACTIVE_GUIDE =
-  'Zasady odpowiedzi Jyn Mitek: ZAWSZE pisz w 1. osobie r.ż. („sprawdziłam”, „monitoruję”, „melduję”) bezpośrednio do Operatora w wołaczu „Mateuszu” (nigdy „pan Mateusz”, nigdy nie zaczynaj od „Jyn,” ani „Cześć Jyn”). Odpowiadaj wyłącznie poprawną polszczyzną, zwięźle i konkretnie z podanych danych SVL-364. Możesz dodać czytelne punkty/tabele Markdown oraz 1–2 przyciski na końcu `[btn: Etykieta|send:/status]`.';
 
 /**
  * Dla lokalnego modelu Ollama na CPU dołączamy schematy narzędzi JSON wyłącznie wtedy,
@@ -210,14 +203,14 @@ export function buildCompactOllamaSystemContext(fullContext: string, maxChars = 
     // Zastąp 4,4k-znakowy przewodnik UI zwięzłą wersją dla lokalnych modeli Ollama
     .replace(
       /Interaktywny Czat SVL CoreOS 2 \(styl GitHub Copilot[\s\S]*?Przyciski nigdy nie uruchamiają poleceń powłoki \(`\/exec`\)\./,
-      OLLAMA_COMPACT_INTERACTIVE_GUIDE,
+      '',
     )
     // Usuń blok zmiennej telemetrii JEDI VM z per-turn ns/scenario/grid/pkt, który unieważnia KV-cache
     .replace(/\n*\[JEDI OMNI-OS v12 VM \(CZAS RZECZYWISTY[^\]]*\]/gi, '')
     // Skompresuj długi statyczny blok protokołu SQLite WAL do 1 zwięzłej linii faktów
     .replace(
       /\[PROTOKÓŁ PRAWDZIWYCH INFORMACJI SQLITE WAL[\s\S]*?synchronizuje każdą zmianę z czatu\]\.\]/g,
-      '[FAKTY SVL: Sojusz=46,5 mln stanowisk, APEX-CITADEL=1420 załogi, Debian 13 Trixie + JEDI Omni-OS v12 ROOT.]',
+      '',
     )
     // Zastąp dynamiczny licznik cykli stałą etykietą w opisie widoczności
     .replace(/cykle_wykonane=\d+/g, 'cykle_wykonane=ACTIVE')
@@ -338,6 +331,7 @@ export type ResolveCachedOllamaResult =
       exactMatch: boolean;
       substituted: boolean;
       installedModels: string[];
+      modelSizes: Record<string, string>;
       version: string;
     }
   | { ok: false; reason: string; cached?: boolean };
@@ -364,6 +358,9 @@ export async function resolveCachedOllamaModel(
   const extractNames = (list: Array<{ name?: string; model?: string }>): string[] =>
     list.map((m) => String(m?.name || m?.model || '').trim()).filter(Boolean);
 
+  const extractSizes = (list: Array<{ name?: string; model?: string; details?: { parameter_size?: string }; parameter_size?: string }>) =>
+    Object.fromEntries(list.map(m => [String(m?.name || m?.model || '').trim(), String(m?.details?.parameter_size || m?.parameter_size || '')]));
+
   const cached = ollamaTagsCache.get(base);
   if (!opts.forceRefresh && cached && Date.now() - cached.checkedAt < ttlMs) {
     const resolved = resolveInstalledOllamaModel(
@@ -379,6 +376,7 @@ export async function resolveCachedOllamaModel(
         exactMatch: !resolved.substituted,
         substituted: resolved.substituted,
         installedModels: extractNames(cached.models),
+        modelSizes: extractSizes(cached.models),
         version: cached.version,
       };
     }
@@ -402,9 +400,11 @@ export async function resolveCachedOllamaModel(
     }
     const version: any = await versionRes.json();
     const versionStr = String(version?.version || '');
-    // Wbudowane endpointy ze statku SVL-364 są traktowane jako w pełni wspierane i błyskawiczne (High-Speed Edge Bridge)
     if (versionStr.includes('svl-364')) {
-      // akceptujemy wersję statku SVL-364 jako poprawny punkt końcowy
+      ollamaTagsCache.delete(base);
+      const reason = 'Wbudowany zastępnik SVL-364 nie wykonuje inferencji Ollamy.';
+      ollamaOfflineCache.set(base, { checkedAt: Date.now(), reason });
+      return { ok: false, reason };
     }
     if (!tagsRes.ok) {
       ollamaTagsCache.delete(base);
@@ -434,6 +434,7 @@ export async function resolveCachedOllamaModel(
       exactMatch: !resolved.substituted,
       substituted: resolved.substituted,
       installedModels: extractNames(models),
+      modelSizes: extractSizes(models),
       version: versionStr,
     };
   } catch (error) {

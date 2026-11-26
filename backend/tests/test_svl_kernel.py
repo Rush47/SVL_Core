@@ -576,12 +576,13 @@ class TestSVLKernelSuite(unittest.TestCase):
             self.assertEqual(orchestrator.agent_states["Jyn"]["worker_phase"], "BUSY")
             self.assertEqual(orchestrator.agent_logs["Jyn"][-1]["level"], "TOOL_COMPLETED")
 
-    def test_worker_mission_completion_claim_is_blocked_without_verified_state(self) -> None:
+    def test_worker_mission_completion_claim_preserves_answer_with_verification_note(self) -> None:
         guarded = guard_unverified_mission_completion(
             "Prowadzę misję, sprawdź status procedury.",
             "Cała procedura misji dobiegła już końca.",
         )
-        self.assertIn("Status misji: NIEZWERYFIKOWANY", guarded)
+        self.assertTrue(guarded.startswith("Cała procedura misji dobiegła już końca."))
+        self.assertIn("status misji nie został potwierdzony", guarded)
         planned = "Procedurę można uznać za zakończoną dopiero po weryfikacji każdego kroku."
         self.assertEqual(
             guard_unverified_mission_completion("Opisz procedurę misji.", planned),
@@ -949,11 +950,11 @@ class TestSVLKernelSuite(unittest.TestCase):
                     "Raport testowy dla kanału Jyn",
                     model_label="SVL_System_Kernel_Report",
                     message_prefix="sys-report-test",
-                    conversation_id="conv-jyn",
+                    conversation_id="conv-ai-jyn-20261125",
                 )
                 self.assertTrue(report.get("ok"))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-                si1_msgs = convs["conv-jyn"]["messages"]
+                si1_msgs = convs["conv-ai-jyn-20261125"]["messages"]
                 self.assertTrue(any("Raport testowy dla kanału Jyn" in m["content"] for m in si1_msgs))
             finally:
                 asyncio.run(orchestrator.shutdown())
@@ -998,7 +999,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 self.assertTrue(any(u.get("ship_id") == "SVL-465" for u in si1_fleet))
                 self.assertTrue(any(u.get("ship_id") == "SVL-364" for u in si1_fleet))
                 convs = {c["id"]: c for c in kernel.list_conversations_with_messages()}
-                self.assertIn("conv-si-sphere", convs)
+                self.assertIn("conv-ai-si-sphere-20261125", convs)
             finally:
                 asyncio.run(orchestrator.shutdown())
 
@@ -1008,7 +1009,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             token = "test_operator_token_with_more_than_32_chars_abcdef"
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             kernel.save_chat_message(
-                "conv-si-sphere",
+                "conv-ai-si-sphere-20261125",
                 "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
                 "jedi-omni-os-v12-vm",
                 {
@@ -1020,7 +1021,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 },
             )
             kernel.save_chat_message(
-                "conv-jyn",
+                "conv-ai-jyn-20261125",
                 "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
@@ -1053,7 +1054,7 @@ class TestSVLKernelSuite(unittest.TestCase):
             kernel = SVLSystemKernel(db_path=db_file, operator_token=token)
             orig_version = kernel.sys_version.value
             kernel.save_chat_message(
-                "conv-jyn",
+                "conv-ai-jyn-20261125",
                 "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
@@ -1065,7 +1066,7 @@ class TestSVLKernelSuite(unittest.TestCase):
                 },
             )
             kernel.save_chat_message(
-                "conv-jyn",
+                "conv-ai-jyn-20261125",
                 "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "svl-hybrid-router",
                 {
@@ -1399,14 +1400,14 @@ class TestSVLKernelSuite(unittest.TestCase):
         sample_messages = [
             {
                 "id": "usr-proj-1",
-                "conversation_id": "conv-jyn",
+                "conversation_id": "conv-ai-jyn-20261125",
                 "role": "user",
                 "content": "[Plik: Plussfera.docx] Zaktualizuj automatycznie system o nową teorię z załącznika.",
                 "created_at": "2026-11-23T19:10:00+00:00",
             },
             {
                 "id": "asst-proj-1",
-                "conversation_id": "conv-jyn",
+                "conversation_id": "conv-ai-jyn-20261125",
                 "role": "assistant",
                 "content": (
                     "[card: STATUS PROJEKTU: Sphere_cinema|WDROŻONY|ok]\n"

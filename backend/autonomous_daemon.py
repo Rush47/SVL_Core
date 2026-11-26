@@ -221,7 +221,7 @@ def derive_improvement_findings(
             "area": "ai/ollama",
             "message": (
                 f"Demon Ollama ({ollama.get('ollama_host', '127.0.0.1:11434')}) jest obecnie nieosiągalny; "
-                "zapytania czatu korzystają z fallbacku Gemini lub procesora komend VM."
+                "zapytania do niedostępnego modelu kończą się błędem bez automatycznego zamiennika."
             ),
             "detected_at": now_iso,
         })
@@ -584,7 +584,7 @@ class AutonomousAIDaemon:
         text: str,
         *,
         sender: str = "Jyn Mitek",
-        conversation_id: str = "conv-jyn",
+        conversation_id: str = "conv-ai-jyn-20261125",
         title: str = "Jyn Mitek",
         model: str = "ollama:svl364-apex-uncensored:latest",
         origin: str = "autonomous-daemon",

@@ -15,8 +15,8 @@ import {
 } from 'lucide-react';
 import { CANONICAL_AGENTS, DYNAMIC_AGENT_TEMPLATES, SyncableMessage, formatAgentDisplayName } from '../utils/svlLogic';
 import { SvlAvatar } from './AgentAvatar';
-import { renderFormattedContent } from './ChatContentRenderer';
-import { parseFollowUpToken, ParsedFollowUpToken } from '../utils/chatInteractiveTokens';
+import { renderFormattedContent } from './OpenAIChatRenderer';
+import { Button } from '@openai/apps-sdk-ui/components/Button';
 
 export const PROVENANCE_STYLE: Record<
   NonNullable<SyncableMessage['provenance']>,
@@ -91,8 +91,8 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
     [formattedSender, msg.agentId, msg.sender],
   );
   const formattedContentNode = useMemo(
-    () => renderFormattedContent(msg.content, onInteractiveAction),
-    [msg.content, onInteractiveAction],
+    () => renderFormattedContent(msg.content, isUser ? undefined : onInteractiveAction),
+    [msg.content, onInteractiveAction, isUser],
   );
 
   return (
@@ -367,56 +367,7 @@ export const ChatMessageRow = React.memo<ChatMessageRowProps>(function ChatMessa
               </button>
             </div>
 
-            {/* Contextual Copilot / ChatGPT Follow-up pills */}
-            {(() => {
-              const lines = (msg.content || '').split('\n');
-              const explicitPills: ParsedFollowUpToken[] = [];
-              for (const l of lines) {
-                const p = parseFollowUpToken(l.trim());
-                if (p) explicitPills.push(p);
-              }
-              const displayPills: ParsedFollowUpToken[] =
-                explicitPills.length > 0
-                  ? explicitPills
-                  : (msg.content || '').length > 70
-                    ? [
-                        {
-                          prompt: '📊 Pokaż wykres',
-                          action: 'send:Przedstaw podsumowanie i dane w formie wykresu interaktywnego [chart:line|...]'
-                        },
-                        {
-                          prompt: '📐 Pokaż wzór',
-                          action: 'send:Pokaż matematyczny wzór i definicję fizyczną w formie widgetu [formula:...]'
-                        },
-                        {
-                          prompt: '🔍 Wyjaśnij szczegółowo',
-                          action: 'send:Wyjaśnij tę odpowiedź szczegółowo krok po kroku'
-                        }
-                      ]
-                    : [];
 
-              if (displayPills.length === 0) return null;
-
-              return (
-                <div className="pt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mr-0.5">
-                    <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-                    Sugerowane:
-                  </span>
-                  {displayPills.map((pill, pIdx) => (
-                    <button
-                      key={`pill-${pIdx}`}
-                      type="button"
-                      onClick={() => void onInteractiveAction(pill.action, pill.prompt)}
-                      className="inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-slate-900/90 hover:bg-cyan-950/60 text-slate-300 hover:text-cyan-200 border border-slate-800 hover:border-cyan-500/40 transition-colors shadow-xs cursor-pointer group"
-                    >
-                      <span>{pill.prompt}</span>
-                      <ArrowRight className="w-2.5 h-2.5 text-cyan-400 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
-                    </button>
-                  ))}
-                </div>
-              );
-            })()}
           </div>
         )}
       </div>

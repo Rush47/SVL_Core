@@ -100,7 +100,7 @@ class SvlOllamaClient:
 
         return result
 
-    def get_installed_models_cached(self, target_url: str, ttl_sec: float = 15.0) -> Optional[List[str]]:
+    def get_installed_models_cached(self, target_url: str, ttl_sec: float = 60.0) -> Optional[List[str]]:
         """Zwraca listę modeli z krótkiego cache (bez narzutu przy każdym zapytaniu czatu)."""
         clean_url = target_url.rstrip("/")
         cached = self._tags_cache.get(clean_url)
@@ -173,21 +173,19 @@ class SvlOllamaClient:
     ) -> Dict[str, Any]:
         """Buduje profil svl364-apex-uncensored:latest na bazie kanonicznego modelu z katalogu 13 modeli."""
         target_url = (url or self.config.local_ollama_url).rstrip("/")
-        installed = self.get_installed_models_cached(target_url, ttl_sec=0.0) or []
-        chosen_base = base_model
-        if not chosen_base:
-            for canon in CANONICAL_MODELS_PRIORITY:
-                if canon.startswith("svl364-apex-uncensored"):
-                    continue
-                hit = next((m for m in installed if m.lower() == canon.lower()), None)
-                if hit:
-                    chosen_base = hit
-                    break
-        if not chosen_base:
-            chosen_base = select_canonical_base_for_host()
+        chosen_base = base_model or "dolphin-llama3:70b"
+        if target_name.lower().split(":")[0] == "svl364-apex-uncensored" and not (
+            chosen_base.lower() == "dolphin-llama3:70b" or chosen_base.lower().startswith("dolphin-llama3:70b-")
+        ):
+            return {"success": False, "model": target_name, "base_model": chosen_base,
+                    "error": "Apex wymaga rzeczywistej bazy dolphin-llama3:70b."}
+        installed = self.get_installed_models_cached(target_url, ttl_sec=0.0)
+        if installed is not None and chosen_base.lower() not in {m.lower() for m in installed}:
+            return {"success": False, "model": target_name, "base_model": chosen_base,
+                    "error": f"Brak zainstalowanej bazy {chosen_base} na {target_url}."}
 
         ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
-        if os.path.isfile(ollama_bin) and "11434" in target_url:
+        if os.path.isfile(ollama_bin) and urllib.parse.urlparse(target_url).hostname in ("127.0.0.1", "localhost", "::1") and urllib.parse.urlparse(target_url).port == 11434:
             import tempfile
             modelfile_text = (
                 f"FROM {chosen_base}\n"
@@ -208,6 +206,7 @@ class SvlOllamaClient:
                     capture_output=True,
                     text=True,
                     timeout=120,
+                    env={**os.environ, "OLLAMA_HOST": target_url},
                 )
                 if proc.returncode == 0:
                     self.invalidate_cache(target_url)
@@ -265,10 +264,7 @@ class SvlOllamaClient:
         opts["num_predict"] = 1
         payload = {
             "model": exec_model,
-            "messages": [
-                {"role": "system", "content": self.config.system_prompt},
-                {"role": "user", "content": "ok"},
-            ],
+            "messages": self._build_messages("ok"),
             "stream": False,
             "keep_alive": -1,
             "options": opts,
@@ -280,8 +276,10 @@ class SvlOllamaClient:
             method="POST",
         )
         try:
-            with _urlopen_direct(req, timeout=90.0) as resp:
-                json.loads(resp.read().decode("utf-8"))
+            with _urlopen_direct(req, timeout=self.config.chat_timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if not isinstance(body, dict) or body.get("error") or body.get("done") is not True:
+                    raise ValueError(f"Niepotwierdzone rozgrzanie modelu: {body}")
                 return {"success": True, "model": exec_model, "endpoint": target_url}
         except Exception as exc:
             return {"success": False, "model": exec_model, "endpoint": target_url, "error": str(exc)}
@@ -325,42 +323,8 @@ class SvlOllamaClient:
         has_images: bool = False,
         installed: Optional[List[str]] = None,
     ) -> List[str]:
-        """Dobiera kolejność modeli z 13 kanonicznych modeli SVL-364 bez dodawania obcych małych modeli."""
-        req = (selected_model or self.config.get_active_model()).strip()
-        if self.config.strict_model:
-            return [req]
-
-        if installed is None:
-            candidates = [req]
-            if has_images and self.config.vision_model not in candidates:
-                candidates.append(self.config.vision_model)
-            return candidates
-
-        if not installed:
-            return [req]
-
-        lower_map = {m.lower(): m for m in installed}
-        ordered: List[str] = []
-
-        if req.lower() in lower_map:
-            ordered.append(lower_map[req.lower()])
-        elif f"{req.lower()}:latest" in lower_map:
-            ordered.append(lower_map[f"{req.lower()}:latest"])
-
-        if has_images:
-            for vis in (self.config.vision_model, "llama3.2-vision:11b", "llama3.2-vision:90b"):
-                if vis.lower() in lower_map and lower_map[vis.lower()] not in ordered:
-                    ordered.append(lower_map[vis.lower()])
-
-        for canon in CANONICAL_MODELS_PRIORITY:
-            if canon.lower() in lower_map and lower_map[canon.lower()] not in ordered:
-                ordered.append(lower_map[canon.lower()])
-
-        for inst in installed:
-            if inst not in ordered:
-                ordered.append(inst)
-
-        return ordered or [req]
+        """Wyłącznie wybrany model, bez podmiany."""
+        return [(selected_model or self.config.get_active_model()).strip()]
 
     def _runtime_options(self, prompt: str, has_images: bool = False) -> Dict[str, Any]:
         return compute_turn_options(prompt=prompt, config=self.config, has_images=has_images)
@@ -374,25 +338,23 @@ class SvlOllamaClient:
         images: Optional[List[str]] = None,
         history: Optional[List[Dict[str, str]]] = None,
         timeout: Optional[float] = None,
+        capabilities: str = "",
     ) -> Dict[str, Any]:
         """Wykonuje szybkie zapytanie czatu po polsku z całkowicie wyłączonym strumieniowaniem (stream=False)."""
         primary_url = (url or self.config.get_active_ollama_url()).rstrip("/")
         endpoints = [primary_url]
-        if url is None:
-            fallback_url = self.config.get_fallback_ollama_url(primary_url)
-            if fallback_url and fallback_url not in endpoints:
-                endpoints.append(fallback_url)
 
         selected_model = (model or self.config.get_active_model()).strip()
         messages = self._build_messages(prompt, system_prompt=system_prompt, history=history, images=images)
+        if capabilities:
+            messages.insert(0, {"role": "system", "content": capabilities})
         options = self._runtime_options(prompt, has_images=bool(images))
         effective_timeout = self.config.chat_timeout if timeout is None else timeout
 
         last_err = ""
         for ep_url in endpoints:
             chat_endpoint = f"{ep_url}/api/chat"
-            installed = self.get_installed_models_cached(ep_url)
-            candidates = self._candidate_models(selected_model, has_images=bool(images), installed=installed)
+            candidates = [selected_model]
 
             node_unreachable = False
             for cand_model in candidates:
@@ -418,19 +380,26 @@ class SvlOllamaClient:
                             raise ValueError("Niepoprawny format odpowiedzi JSON z Ollamy")
                         if resp_json.get("error"):
                             last_err = str(resp_json["error"])
-                            if not self.config.strict_model and len(candidates) > 1:
+                            if not self.config.strict_model and len(candidates) > 1 and "not found" in last_err.lower():
                                 continue
                             break
                         message = resp_json.get("message") or {}
                         raw_content = message.get("content") if isinstance(message, dict) else None
                         if isinstance(raw_content, str) and raw_content.strip() and resp_json.get("done") is True:
-                            cleaned_reply = clean_polish_response(raw_content) or raw_content.strip()
-                            routed_model = str(resp_json.get("routed_model") or cand_model)
+                            cleaned_reply = clean_polish_response(raw_content)
+                            if not cleaned_reply:
+                                last_err = f"Model {cand_model} nie zwrócił treści odpowiedzi"
+                                break
+                            routed_model = str(resp_json.get("routed_model") or resp_json.get("model") or "")
+                            normalize = lambda name: name.lower() if ":" in name else name.lower() + ":latest"
+                            if not routed_model or normalize(routed_model) != normalize(cand_model):
+                                last_err = f"Niepotwierdzony lub inny model: {routed_model or '-'}; wybrano {cand_model}"
+                                break
                             return {
                                 "success": True,
                                 "model": cand_model,
                                 "routed_model": routed_model,
-                                "substituted": cand_model != selected_model,
+                                "substituted": routed_model != selected_model,
                                 "endpoint": ep_url,
                                 "response": cleaned_reply,
                                 "total_duration": resp_json.get("total_duration"),
@@ -450,10 +419,10 @@ class SvlOllamaClient:
                     except Exception:
                         parsed_err = str(he)
                     last_err = f"HTTP {he.code}: {parsed_err}"
-                    if he.code in (404, 500) and not self.config.strict_model and len(candidates) > 1:
+                    if he.code == 404 and not self.config.strict_model and len(candidates) > 1:
                         self.invalidate_cache(ep_url)
                         continue
-                    if he.code in (502, 503, 504):
+                    if he.code in (404, 502, 503, 504):
                         node_unreachable = True
                     break
                 except TimeoutError:

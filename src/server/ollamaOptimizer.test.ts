@@ -28,8 +28,8 @@ test('isAutoGitSyncAllowed is false by default even if interval is configured', 
 
 test('getOllamaRuntimeOptions returns fast tuned defaults and respects overrides', () => {
   const defaults = getOllamaRuntimeOptions({});
-  assert.equal(defaults.num_ctx, 2048);
-  assert.equal(defaults.num_predict, 512);
+  assert.equal(defaults.num_ctx, 8192);
+  assert.equal(defaults.num_predict, 2048);
   assert.equal(defaults.keep_alive, -1);
   assert.deepEqual(defaults.perf, {});
   assert.equal(defaults.historyTurns, 12);
@@ -166,17 +166,18 @@ test('warmOllamaModels ładuje każdy model raz z keep_alive i raportuje błędy
 
 test('selectOllamaTurnOptions tunes short, normal, detailed and tool turns while keeping num_batch fast', () => {
   const base = getOllamaRuntimeOptions({});
-  const shortOpts = selectOllamaTurnOptions('ping', base, { env: {} });
-  assert.equal(shortOpts.num_predict, 384);
+  const shortOpts = selectOllamaTurnOptions('Cześć Jyn!', base, { env: {} });
+  assert.equal(shortOpts.num_predict, 160);
   assert.equal(shortOpts.historyTurns, 8);
   assert.equal(shortOpts.maxTurnChars, 1200);
   assert.equal(shortOpts.perf.num_batch, 512);
 
   const detailedOpts = selectOllamaTurnOptions('Napisz szczegółowy raport i kod skryptu dla jądra', base, { env: {} });
-  assert.equal(detailedOpts.num_predict, 1024);
+  assert.equal(detailedOpts.num_predict, 2048);
 
   const toolOpts = selectOllamaTurnOptions('Sprawdź status', base, { env: {}, hasTools: true });
-  assert.equal(toolOpts.num_ctx, 4096);
+  assert.equal(toolOpts.num_ctx, 8192);
+  assert.equal(selectOllamaTurnOptions('Raport', base, { env: {}, estimatedPromptChars: 9000 }).num_ctx, 8192);
 });
 
 test('buildCompactOllamaSystemContext strips volatile per-turn telemetry so Ollama KV cache prefix hits', () => {

@@ -32,7 +32,7 @@ export function formatMemoryPromptContext(
   if (!Array.isArray(memories) || memories.length === 0) return '';
   const seen = new Set<string>();
   const cleaned = memories
-    .filter((m) => m && typeof m.content === 'string')
+    .filter((m) => m && typeof m.content === 'string' && !/SQLite\s+WAL\s+Fallback|bufor jądra SVL|Słyszę Cię doskonale,\s*Mateuszu\.\s*Jestem z Tobą przy konsoli/i.test(m.content))
     .map((m) => ({
       kind: String(m.kind || 'fact').toLowerCase(),
       content: m.content.trim().replace(/\s+/g, ' ').slice(0, 320),
@@ -50,7 +50,7 @@ export function formatMemoryPromptContext(
   if (cleaned.length === 0) return '';
   const lines = cleaned.map((m) => `- [${KIND_LABELS[m.kind] || m.kind.toUpperCase()}] ${m.content}`);
   return (
-    `Trwała pamięć agenta ${agentName} z bazy SQLite (używaj jej naturalnie w rozmowie, gdy użytkownik pyta o wcześniejsze ustalenia lub fakty):\n` +
+    `Trwała pamięć agenta ${agentName} z bazy SQLite:\n` +
     lines.join('\n')
   );
 }
@@ -117,13 +117,6 @@ export function buildProactiveStarterPrompt(
   operatorName = 'Mateusz',
   memoryContext = '',
 ): string {
-  const speakerLabel = speaker;
-  const memoryHint = memoryContext
-    ? ` Jeśli pasuje to naturalnie do rozmowy, możesz delikatnie nawiązać do swojej trwałej pamięci.`
-    : '';
-  return (
-    `[Rozpocznij swobodną, naturalną rozmowę po polsku jako ${speakerLabel} z ${operatorName} (Operatorem). ` +
-    `Przywitaj się krótko, podziel jedną ciekawą myślą lub obserwacją i zadaj jedno otwarte pytanie, żeby zachęcić do dialogu.` +
-    `${memoryHint}]`
-  );
+  // Same dane uczestników, bez instrukcji dotyczącej tonu lub treści wypowiedzi.
+  return `[Rozmowa: ${speaker}, ${operatorName}]${memoryContext ? ' [Kontekst trwałej pamięci dostępny]' : ''}`;
 }

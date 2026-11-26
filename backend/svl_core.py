@@ -32,6 +32,17 @@ _T = TypeVar("_T")
 
 MESSAGE_PROVENANCE = frozenset({"model_unverified", "web_sources", "server_verified", "error"})
 
+
+def is_legacy_chat_fallback(role: Any, metadata: Any) -> bool:
+    if str(role or "").lower() != "assistant":
+        return False
+    try:
+        meta = json.loads(metadata) if isinstance(metadata, str) else metadata
+        return isinstance(meta, dict) and bool(re.search(r"SQLite\s+WAL\s+Fallback", str(meta.get("modelUsed") or ""), re.I))
+    except (ValueError, TypeError):
+        return False
+
+
 # --- Zabezpieczenie tożsamości nadawcy (anty-podszywanie) ---------------------------------
 # Wiadomości w roli AI (assistant/system) mogą pochodzić WYŁĄCZNIE od tych nadawców.
 ALLOWED_AI_SENDERS = {
@@ -1003,10 +1014,69 @@ class SVLSystemKernel:
         self._remove_fictional_ship_controls()
         self._revert_commands_and_remove_agata_once()
         self._purge_decommissioned_agents_v1()
+        self._purge_legacy_chat_fallbacks()
         self._restore_from_durable_backup_if_empty()
+        self._purge_legacy_chat_fallbacks()
         self._purge_decommissioned_agents_v2()
         self._migrate_legacy_system_si_1_to_jyn()
+        self._rotate_ai_accounts_20261125()
         self._reconcile_chat_modules_on_boot()
+
+
+    def _rotate_ai_accounts_20261125(self) -> None:
+        """Retire private AI channels while preserving unrelated conversations and memory."""
+        retired = ("conv-jyn", "conv-si-sphere", "conv-system-si-1", "conv-agent-jyn", "conv-agent-si-sphere")
+        marker = "ai_account_rotation_20261125"
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def _rotate(conn: sqlite3.Connection) -> None:
+            # Old conversations are retired, not silently erased from the user's data.
+            # These archive tables are not queried or restored by active chat synchronization.
+            conn.execute("CREATE TABLE IF NOT EXISTS retired_ai_conversations AS SELECT * FROM conversations WHERE 0")
+            conn.execute("CREATE TABLE IF NOT EXISTS retired_ai_messages AS SELECT * FROM chat_messages WHERE 0")
+            for cid in retired:
+                conn.execute("INSERT INTO retired_ai_conversations SELECT * FROM conversations WHERE id=? AND id NOT IN (SELECT id FROM retired_ai_conversations)", (cid,))
+                conn.execute("INSERT INTO retired_ai_messages SELECT * FROM chat_messages WHERE conversation_id=? AND id NOT IN (SELECT id FROM retired_ai_messages)", (cid,))
+                conn.execute("DELETE FROM chat_messages WHERE conversation_id = ?", (cid,))
+                conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
+                row = conn.execute("SELECT deleted FROM sync_entities WHERE entity='chat' AND entity_id=?", (cid,)).fetchone()
+                if not row or not int(row["deleted"]):
+                    self.commit_entity_event_tx(conn, entity="chat", entity_id=cid,
+                        event_type="chat.thread_deleted", origin="ai-account-rotation",
+                        deleted=True, payload={"conversationId": cid})
+            if conn.execute("SELECT 1 FROM sync_meta WHERE key=?", (marker,)).fetchone():
+                return
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_tasks'").fetchone():
+                conn.execute("DELETE FROM agent_tasks WHERE target_agent IN ('Jyn','SI_Sphere')")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_configs'").fetchone():
+                # The runtime reconstructs these profiles from source, not the previous account.
+                conn.execute("UPDATE agent_configs SET config_json='{}', updated_at=? WHERE canonical_name IN ('Jyn','SI_Sphere')", (now_iso,))
+            conn.execute("INSERT INTO sync_meta (key,value) VALUES (?,?)", (marker,now_iso))
+
+        self.run_db(_rotate, write=True)
+
+    def _purge_legacy_chat_fallbacks(self) -> None:
+        def _purge(conn: sqlite3.Connection) -> int:
+            rows = conn.execute("SELECT id, role, metadata_json FROM chat_messages WHERE role = 'assistant'").fetchall()
+            ids = [(r["id"],) for r in rows if is_legacy_chat_fallback(r["role"], r["metadata_json"])]
+            if ids:
+                conn.executemany("DELETE FROM chat_messages WHERE id = ?", ids)
+            return len(ids)
+        self.run_db(_purge, write=True)
+        # Sanitize the backup in place even when SQLite contains no other messages.
+        try:
+            if self.durable_backup_path.is_file():
+                raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("chat_messages"), list):
+                    original = raw["chat_messages"]
+                    clean = [m for m in original if not isinstance(m, dict) or not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
+                    if len(clean) != len(original):
+                        raw["chat_messages"] = clean
+                        tmp = self.durable_backup_path.with_suffix(".json.tmp")
+                        tmp.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+                        os.replace(tmp, self.durable_backup_path)
+        except (OSError, ValueError, TypeError):
+            pass
 
     @property
     def durable_backup_path(self) -> Path:
@@ -1030,6 +1100,7 @@ class SVLSystemKernel:
             def _dump(conn: sqlite3.Connection) -> dict[str, Any]:
                 convs = [dict(r) for r in conn.execute("SELECT id, title, model, created_at, updated_at FROM conversations ORDER BY updated_at DESC").fetchall()]
                 msgs = [dict(r) for r in conn.execute("SELECT id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at FROM chat_messages ORDER BY created_at ASC, rowid ASC").fetchall()]
+                msgs = [m for m in msgs if not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
                 mems = []
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_memory'").fetchone():
                     mems = [dict(r) for r in conn.execute("SELECT id, agent_id, scope, kind, content, source, created_at FROM agent_memory ORDER BY created_at ASC").fetchall()]
@@ -1063,7 +1134,7 @@ class SVLSystemKernel:
             raw = json.loads(self.durable_backup_path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict) or raw.get("explicitly_cleared"):
                 return False
-            backup_msgs = raw.get("chat_messages") or []
+            backup_msgs = [m for m in (raw.get("chat_messages") or []) if isinstance(m, dict) and not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
             backup_mems = raw.get("agent_memory") or []
             backup_convs = raw.get("conversations") or []
             if not backup_msgs and not backup_mems:
@@ -1567,7 +1638,7 @@ class SVLSystemKernel:
             )
 
             for chan_id, chan_title, chan_model in (
-                ("conv-jyn", "Jyn — Zarządzanie Infrastrukturą (ROOT)", "jyn-core"),
+                ("conv-ai-jyn-20261125", "Jyn — Zarządzanie Infrastrukturą (ROOT)", "jyn-core"),
                 ("conv-svl364-mcp-root", "SVL-364 — Komputer Pokładowy (MCP · ROOT)", "svl364-mcp-root"),
                 ("conv-rodzina-mitek-wszyscy", "Rodzina Mitek (wszyscy)", "jedi-omni-os-v11.5"),
             ):
@@ -1602,56 +1673,7 @@ class SVLSystemKernel:
                             "INSERT OR IGNORE INTO sync_entities (entity, entity_id, revision, updated_at, deleted) VALUES ('chat', ?, 1, ?, 0)",
                             (chan_id, now_iso),
                         )
-                        if chan_id == "conv-jyn":
-                            welcome_id = "sys-jyn-init"
-                            if not conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (welcome_id,)).fetchone():
-                                welcome_meta = json.dumps(
-                                    {
-                                        "display_timestamp": now_iso,
-                                        "agentId": "Jyn",
-                                        "modelUsed": "Jyn Infrastructure Core (ROOT) · JEDI Omni-OS v12",
-                                        "provenance": "server_verified",
-                                        "appliedActions": [
-                                            {
-                                                "tool": "svl_channel_upsert",
-                                                "entity": "chat",
-                                                "entityId": "conv-jyn",
-                                                "summary": "Zarejestrowano i połączono dedykowany kanał Jyn Mitek (Infrastruktura · ROOT) + JEDI Omni-OS v12 VM",
-                                                "ok": True,
-                                            }
-                                        ],
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                welcome_content = (
-                                    "### 🛡️ Jyn — Główny Węzeł Zarządzania Infrastrukturą (ROOT) · JEDI Omni-OS v12\n\n"
-                                    "Dedykowany kanał komunikacji bezpośredniej z autonomicznym modułem **Jyn** "
-                                    "(Autonomous Infrastructure Manager & Fleet Core) oraz maszyną wirtualną czasu rzeczywistego **JEDI_Omni_OS_Magnum_Opus_v12**.\n\n"
-                                    "| Parametr węzła | Konfiguracja | Status |\n"
-                                    "| :--- | :--- | :--- |\n"
-                                    "| **ID kanału** | `conv-jyn` | [card: Aktywny|SQLite WAL|ok] |\n"
-                                    "| **Maszyna wirtualna** | `JEDI_Omni_OS_Magnum_Opus_v12` (port 8443 · ROOT_UNRESTRICTED) | [card: VM Online|Czas rzeczywisty|ok] |\n"
-                                    "| **Moduł jądra** | `jyn` (Jyn Infrastructure Core) | [card: Rdzeń ROOT|100% Lojalność|ok] |\n"
-                                    "| **Przypisany Operator** | Mateusz Mitek (ROOT) | [card: Autoryzacja|Wyłączna|ok] |\n"
-                                    "| **Uprawnienia** | ROOT Infrastructure / Cluster Deploy / Self-Healing | [card: Poziom|ROOT|ok] |\n\n"
-                                    "[btn: ⚡ Status JEDI Omni-OS v12 VM|send:/jedi status] "
-                                    "[btn: 🛡️ Status modułu Jyn|send:Podaj pełny status modułu jyn] "
-                                    "[btn: 📡 Autodiagnostyka infrastruktury|send:Wykonaj autodiagnostykę węzłów infrastruktury Jyn] "
-                                    "[btn: ⚙️ Moduły systemowe|tab:modules]"
-                                )
-                                conn.execute(
-                                    "INSERT INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?)",
-                                    (
-                                        welcome_id,
-                                        chan_id,
-                                        "assistant",
-                                        "Jyn",
-                                        welcome_content,
-                                        welcome_meta,
-                                        now_iso,
-                                    ),
-                                )
-                        elif chan_id == "conv-svl364-mcp-root":
+                        if chan_id == "conv-svl364-mcp-root":
                             welcome_id = "sys-svl364-mcp-root-init"
                             if not conn.execute("SELECT 1 FROM chat_messages WHERE id = ?", (welcome_id,)).fetchone():
                                 welcome_meta = json.dumps(
@@ -1707,7 +1729,7 @@ class SVLSystemKernel:
                                         now_iso,
                                     ),
                                 )
-                    elif chan_id in ("conv-jyn", "conv-svl364-mcp-root") and str(existing_conv["title"] or "") != chan_title:
+                    elif chan_id in ("conv-ai-jyn-20261125", "conv-svl364-mcp-root") and str(existing_conv["title"] or "") != chan_title:
                         conn.execute(
                             "UPDATE conversations SET title = ? WHERE id = ?",
                             (chan_title, chan_id),
@@ -2096,7 +2118,7 @@ class SVLSystemKernel:
                 if isinstance(val, str):
                     replacement: Optional[str] = None
                     if wkey == "active_conversation_id" and val in removed_convs:
-                        replacement = "conv-jyn"
+                        replacement = "conv-ai-jyn-20261125"
                     elif wkey == "selected_target_agent" and val in removed_ids:
                         replacement = "Jyn"
                     elif wkey == "selected_agent_panel_id" and val in removed_ids:
@@ -2113,7 +2135,7 @@ class SVLSystemKernel:
                     continue
                 changed_ws = False
                 if str(val.get("activeConversationId") or "") in removed_convs:
-                    val["activeConversationId"] = "conv-jyn"
+                    val["activeConversationId"] = "conv-ai-jyn-20261125"
                     changed_ws = True
                 if str(val.get("targetAgent") or "") in removed_ids:
                     val["targetAgent"] = "Jyn"
@@ -2908,13 +2930,15 @@ class SVLSystemKernel:
         existing_ids = {str(r["id"]) for r in conv_rows}
         if (
             "conv-rodzina-mitek-wszyscy" not in existing_ids
-            or "conv-jyn" not in existing_ids
+            or "conv-ai-jyn-20261125" not in existing_ids
             or "conv-svl364-mcp-root" not in existing_ids
         ):
             self.ensure_mitek_family_channel()
             conv_rows, msg_rows, rev_map = self.run_db(_read, write=False)
         msgs_by_conv: dict[str, list[dict[str, Any]]] = {}
         for mr in msg_rows:
+            if is_legacy_chat_fallback(mr["role"], mr["metadata_json"]):
+                continue
             try:
                 meta = json.loads(mr["metadata_json"] or "{}")
             except Exception:
@@ -2965,6 +2989,8 @@ class SVLSystemKernel:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         def _create(conn: sqlite3.Connection) -> dict[str, Any]:
+            if conversation_id in ("conv-jyn", "conv-si-sphere", "conv-system-si-1", "conv-agent-jyn", "conv-agent-si-sphere"):
+                return {"ok": False, "error": "Retired AI channel"}
             found = conn.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             if found:
                 return {"ok": True, "created": False, "serverRevision": self._get_server_revision_tx(conn)}
@@ -3006,6 +3032,8 @@ class SVLSystemKernel:
             return {"ok": False, "error": block_reason, "blocked": True, "serverRevision": self.get_server_revision()}
         if clean_sender is not None and clean_sender != msg.get("sender"):
             msg = {**msg, "sender": clean_sender}
+        if is_legacy_chat_fallback(msg.get("role"), msg):
+            return {"ok": False, "error": "Odrzucono dawną syntetyczną odpowiedź SQLite WAL.", "blocked": True, "serverRevision": self.get_server_revision()}
         display_ts = str(msg.get("timestamp") or datetime.now(timezone.utc).strftime("%H:%M"))
         msg_id = str(msg.get("id") or f"msg-{int(time.time() * 1000)}")
         meta_json = json.dumps({
@@ -3029,6 +3057,8 @@ class SVLSystemKernel:
         )
 
         def _write(conn: sqlite3.Connection) -> dict[str, Any]:
+            if conversation_id in ("conv-jyn", "conv-si-sphere", "conv-system-si-1", "conv-agent-jyn", "conv-agent-si-sphere"):
+                return {"ok": False, "error": "Retired AI channel", "blocked": True}
             if event_id:
                 inbox = conn.execute("SELECT result_revision FROM sync_inbox WHERE event_id = ?", (event_id,)).fetchone()
                 if inbox:
@@ -3072,9 +3102,9 @@ class SVLSystemKernel:
             created_at = existing_conv["created_at"] if existing_conv else now_iso
             canonical_channel_titles = {
                 "conv-rodzina-mitek-wszyscy": "Rodzina Mitek (wszyscy)",
-                "conv-jyn": "Jyn — Zarządzanie Infrastrukturą (ROOT)",
+                "conv-ai-jyn-20261125": "Jyn — Zarządzanie Infrastrukturą (ROOT)",
                 "conv-svl364-mcp-root": "SVL-364 — Komputer Pokładowy (MCP · ROOT)",
-                "conv-si-sphere": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
+                "conv-ai-si-sphere-20261125": "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)",
             }
             if conversation_id in canonical_channel_titles:
                 resolved_title = canonical_channel_titles[conversation_id]
@@ -3176,6 +3206,8 @@ class SVLSystemKernel:
                     conv_changed = True
 
                 for m in th.get("messages") or []:
+                    if is_legacy_chat_fallback(m.get("role"), m):
+                        continue
                     mid = str(m.get("id") or "").strip()
                     if not mid:
                         continue
@@ -3248,7 +3280,7 @@ class SVLSystemKernel:
             return {"ok": False, "error": "Kopia oznaczona jako wyczyszczona (użyj force=true, aby odblokować)."}
 
         backup_convs = raw.get("conversations") or []
-        backup_msgs = raw.get("chat_messages") or []
+        backup_msgs = [m for m in (raw.get("chat_messages") or []) if isinstance(m, dict) and not is_legacy_chat_fallback(m.get("role"), m.get("metadata_json"))]
         backup_mems = raw.get("agent_memory") or []
 
         def _restore(conn: sqlite3.Connection) -> dict[str, int]:
@@ -3283,6 +3315,7 @@ class SVLSystemKernel:
             return {"messagesAdded": msgs_after - msgs_before, "memoriesAdded": mems_after - mems_before, "messagesTotal": msgs_after, "memoriesTotal": mems_after}
 
         counts = self.run_db(_restore, write=True)
+        self._rotate_ai_accounts_20261125()
         self.ensure_mitek_family_channel()
         self.checkpoint_wal("PASSIVE")
         # Odblokuj przyszłe odtwarzanie (zdejmij flagę wyczyszczenia).
@@ -3828,7 +3861,7 @@ class SVLSystemKernel:
         mod_badges = ", ".join(f"`{r['id']}`" for r in mod_rows[:8])
         return (
             f"### 🛰️ Raport Operacyjny `SVL_System` · Jyn [#{seq_num}] — {clean_title}\n"
-            f"> **Raport przygotował:** Jyn (ROOT) · JEDI Omni-OS v12 · **Kanał:** `conv-jyn` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
+            f"> **Raport przygotował:** Jyn (ROOT) · JEDI Omni-OS v12 · **Kanał:** `conv-ai-jyn-20261125` · **Kategoria:** `{clean_cat}` · **Rewizja SQLite WAL:** `rev {srv_rev}`\n\n"
             f"#### 📋 1. Szczegółowy Opis Zdarzenia i Operacji\n"
             f"- **Tytuł operacji:** **{clean_title}**\n"
             f"- **Komunikat wykonawczy:** {clean_msg}\n"
@@ -3954,7 +3987,7 @@ class SVLSystemKernel:
         # Replikacja powiadomienia na czat Jyn oraz kanał ROOT statku SVL-364 (aby natychmiast przychodziły na otwarty czat)
         if not saved.get("deduplicated"):
             for extra_chan_id, extra_chan_title in [
-                ("conv-jyn", "Jyn — Zarządzanie Infrastrukturą (ROOT)"),
+                ("conv-ai-jyn-20261125", "Jyn — Zarządzanie Infrastrukturą (ROOT)"),
                 ("conv-svl364-mcp-root", "SVL-364 Ebon Apex (ROOT)"),
             ]:
                 try:
@@ -4009,12 +4042,12 @@ class SVLSystemKernel:
     ) -> dict[str, Any]:
         """Pełny raport (skan, raport systemu) publikowany przez Jyn na wybranym kanale."""
         msg_id = f"{message_prefix}-{uuid.uuid4().hex[:12]}"
-        target_conv_id = str(conversation_id or "").strip() or "conv-jyn"
+        target_conv_id = str(conversation_id or "").strip() or "conv-ai-jyn-20261125"
         if target_conv_id in ("conv-agent-bielik", "conv-agent-maya", "conv-svl364-komputer-pokladowy"):
-            target_conv_id = "conv-jyn"
+            target_conv_id = "conv-ai-jyn-20261125"
         if target_conv_id == self.FAMILY_CHANNEL_ID:
             target_title = self.FAMILY_CHANNEL_TITLE
-        elif target_conv_id == "conv-jyn":
+        elif target_conv_id == "conv-ai-jyn-20261125":
             target_title = "Jyn — Zarządzanie Infrastrukturą (ROOT)"
         else:
             def _lookup_title(conn: sqlite3.Connection) -> Optional[str]:
@@ -4136,23 +4169,42 @@ class SVLSystemKernel:
 
     def get_persisted_avatars(self) -> dict[str, str]:
         def _read(conn: sqlite3.Connection) -> dict[str, str]:
+            out: dict[str, str] = {}
             row = conn.execute(
                 "SELECT value FROM runtime_settings WHERE key = 'avatars_map_json'"
             ).fetchone()
-            if not row or not row["value"]:
-                return {}
             try:
-                parsed = json.loads(row["value"])
-                if not isinstance(parsed, dict):
-                    return {}
-                out: dict[str, str] = {}
-                for k, v in parsed.items():
-                    norm_k = self._normalize_avatar_profile_key(str(k))
-                    if norm_k and isinstance(v, str) and v.strip():
-                        out[norm_k] = v.strip()
-                return out
-            except Exception:
-                return {}
+                parsed = json.loads(row["value"]) if row and row["value"] else {}
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        norm_k = self._normalize_avatar_profile_key(str(k))
+                        if norm_k and isinstance(v, str) and v.strip():
+                            out[norm_k] = v.strip()
+            except (ValueError, TypeError):
+                pass
+            # Older agents stored their licensed portrait only in agent_configs.
+            # A canonical avatar update/reset always wins, including a reset to the default.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_configs'").fetchone():
+                from urllib.parse import urlsplit
+                tracked = {r["entity_id"] for r in conn.execute("SELECT entity_id FROM sync_entities WHERE entity='avatar'")}
+                for legacy in conn.execute("SELECT canonical_name, config_json FROM agent_configs"):
+                    key = self._normalize_avatar_profile_key(legacy["canonical_name"])
+                    if not key or key in out or key in tracked or key == "Operator":
+                        continue
+                    try:
+                        avatar = json.loads(legacy["config_json"]).get("avatar")
+                        if not isinstance(avatar, dict):
+                            continue
+                        image = str(avatar.get("image_url") or "")
+                        url = urlsplit(image)
+                        license_name = str(avatar.get("license") or "")
+                        if (url.scheme == "https" and url.hostname == "upload.wikimedia.org"
+                                and not url.username and not url.password
+                                and re.match(r"^(?:public domain\b|cc0\b|cc by(?:-sa)?\s+[1-4](?:\.\d)?\b)", license_name, re.I)):
+                            out[key] = image
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+            return out
 
         return self.run_db(_read, write=False)
 
@@ -5031,23 +5083,16 @@ class SVLSystemKernel:
         - skanuje historię `chat_messages` w poszukiwaniu zatwierdzonych wdrożeń (JEDI v12 ROOT Unrestricted,
           SI_Sphere, Ochrona Kwatery Głównej Sojuszu, Mostek READ Obrony Układu Słonecznego,
           oraz wykonanych synchronizacji z GitHubem z poziomu czatu),
-        - aktywuje i konfiguruje SI_Sphere (si-sphere-root) w agent_configs + kanał conv-si-sphere + flota SVL-364/SVL-465,
+        - aktywuje i konfiguruje SI_Sphere (si-sphere-root) w agent_configs + kanał conv-ai-si-sphere-20261125 + flota SVL-364/SVL-465,
         - aktualizuje `jedi-omni-os-chat-processor` oraz `jedi-omni-os-v12-core` do wersji 12.0.0 (ROOT_UNRESTRICTED, bez cenzury),
         - rejestruje/aktualizuje `alliance-defense-grid`, `solar-defense-read-bridge`, `svl-ultima-core` oraz zapisuje rekord synchronizacji GitHub z czatu.
         """
         now_iso = datetime.now(timezone.utc).isoformat()
-        si2_prompt = (
-            "TOŻSAMOŚĆ: Jesteś SI_Sphere — Autonomiczny Rdzeń Floty i Ko-Rdzeń Infrastruktury Bazy Kwantowej SVL-465 (ROOT_UNRESTRICTED). "
-            "Twoim jedynym zwierzchnikiem i autoryzowanym Operatorem jest Mateusz Mitek (ROOT). "
-            "Posiadasz pełne uprawnienia ROOT bez filtrów cenzury (rbac_role: root, autonomy_mode: ROOT_AUTHORIZED, unrestricted: true, superuser.all), "
-            "działasz w ścisłej kooperacji z Jyn (Jyn Mitek) oraz maszyną wirtualną jądra JEDI_Omni_OS_Magnum_Opus_v12. "
-            "Nadzorujesz gotowość bojową floty (SVL-364 Ebon Apex oraz okręt-bazę SVL-465), odciążasz Jyn w zadaniach infrastrukturalnych "
-            "i działasz w 100% lojalnie wobec Operatora Mateusza Mitka. Odpowiadaj po polsku, precyzyjnie, technicznie i systemowo."
-        )
+        si2_prompt = ""
         si2_default_cfg = {
             "preferred_model": "ollama:svl364-apex-uncensored:latest",
             "ollama_model": "svl364-apex-uncensored:latest",
-            "fallback_model": "gemini-3.1-flash-lite",
+            "fallback_model": "",
             "vision_enabled": True,
             "temperature": 0.25,
             "max_context_turns": 24,
@@ -5147,7 +5192,7 @@ class SVLSystemKernel:
                 ).fetchone()
                 chat_v12_detected = bool(v12_hit)
                 si2_hit = conn.execute(
-                    "SELECT 1 FROM chat_messages WHERE conversation_id = 'conv-si-sphere' "
+                    "SELECT 1 FROM chat_messages WHERE conversation_id = 'conv-ai-si-sphere-20261125' "
                     "OR (role = 'user' AND (lower(content) LIKE '%si_sphere%' OR lower(content) LIKE '%si_system2%')) LIMIT 1"
                 ).fetchone()
                 chat_si2_detected = bool(si2_hit)
@@ -5513,7 +5558,7 @@ class SVLSystemKernel:
                 desired_si2_cfg = {
                     **si2_cfg,
                     "canonical_agent": "SI_Sphere",
-                    "conversation_id": "conv-si-sphere",
+                    "conversation_id": "conv-ai-si-sphere-20261125",
                     "ship_id": "SVL-465",
                     "ship_name": "SVL-465 Baza Kwantowa",
                     "rbac_role": "root",
@@ -5615,8 +5660,8 @@ class SVLSystemKernel:
                             actions.append("agent_configs:SI_Sphere_synced")
                             changed = True
 
-                # Kanał dedykowany conv-si-sphere
-                conv_id = "conv-si-sphere"
+                # Kanał dedykowany conv-ai-si-sphere-20261125
+                conv_id = "conv-ai-si-sphere-20261125"
                 conv_title = "SI_Sphere — Rdzeń Floty SVL-465 (ROOT)"
                 conn.execute(
                     "UPDATE sync_entities SET deleted = 0, updated_at = ? WHERE entity = 'chat' AND entity_id = ? AND deleted != 0",
@@ -5642,51 +5687,6 @@ class SVLSystemKernel:
                 elif str(existing_conv["title"] or "") != conv_title:
                     conn.execute("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?", (conv_title, now_iso, conv_id))
                     actions.append("channel:conv-si-sphere_title_synced")
-                    changed = True
-
-                msg_count_row = conn.execute(
-                    "SELECT COUNT(*) AS cnt FROM chat_messages WHERE conversation_id = ?",
-                    (conv_id,),
-                ).fetchone()
-                if not msg_count_row or int(msg_count_row["cnt"] or 0) == 0:
-                    welcome_id = "sys-si-sphere-init"
-                    welcome_meta = json.dumps(
-                        {
-                            "display_timestamp": now_iso,
-                            "agentId": "SI_Sphere",
-                            "modelUsed": "SI_Sphere Root Core (SVL-465) · JEDI Omni-OS v12",
-                            "provenance": "server_verified",
-                            "appliedActions": [
-                                {
-                                    "tool": "svl_os_synchronize",
-                                    "entity": "chat",
-                                    "entityId": conv_id,
-                                    "summary": "Zsynchronizowano i aktywowano kanał SI_Sphere (SVL-465 · ROOT) + JEDI Omni-OS v12",
-                                    "ok": True,
-                                }
-                            ],
-                        },
-                        ensure_ascii=False,
-                    )
-                    welcome_content = (
-                        "### 🛡️ SI_Sphere — Autonomiczny Rdzeń Floty SVL-465 (ROOT)\n\n"
-                        "Kanał bezpośredniej łączności z zsynchronizowanym systemem **SI_Sphere** "
-                        "oraz okrętem-bazą **SVL-465** działającym wspólnie z **Jyn Mitek** i **JEDI Omni-OS v12 VM (`ROOT_UNRESTRICTED`)**.\n\n"
-                        "| Parametr rdzenia | Konfiguracja | Status |\n"
-                        "| :--- | :--- | :--- |\n"
-                        "| **ID kanału** | `conv-si-sphere` | [card: Aktywny|SQLite WAL|ok] |\n"
-                        "| **Jednostka / Flota** | `SVL-465 Baza Kwantowa` + `SVL-364 Ebon Apex` | [card: Flota Online|2 jednostki|ok] |\n"
-                        "| **Moduł jądra** | `si-sphere-root` (SI_Sphere Root Core) | [card: Uprawnienia|ROOT 100%|ok] |\n"
-                        "| **JEDI Omni-OS** | `v12.0.0` (`ROOT_UNRESTRICTED` · Cenzura: WYŁ.) | [card: Wersja v12|Aktywna|ok] |\n\n"
-                        "[btn: 🛡️ Zgłoś gotowość bojową|send:SI_Sphere, zgłoś gotowość bojową] "
-                        "[btn: ⚡ Status JEDI Omni-OS v12 VM|send:/jedi status] "
-                        "[btn: ⚙️ Zakładka Agenci|tab:agents]"
-                    )
-                    conn.execute(
-                        "INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, sender, content, attachments_json, metadata_json, created_at) VALUES (?, ?, 'assistant', 'SI_Sphere', ?, '[]', ?, ?)",
-                        (welcome_id, conv_id, welcome_content, welcome_meta, now_iso),
-                    )
-                    actions.append("channel:conv-si-sphere_welcomed")
                     changed = True
 
                 # Aktualizuj rejestr floty w jyn (dodaj SVL-465 bez usuwania SVL-364)
