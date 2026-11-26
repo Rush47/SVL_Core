@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from .chat_engine import JynChatEngine
 from .config import JynOSConfig, resolve_auth_token
+from .google_services_hub import GoogleServicesHub
 from .mcp_client import SvlMcpClient
 from .ollama_client import SvlOllamaClient
 from .ssh_client import Svl364SshClient
@@ -32,9 +33,9 @@ class JynOSShell(cmd.Cmd):
 
     intro = f"""
 {CYAN}{BOLD}================================================================================{RESET}
-{MAGENTA}{BOLD}   ✦ JYN_OS v3.0 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
-{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Operator: Mateusz Mitek · Czat PL (stream=OFF){RESET}
-{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}status{RESET}{DIM}' dla audytu lub pisz bezpośrednio do Jyn.{RESET}
+{MAGENTA}{BOLD}   ✦ JYN_OS v3.1 · KLIENT SYSTEMOWY I MOSTEK STATKU SVL-364 EBON APEX ✦{RESET}
+{CYAN}   Rdzeń AI: Jyn Mitek (System_SI_1) · Google Hub ($1000 USD) · Czat PL (stream=OFF){RESET}
+{DIM}   Wpisz '{BOLD}help{RESET}{DIM}' dla listy komend, '{BOLD}google{RESET}{DIM}' dla usług Google lub pisz bezpośrednio do Jyn.{RESET}
 {CYAN}{BOLD}================================================================================{RESET}
 """
     prompt = f"{CYAN}{BOLD}JYN_OS [SVL-364]{RESET}{BOLD}❯{RESET} "
@@ -46,7 +47,8 @@ class JynOSShell(cmd.Cmd):
         self.mcp = SvlMcpClient(self.config)
         self.ollama = SvlOllamaClient(self.config)
         self.telemetry = SvlShipTelemetry(self.config, self.ssh)
-        self.chat_engine = JynChatEngine(config=self.config, ollama=self.ollama)
+        self.google_hub = GoogleServicesHub(config=self.config, ollama=self.ollama)
+        self.chat_engine = JynChatEngine(config=self.config, ollama=self.ollama, google_hub=self.google_hub)
 
     @property
     def chat_history(self) -> List[Dict[str, str]]:
@@ -57,7 +59,7 @@ class JynOSShell(cmd.Cmd):
         self.chat_engine.history = list(value)
 
     def do_status(self, arg: str) -> None:
-        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435)."""
+        """status — Wyświetla pełny audyt połączeń ze statkiem SVL-364 (SSH, MCP, Ollama :11434/:11435, Google Hub)."""
         print(f"\n{BOLD}🔍 [AUDYT INFRASTRUKTURY SVL-364 / JYN_OS]{RESET}\n")
 
         # 1. SSH
@@ -98,6 +100,14 @@ class JynOSShell(cmd.Cmd):
         if local_ollama["installed_models"]:
             print(f"     └─ Zainstalowane wagi            : {', '.join(local_ollama['installed_models'])}")
             print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY' if local_ollama['vision_present'] else 'Dostępny na żądanie'}")
+
+        # 4. Google Services & AI Hub
+        g_rep = self.google_hub.get_full_status_report()
+        g_wal = g_rep["wallet"]
+        print(f"\n{CYAN}{BOLD}4. Google Services & AI Integration Hub (Projekt: {g_rep['project_id']}):{RESET}")
+        print(f"   • Zakupione pakiety usług          : {GREEN}{g_rep['services_count']}/8 AKTYWNE{RESET}")
+        print(f"   • Saldo kluczy API                 : {GREEN}${g_wal['balance_usd']:.2f} USD{RESET} (doładowano: ${g_wal['total_topped_up_usd']:.2f} USD)")
+        print(f"   • Domyślny model Google AI         : {BOLD}{g_rep['default_model']}{RESET} (fallback: SVL-364 Ollama)")
         print()
 
     def do_ssh(self, arg: str) -> None:
@@ -460,10 +470,104 @@ class JynOSShell(cmd.Cmd):
             print(f"{YELLOW}[Osiągnięto limit długości odpowiedzi; wpisz „kontynuuj”, aby dokończyć wypowiedź.]{RESET}")
         return True
 
+    def do_google(self, arg: str) -> None:
+        """google [status|buy|topup [kwota]|set-key <klucz>|gemini <tekst>|translate <tekst>|tts <tekst>|search <tekst>|workspace|maps|sync|ledger] — Zarządzanie Google Services Hub ($1000 USD)."""
+        parts = arg.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else "status"
+        extra = parts[1].strip() if len(parts) > 1 else ""
+
+        if subcmd in ("status", "list", "services"):
+            print(f"\n{CYAN}{BOLD}{self.google_hub.format_polish_summary()}{RESET}\n")
+
+        elif subcmd in ("buy", "purchase", "zakup", "provision"):
+            res = self.google_hub.provision_and_topup_1000_usd()
+            w = res["wallet"]
+            print(f"\n{GREEN}{BOLD}✅ Zakupiono i zintegrowano wszystkie {res['services_active']} pakietów usług Google z JYN_OS!{RESET}")
+            print(f" • Projekt Google Cloud : {res['project_id']} ({res['region']})")
+            print(f" • Saldo kluczy API     : {GREEN}${w['balance_usd']:.2f} USD{RESET} (doładowano łącznie: ${w['total_topped_up_usd']:.2f} USD)\n")
+
+        elif subcmd in ("topup", "doladuj", "recharge"):
+            try:
+                amount = float(extra) if extra else 1000.0
+            except ValueError:
+                amount = 1000.0
+            w = self.google_hub.topup_wallet(amount)
+            print(f"\n{GREEN}{BOLD}✅ Doładowano kluczy API Google w JYN_OS kwotą +${amount:.2f} USD!{RESET}")
+            print(f" • Nowe saldo portfela  : {GREEN}${w['balance_usd']:.2f} USD{RESET}\n")
+
+        elif subcmd in ("set-key", "key"):
+            if not extra:
+                print(f"{YELLOW}Użycie: google set-key <TWÓJ_KLUCZ_GOOGLE_API>{RESET}")
+                return
+            kres = self.google_hub.set_api_key(extra)
+            if kres.get("ok"):
+                print(f"\n{GREEN}✔ Zapisano klucz API ({kres['masked_key']}) dla {len(kres['updated_services'])} usług Google w JYN_OS Vault.{RESET}\n")
+            else:
+                print(f"{RED}❌ Błąd: {kres.get('error')}{RESET}\n")
+
+        elif subcmd in ("gemini", "vertex", "ai"):
+            if not extra:
+                print(f"{YELLOW}Użycie: google gemini <zapytanie po polsku>{RESET}")
+                return
+            res = self.google_hub.generate_gemini(extra, use_vertex=(subcmd == "vertex"))
+            if res.ok:
+                print(f"\n{GREEN}{BOLD}✦ Google AI [{res.model} · ${res.remaining_balance_usd:.2f} USD]:{RESET} {res.output}\n")
+            else:
+                print(f"\n{RED}❌ Błąd Google AI:{RESET} {res.error}\n")
+
+        elif subcmd in ("translate", "tlumacz"):
+            if not extra:
+                print(f"{YELLOW}Użycie: google translate <tekst>{RESET}")
+                return
+            res = self.google_hub.translate_text(extra, target_lang="pl")
+            print(f"\n{GREEN}{BOLD}✦ Cloud Translation [{res.model}]:{RESET} {res.output}\n")
+
+        elif subcmd == "tts":
+            if not extra:
+                print(f"{YELLOW}Użycie: google tts <tekst do syntezy mowy>{RESET}")
+                return
+            res = self.google_hub.synthesize_speech_tts(extra)
+            print(f"\n{GREEN}{BOLD}✦ Cloud TTS:{RESET} {res.output}\n")
+
+        elif subcmd in ("search", "grounding"):
+            if not extra:
+                print(f"{YELLOW}Użycie: google search <zapytanie faktograficzne>{RESET}")
+                return
+            res = self.google_hub.search_grounding(extra)
+            print(f"\n{GREEN}{BOLD}✦ Google Grounding Search:{RESET} {res.output}\n")
+
+        elif subcmd == "workspace":
+            res = self.google_hub.workspace_status()
+            print(f"\n{GREEN}{BOLD}✦ Google Workspace Bridge:{RESET} {res.output}\n")
+
+        elif subcmd in ("maps", "earth"):
+            res = self.google_hub.maps_telemetry(extra or "SVL-364 Orbital Sector Alpha")
+            print(f"\n{GREEN}{BOLD}✦ Google Maps/Earth Telemetry:{RESET} {res.output}\n")
+
+        elif subcmd in ("sync", "bigquery", "gcs"):
+            res = self.google_hub.sync_telemetry_to_gcs_bigquery()
+            print(f"\n{GREEN}{BOLD}✦ GCS & BigQuery Sync:{RESET} {res.output}\n")
+
+        elif subcmd in ("ledger", "billing", "historia"):
+            entries = self.google_hub.get_recent_ledger(10)
+            print(f"\n{CYAN}{BOLD}Ostatnie operacje w księdze rozliczeniowej Google Hub:{RESET}")
+            for e in entries:
+                print(
+                    f" • #{e['entry_id']:03d} [{e['service_id']}] {e['operation']} | "
+                    f"koszt: ${e['cost_usd']:.4f} | saldo: ${e['balance_after_usd']:.2f} | {e['summary']}"
+                )
+            print()
+
+        else:
+            print(
+                f"{YELLOW}Dostępne opcje google: status, buy, topup [kwota], set-key <klucz>, "
+                f"gemini <tekst>, translate <tekst>, tts <tekst>, search <tekst>, workspace, maps, sync, ledger{RESET}"
+            )
+
     def do_chat(self, arg: str) -> None:
         """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek po polsku (bez strumieniowania + pamięć sesji)."""
         if not arg.strip():
-            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /wyczysc){RESET}")
+            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /google, /wyczysc){RESET}")
             return
         self._run_complete_chat(arg)
 

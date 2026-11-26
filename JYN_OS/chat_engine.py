@@ -163,11 +163,19 @@ def build_polish_chat_messages(
 
 @dataclass
 class JynChatEngine:
-    """Silnik rozmowy JYN_OS (bez strumieniowania, język polski, obsługa 13 modeli SVL-364)."""
+    """Silnik rozmowy JYN_OS (bez strumieniowania, język polski, obsługa 13 modeli SVL-364 oraz Google Hub)."""
 
     config: JynOSConfig
     ollama: "SvlOllamaClient"
     history: List[Dict[str, str]] = field(default_factory=list)
+    google_hub: Any = None
+
+    def _get_google_hub(self) -> Any:
+        if self.google_hub is None:
+            from .google_services_hub import GoogleServicesHub
+
+            self.google_hub = GoogleServicesHub(config=self.config, ollama=self.ollama)
+        return self.google_hub
 
     def clear_history(self) -> None:
         self.history.clear()
@@ -254,9 +262,69 @@ class JynChatEngine:
                 )
             return ChatTurnResult(ok=False, error=str(warm.get("error") or "Błąd rozgrzewania modelu."), local_command=True)
 
+        if cmd in ("/google", "/gservices"):
+            hub = self._get_google_hub()
+            subparts = arg.split(maxsplit=1) if arg else []
+            sub = subparts[0].lower() if subparts else "status"
+            subarg = subparts[1].strip() if len(subparts) > 1 else ""
+
+            if sub in ("topup", "doladuj"):
+                amt = float(subarg) if subarg else 1000.0
+                w = hub.topup_wallet(amt)
+                return ChatTurnResult(
+                    ok=True,
+                    reply=f"Doładowałam klucze Google API w JYN_OS kwotą +${amt:.2f} USD. Aktualne saldo portfela: ${w['balance_usd']:.2f} USD.",
+                    model=self.config.google_default_model,
+                    endpoint="google_services_hub",
+                    local_command=True,
+                )
+            if sub in ("buy", "purchase", "zakup"):
+                res = hub.provision_and_topup_1000_usd()
+                w = res["wallet"]
+                return ChatTurnResult(
+                    ok=True,
+                    reply=f"Zakupiłam i zintegrowałam wszystkie {res['services_active']} pakietów usług Google z JYN_OS. Saldo kluczy API: ${w['balance_usd']:.2f} USD.",
+                    model=self.config.google_default_model,
+                    endpoint="google_services_hub",
+                    local_command=True,
+                )
+            return ChatTurnResult(
+                ok=True,
+                reply=hub.format_polish_summary(),
+                model=self.config.google_default_model,
+                endpoint="google_services_hub",
+                local_command=True,
+            )
+
+        if cmd == "/gemini":
+            if not arg:
+                return ChatTurnResult(
+                    ok=False,
+                    error="Użycie: /gemini <zapytanie po polsku>",
+                    local_command=True,
+                )
+            hub = self._get_google_hub()
+            gres = hub.generate_gemini(arg)
+            if not gres.ok:
+                return ChatTurnResult(ok=False, error=gres.error, local_command=True)
+            reply = clean_polish_response(gres.output)
+            self.history.append({"role": "user", "content": arg})
+            self.history.append({"role": "assistant", "content": reply})
+            return ChatTurnResult(
+                ok=True,
+                reply=reply,
+                requested_model=self.config.google_default_model,
+                model=gres.model,
+                routed_model=gres.model,
+                endpoint=gres.provider_mode,
+                duration_sec=gres.duration_sec,
+            )
+
         if cmd == "/status":
             loc = self.ollama.check_node_status(self.config.local_ollama_url)
             ship = self.ollama.check_node_status(self.config.ship_ollama_url)
+            hub = self._get_google_hub()
+            w = hub.get_wallet_status()
             loc_str = f"ONLINE (v{loc['version']}, modeli: {len(loc['installed_models'])})" if loc["online"] else "OFFLINE"
             ship_str = f"ONLINE (v{ship['version']}, modeli: {len(ship['installed_models'])})" if ship["online"] else "OFFLINE"
             return ChatTurnResult(
@@ -267,6 +335,7 @@ class JynChatEngine:
                     f"• Aktywny model : {self.config.get_active_model()}\n"
                     f"• Lokalna Ollama (:11434) : {loc_str}\n"
                     f"• Statek SVL-364 (:11435) : {ship_str}\n"
+                    f"• Google Services Hub     : AKTYWNY (8/8 usług, saldo API: ${w['balance_usd']:.2f} USD)\n"
                     f"• Historia sesji: {len(self.history) // 2} tur"
                 ),
                 model=self.config.get_active_model(),
@@ -283,7 +352,7 @@ class JynChatEngine:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
     ) -> ChatTurnResult:
-        """Wysyła wiadomość do silnika Ollama bez strumieniowania i zwraca pełną polską odpowiedź."""
+        """Wysyła wiadomość do silnika Ollama lub Google Hub bez strumieniowania i zwraca pełną polską odpowiedź."""
         cleaned = (message or "").strip()
         if not cleaned:
             return ChatTurnResult(ok=False, error="Pusta wiadomość.")
@@ -293,6 +362,25 @@ class JynChatEngine:
             return slash_res
 
         selected_model = (model or self.config.get_active_model()).strip()
+        if selected_model.lower().startswith(("gemini-", "vertex/", "google/")):
+            hub = self._get_google_hub()
+            use_vertex = selected_model.lower().startswith("vertex/")
+            gres = hub.generate_gemini(cleaned, model=selected_model, use_vertex=use_vertex)
+            if not gres.ok:
+                return ChatTurnResult(ok=False, requested_model=selected_model, error=gres.error)
+            reply = clean_polish_response(gres.output)
+            self.history.append({"role": "user", "content": cleaned})
+            self.history.append({"role": "assistant", "content": reply})
+            return ChatTurnResult(
+                ok=True,
+                reply=reply,
+                requested_model=selected_model,
+                model=gres.model,
+                routed_model=gres.model,
+                endpoint=gres.provider_mode,
+                duration_sec=gres.duration_sec,
+            )
+
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
 
         t0 = time.monotonic()

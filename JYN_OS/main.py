@@ -94,6 +94,14 @@ def build_parser() -> argparse.ArgumentParser:
     call_p = mcp_sub.add_parser("call", help="Wywołanie narzędzia MCP")
     call_p.add_argument("tool", help="Nazwa narzędzia MCP")
 
+    google_p = subparsers.add_parser("google", help="Zarządzanie Google Services & AI Hub ($1000.00 USD)")
+    google_p.add_argument(
+        "google_args",
+        nargs="*",
+        default=[],
+        help="Podpolecenie Google Hub: status, buy, topup [kwota], set-key <klucz>, gemini <tekst>, translate <tekst>, tts <tekst>, search <tekst>, workspace, maps, sync, ledger",
+    )
+
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
 
@@ -163,6 +171,11 @@ def main() -> int:
             shell.do_mcp(f"call {getattr(args, 'tool', '')}")
         else:
             shell.do_mcp(action)
+        return 0
+
+    if args.command == "google":
+        g_args = " ".join(getattr(args, "google_args", []) or []).strip()
+        shell.do_google(g_args or "status")
         return 0
 
     if args.command in ("reset", "factory-reset"):

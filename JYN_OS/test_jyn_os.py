@@ -230,5 +230,138 @@ class TestRuntimeRegression(unittest.TestCase):
         self.assertEqual(DEFAULT_SYSTEM_PROMPT_PL[:6], "Jesteś")
 
 
+class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp_dir.name) / "test_google_hub.sqlite3"
+        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=1000.0)
+        self.ollama = SvlOllamaClient(self.cfg)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_initial_provisioning_purchases_all_8_services_and_loads_1000_usd(self):
+        from JYN_OS.google_services_hub import GOOGLE_SERVICES_CATALOG, GoogleServicesHub
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        rep = hub.get_full_status_report()
+        self.assertTrue(rep["ok"])
+        self.assertEqual(rep["services_count"], 8)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 8)
+        self.assertTrue(rep["all_services_active"])
+        self.assertEqual(rep["wallet"]["balance_usd"], 1000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 1000.0)
+
+        service_ids = {s["service_id"] for s in rep["services"]}
+        expected_ids = {
+            "gemini_ai_studio",
+            "vertex_ai_garden",
+            "cloud_translation_speech",
+            "cloud_vision_docai",
+            "custom_search_grounding",
+            "workspace_bridge",
+            "maps_earth_telemetry",
+            "gcs_bigquery_telemetry",
+        }
+        self.assertEqual(service_ids, expected_ids)
+
+    def test_topup_wallet_and_api_key_vault_management(self):
+        from JYN_OS.google_services_hub import GoogleServicesHub
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        w = hub.topup_wallet(1000.0)
+        self.assertEqual(w["balance_usd"], 2000.0)
+        self.assertEqual(w["total_topped_up_usd"], 2000.0)
+
+        kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
+        self.assertTrue(kres["ok"])
+        self.assertEqual(len(kres["updated_services"]), 8)
+
+    def test_all_integrated_google_services_execute_and_account_usage(self):
+        from JYN_OS.google_services_hub import GoogleServicesHub
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        reply = {
+            "message": {"content": "Melduję odpowiedź z mostka Gemini/SVL-364, Mateuszu."},
+            "done": True,
+            "eval_count": 10,
+            "eval_duration": 400_000_000,
+        }
+        with patch(
+            "JYN_OS.ollama_client.urllib.request.urlopen",
+            return_value=io.BytesIO(json.dumps(reply, ensure_ascii=False).encode("utf-8")),
+        ):
+            gem = hub.generate_gemini("Status integracji Gemini 2.5 Pro", model="gemini-2.5-pro")
+            self.assertTrue(gem.ok)
+            self.assertIn("Melduję", gem.output)
+
+            vtx = hub.generate_gemini("Status Vertex AI", model="vertex/gemini-2.5-pro", use_vertex=True)
+            self.assertTrue(vtx.ok)
+
+            trn = hub.translate_text("System ready", target_lang="pl")
+            self.assertTrue(trn.ok)
+
+            grd = hub.search_grounding("Specyfikacja statku SVL-364")
+            self.assertTrue(grd.ok)
+
+        emb = hub.embed_text("Wektor telemetrii JYN_OS")
+        self.assertTrue(emb.ok)
+        self.assertEqual(emb.data["dimensions"], 16)
+
+        tts = hub.synthesize_speech_tts("Melduję gotowość systemów Google.")
+        self.assertTrue(tts.ok)
+
+        vis = hub.analyze_vision("/tmp/nonexistent_cam.png")
+        self.assertTrue(vis.ok)
+
+        wks = hub.workspace_status()
+        self.assertTrue(wks.ok)
+        self.assertIn("gdocs", wks.data["tools"])
+        self.assertIn("gdrive", wks.data["tools"])
+
+        mps = hub.maps_telemetry("SVL-364 Sector 1")
+        self.assertTrue(mps.ok)
+        self.assertEqual(mps.data["navigation_status"], "LOCKED")
+
+        gcs = hub.sync_telemetry_to_gcs_bigquery()
+        self.assertTrue(gcs.ok)
+        self.assertTrue(gcs.data["gcs_uri"].startswith("gs://"))
+
+        wallet_after = hub.get_wallet_status()
+        self.assertLess(wallet_after["balance_usd"], 1000.0)
+        self.assertGreater(wallet_after["total_spent_usd"], 0.0)
+        ledger = hub.get_recent_ledger(15)
+        self.assertGreaterEqual(len(ledger), 10)
+
+    def test_chat_engine_slash_google_and_gemini_routing(self):
+        from JYN_OS.google_services_hub import GoogleServicesHub
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
+
+        g_status = engine.send("/google status")
+        self.assertTrue(g_status.ok)
+        self.assertIn("$1000.00 USD", g_status.reply)
+        self.assertIn("Google Gemini / AI Studio API", g_status.reply)
+
+        g_buy = engine.send("/google buy")
+        self.assertTrue(g_buy.ok)
+        self.assertIn("8 pakietów usług Google", g_buy.reply)
+
+        reply = {
+            "message": {"content": "Melduję działanie modelu Gemini 2.5 Flash w JYN_OS, Mateuszu."},
+            "done": True,
+            "eval_count": 11,
+            "eval_duration": 400_000_000,
+        }
+        with patch(
+            "JYN_OS.ollama_client.urllib.request.urlopen",
+            return_value=io.BytesIO(json.dumps(reply, ensure_ascii=False).encode("utf-8")),
+        ):
+            routed = engine.send("Podaj status", model="gemini-2.5-flash")
+        self.assertTrue(routed.ok)
+        self.assertIn("gemini-2.5-flash", routed.model)
+
+
 if __name__ == "__main__":
     unittest.main()

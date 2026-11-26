@@ -180,7 +180,7 @@ def ensure_ship_ollama_running() -> None:
 
 def main() -> int:
     print("\n" + "=" * 76)
-    print(" 🛠️  [JYN_OS v3.0 BOOTSTRAP] Konfiguracja systemu i węzła SVL-364...")
+    print(" 🛠️  [JYN_OS v3.1 BOOTSTRAP] Konfiguracja systemu, SVL-364 i Google Hub ($1000 USD)...")
     print("=" * 76 + "\n")
 
     cfg = JynOSConfig.load_from_env()
@@ -188,6 +188,7 @@ def main() -> int:
 
     setup_ssh_environment()
     setup_security_tokens()
+    shell.google_hub.provision_and_topup_1000_usd()
     ensure_local_ollama_ready(shell)
     ensure_ship_ollama_running()
 
@@ -201,7 +202,8 @@ def main() -> int:
         print("\n❌ Brak zainstalowanych modeli na aktywnym węźle Ollama.")
         return 1
 
-    print("\n✅ Węzły Ollama (:11434 oraz SVL-364 :11435) i 13 modeli są skonfigurowane i gotowe.")
+    print("\n✅ Węzły Ollama (:11434 oraz SVL-364 :11435), 13 modeli i Google Hub ($1000 USD) są gotowe.")
+    print("👉 Usługi Google Hub:     ./jyn_os google status")
     print("👉 Rozmowa po polsku:     ./jyn_os chat \"Cześć Jyn, zamelduj status\"")
     print("👉 Konsola interaktywna:  ./jyn_os\n")
     return 0

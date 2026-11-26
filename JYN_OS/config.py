@@ -127,6 +127,18 @@ DEFAULT_CHAT_HISTORY_MAX_CHARS = _env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 25
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
 DEFAULT_BACKEND_URL = os.environ.get("SVL_BACKEND_URL", "http://127.0.0.1:8085")
 
+# Konfiguracja Google Services & AI Integration Hub ($1000.00 USD budżetu kluczy API)
+DEFAULT_GOOGLE_BUDGET_USD: float = float(os.environ.get("SVL_GOOGLE_BUDGET_USD", "1000.00"))
+DEFAULT_GOOGLE_PROJECT_ID: str = os.environ.get("SVL_GOOGLE_PROJECT_ID", "svl364-ebon-apex")
+DEFAULT_GOOGLE_REGION: str = os.environ.get("SVL_GOOGLE_REGION", "europe-central2")
+DEFAULT_GOOGLE_MODEL: str = os.environ.get("SVL_GOOGLE_MODEL", "gemini-2.5-flash")
+DEFAULT_GOOGLE_HUB_DB_PATH: Path = Path(
+    os.environ.get(
+        "SVL_GOOGLE_HUB_DB",
+        str(Path(__file__).resolve().parent.parent / "data" / "jyn_google_hub.sqlite3"),
+    )
+)
+
 # Kanoniczny katalog 13 modeli pokładowych jednostki obliczeniowej statku SVL-364
 SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
     {
@@ -305,6 +317,12 @@ class JynOSConfig:
     gateway_url: str = DEFAULT_GATEWAY_URL
     backend_url: str = DEFAULT_BACKEND_URL
 
+    google_budget_usd: float = DEFAULT_GOOGLE_BUDGET_USD
+    google_project_id: str = DEFAULT_GOOGLE_PROJECT_ID
+    google_region: str = DEFAULT_GOOGLE_REGION
+    google_default_model: str = DEFAULT_GOOGLE_MODEL
+    google_hub_db_path: Path = field(default_factory=lambda: DEFAULT_GOOGLE_HUB_DB_PATH)
+
     connect_timeout: float = 3.5
     command_timeout: float = 30.0
     chat_stream_enabled: bool = DEFAULT_CHAT_STREAM
@@ -359,3 +377,4 @@ class JynOSConfig:
             chat_history_max_chars=_env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 256, 32000),
             strict_model=_env_bool("SVL_STRICT_MODEL", False),
         )
+
