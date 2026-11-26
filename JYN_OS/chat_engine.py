@@ -19,6 +19,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from .avatar_client import AVATAR_CAPABILITY, extract_avatar_action, update_own_avatar
@@ -58,7 +59,7 @@ _TRAILING_TURN_RE = re.compile(
 
 @dataclass
 class ChatTurnResult:
-    """Wynik pojedynczej tury rozmowy w module czatu JYN_OS."""
+    """Wynik pojedynczej tury rozmowy w module czatu JYN_OS (z kanałami AI, przyciskami i widżetami)."""
 
     ok: bool
     reply: str = ""
@@ -77,6 +78,10 @@ class ChatTurnResult:
     truncated: bool = False
     local_command: bool = False
     error: str = ""
+    widgets: List[Dict[str, Any]] = field(default_factory=list)
+    buttons: List[Dict[str, Any]] = field(default_factory=list)
+    ai_channels: List[Dict[str, Any]] = field(default_factory=list)
+    invoked_modules: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def clean_polish_response(raw_text: str) -> str:
@@ -199,12 +204,12 @@ class JynChatEngine:
                     local_command=True,
                 )
             if sub_cmd in ("buy", "zakup", "provision"):
-                res = hub.provision_and_topup_1000_usd()
+                res = hub.topup_each_module_to_1000_usd(1000.0)
                 return ChatTurnResult(
                     ok=True,
                     reply=(
-                        f"Zakupiono i aktywowano wszystkie 8 pakietów usług Google w JYN_OS. "
-                        f"Portfel kluczy API zasilony: ${res['wallet']['balance_usd']:.2f} USD.\n\n"
+                        f"Zakupiono i aktywowano wszystkie {res['modules_count']} modułów w JYN_OS (w tym 8 pakietów usług Google + 4 moduły AI Enterprise). "
+                        f"Każdy moduł doładowany do $1000.00 USD (łącznie: ${res['wallet']['balance_usd']:.2f} USD).\n\n"
                         f"{hub.format_polish_summary()}"
                     ),
                     model=self.config.google_default_model,
@@ -329,6 +334,81 @@ class JynChatEngine:
 
         return None
 
+    def get_ai_channels(self) -> List[Dict[str, Any]]:
+        """Zwraca 12 aktywnych kanałów modułowych widocznych dla Jyn Mitek na czacie."""
+        return self._get_google_hub().get_ai_visible_channels()
+
+    def click_button(self, button_or_action: str, payload: Optional[Dict[str, Any]] = None) -> ChatTurnResult:
+        """
+        Obsługuje kliknięcie interaktywnego przycisku modułu na czacie (np. `module:cloud_vision_docai:analyze_camera`
+        lub `btn_vision_scan`) bez potrzeby wpisywania komend tekstowych.
+        """
+        from .interactive_ui_hub import DEFAULT_CHAT_MODULE_BUTTONS, InteractiveUIEngine
+
+        hub = self._get_google_hub()
+        ui = InteractiveUIEngine(google_hub=hub)
+        raw = (button_or_action or "").strip()
+
+        module_id = "interactive_ai_ui_kit"
+        action = "open_dashboard"
+        if raw.startswith("module:"):
+            parts = raw.split(":")
+            module_id = parts[1] if len(parts) > 1 else module_id
+            action = parts[2] if len(parts) > 2 else "execute"
+        else:
+            for b in DEFAULT_CHAT_MODULE_BUTTONS:
+                if raw in (b["button_id"], b["label"], b["action"], b["module_id"]):
+                    module_id = b["module_id"]
+                    action = b["action"]
+                    break
+
+        res = hub.trigger_module_button_action(module_id=module_id, action=action, payload=payload)
+        bundle = ui.build_contextual_widgets(raw, res.output, vision_data=res.data if module_id == "cloud_vision_docai" else None)
+        channels = hub.get_ai_visible_channels()
+        return ChatTurnResult(
+            ok=res.ok,
+            reply=res.output,
+            model=res.model,
+            routed_model=res.model,
+            endpoint=res.provider_mode,
+            duration_sec=res.duration_sec,
+            local_command=True,
+            widgets=bundle["widgets"],
+            buttons=bundle["buttons"],
+            ai_channels=channels,
+            invoked_modules=[{"service_id": res.service_id, "operation": res.operation, "data": res.data, "cost_usd": res.cost_usd}],
+        )
+
+    def _autonomous_jyn_module_orchestration(
+        self,
+        prompt: str,
+        images: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Pozwala samej Jyn Mitek autonomicznie korzystać ze zintegrowanych modułów podczas rozmowy na czacie
+        (Vision, Gemini, Search Grounding, Vector RAG 128D, Maps, Swarm, Security, Workspace, UI Kit).
+        """
+        hub = self._get_google_hub()
+        invoked: List[Dict[str, Any]] = []
+
+        # 1. Jeśli przesłano obrazy lub tag [vision:...] -> Jyn automatycznie odpala moduł Vision
+        vision_match = re.search(r"\[(?:vision|obraz|kamera)\s*:\s*([^\]]+)\]", prompt, re.IGNORECASE)
+        if images or vision_match:
+            img_ref = vision_match.group(1).strip() if vision_match else "svl364://camera/inline-chat-image.png"
+            b64_img = images[0] if (images and not Path(images[0]).is_file()) else None
+            path_img = images[0] if (images and Path(images[0]).is_file()) else img_ref
+            vres = hub.analyze_vision(image_path=path_img, prompt=prompt, image_base64=b64_img)
+            invoked.append({"service_id": vres.service_id, "operation": vres.operation, "output": vres.output, "data": vres.data})
+
+        # 2. Jeśli wiadomość zawiera jawne wywołanie modułu przez Jyn lub przycisk [module:id:action]
+        for mod_match in re.finditer(r"\[module\s*:\s*([a-z0-9_]+)(?:\s*:\s*([^\]]+))?\]", prompt, re.IGNORECASE):
+            mid = mod_match.group(1).strip().lower()
+            mact = (mod_match.group(2) or "execute").strip()
+            mres = hub.trigger_module_button_action(mid, mact, {"prompt": prompt, "query": prompt})
+            invoked.append({"service_id": mres.service_id, "operation": mres.operation, "output": mres.output, "data": mres.data})
+
+        return invoked
+
     def send(
         self,
         message: str,
@@ -336,20 +416,36 @@ class JynChatEngine:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
     ) -> ChatTurnResult:
-        """Wysyła wiadomość do silnika Ollama lub Google Services Hub bez strumieniowania i zwraca pełną polską odpowiedź."""
+        """Wysyła wiadomość do Jyn Mitek z aktywnymi kanałami 12 modułów, obsługą Vision i interaktywnymi przyciskami UI."""
+        from .interactive_ui_hub import InteractiveUIEngine
+
         cleaned = (message or "").strip()
         if not cleaned:
             return ChatTurnResult(ok=False, error="Pusta wiadomość.")
 
+        # Obsługa kliknięcia przycisku akcji bezpośrednio w czacie (np. module:cloud_vision_docai:analyze_camera)
+        if cleaned.startswith("module:") or cleaned.startswith("btn_"):
+            return self.click_button(cleaned)
+
         slash_res = self._handle_slash_command(cleaned)
         if slash_res is not None:
+            hub = self._get_google_hub()
+            ui = InteractiveUIEngine(google_hub=hub)
+            bundle = ui.build_contextual_widgets(cleaned, slash_res.reply)
+            slash_res.widgets = bundle["widgets"]
+            slash_res.buttons = bundle["buttons"]
+            slash_res.ai_channels = hub.get_ai_visible_channels()
             return slash_res
+
+        hub = self._get_google_hub()
+        ui = InteractiveUIEngine(google_hub=hub)
+        ai_channels = hub.get_ai_visible_channels()
+        invoked_modules = self._autonomous_jyn_module_orchestration(cleaned, images=images)
 
         selected_model = (model or self.config.get_active_model()).strip()
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
 
         if selected_model.lower().startswith(("gemini-", "vertex-", "imagen-", "veo-")):
-            hub = self._get_google_hub()
             g_res = hub.generate_gemini(prompt=cleaned, model=selected_model)
             if not g_res.ok:
                 return ChatTurnResult(
@@ -363,6 +459,7 @@ class JynChatEngine:
             reply = clean_polish_response(g_res.output)
             self.history.append({"role": "user", "content": cleaned})
             self.history.append({"role": "assistant", "content": reply})
+            bundle = ui.build_contextual_widgets(cleaned, reply)
             return ChatTurnResult(
                 ok=True,
                 reply=reply,
@@ -371,6 +468,10 @@ class JynChatEngine:
                 routed_model=g_res.model,
                 endpoint=g_res.provider_mode,
                 duration_sec=g_res.duration_sec,
+                widgets=bundle["widgets"],
+                buttons=bundle["buttons"],
+                ai_channels=ai_channels,
+                invoked_modules=invoked_modules + [{"service_id": g_res.service_id, "operation": g_res.operation}],
             )
 
         t0 = time.monotonic()
@@ -399,6 +500,14 @@ class JynChatEngine:
         if avatar_args is not None:
             receipt = update_own_avatar(self.config, avatar_args)
             reply = (reply + "\n\n" + receipt).strip()
+
+        # Autonomiczne użycie modułu przez Jyn w treści jej odpowiedzi (np. [JYN_MODULE:cloud_vision_docai:analyze])
+        for jyn_mod in re.finditer(r"\[JYN_MODULE\s*:\s*([a-z0-9_]+)(?:\s*:\s*([^\]]+))?\]", reply, re.IGNORECASE):
+            mid = jyn_mod.group(1).strip().lower()
+            mact = (jyn_mod.group(2) or "execute").strip()
+            mres = hub.trigger_module_button_action(mid, mact, {"prompt": cleaned})
+            invoked_modules.append({"service_id": mres.service_id, "operation": mres.operation, "output": mres.output, "data": mres.data})
+
         if not reply:
             return ChatTurnResult(
                 ok=False,
@@ -422,6 +531,9 @@ class JynChatEngine:
         if len(self.history) > max_items:
             self.history = self.history[-max_items:]
 
+        vision_ctx = invoked_modules[0].get("data") if (invoked_modules and invoked_modules[0]["service_id"] == "cloud_vision_docai") else None
+        bundle = ui.build_contextual_widgets(cleaned, reply, vision_data=vision_ctx)
+
         return ChatTurnResult(
             ok=True,
             reply=reply,
@@ -438,6 +550,10 @@ class JynChatEngine:
             eval_sec=eval_ns / 1e9,
             overhead_sec=max(0.0, elapsed - total_sec) if total_sec else 0.0,
             truncated=bool(res.get("truncated")),
+            widgets=bundle["widgets"],
+            buttons=bundle["buttons"],
+            ai_channels=ai_channels,
+            invoked_modules=invoked_modules,
         )
 
 

@@ -497,8 +497,8 @@ class JynOSShell(cmd.Cmd):
             print(f"\n{CYAN}{hub.format_polish_summary()}{RESET}\n")
             return
         if sub in ("buy", "zakup", "provision"):
-            res = hub.provision_and_topup_1000_usd()
-            print(f"\n{GREEN}✔ Zakupiono i aktywowano wszystkie 8 pakietów usług Google. Saldo: ${res['wallet']['balance_usd']:.2f} USD.{RESET}")
+            res = hub.topup_each_module_to_1000_usd(1000.0)
+            print(f"\n{GREEN}✔ Zakupiono i aktywowano wszystkie {res['modules_count']} modułów (każdy doładowany do $1000.00 USD). Saldo łączne: ${res['wallet']['balance_usd']:.2f} USD.{RESET}")
             print(f"{CYAN}{hub.format_polish_summary()}{RESET}\n")
             return
         if sub in ("topup", "doladuj"):

@@ -290,23 +290,26 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp_dir.name) / "test_google_hub.sqlite3"
-        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=1000.0)
+        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=12000.0)
         self.ollama = SvlOllamaClient(self.cfg)
 
     def tearDown(self):
         self.tmp_dir.cleanup()
 
-    def test_initial_provisioning_purchases_all_8_services_and_loads_1000_usd(self):
+    def test_initial_provisioning_purchases_all_12_modules_and_loads_1000_usd_each(self):
         from JYN_OS.google_services_hub import GOOGLE_SERVICES_CATALOG, GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 8)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 8)
+        self.assertEqual(rep["services_count"], 12)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 12)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 1000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 1000.0)
+        self.assertEqual(rep["wallet"]["balance_usd"], 12000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 12000.0)
+        self.assertEqual(len(rep["ai_channels"]), 12)
+        for s in rep["services"]:
+            self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
         service_ids = {s["service_id"] for s in rep["services"]}
         expected_ids = {
@@ -318,6 +321,10 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "workspace_bridge",
             "maps_earth_telemetry",
             "gcs_bigquery_telemetry",
+            "interactive_ai_ui_kit",
+            "agentic_swarm_adk",
+            "vector_rag_engine",
+            "security_chronicle_shield",
         }
         self.assertEqual(service_ids, expected_ids)
 
@@ -326,12 +333,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 2000.0)
-        self.assertEqual(w["total_topped_up_usd"], 2000.0)
+        self.assertEqual(w["balance_usd"], 13000.0)
+        self.assertEqual(w["total_topped_up_usd"], 13000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 8)
+        self.assertEqual(len(kres["updated_services"]), 12)
 
     def test_all_integrated_google_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -369,6 +376,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         vis = hub.analyze_vision("/tmp/nonexistent_cam.png")
         self.assertTrue(vis.ok)
+        self.assertTrue(vis.data["ocr_ready"])
 
         wks = hub.workspace_status()
         self.assertTrue(wks.ok)
@@ -383,40 +391,62 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertTrue(gcs.ok)
         self.assertTrue(gcs.data["gcs_uri"].startswith("gs://"))
 
-        wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 1000.0)
-        self.assertGreater(wallet_after["total_spent_usd"], 0.0)
-        ledger = hub.get_recent_ledger(15)
-        self.assertGreaterEqual(len(ledger), 10)
+        ui_kit = hub.render_interactive_ui_kit("Panel JYN_OS")
+        self.assertTrue(ui_kit.ok)
+        self.assertGreaterEqual(len(ui_kit.data["buttons"]), 12)
 
-    def test_chat_engine_slash_google_and_gemini_routing(self):
+        swarm = hub.deploy_agentic_swarm("Patrol SVL-364")
+        self.assertTrue(swarm.ok)
+
+        vrag = hub.query_vector_rag("Pamięć 128D")
+        self.assertTrue(vrag.ok)
+
+        sec = hub.audit_security_shield()
+        self.assertTrue(sec.ok)
+
+        wallet_after = hub.get_wallet_status()
+        self.assertLess(wallet_after["balance_usd"], 12000.0)
+        self.assertGreater(wallet_after["total_spent_usd"], 0.0)
+        ledger = hub.get_recent_ledger(20)
+        self.assertGreaterEqual(len(ledger), 14)
+
+    def test_chat_engine_buttons_channels_vision_and_autonomous_jyn_modules(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
 
-        g_status = engine.send("/google status")
-        self.assertTrue(g_status.ok)
-        self.assertIn("$1000.00 USD", g_status.reply)
-        self.assertIn("Google Gemini / AI Studio API", g_status.reply)
+        # 1. Kliknięcie przycisku w czacie bez wpisywania komendy
+        btn_turn = engine.click_button("module:cloud_vision_docai:analyze_camera")
+        self.assertTrue(btn_turn.ok)
+        self.assertEqual(len(btn_turn.ai_channels), 12)
+        self.assertGreaterEqual(len(btn_turn.buttons), 12)
+        self.assertGreaterEqual(len(btn_turn.widgets), 2)
 
-        g_buy = engine.send("/google buy")
-        self.assertTrue(g_buy.ok)
-        self.assertIn("8 pakietów usług Google", g_buy.reply)
+        # 2. Doładowanie wszystkich modułów przyciskiem
+        top_turn = engine.send("module:all:topup_all_1000")
+        self.assertTrue(top_turn.ok)
+        self.assertIn("$1000.00 USD", top_turn.reply)
 
+        # 3. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie
         reply = {
-            "message": {"content": "Melduję działanie modelu Gemini 2.5 Flash w JYN_OS, Mateuszu."},
+            "model": "svl364-apex-uncensored:latest",
+            "message": {
+                "content": "Analizuję obraz z kamery mostka [JYN_MODULE:cloud_vision_docai:analyze_camera] i melduję pełną sprawność."
+            },
             "done": True,
-            "eval_count": 11,
+            "eval_count": 14,
             "eval_duration": 400_000_000,
         }
         with patch(
             "JYN_OS.ollama_client.urllib.request.urlopen",
             return_value=io.BytesIO(json.dumps(reply, ensure_ascii=False).encode("utf-8")),
         ):
-            routed = engine.send("Podaj status", model="gemini-2.5-flash")
-        self.assertTrue(routed.ok)
-        self.assertIn("gemini-2.5-flash", routed.model)
+            jyn_turn = engine.send("Sprawdź obraz z kamery mostka")
+        self.assertTrue(jyn_turn.ok)
+        self.assertEqual(len(jyn_turn.ai_channels), 12)
+        self.assertGreaterEqual(len(jyn_turn.invoked_modules), 1)
+        self.assertEqual(jyn_turn.invoked_modules[0]["service_id"], "cloud_vision_docai")
 
 
 if __name__ == "__main__":

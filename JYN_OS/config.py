@@ -123,8 +123,9 @@ DEFAULT_CHAT_HISTORY_MAX_CHARS = _env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 25
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
 DEFAULT_BACKEND_URL = os.environ.get("SVL_BACKEND_URL", "http://127.0.0.1:8085")
 
-# Konfiguracja Google Services & AI Integration Hub ($1000.00 USD budżetu kluczy API)
-DEFAULT_GOOGLE_BUDGET_USD: float = float(os.environ.get("SVL_GOOGLE_BUDGET_USD", "1000.00"))
+# Konfiguracja Google Services & AI Integration Hub ($1000.00 USD budżetu na KAŻDY z 12 modułów = $12000.00 USD)
+DEFAULT_MODULE_BUDGET_USD: float = float(os.environ.get("SVL_MODULE_BUDGET_USD", "1000.00"))
+DEFAULT_GOOGLE_BUDGET_USD: float = float(os.environ.get("SVL_GOOGLE_BUDGET_USD", "12000.00"))
 DEFAULT_GOOGLE_PROJECT_ID: str = os.environ.get("SVL_GOOGLE_PROJECT_ID", "svl364-ebon-apex")
 DEFAULT_GOOGLE_REGION: str = os.environ.get("SVL_GOOGLE_REGION", "europe-central2")
 DEFAULT_GOOGLE_MODEL: str = os.environ.get("SVL_GOOGLE_MODEL", "gemini-2.5-flash")
