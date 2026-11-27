@@ -302,12 +302,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 28)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 28)
+        self.assertEqual(rep["services_count"], 35)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 35)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 28000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 28000.0)
-        self.assertEqual(len(rep["ai_channels"]), 28)
+        self.assertEqual(rep["wallet"]["balance_usd"], 35000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 35000.0)
+        self.assertEqual(len(rep["ai_channels"]), 35)
         for s in rep["services"]:
             self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
@@ -341,6 +341,13 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "google_customer_care_mission_critical_sre",
             "google_pso_max_acceleration_10m_fund",
             "omega_ring0_sovereign_kernel_v6",
+            "google_linux_debian13_ubuntu_hybrid_os",
+            "google_compute_engine_vm_supervisor",
+            "google_mandiant_threat_intel_hunt",
+            "google_assured_workloads_confidential_vm",
+            "google_binary_authorization_artifact_guard",
+            "google_access_transparency_dlp_shield",
+            "google_duplex_media_video_stream_engine",
         }
         self.assertEqual(service_ids, expected_ids)
         net = rep["static_ip_vpn_security"]
@@ -354,12 +361,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 29000.0)
-        self.assertEqual(w["total_topped_up_usd"], 29000.0)
+        self.assertEqual(w["balance_usd"], 36000.0)
+        self.assertEqual(w["total_topped_up_usd"], 36000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 28)
+        self.assertEqual(len(kres["updated_services"]), 35)
 
     def test_all_integrated_google_and_offworld_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -494,11 +501,31 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertTrue(solar.ok)
         self.assertEqual(len(solar.data["solar_system_bodies"]), 10)
 
+        linux_ai = hub.supervise_hybrid_linux_autonomous_ai("Audyt hybrydowego Linuxa Debian 13 + Ubuntu 24.04")
+        self.assertTrue(linux_ai.ok)
+        self.assertIn("Debian 13 Trixie + Ubuntu 24.04 LTS", linux_ai.output)
+        self.assertIn("UWAGA DIAGNOSTYCZNA", linux_ai.output)
+
+        vm_sup = hub.manage_google_cloud_vms("svl364-omega-master-vm", "live_patch_kernel")
+        self.assertTrue(vm_sup.ok)
+        self.assertEqual(len(vm_sup.data["vm_fleet"]), 3)
+        self.assertIn("svl364-omega-master-vm", vm_sup.output)
+
+        max_sec = hub.configure_google_max_security_suite()
+        self.assertTrue(max_sec.ok)
+        self.assertIn("Mandiant", max_sec.output)
+        self.assertIn("Confidential Computing", max_sec.output)
+
+        duplex_vid = hub.render_duplex_video_and_web_media()
+        self.assertTrue(duplex_vid.ok)
+        self.assertIn("[video:", duplex_vid.output)
+        self.assertIn("![Zdjęcie z internetu", duplex_vid.output)
+
         wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 28000.0)
+        self.assertLess(wallet_after["balance_usd"], 35000.0)
         self.assertGreater(wallet_after["total_spent_usd"], 0.0)
-        ledger = hub.get_recent_ledger(35)
-        self.assertGreaterEqual(len(ledger), 25)
+        ledger = hub.get_recent_ledger(40)
+        self.assertGreaterEqual(len(ledger), 28)
 
     def test_chat_engine_buttons_channels_vision_and_autonomous_jyn_modules(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -506,16 +533,28 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
 
-        # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText i OpenAI w czacie bez wpisywania komendy
+        # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText, VM, Linux i Wideo w czacie bez wpisywania komendy
         btn_turn = engine.click_button("module:exo_botany_biodome:adjust_climate")
         self.assertTrue(btn_turn.ok)
-        self.assertEqual(len(btn_turn.ai_channels), 28)
-        self.assertGreaterEqual(len(btn_turn.buttons), 23)
+        self.assertEqual(len(btn_turn.ai_channels), 35)
+        self.assertGreaterEqual(len(btn_turn.buttons), 25)
         self.assertGreaterEqual(len(btn_turn.widgets), 5)
 
         vpn_turn = engine.click_button("module:google_ha_vpn_interconnect:establish_ha_vpn")
         self.assertTrue(vpn_turn.ok)
         self.assertIn("99.99%", vpn_turn.reply)
+
+        vm_turn = engine.send("/vm")
+        self.assertTrue(vm_turn.ok)
+        self.assertIn("svl364-omega-master-vm", vm_turn.reply)
+
+        lx_turn = engine.send("/linux")
+        self.assertTrue(lx_turn.ok)
+        self.assertIn("Debian 13 Trixie + Ubuntu 24.04 LTS", lx_turn.reply)
+
+        vid_turn = engine.send("/wideo")
+        self.assertTrue(vid_turn.ok)
+        self.assertIn("[video:", vid_turn.reply)
 
         ip_cmd = engine.send("/ip")
         self.assertTrue(ip_cmd.ok)
@@ -548,11 +587,11 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertIn("6.18.57-svl364-omega-v6.0-ring0-sovereign", krn_cmd.reply)
         self.assertIn("10,000,000.00", krn_cmd.reply)
 
-        # 2. Doładowanie wszystkich 28 modułów przyciskiem
+        # 2. Doładowanie wszystkich 35 modułów przyciskiem
         top_turn = engine.send("module:all:topup_all_1000")
         self.assertTrue(top_turn.ok)
         self.assertIn("$1000.00 USD", top_turn.reply)
-        self.assertIn("28000.00", top_turn.reply)
+        self.assertIn("35000.00", top_turn.reply)
 
         # 3. Uniwersalny Terminal obsługujący dowolny rozkaz (np. "Raport z układu słonecznego")
         shell = JynOSShell(self.cfg)
@@ -574,7 +613,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         ):
             jyn_turn = engine.send("Sprawdź biokopuły i kamerę mostka")
         self.assertTrue(jyn_turn.ok)
-        self.assertEqual(len(jyn_turn.ai_channels), 28)
+        self.assertEqual(len(jyn_turn.ai_channels), 35)
         self.assertGreaterEqual(len(jyn_turn.invoked_modules), 2)
         self.assertGreaterEqual(len(jyn_turn.inline_tags), 3)
 

@@ -95,16 +95,19 @@ DEFAULT_CHAT_MODULE_BUTTONS: List[Dict[str, str]] = [
     {"button_id": "btn_glocki_codec", "label": "0x03 // Kodek W. Głockiego (CUBE 364)", "module_id": "chroma_rich_typography_suite", "action": "glocki_codec", "icon": "🧊", "variant": "info"},
     {"button_id": "btn_ring0_trans", "label": "Transmisja Hiperprzestrzeni Ring-0", "module_id": "chroma_rich_typography_suite", "action": "ring0_transmission", "icon": "✨", "variant": "success"},
     {"button_id": "btn_pill_chart", "label": "Wykres", "module_id": "chroma_rich_typography_suite", "action": "render_chart", "icon": "📊", "variant": "info"},
-    {"button_id": "btn_pill_image", "label": "Grafika", "module_id": "cloud_vision_docai", "action": "analyze_camera", "icon": "🖼️", "variant": "primary"},
-    {"button_id": "btn_pill_video", "label": "Wideo", "module_id": "gemini_ai_studio", "action": "run_pro", "icon": "🎬", "variant": "success"},
+    {"button_id": "btn_pill_image", "label": "Grafika", "module_id": "google_duplex_media_video_stream_engine", "action": "embed_media", "icon": "🖼️", "variant": "primary"},
+    {"button_id": "btn_pill_video", "label": "Wideo", "module_id": "google_duplex_media_video_stream_engine", "action": "render_video", "icon": "🎬", "variant": "success"},
     {"button_id": "btn_pill_code", "label": "Kod", "module_id": "chroma_rich_typography_suite", "action": "exec_code", "icon": "</>", "variant": "warning"},
     {"button_id": "btn_pill_curl", "label": "cURL", "module_id": "chroma_rich_typography_suite", "action": "exec_curl", "icon": "</>", "variant": "info"},
+    {"button_id": "btn_gcloud_vm_supervisor", "label": "Nadzór VM Google Cloud (GCE)", "module_id": "google_compute_engine_vm_supervisor", "action": "manage_vms", "icon": "🖥️", "variant": "primary"},
+    {"button_id": "btn_linux_hybrid_ai_logs", "label": "Linux Hybrid (Debian 13 + Ubuntu 24.04) & Logi AI Live", "module_id": "google_linux_debian13_ubuntu_hybrid_os", "action": "stream_logs", "icon": "🐧", "variant": "success"},
+    {"button_id": "btn_google_mandiant_sec", "label": "Mandiant Threat Intel & Confidential VM", "module_id": "google_mandiant_threat_intel_hunt", "action": "threat_hunt", "icon": "🛡️", "variant": "danger"},
     {"button_id": "btn_openai_chatgpt", "label": "ChatGPT Business (GPT-4.1 / o3-pro)", "module_id": "openai_chatgpt_business_suite", "action": "chatgpt", "icon": "💬", "variant": "primary"},
     {"button_id": "btn_openai_codex", "label": "OpenAI Codex (codex-1 · Inżynieria Kodu)", "module_id": "openai_chatgpt_business_suite", "action": "codex", "icon": "💻", "variant": "info"},
     {"button_id": "btn_openai_work", "label": "ChatGPT Work (Enterprise Workspace & Canvas)", "module_id": "openai_chatgpt_business_suite", "action": "chatgpt_work", "icon": "🏢", "variant": "success"},
     {"button_id": "btn_openai_api_sec", "label": "OpenAI API ($1000 · Dodatkowe / Secondary)", "module_id": "openai_api_secondary_provider", "action": "openai_api", "icon": "⚡", "variant": "warning"},
     {"button_id": "btn_solar_report", "label": "Raport z Układu Słonecznego (SVL-364)", "module_id": "solar_system_telemetry", "action": "solar_system_report", "icon": "🪐", "variant": "primary"},
-    {"button_id": "btn_topup_all", "label": "Doładuj Wszystkie 23 Moduły ($1000/moduł)", "module_id": "all", "action": "topup_all_1000", "icon": "💳", "variant": "success"},
+    {"button_id": "btn_topup_all", "label": "Doładuj Wszystkie 35 Modułów ($1000/moduł)", "module_id": "all", "action": "topup_all_1000", "icon": "💳", "variant": "success"},
     {"button_id": "btn_avatar_jyn_core", "label": "Awatar Jyn: Neural Core", "module_id": "avatar_selector", "action": "jyn_neural_core", "icon": "🎭", "variant": "primary"},
     {"button_id": "btn_avatar_jyn_valkyrie", "label": "Awatar Jyn: Quantum Valkyrie", "module_id": "avatar_selector", "action": "jyn_quantum_valkyrie", "icon": "🤖", "variant": "info"},
     {"button_id": "btn_avatar_jyn_sentinel", "label": "Awatar Jyn: Orbital Sentinel", "module_id": "avatar_selector", "action": "jyn_orbital_sentinel", "icon": "🛰️", "variant": "info"},
@@ -151,6 +154,14 @@ class InteractiveUIEngine:
             by_mod.setdefault(b.module_id, []).append(b)
 
         picked: List[InteractiveButton] = []
+        if any(k in lower_q for k in ("vm", "maszyn", "wirtualn", "gce", "compute engine", "chmur")):
+            picked.extend(by_mod.get("google_compute_engine_vm_supervisor", []))
+        if any(k in lower_q for k in ("linux", "debian", "ubuntu", "logi", "autonom", "trixie")):
+            picked.extend(by_mod.get("google_linux_debian13_ubuntu_hybrid_os", []))
+        if any(k in lower_q for k in ("wideo", "video", "film", "veo", "zdjęci", "zdjeci", "grafik", "internet")):
+            picked.extend(by_mod.get("google_duplex_media_video_stream_engine", []))
+        if any(k in lower_q for k in ("mandiant", "confidential", "dlp", "binary", "bezpiecz", "security")):
+            picked.extend(by_mod.get("google_mandiant_threat_intel_hunt", []))
         if any(k in lower_q for k in ("chatgpt", "codex", "work", "openai", "gpt-4", "o3", "api", "oplama", "ollama")):
             picked.extend(by_mod.get("openai_chatgpt_business_suite", []))
             picked.extend(by_mod.get("openai_api_secondary_provider", []))
@@ -180,7 +191,7 @@ class InteractiveUIEngine:
             picked.extend(by_mod.get("vertex_ai_garden", []))
         if any(k in lower_q for k in ("pamięć", "wektor", "rag", "128d")):
             picked.extend(by_mod.get("vector_rag_engine", []))
-        if any(k in lower_q for k in ("budżet", "doładuj", "1000", "20000", "23000", "portfel", "google")):
+        if any(k in lower_q for k in ("budżet", "doładuj", "1000", "20000", "23000", "35000", "portfel", "google")):
             picked.extend(by_mod.get("all", []))
 
         # Zawsze dodaj główne przyciski sterujące, aby AI aktywnie prezentowało interaktywne opcje

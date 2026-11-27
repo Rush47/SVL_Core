@@ -784,6 +784,74 @@ export function parseFollowUpToken(token: string): ParsedFollowUpToken | null {
   return { prompt, action, icon };
 }
 
+export interface ParsedVideoToken {
+  url: string;
+  title: string;
+  poster?: string;
+}
+
+export function parseVideoToken(token: string): ParsedVideoToken | null {
+  const trimmed = token.trim();
+  const tagMatch = trimmed.match(/^\[(?:video|wideo|film|veo|stream):\s*([^\]\n]+)\]$/i);
+  if (tagMatch) {
+    const parts = tagMatch[1].split('|').map((p) => p.trim());
+    const url = parts[0] || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+    const title = parts[1] || 'Transmisja Wideo Veo 2 · SVL-364 Ebon Apex';
+    const poster = parts[2] || undefined;
+    return { url, title, ...(poster ? { poster } : {}) };
+  }
+  const htmlMatch = trimmed.match(/^<video[^>]*src=["']([^"']+)["'][^>]*>(?:.*?<\/video>)?$/i);
+  if (htmlMatch) {
+    return {
+      url: htmlMatch[1].trim(),
+      title: 'Transmisja Wideo HTML5 · SVL-364',
+    };
+  }
+  const directVideoUrl = trimmed.match(/^(https?:\/\/[^\s"'<>]+\.(?:mp4|webm|ogg|mov)(?:\?[^\s"'<>]*)?)$/i);
+  if (directVideoUrl) {
+    return {
+      url: directVideoUrl[1].trim(),
+      title: 'Strumień Wideo z Sieci · SVL-364',
+    };
+  }
+  return null;
+}
+
+export interface ParsedImageToken {
+  url: string;
+  alt: string;
+  caption?: string;
+}
+
+export function parseImageToken(token: string): ParsedImageToken | null {
+  const trimmed = token.trim();
+  const mdImgMatch = trimmed.match(/^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)$/);
+  if (mdImgMatch) {
+    const alt = mdImgMatch[1].trim() || 'Zdjęcie z internetu · SVL-364';
+    const url = mdImgMatch[2].trim();
+    const caption = mdImgMatch[3]?.trim() || alt;
+    if (url) return { url, alt, caption };
+  }
+  const tagMatch = trimmed.match(/^\[(?:image|img|obraz|foto|zdjecie|zdjęcie):\s*([^\]\n]+)\]$/i);
+  if (tagMatch) {
+    const parts = tagMatch[1].split('|').map((p) => p.trim());
+    const url = parts[0];
+    if (!url) return null;
+    const alt = parts[1] || 'Obraz z sieci · SVL-364 Ebon Apex';
+    return { url, alt, caption: parts[2] || alt };
+  }
+  const directImgUrl = trimmed.match(/^(https?:\/\/[^\s"'<>]+\.(?:png|jpg|jpeg|webp|gif|svg)(?:\?[^\s"'<>]*)?)$/i);
+  if (directImgUrl) {
+    return {
+      url: directImgUrl[1].trim(),
+      alt: 'Zdjęcie z internetu · SVL-364',
+      caption: directImgUrl[1].trim(),
+    };
+  }
+  return null;
+}
+
+
 
 
 

@@ -71,6 +71,10 @@ import {
   parseChartToken,
   parseFormulaToken,
   parseThinkingToken,
+  parseVideoToken,
+  parseImageToken,
+  type ParsedVideoToken,
+  type ParsedImageToken,
 } from '../utils/chatInteractiveTokens';
 import { InteractiveChartWidget } from './InteractiveChartWidget';
 import { InteractiveFormulaWidget } from './InteractiveFormulaWidget';
@@ -81,6 +85,174 @@ import {
   type InlineMarkdownNode,
 } from '../utils/chatMarkdownInline';
 import { renderMathToHtml } from '../utils/chatMath';
+
+const InteractiveChatVideoPlayer: React.FC<{
+  video: ParsedVideoToken;
+}> = ({ video }) => {
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [isPlayingStream, setIsPlayingStream] = useState(true);
+
+  return (
+    <div
+      data-chat-video-player="true"
+      className="my-2.5 w-full max-w-2xl rounded-xl border border-emerald-500/40 bg-[#060A14] overflow-hidden shadow-lg"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[#0C1526] border-b border-emerald-500/25 text-xs">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          <span className="font-semibold text-emerald-300 truncate">
+            🎬 {video.title}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-200">
+            VEO 2 · HTML5 LIVE STREAM
+          </span>
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-mono text-cyan-300 hover:text-cyan-200 underline"
+          >
+            Otwórz źródło
+          </a>
+        </div>
+      </div>
+
+      <div className="relative bg-black">
+        {!videoFailed ? (
+          <video
+            src={video.url}
+            poster={video.poster}
+            controls
+            autoPlay
+            muted
+            loop
+            playsInline
+            onError={() => setVideoFailed(true)}
+            className="w-full max-h-[360px] object-contain bg-black"
+          >
+            Twoja przeglądarka nie obsługuje elementu HTML5 video.
+          </video>
+        ) : null}
+
+        {/* Zawsze aktywny lub zapasowy animowany strumień orbitalny Veo 2 / SVL-364 HUD */}
+        <div className={`${videoFailed ? 'block' : 'border-t border-slate-800/80'} bg-gradient-to-r from-[#050914] via-[#0A1428] to-[#050914] px-3 py-2`}>
+          <div className="flex items-center justify-between gap-2 text-[11px] font-mono text-slate-300">
+            <span className="flex items-center gap-1.5 text-cyan-300">
+              <Play className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Strumień Wideo Veo 2 / SVL-364 Ebon Apex (60 FPS · 1080p · Ring-0)</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsPlayingStream((p) => !p)}
+              className="px-2 py-0.5 rounded border border-emerald-500/40 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 text-[10px]"
+            >
+              {isPlayingStream ? '⏸ Wstrzymaj HUD' : '▶ Wznów HUD'}
+            </button>
+          </div>
+          {videoFailed && (
+            <svg
+              viewBox="0 0 640 240"
+              className="mt-2 w-full h-44 rounded-lg border border-cyan-500/30 bg-[#04070F]"
+              role="img"
+              aria-label={video.title}
+            >
+              <defs>
+                <radialGradient id="svlOrbitalGlow" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.45" />
+                  <stop offset="60%" stopColor="#a855f7" stopOpacity="0.18" />
+                  <stop offset="100%" stopColor="#04070f" stopOpacity="1" />
+                </radialGradient>
+              </defs>
+              <rect width="640" height="240" fill="url(#svlOrbitalGlow)" />
+              <circle cx="320" cy="120" r="64" fill="none" stroke="#22d3ee" strokeWidth="2" strokeDasharray="8 4" />
+              <circle cx="320" cy="120" r="36" fill="none" stroke="#34d399" strokeWidth="2" />
+              <circle cx="320" cy="120" r="10" fill="#34d399" />
+              <text x="20" y="30" fill="#22d3ee" fontSize="13" fontFamily="monospace">
+                LIVE VEO-2 VIDEO STREAM // SVL-364 EBON APEX (3145.0 MW)
+              </text>
+              <text x="20" y="215" fill="#34d399" fontSize="11" fontFamily="monospace">
+                HA VPN: 34.118.64.100 &lt;-&gt; 34.118.64.200 | GCE VM: RUNNING | {video.title}
+              </text>
+            </svg>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const InteractiveChatImageCard: React.FC<{
+  image: ParsedImageToken;
+}> = ({ image }) => {
+  const [imgError, setImgError] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div
+      data-chat-image-card="true"
+      className="my-2.5 w-full max-w-xl rounded-xl border border-cyan-500/35 bg-[#070C18] overflow-hidden shadow-md"
+    >
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#0D1628] border-b border-cyan-500/20 text-xs">
+        <span className="font-semibold text-cyan-200 truncate">🖼️ {image.alt}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setExpanded((prev) => !prev)}
+            className="px-2 py-0.5 rounded bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 hover:bg-cyan-500/25 text-[10px] font-mono"
+          >
+            {expanded ? 'Pomniejsz' : 'Powiększ'}
+          </button>
+          <a
+            href={image.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-mono text-cyan-300 hover:text-cyan-200 underline"
+          >
+            URL
+          </a>
+        </div>
+      </div>
+      <div className="p-2 bg-[#050811] flex flex-col items-center">
+        {!imgError ? (
+          <img
+            src={image.url}
+            alt={image.alt}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            onClick={() => setExpanded((prev) => !prev)}
+            className={`cursor-pointer rounded-lg border border-slate-800 object-contain transition-all ${
+              expanded ? 'max-h-[620px] w-full' : 'max-h-72 w-auto'
+            }`}
+          />
+        ) : (
+          <svg
+            viewBox="0 0 560 220"
+            className="w-full h-44 rounded-lg border border-purple-500/30 bg-[#070B16]"
+            role="img"
+            aria-label={image.alt}
+          >
+            <rect width="560" height="220" fill="#070B16" />
+            <circle cx="280" cy="105" r="54" fill="none" stroke="#c084fc" strokeWidth="2.5" />
+            <circle cx="280" cy="105" r="24" fill="#22d3ee" fillOpacity="0.25" stroke="#22d3ee" strokeWidth="2" />
+            <text x="20" y="32" fill="#c084fc" fontSize="13" fontFamily="monospace">
+              SVL-364 REAL VISION &amp; WEB IMAGE RENDERER
+            </text>
+            <text x="20" y="195" fill="#22d3ee" fontSize="11" fontFamily="monospace">
+              {image.alt.slice(0, 68)}
+            </text>
+          </svg>
+        )}
+        {image.caption && (
+          <div className="mt-1.5 text-[11px] text-slate-300 font-mono text-center break-all px-2">
+            {image.caption}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const InteractiveCodeBlock: React.FC<{
   code: string;
@@ -1395,6 +1567,14 @@ function renderInlineToken(
       </div>
     );
   }
+  const inlineVideo = parseVideoToken(raw);
+  if (inlineVideo) {
+    return <InteractiveChatVideoPlayer key={key} video={inlineVideo} />;
+  }
+  const inlineImage = parseImageToken(raw);
+  if (inlineImage) {
+    return <InteractiveChatImageCard key={key} image={inlineImage} />;
+  }
   return <React.Fragment key={key}>{raw}</React.Fragment>;
 }
 
@@ -1829,6 +2009,20 @@ export function renderFormattedContent(
       const formulaToken = parseFormulaToken(trimmed);
       if (formulaToken) {
         renderedElements.push(<InteractiveFormulaWidget key={`formula-${segIdx}-${idx}`} formula={formulaToken} />);
+        idx += 1;
+        continue;
+      }
+
+      const videoToken = parseVideoToken(trimmed);
+      if (videoToken) {
+        renderedElements.push(<InteractiveChatVideoPlayer key={`video-${segIdx}-${idx}`} video={videoToken} />);
+        idx += 1;
+        continue;
+      }
+
+      const imageToken = parseImageToken(trimmed);
+      if (imageToken) {
+        renderedElements.push(<InteractiveChatImageCard key={`image-${segIdx}-${idx}`} image={imageToken} />);
         idx += 1;
         continue;
       }

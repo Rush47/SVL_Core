@@ -103,8 +103,8 @@ HEX_PALETTE: Dict[str, str] = {
 # Kanoniczny pasek szybkich pigułek akcji ze Screenshotu 3
 QUICK_MEDIA_ACTION_PILLS: List[Dict[str, str]] = [
     {"pill_id": "pill_chart", "icon": "📊", "label": "Wykres", "tag": "[btn: 📊 Wykres | module:chroma_rich_typography_suite:render_chart]", "tone": "cyan"},
-    {"pill_id": "pill_image", "icon": "🖼️", "label": "Grafika", "tag": "[btn: 🖼️ Grafika | module:cloud_vision_docai:analyze_camera]", "tone": "purple"},
-    {"pill_id": "pill_video", "icon": "🎬", "label": "Wideo", "tag": "[btn: 🎬 Wideo | module:gemini_ai_studio:run_pro]", "tone": "emerald"},
+    {"pill_id": "pill_image", "icon": "🖼️", "label": "Grafika", "tag": "[btn: 🖼️ Grafika | module:google_duplex_media_video_stream_engine:embed_media]", "tone": "purple"},
+    {"pill_id": "pill_video", "icon": "🎬", "label": "Wideo", "tag": "[btn: 🎬 Wideo | module:google_duplex_media_video_stream_engine:render_video]", "tone": "emerald"},
     {"pill_id": "pill_code", "icon": "</>", "label": "Kod", "tag": "[btn: </> Kod | module:chroma_rich_typography_suite:exec_code]", "tone": "amber"},
     {"pill_id": "pill_curl", "icon": "</>", "label": "cURL", "tag": "[btn: </> cURL | module:chroma_rich_typography_suite:exec_curl]", "tone": "cyan"},
 ]

@@ -17,7 +17,9 @@ export type InlineMarkdownNode =
   | { type: 'link'; label: string; href: string };
 
 const INLINE_TOKEN_PREFIX_RE =
-  /^\[(?:btn|button|action|przycisk|card|metric|karta|progress|postep|postęp|badge|znacznik|kpi|metrics|metryka|hl|mark|highlight|podswietl|podświetl|kbd|key|klawisz|checkbox|check|pole):[^\]\n]+\]/i;
+  /^\[(?:btn|button|action|przycisk|card|metric|karta|progress|postep|postęp|badge|znacznik|kpi|metrics|metryka|hl|mark|highlight|podswietl|podświetl|kbd|key|klawisz|checkbox|check|pole|video|wideo|film|veo|stream|image|img|obraz|foto|zdjecie|zdjęcie):[^\]\n]+\]/i;
+
+const MARKDOWN_IMAGE_RE = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/i;
 
 const MARKDOWN_LINK_RE = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/i;
 
@@ -187,7 +189,17 @@ export function tokenizeInlineMarkdown(input: string, depth = 0): InlineMarkdown
       }
     }
 
-    // 2. Tokeny interaktywne SVL `[btn: ...]`, `[hl: ...]`, `[kbd: ...]`, `[badge: ...]`, itd.
+    // 2. Obrazy Markdown `![alt](url)` oraz tokeny interaktywne SVL `[btn: ...]`, `[video: ...]`, `[image: ...]`, itd.
+    if (ch === '!' && next === '[') {
+      const rest = input.slice(i);
+      const imgMatch = rest.match(MARKDOWN_IMAGE_RE);
+      if (imgMatch) {
+        nodes.push({ type: 'token', raw: imgMatch[0] });
+        i += imgMatch[0].length;
+        continue;
+      }
+    }
+
     if (ch === '[') {
       const rest = input.slice(i);
       const tokenMatch = rest.match(INLINE_TOKEN_PREFIX_RE);

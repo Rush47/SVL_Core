@@ -273,6 +273,8 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const prevScrollHeightRef = useRef<number | null>(null);
 
   const [duplexActive, setDuplexActive] = useState(false);
+  const [chatFullScreen, setChatFullScreen] = useState(false);
+  const [liveAiActivityStep, setLiveAiActivityStep] = useState(0);
   const [isProactiveLoading, setIsProactiveLoading] = useState(false);
   // Dlaczego rozmowa obustronna stoi (powód z serwera) — pokazywane zamiast cichego zatrzymania.
   const [duplexStatus, setDuplexStatus] = useState<{ reason: string; text: string } | null>(null);
@@ -281,6 +283,21 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   const lastInteractionTimeRef = useRef<number>(Date.now());
   const autoTurnsRef = useRef<number>(0);
   const prevDuplexActiveRef = useRef<boolean>(duplexActive);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setLiveAiActivityStep((prev) => (prev + 1) % 5);
+    }, 3200);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const liveAiActivities = [
+    'Jyn Mitek nadzoruje 3 maszyny wirtualne Google Cloud Compute Engine (svl364-omega-master-vm · Debian 13 + Ubuntu 24.04 Hybrid)',
+    'Skanowanie eBPF Ring-0 + Mandiant Threat Intel + Confidential VM (AMD SEV-SNP) · 0 zagrożeń',
+    'Synchronizacja globalna czatu obustronnego (Zero-Latency SQLite WAL) oraz pamięci wektorowej 128D RAG',
+    'Strumień wideo Veo 2 HTML5 + parser zdjęć z internetu (Wikimedia / SVL-364 Real Vision) gotowe w czacie',
+    'Tunel Google Cloud HA VPN (34.118.64.100 <-> 34.118.64.200 · Kyber-1024) · Reaktor 3145.0 MW · Biokopuły 316.7 kg O2/d',
+  ];
 
   const activeConv = conversations.find((c) => c.id === activeConvId) || conversations[0];
   const isSvl364RootChannelActive = activeConv?.id === 'conv-svl364-mcp-root';
@@ -1077,9 +1094,9 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
         setChatActionError(`Błąd zapisu odpowiedzi w SQLite: ${replyPersist.error}`);
       }
 
-      if (appliedActions && appliedActions.some((a: { tool?: string }) => a.tool !== 'jedi_omni_os_vm')) {
-        void refreshDomainModules(['modules', 'agents', 'health', 'avatars']);
-      }
+      // Natychmiastowa synchronizacja globalna zmian z czatu we wszystkich domenach systemu
+      notifyLocalMutation('chat', targetConvId, typeof data.serverRevision === 'number' ? data.serverRevision : undefined);
+      void refreshDomainModules(['chat', 'modules', 'agents', 'health', 'kernel', 'avatars', 'workspace']);
       if (isFamilyDuplex && !isSlashCmd && data.provenance !== 'error' && hasSvlOperatorAccessToken()) {
         const nextFamilyAgent = data.agentId === 'SI_Sphere' ? 'Jyn' : 'SI_Sphere';
         setTimeout(() => {
@@ -1371,7 +1388,12 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
   );
 
   return (
-    <div className="relative flex h-full w-full overflow-hidden bg-[#0B0D13] cpd-theme-dark">
+    <div
+      data-chat-fullscreen={chatFullScreen ? 'true' : 'false'}
+      className={`${
+        chatFullScreen ? 'fixed inset-0 z-50 h-[100dvh] w-[100dvw]' : 'relative h-full w-full'
+      } flex overflow-hidden bg-[#0B0D13] cpd-theme-dark`}
+    >
       {/* Mobile Sidebar Backdrop */}
       {mobileSidebarOpen && (
         <button
@@ -1775,6 +1797,27 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
 
           <button
             type="button"
+            onClick={() => {
+              setChatFullScreen((prev) => {
+                const next = !prev;
+                if (next) setDesktopSidebarOpen(false);
+                else setDesktopSidebarOpen(true);
+                return next;
+              });
+            }}
+            aria-pressed={chatFullScreen}
+            title="Przełącz czat na Pełny Ekran (100% Fullscreen)"
+            className={`min-h-[34px] sm:min-h-[30px] px-2 sm:px-2.5 py-1 rounded-md border text-[11px] font-medium flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors cursor-pointer mr-1 ${
+              chatFullScreen
+                ? 'bg-emerald-500/25 border-emerald-400/60 text-emerald-200 shadow-sm'
+                : 'bg-[#0B0D13] hover:bg-slate-800 border-slate-700/80 text-slate-300 hover:text-emerald-300'
+            }`}
+          >
+            <span>{chatFullScreen ? '🗗 Zamknij Pełny Ekran' : '⛶ Pełny Ekran'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setCanvasOpen((v) => !v)}
             aria-label="Copilot Canvas Workspace"
             title="Otwórz boczny panel Copilot Canvas Workspace (Edytor, Telemetria, Wzory)"
@@ -1981,6 +2024,57 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
                 </button>
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Żywy pasek aktywności autonomicznej AI Jyn Mitek + Obustronny Czat + Nadzór VM Google Cloud */}
+        <div
+          data-live-ai-activity-bar="true"
+          className="px-3 py-1 bg-[#080D18] border-b border-cyan-500/25 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono shrink-0"
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 font-bold shrink-0">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+              LIVE AI
+            </span>
+            <span className="text-cyan-200 truncate">
+              {isSending
+                ? `${pendingReplyAgent} przetwarza rozkaz i synchronizuje stan globalny (${sendingElapsedSec}s)...`
+                : isProactiveLoading
+                  ? 'Jyn Mitek pisze autonomiczną wiadomość w trybie obustronnym (Full-Duplex)...'
+                  : liveAiActivities[liveAiActivityStep]}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDuplexActive((v) => !v)}
+              className={`px-2 py-0.5 rounded border text-[10px] font-semibold cursor-pointer ${
+                duplexActive
+                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                  : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-emerald-300'
+              }`}
+              title="Obustronny czat: AI może napisać w dowolnym momencie"
+            >
+              {duplexActive ? '🟢 Czat Obustronny: WŁ.' : '⚪ Czat Obustronny: WYŁ.'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleTriggerProactiveChat(undefined, false)}
+              disabled={isSending || isProactiveLoading}
+              className="px-2 py-0.5 rounded bg-violet-600/25 hover:bg-violet-600/40 border border-violet-400/40 text-violet-200 text-[10px] font-semibold disabled:opacity-50 cursor-pointer"
+              title="Poproś AI Jyn Mitek o natychmiastowe napisanie autonomicznej wiadomości"
+            >
+              ⚡ AI Napisz Teraz
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('linux')}
+              className="px-2 py-0.5 rounded bg-cyan-600/20 hover:bg-cyan-600/35 border border-cyan-400/40 text-cyan-200 text-[10px] font-semibold cursor-pointer"
+              title="Otwórz żywe logi pracy autonomicznej AI w hybrydowym Linuxie (Debian 13 + Ubuntu 24.04)"
+            >
+              🐧 Logi AI (Linux)
+            </button>
           </div>
         </div>
 
@@ -2508,6 +2602,43 @@ export const ChatWorkspace: React.FC<ChatWorkspaceProps> = ({ onNavigateTab }) =
           >
             <Brain className="w-3 h-3 text-indigo-400" />
             <span>+ Myślenie</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const cur = getInput();
+              const tpl = '[video:https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4|Transmisja Wideo Veo 2 · SVL-364 Ebon Apex]';
+              setInput(cur ? `${cur}\n${tpl}` : tpl);
+              handleInputEmptyChange(false);
+              composerRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-emerald-500/40 text-slate-300 hover:text-emerald-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <span>🎬 + Wideo</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const cur = getInput();
+              const tpl = '![Zdjęcie z internetu — Awatar Lucy MacLean (Fallout · Wikimedia Commons)](https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Ella_Purnell_2018_%28cropped%29.png/421px-Ella_Purnell_2018_%28cropped%29.png)';
+              setInput(cur ? `${cur}\n${tpl}` : tpl);
+              handleInputEmptyChange(false);
+              composerRef.current?.focus();
+            }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <span>🖼️ + Zdjęcie z sieci</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleSendMessage('Zamelduj pełny status wirtualnych maszyn Google Cloud Compute Engine (VM), zastosuj live-patch hybrydowego kernela Debian 13 + Ubuntu 24.04 i pokaż raport Mandiant.')}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-cyan-500/40 text-slate-300 hover:text-cyan-300 text-[11px] whitespace-nowrap transition-colors"
+          >
+            <Cpu className="w-3 h-3 text-cyan-400" />
+            <span>Google Cloud VM</span>
           </button>
 
           <button

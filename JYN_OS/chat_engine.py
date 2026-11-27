@@ -342,9 +342,24 @@ class JynChatEngine:
                 local_command=True,
             )
 
-        if cmd in ("/obraz", "/image"):
+        if cmd in ("/obraz", "/image", "/foto", "/zdjecie"):
             hub = self._get_google_hub()
             res = hub.generate_image_from_services(prompt=arg or "Statek kosmiczny SVL-364 Ebon Apex na orbicie Jowisza")
+            media_res = hub.render_duplex_video_and_web_media(media_type="image", prompt=arg or "Zdjęcie z internetu i generatora SVL-364")
+            return ChatTurnResult(
+                ok=True,
+                reply=f"{res.output}\n\n{media_res.output}",
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/wideo", "/video", "/veo", "/media", "/stream"):
+            hub = self._get_google_hub()
+            res = hub.render_duplex_video_and_web_media(
+                media_type="video_and_image",
+                prompt=arg or "Transmisja Wideo Veo 2 oraz zdjęcie z internetu dla SVL-364 Ebon Apex",
+            )
             return ChatTurnResult(
                 ok=True,
                 reply=res.output,
@@ -353,17 +368,43 @@ class JynChatEngine:
                 local_command=True,
             )
 
-        if cmd in ("/ip", "/static-ip", "/vpn", "/security", "/bezpieczenstwo"):
+        if cmd in ("/vm", "/vms", "/gce", "/maszyny"):
+            hub = self._get_google_hub()
+            res = hub.manage_google_cloud_vms(
+                vm_id="svl364-omega-master-vm",
+                operation=arg or "live_supervision_and_patch",
+            )
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/linux", "/debian", "/ubuntu", "/logi-ai"):
+            hub = self._get_google_hub()
+            res = hub.supervise_hybrid_linux_autonomous_ai(custom_task=arg or None)
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/ip", "/static-ip", "/vpn", "/security", "/bezpieczenstwo", "/mandiant"):
             hub = self._get_google_hub()
             ip_res = hub.configure_google_static_ip_networking()
             vpn_res = hub.configure_google_ha_vpn_tunnel()
             bc_res = hub.configure_google_beyondcorp_zero_trust()
             ar_res = hub.configure_google_cloud_armor_ids()
             scc_res = hub.configure_google_scc_kms_hsm()
+            max_sec = hub.configure_google_max_security_suite()
             sec_res = hub.audit_security_shield()
             return ChatTurnResult(
                 ok=True,
-                reply="\n\n".join([ip_res.output, vpn_res.output, bc_res.output, ar_res.output, scc_res.output, sec_res.output]),
+                reply="\n\n".join([ip_res.output, vpn_res.output, bc_res.output, ar_res.output, scc_res.output, max_sec.output, sec_res.output]),
                 model=self.config.google_default_model,
                 endpoint="google_services_hub",
                 local_command=True,
@@ -374,20 +415,27 @@ class JynChatEngine:
             sub_parts = arg.split(maxsplit=1) if arg else ["status"]
             sub_cmd = sub_parts[0].lower()
             sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+            if sub_cmd in ("vm", "vms", "gce", "compute"):
+                r = hub.manage_google_cloud_vms(operation=sub_arg or "status_and_patch")
+                return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
+            if sub_cmd in ("linux", "debian", "ubuntu", "hybrid"):
+                r = hub.supervise_hybrid_linux_autonomous_ai(custom_task=sub_arg or None)
+                return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
             if sub_cmd in ("ip", "static-ip"):
                 r = hub.configure_google_static_ip_networking()
                 return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
             if sub_cmd == "vpn":
                 r = hub.configure_google_ha_vpn_tunnel()
                 return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
-            if sub_cmd in ("security", "bezpieczenstwo", "beyondcorp", "armor", "kms", "scc"):
+            if sub_cmd in ("security", "bezpieczenstwo", "beyondcorp", "armor", "kms", "scc", "mandiant"):
                 r1 = hub.configure_google_beyondcorp_zero_trust()
                 r2 = hub.configure_google_cloud_armor_ids()
                 r3 = hub.configure_google_scc_kms_hsm()
-                r4 = hub.audit_security_shield()
+                r4 = hub.configure_google_max_security_suite()
+                r5 = hub.audit_security_shield()
                 return ChatTurnResult(
                     ok=True,
-                    reply="\n\n".join([r1.output, r2.output, r3.output, r4.output]),
+                    reply="\n\n".join([r1.output, r2.output, r3.output, r4.output, r5.output]),
                     model=r1.model,
                     endpoint=r1.provider_mode,
                     local_command=True,
@@ -645,6 +693,18 @@ class JynChatEngine:
         if any(k in low for k in ("układu słonecznego", "ukladu slonecznego", "układ słoneczny", "uklad sloneczny", "solar system")):
             sol_r = hub.generate_solar_system_telemetry_report(prompt)
             invoked.append({"service_id": sol_r.service_id, "operation": sol_r.operation, "output": sol_r.output, "data": sol_r.data})
+        if any(k in low for k in ("wirtualn", "maszyn", "vm", "gce", "compute engine")) and not any(m["service_id"] == "google_compute_engine_vm_supervisor" for m in invoked):
+            vm_r = hub.manage_google_cloud_vms(operation="autonomous_chat_supervision")
+            invoked.append({"service_id": vm_r.service_id, "operation": vm_r.operation, "output": vm_r.output, "data": vm_r.data})
+        if any(k in low for k in ("linux", "debian", "ubuntu", "trixie", "pracy autonomicznej", "logi")) and not any(m["service_id"] == "google_linux_debian13_ubuntu_hybrid_os" for m in invoked):
+            lx_r = hub.supervise_hybrid_linux_autonomous_ai(custom_task=prompt)
+            invoked.append({"service_id": lx_r.service_id, "operation": lx_r.operation, "output": lx_r.output, "data": lx_r.data})
+        if any(k in low for k in ("wideo", "video", "veo", "film", "zdjęcie z internetu", "zdjęcia z internetu", "wklej")) and not any(m["service_id"] == "google_duplex_media_video_stream_engine" for m in invoked):
+            vid_r = hub.render_duplex_video_and_web_media(prompt=prompt)
+            invoked.append({"service_id": vid_r.service_id, "operation": vid_r.operation, "output": vid_r.output, "data": vid_r.data})
+        if any(k in low for k in ("mandiant", "confidential", "dlp", "binary authorization")) and not any(m["service_id"] == "google_mandiant_threat_intel_hunt" for m in invoked):
+            sec_r = hub.configure_google_max_security_suite()
+            invoked.append({"service_id": sec_r.service_id, "operation": sec_r.operation, "output": sec_r.output, "data": sec_r.data})
 
         return invoked
 

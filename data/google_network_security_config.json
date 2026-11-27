@@ -25,7 +25,11 @@
         "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
         "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
         "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
-        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS",
+        "Google Cloud Mandiant Threat Intelligence, Autonomous Red-Team & Breach Analytics",
+        "Google Cloud Confidential Computing (AMD SEV-SNP / Intel TDX Encrypted RAM VM) & Assured Workloads",
+        "Google Cloud Binary Authorization (SLSA L4), Artifact Analysis, Web Risk API & reCAPTCHA Enterprise",
+        "Google Cloud Sensitive Data Protection (Cloud DLP), Access Transparency & Access Approval"
       ],
       "status": "ACTIVE"
     },
@@ -47,7 +51,11 @@
         "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
         "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
         "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
-        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS",
+        "Google Cloud Mandiant Threat Intelligence, Autonomous Red-Team & Breach Analytics",
+        "Google Cloud Confidential Computing (AMD SEV-SNP / Intel TDX Encrypted RAM VM) & Assured Workloads",
+        "Google Cloud Binary Authorization (SLSA L4), Artifact Analysis, Web Risk API & reCAPTCHA Enterprise",
+        "Google Cloud Sensitive Data Protection (Cloud DLP), Access Transparency & Access Approval"
       ],
       "status": "ACTIVE"
     }
@@ -88,7 +96,11 @@
     "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
     "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
     "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
-    "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+    "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS",
+    "Google Cloud Mandiant Threat Intelligence, Autonomous Red-Team & Breach Analytics",
+    "Google Cloud Confidential Computing (AMD SEV-SNP / Intel TDX Encrypted RAM VM) & Assured Workloads",
+    "Google Cloud Binary Authorization (SLSA L4), Artifact Analysis, Web Risk API & reCAPTCHA Enterprise",
+    "Google Cloud Sensitive Data Protection (Cloud DLP), Access Transparency & Access Approval"
   ],
-  "updated_at": 1795814327.5620322
+  "updated_at": 1795819890.5107174
 }
