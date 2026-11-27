@@ -290,24 +290,24 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp_dir.name) / "test_google_hub.sqlite3"
-        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=25000.0)
+        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=28000.0)
         self.ollama = SvlOllamaClient(self.cfg)
 
     def tearDown(self):
         self.tmp_dir.cleanup()
 
-    def test_initial_provisioning_purchases_all_25_modules_and_loads_1000_usd_each(self):
+    def test_initial_provisioning_purchases_all_28_modules_and_loads_1000_usd_each(self):
         from JYN_OS.google_services_hub import GOOGLE_SERVICES_CATALOG, GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 25)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 25)
+        self.assertEqual(rep["services_count"], 28)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 28)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 25000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 25000.0)
-        self.assertEqual(len(rep["ai_channels"]), 25)
+        self.assertEqual(rep["wallet"]["balance_usd"], 28000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 28000.0)
+        self.assertEqual(len(rep["ai_channels"]), 28)
         for s in rep["services"]:
             self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
@@ -338,6 +338,9 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "openai_api_secondary_provider",
             "google_ai_ultra_all_subscriptions",
             "google_professional_services_rebuild_github",
+            "google_customer_care_mission_critical_sre",
+            "google_pso_max_acceleration_10m_fund",
+            "omega_ring0_sovereign_kernel_v6",
         }
         self.assertEqual(service_ids, expected_ids)
         net = rep["static_ip_vpn_security"]
@@ -351,12 +354,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 26000.0)
-        self.assertEqual(w["total_topped_up_usd"], 26000.0)
+        self.assertEqual(w["balance_usd"], 29000.0)
+        self.assertEqual(w["total_topped_up_usd"], 29000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 25)
+        self.assertEqual(len(kres["updated_services"]), 28)
 
     def test_all_integrated_google_and_offworld_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -492,7 +495,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertEqual(len(solar.data["solar_system_bodies"]), 10)
 
         wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 25000.0)
+        self.assertLess(wallet_after["balance_usd"], 28000.0)
         self.assertGreater(wallet_after["total_spent_usd"], 0.0)
         ledger = hub.get_recent_ledger(35)
         self.assertGreaterEqual(len(ledger), 25)
@@ -506,7 +509,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText i OpenAI w czacie bez wpisywania komendy
         btn_turn = engine.click_button("module:exo_botany_biodome:adjust_climate")
         self.assertTrue(btn_turn.ok)
-        self.assertEqual(len(btn_turn.ai_channels), 25)
+        self.assertEqual(len(btn_turn.ai_channels), 28)
         self.assertGreaterEqual(len(btn_turn.buttons), 23)
         self.assertGreaterEqual(len(btn_turn.widgets), 5)
 
@@ -540,11 +543,16 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertTrue(ch_cmd.ok)
         self.assertIn("000101101100", ch_cmd.reply)
 
-        # 2. Doładowanie wszystkich 25 modułów przyciskiem
+        krn_cmd = engine.send("/kernel")
+        self.assertTrue(krn_cmd.ok)
+        self.assertIn("6.18.57-svl364-omega-v6.0-ring0-sovereign", krn_cmd.reply)
+        self.assertIn("10,000,000.00", krn_cmd.reply)
+
+        # 2. Doładowanie wszystkich 28 modułów przyciskiem
         top_turn = engine.send("module:all:topup_all_1000")
         self.assertTrue(top_turn.ok)
         self.assertIn("$1000.00 USD", top_turn.reply)
-        self.assertIn("25000.00", top_turn.reply)
+        self.assertIn("28000.00", top_turn.reply)
 
         # 3. Uniwersalny Terminal obsługujący dowolny rozkaz (np. "Raport z układu słonecznego")
         shell = JynOSShell(self.cfg)
@@ -566,9 +574,34 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         ):
             jyn_turn = engine.send("Sprawdź biokopuły i kamerę mostka")
         self.assertTrue(jyn_turn.ok)
-        self.assertEqual(len(jyn_turn.ai_channels), 25)
+        self.assertEqual(len(jyn_turn.ai_channels), 28)
         self.assertGreaterEqual(len(jyn_turn.invoked_modules), 2)
         self.assertGreaterEqual(len(jyn_turn.inline_tags), 3)
+
+    def test_omega_ring0_sovereign_kernel_executes_every_command(self):
+        from JYN_OS.google_services_hub import GoogleServicesHub
+        from JYN_OS.omega_kernel import OMEGA_KERNEL_VERSION, OmegaSovereignKernel
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        kernel = OmegaSovereignKernel(config=self.cfg, google_hub=hub)
+        manifest = kernel.get_kernel_manifest()
+        self.assertEqual(manifest["kernel_version"], OMEGA_KERNEL_VERSION)
+        self.assertEqual(manifest["google_cloud_partnership"]["maximum_acceleration_budget_usd"], 10_000_000.0)
+
+        r_py = kernel.execute_anything("py: 364 * 10")
+        self.assertTrue(r_py.ok)
+        self.assertEqual(r_py.intent_category, "python_eval")
+        self.assertIn("3640", r_py.output)
+
+        r_sh = kernel.execute_anything("echo OMEGA_KERNEL_READY")
+        self.assertTrue(r_sh.ok)
+        self.assertEqual(r_sh.intent_category, "root_bash")
+        self.assertIn("OMEGA_KERNEL_READY", r_sh.output)
+
+        r_sol = kernel.execute_anything("Raport z układu słonecznego")
+        self.assertTrue(r_sol.ok)
+        self.assertEqual(r_sol.intent_category, "solar_telemetry")
+        self.assertIn("Jowisz", r_sol.output)
 
     def test_avatar_catalog_for_ai_and_lucy_fallout_for_operator(self):
         from JYN_OS.avatar_client import (

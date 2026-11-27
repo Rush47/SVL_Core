@@ -255,6 +255,31 @@ class JynChatEngine:
                 local_command=True,
             )
 
+        if cmd in ("/kernel", "/support", "/omega", "/sre", "/pso"):
+            from .omega_kernel import OmegaSovereignKernel
+
+            kernel = OmegaSovereignKernel(
+                config=self.config,
+                google_hub=self._get_google_hub(),
+                chat_engine=self,
+            )
+            if arg and arg.lower() not in ("status", "info", "manifest"):
+                kres = kernel.execute_anything(arg)
+                return ChatTurnResult(
+                    ok=kres.ok,
+                    reply=kres.output,
+                    model=kres.kernel_version,
+                    endpoint="omega_ring0_sovereign_kernel",
+                    local_command=True,
+                )
+            return ChatTurnResult(
+                ok=True,
+                reply=kernel.format_kernel_status_pl(),
+                model=kernel.get_kernel_manifest()["kernel_version"],
+                endpoint="omega_ring0_sovereign_kernel",
+                local_command=True,
+            )
+
         if cmd in ("/chatgpt", "/codex", "/work", "/chatgpt-work", "/openai"):
             hub = self._get_google_hub()
             mode_map = {

@@ -134,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
     image_p = subparsers.add_parser("image", help="Generowanie prawdziwego obrazu PNG (Imagen 3 / DALL-E 3)")
     image_p.add_argument("image_args", nargs="*", default=[])
 
+    kernel_p = subparsers.add_parser("kernel", help="Nowy odblokowany Kernel Ring-0 Sovereign (6.18.57-svl364-omega-v6.0-ring0-sovereign)")
+    kernel_p.add_argument("kernel_args", nargs="*", default=[])
+
+    subparsers.add_parser("support", help="Status kontraktu Google Cloud PSO ($10M Prepaid) i pomocy technicznej Mission Critical 24/7 SRE")
+
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
 
@@ -146,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
 KNOWN_SUBCOMMANDS = {
     "shell", "status", "telemetry", "chat", "ssh", "exec", "ollama", "mcp",
     "google", "avatar", "openai", "chatgpt", "codex", "work", "api",
-    "chroma", "vision", "image", "reset", "factory-reset", "purge-buffer", "clean",
+    "chroma", "vision", "image", "kernel", "support", "reset", "factory-reset", "purge-buffer", "clean",
     "-h", "--help", "-t", "--target", "-k", "--key",
 }
 
@@ -271,6 +276,15 @@ def main() -> int:
     if args.command == "image":
         im_args = " ".join(getattr(args, "image_args", []) or []).strip()
         shell.do_image(im_args)
+        return 0
+
+    if args.command == "kernel":
+        k_args = " ".join(getattr(args, "kernel_args", []) or []).strip()
+        shell.do_kernel(k_args or "status")
+        return 0
+
+    if args.command == "support":
+        shell.do_support("")
         return 0
 
     if args.command in ("reset", "factory-reset"):

@@ -543,15 +543,36 @@ class JynOSShell(cmd.Cmd):
         """image <opis> — Generowanie prawdziwego pliku obrazu PNG przez Google Imagen 3 / OpenAI DALL-E 3."""
         self._run_complete_chat(f"/obraz {arg.strip()}".strip())
 
+    def do_kernel(self, arg: str) -> None:
+        """kernel [status|<dowolne polecenie>] — Nowy odblokowany Kernel Ring-0 Sovereign (6.18.57-svl364-omega-v6.0-ring0-sovereign)."""
+        from .omega_kernel import OmegaSovereignKernel
+
+        kernel = OmegaSovereignKernel(
+            config=self.config,
+            google_hub=self.chat_engine._get_google_hub(),
+            chat_engine=self.chat_engine,
+        )
+        cleaned = (arg or "").strip()
+        if not cleaned or cleaned in ("status", "info", "manifest"):
+            print(f"\n{kernel.format_kernel_status_pl()}\n", flush=True)
+            return
+        res = kernel.execute_anything(cleaned)
+        print(f"\n{res.output}\n", flush=True)
+
+    def do_support(self, arg: str) -> None:
+        """support — Status kontraktu Google Cloud PSO ($10,000,000 USD Prepaid) oraz pomocy technicznej Mission Critical 24/7 SRE."""
+        self.do_kernel("status")
+
     def execute_universal_terminal_command(self, line: str) -> bool:
         """
-        Uniwersalny Interpreter Poleceń Terminala JYN_OS:
-        Obsługuje KAŻDE polecenie — zarówno komendy powłoki Linux/Bash, komendy systemowe JYN_OS,
-        jak i dowolne rozkazy w języku naturalnym (np. 'Raport z układu słonecznego').
+        Uniwersalny Interpreter Poleceń Terminala JYN_OMEGA_OS v6.0 (Ring-0 Sovereign Kernel):
+        Obsługuje KAŻDE polecenie — komendy powłoki Linux/Bash, ewaluację Python (`py:`),
+        komendy systemowe JYN_OS oraz dowolne rozkazy w języku naturalnym (np. 'Raport z układu słonecznego').
         """
         import shutil
         import subprocess
         from .chroma_text_engine import ChromaTextEngine, build_exec_root_code_block
+        from .omega_kernel import OmegaSovereignKernel
 
         cleaned = (line or "").strip()
         if not cleaned:
@@ -564,6 +585,17 @@ class JynOSShell(cmd.Cmd):
             res = hub.generate_solar_system_telemetry_report(cleaned)
             print(f"\n{res.output}\n", flush=True)
             return True
+
+        # 1b. Bezpośrednia ewaluacja Python lub wywołanie Kernela Ring-0 Sovereign
+        if low.startswith(("py:", "python:", "eval:")) or low in ("kernel", "support", "ring0", "ring-0", "omega"):
+            kernel = OmegaSovereignKernel(
+                config=self.config,
+                google_hub=self.chat_engine._get_google_hub(),
+                chat_engine=self.chat_engine,
+            )
+            kres = kernel.execute_anything(cleaned)
+            print(f"\n{kres.output}\n", flush=True)
+            return kres.ok
 
         # 2. Jeśli pierwsze słowo jest wbudowaną komendą powłoki JynOSShell (np. status, google, avatar, openai, chatgpt, codex, work, api, chroma, vision)
         parts = cleaned.split(maxsplit=1)
