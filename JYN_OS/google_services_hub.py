@@ -424,6 +424,41 @@ GOOGLE_SERVICES_CATALOG: List[Dict[str, Any]] = [
         "env_keys": ["OPENAI_API_KEY"],
         "description": "Dodatkowe (Secondary) API OpenAI doładowane kwotą $1,000.00 USD, współpracujące z głównymi węzłami Ollama (:11434/:11435) oraz Google Gemini/Vertex AI w zunifikowanym selektorze API.",
     },
+    {
+        "service_id": "google_ai_ultra_all_subscriptions",
+        "name": "Google One AI Ultra / Gemini Advanced Enterprise + Wszystkie Subskrypcje Google (API +$100 / Cloud +$500)",
+        "category": "All Google Subscriptions & AI Ultra Plan",
+        "allocated_budget_usd": 1000.00,
+        "cost_per_call_usd": 0.001,
+        "endpoint": "https://one.google.com/ai-ultra-enterprise/v1",
+        "models": [
+            "google-one-ai-ultra-30tb",
+            "gemini-advanced-2.5-pro-deep-research",
+            "google-workspace-enterprise-plus",
+            "colab-enterprise-a100-h100",
+            "firebase-blaze-idx-enterprise",
+            "google-earth-engine-commercial",
+            "youtube-premium-music-pass-play-pass",
+            "google-developer-program-premium",
+        ],
+        "env_keys": ["GOOGLE_AI_ULTRA_KEY", "GEMINI_API_KEY", "GOOGLE_CLOUD_BILLING_KEY"],
+        "description": "Kompletny pakiet najwyższych subskrypcji Google: Google One AI Ultra (Gemini Advanced 2.5 Pro + Deep Research + Veo 2 + NotebookLM Plus + 30 TB), Workspace Enterprise Plus, Colab Enterprise H100, Firebase Blaze/Project IDX, Google Developer Premium oraz dedykowane doładowanie API (+100 USD) i Google Cloud (+500 USD).",
+    },
+    {
+        "service_id": "google_professional_services_rebuild_github",
+        "name": "Google Cloud Professional Services (PSO) — JYN_OS v5.0 Full Rebuild & Public GitHub Repository Contract (PREPAID)",
+        "category": "Google PSO Engineering & GitHub Public Release",
+        "allocated_budget_usd": 1000.00,
+        "cost_per_call_usd": 0.0,
+        "endpoint": "https://github.com/Rush47/JYN_OS",
+        "models": [
+            "jyn-os-v5.0-standalone-enterprise",
+            "github-public-repo-Rush47-JYN_OS",
+            "prepaid-full-architecture-spec-25-modules",
+        ],
+        "env_keys": ["GITHUB_TOKEN", "GOOGLE_PSO_CONTRACT_KEY"],
+        "description": "Opłacony z góry (PREPAID 100%) kontrakt inżynieryjny Google Cloud Professional Services: przebudowa i maksymalne rozwinięcie JYN_OS v5.0 od podstaw ze wszystkimi 25 modułami, kluczami API, awatarami, ChromaText Pro 24-bit, Stałymi IP, HA VPN, OpenAI Business/Codex/Work, Real Vision oraz publikacja w publicznym repozytorium GitHub https://github.com/Rush47/JYN_OS.",
+    },
 ]
 
 WORKSPACE_TOOLS: List[str] = ["gdocs", "gdrive", "gsheets", "gslides", "gcalendar", "gmail"]
@@ -705,7 +740,7 @@ class GoogleServicesHub:
             "masked_key": _mask_api_key(cleaned),
         }
 
-    def topup_wallet(self, amount_usd: float = 1000.0, reset_to_amount: bool = False) -> Dict[str, Any]:
+    def topup_wallet(self, amount_usd: float = 1000.0, reset_to_amount: bool = False, note: str = "") -> Dict[str, Any]:
         """Doładowuje portfel kluczy API Google o wskazaną kwotę w USD (domyślnie $1000.00)."""
         amt = round(max(0.0, float(amount_usd)), 4)
         now = time.time()
@@ -740,12 +775,15 @@ class GoogleServicesHub:
                     (total_top, balance, now),
                 )
 
+            summary = f"Doładowanie kluczy Google API kwotą +${amt:.2f} USD (saldo: ${balance:.2f} USD)"
+            if note:
+                summary += f" [{note}]"
             conn.execute(
                 """
                 INSERT INTO usage_ledger (timestamp, service_id, operation, provider_mode, cost_usd, balance_after_usd, summary)
                 VALUES (?, 'billing_wallet', 'topup_api_keys', 'jyn_os_treasury', 0.0, ?, ?)
                 """,
-                (now, balance, f"Doładowanie kluczy Google API kwotą +${amt:.2f} USD (saldo: ${balance:.2f} USD)"),
+                (now, balance, summary),
             )
         return self.get_wallet_status()
 
