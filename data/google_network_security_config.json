@@ -1,0 +1,94 @@
+{
+  "project_id": "svl364-ebon-apex",
+  "region": "europe-central2",
+  "network_tier": "PREMIUM",
+  "vpc_network": "svl364-global-quantum-vpc",
+  "vpc_cidr": "10.240.0.0/16",
+  "anycast_global_ipv4": "35.190.88.1",
+  "static_ipv6_prefix": "2600:1901:0:364::/64",
+  "nodes": [
+    {
+      "node_id": "JYN_OS_LOCAL_CORE",
+      "node_name": "JYN_OS v4.0 Local Command System (Operator: Mateusz Mitek)",
+      "static_external_ipv4": "34.118.64.100",
+      "anycast_ipv4": "35.190.88.1",
+      "static_ipv6": "2600:1901:0:364::100",
+      "internal_vpc_ip": "10.240.1.10",
+      "vpn_tunnel_ip": "10.240.0.1",
+      "dns_domain": "jyn-os.svl364.googlecloud.internal",
+      "vpn_protocol": "Google Cloud HA VPN (IPsec IKEv2 + WireGuard Post-Quantum · BGP ASN 64512)",
+      "security_services": [
+        "Google Cloud Static External & Internal IP (Premium Tier)",
+        "Google Global Anycast IP & Cloud DNS Private Zone",
+        "Google Cloud NAT & Cloud Router BGP (ASN 64512 <-> 64513)",
+        "Google Cloud HA VPN (99.99% SLA · IPsec IKEv2 AES-256-GCM + WireGuard Kyber-1024)",
+        "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
+        "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
+        "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
+        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+      ],
+      "status": "ACTIVE"
+    },
+    {
+      "node_id": "SHIP_SVL364_EBON_APEX",
+      "node_name": "Statek SVL-364 Ebon Apex (Rdzeń Pokładowy Jyn Mitek · ROOT)",
+      "static_external_ipv4": "34.118.64.200",
+      "anycast_ipv4": "35.190.88.1",
+      "static_ipv6": "2600:1901:0:364::200",
+      "internal_vpc_ip": "10.240.2.20",
+      "vpn_tunnel_ip": "10.240.0.2",
+      "dns_domain": "ship.svl364-ebon-apex.googlecloud.internal",
+      "vpn_protocol": "Google Cloud HA VPN (IPsec IKEv2 + WireGuard Post-Quantum · BGP ASN 64513)",
+      "security_services": [
+        "Google Cloud Static External & Internal IP (Premium Tier)",
+        "Google Global Anycast IP & Cloud DNS Private Zone",
+        "Google Cloud NAT & Cloud Router BGP (ASN 64512 <-> 64513)",
+        "Google Cloud HA VPN (99.99% SLA · IPsec IKEv2 AES-256-GCM + WireGuard Kyber-1024)",
+        "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
+        "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
+        "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
+        "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+      ],
+      "status": "ACTIVE"
+    }
+  ],
+  "ha_vpn_tunnels": [
+    {
+      "tunnel_id": "ha-vpn-tunnel-01-jyn-to-svl364",
+      "local_node": "JYN_OS_LOCAL_CORE",
+      "peer_node": "SHIP_SVL364_EBON_APEX",
+      "local_public_ip": "34.118.64.100",
+      "peer_public_ip": "34.118.64.200",
+      "local_tunnel_ip": "10.240.0.1/30",
+      "peer_tunnel_ip": "10.240.0.2/30",
+      "cipher": "IPsec IKEv2 AES-256-GCM-96 + WireGuard Kyber-1024",
+      "bgp_session": "ESTABLISHED (ASN 64512 <-> 64513)",
+      "sla": "99.99%",
+      "status": "ESTABLISHED"
+    },
+    {
+      "tunnel_id": "ha-vpn-tunnel-02-svl364-to-jyn",
+      "local_node": "SHIP_SVL364_EBON_APEX",
+      "peer_node": "JYN_OS_LOCAL_CORE",
+      "local_public_ip": "34.118.64.200",
+      "peer_public_ip": "34.118.64.100",
+      "local_tunnel_ip": "10.240.0.5/30",
+      "peer_tunnel_ip": "10.240.0.6/30",
+      "cipher": "IPsec IKEv2 AES-256-GCM-96 + WireGuard Kyber-1024",
+      "bgp_session": "ESTABLISHED (ASN 64513 <-> 64512)",
+      "sla": "99.99%",
+      "status": "ESTABLISHED"
+    }
+  ],
+  "security_services": [
+    "Google Cloud Static External & Internal IP (Premium Tier)",
+    "Google Global Anycast IP & Cloud DNS Private Zone",
+    "Google Cloud NAT & Cloud Router BGP (ASN 64512 <-> 64513)",
+    "Google Cloud HA VPN (99.99% SLA · IPsec IKEv2 AES-256-GCM + WireGuard Kyber-1024)",
+    "Google BeyondCorp Enterprise Zero-Trust IAP (mTLS) & VPC Service Controls",
+    "Google Cloud Armor Enterprise (Anti-DDoS L3-L7 + Adaptive WAF) & Cloud IDS / NGFW",
+    "Google Security Command Center (SCC Premium) & Chronicle SIEM / SOAR",
+    "Google Cloud HSM (FIPS 140-3 Level 3), Cloud KMS & Private CA mTLS"
+  ],
+  "updated_at": 1795798719.5831728
+}

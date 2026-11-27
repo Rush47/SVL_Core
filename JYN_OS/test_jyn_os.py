@@ -290,24 +290,24 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tmp_dir.name) / "test_google_hub.sqlite3"
-        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=15000.0)
+        self.cfg = JynOSConfig(google_hub_db_path=self.db_path, google_budget_usd=23000.0)
         self.ollama = SvlOllamaClient(self.cfg)
 
     def tearDown(self):
         self.tmp_dir.cleanup()
 
-    def test_initial_provisioning_purchases_all_15_modules_and_loads_1000_usd_each(self):
+    def test_initial_provisioning_purchases_all_23_modules_and_loads_1000_usd_each(self):
         from JYN_OS.google_services_hub import GOOGLE_SERVICES_CATALOG, GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 15)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 15)
+        self.assertEqual(rep["services_count"], 23)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 23)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 15000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 15000.0)
-        self.assertEqual(len(rep["ai_channels"]), 15)
+        self.assertEqual(rep["wallet"]["balance_usd"], 23000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 23000.0)
+        self.assertEqual(len(rep["ai_channels"]), 23)
         for s in rep["services"]:
             self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
@@ -328,20 +328,33 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "exo_infrastructure_grid",
             "exo_missions_command",
             "exo_botany_biodome",
+            "google_static_ip_networking",
+            "google_ha_vpn_interconnect",
+            "google_beyondcorp_zero_trust",
+            "google_cloud_armor_ids",
+            "google_scc_kms_hsm_vault",
+            "chroma_rich_typography_suite",
+            "openai_chatgpt_business_suite",
+            "openai_api_secondary_provider",
         }
         self.assertEqual(service_ids, expected_ids)
+        net = rep["static_ip_vpn_security"]
+        self.assertEqual(net["jyn_os_static_ip"], "34.118.64.100")
+        self.assertEqual(net["ship_svl364_static_ip"], "34.118.64.200")
+        self.assertEqual(net["anycast_global_ipv4"], "35.190.88.1")
+        self.assertEqual(len(net["nodes"]), 2)
 
     def test_topup_wallet_and_api_key_vault_management(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 16000.0)
-        self.assertEqual(w["total_topped_up_usd"], 16000.0)
+        self.assertEqual(w["balance_usd"], 24000.0)
+        self.assertEqual(w["total_topped_up_usd"], 24000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 15)
+        self.assertEqual(len(kres["updated_services"]), 23)
 
     def test_all_integrated_google_and_offworld_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -382,6 +395,16 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertTrue(vis.ok)
         self.assertTrue(vis.data["ocr_ready"])
 
+        gen_img = hub.generate_image_from_services("SVL-364 Ebon Apex na orbicie Jowisza")
+        self.assertTrue(gen_img.ok)
+        self.assertTrue(Path(gen_img.data["file_path"]).is_file())
+        self.assertEqual(gen_img.data["metadata"]["width"], 640)
+        self.assertEqual(gen_img.data["metadata"]["height"], 360)
+
+        real_vis = hub.analyze_vision(gen_img.data["file_path"], "Zbadaj wygenerowany obraz")
+        self.assertTrue(real_vis.ok)
+        self.assertEqual(real_vis.data["real_image_metadata"]["width"], 640)
+
         wks = hub.workspace_status()
         self.assertTrue(wks.ok)
         self.assertIn("gdocs", wks.data["tools"])
@@ -397,7 +420,7 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         ui_kit = hub.render_interactive_ui_kit("Panel JYN_OS")
         self.assertTrue(ui_kit.ok)
-        self.assertGreaterEqual(len(ui_kit.data["buttons"]), 15)
+        self.assertGreaterEqual(len(ui_kit.data["buttons"]), 23)
 
         swarm = hub.deploy_agentic_swarm("Patrol SVL-364")
         self.assertTrue(swarm.ok)
@@ -420,11 +443,57 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertTrue(botany.ok)
         self.assertEqual(len(botany.data["biodomes"]), 3)
 
+        static_ip = hub.configure_google_static_ip_networking()
+        self.assertTrue(static_ip.ok)
+        self.assertIn("34.118.64.100", static_ip.output)
+        self.assertIn("34.118.64.200", static_ip.output)
+
+        ha_vpn = hub.configure_google_ha_vpn_tunnel()
+        self.assertTrue(ha_vpn.ok)
+        self.assertIn("10.240.0.1", ha_vpn.output)
+        self.assertIn("10.240.0.2", ha_vpn.output)
+
+        beyondcorp = hub.configure_google_beyondcorp_zero_trust()
+        self.assertTrue(beyondcorp.ok)
+
+        armor_ids = hub.configure_google_cloud_armor_ids()
+        self.assertTrue(armor_ids.ok)
+
+        scc_hsm = hub.configure_google_scc_kms_hsm()
+        self.assertTrue(scc_hsm.ok)
+
+        chroma_res = hub.render_chroma_rich_typography(cube_number=364)
+        self.assertTrue(chroma_res.ok)
+        self.assertEqual(chroma_res.data["glocki_codec"]["nkb"], "000101101100")
+        self.assertEqual(chroma_res.data["glocki_codec"]["gray"], "000111011010")
+        self.assertEqual(chroma_res.data["glocki_codec"]["bcd"], "0011 0110 0100")
+        self.assertEqual(chroma_res.data["glocki_codec"]["xs3"], "0110 1001 0111")
+
+        oa_chatgpt = hub.invoke_openai_business_service("chatgpt", "Analiza floty SVL-364")
+        self.assertTrue(oa_chatgpt.ok)
+        self.assertIn("ChatGPT Business", oa_chatgpt.output)
+
+        oa_codex = hub.invoke_openai_business_service("codex", "Funkcja telemetrii")
+        self.assertTrue(oa_codex.ok)
+        self.assertIn("OpenAI Codex", oa_codex.output)
+
+        oa_work = hub.invoke_openai_business_service("chatgpt_work", "Projekt SVL-364")
+        self.assertTrue(oa_work.ok)
+        self.assertIn("ChatGPT Work", oa_work.output)
+
+        oa_api = hub.invoke_openai_business_service("openai_api", "Ping Secondary API")
+        self.assertTrue(oa_api.ok)
+        self.assertIn("SECONDARY_PROVIDER", oa_api.output)
+
+        solar = hub.generate_solar_system_telemetry_report("Raport z układu słonecznego")
+        self.assertTrue(solar.ok)
+        self.assertEqual(len(solar.data["solar_system_bodies"]), 10)
+
         wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 15000.0)
+        self.assertLess(wallet_after["balance_usd"], 23000.0)
         self.assertGreater(wallet_after["total_spent_usd"], 0.0)
-        ledger = hub.get_recent_ledger(25)
-        self.assertGreaterEqual(len(ledger), 17)
+        ledger = hub.get_recent_ledger(35)
+        self.assertGreaterEqual(len(ledger), 25)
 
     def test_chat_engine_buttons_channels_vision_and_autonomous_jyn_modules(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -432,19 +501,54 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
 
-        # 1. Kliknięcie przycisku Botaniki i Vision w czacie bez wpisywania komendy
+        # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText i OpenAI w czacie bez wpisywania komendy
         btn_turn = engine.click_button("module:exo_botany_biodome:adjust_climate")
         self.assertTrue(btn_turn.ok)
-        self.assertEqual(len(btn_turn.ai_channels), 15)
-        self.assertGreaterEqual(len(btn_turn.buttons), 15)
-        self.assertGreaterEqual(len(btn_turn.widgets), 3)
+        self.assertEqual(len(btn_turn.ai_channels), 23)
+        self.assertGreaterEqual(len(btn_turn.buttons), 23)
+        self.assertGreaterEqual(len(btn_turn.widgets), 5)
 
-        # 2. Doładowanie wszystkich 15 modułów przyciskiem
+        vpn_turn = engine.click_button("module:google_ha_vpn_interconnect:establish_ha_vpn")
+        self.assertTrue(vpn_turn.ok)
+        self.assertIn("99.99%", vpn_turn.reply)
+
+        ip_cmd = engine.send("/ip")
+        self.assertTrue(ip_cmd.ok)
+        self.assertIn("34.118.64.100", ip_cmd.reply)
+        self.assertIn("34.118.64.200", ip_cmd.reply)
+
+        api_cmd = engine.send("/api")
+        self.assertTrue(api_cmd.ok)
+        self.assertIn("ZUNIFIKOWANY SELEKTOR", api_cmd.reply)
+        self.assertIn("SECONDARY", api_cmd.reply)
+
+        cg_cmd = engine.send("/chatgpt Raport biznesowy SVL-364")
+        self.assertTrue(cg_cmd.ok)
+        self.assertIn("ChatGPT Business", cg_cmd.reply)
+
+        cx_cmd = engine.send("/codex Skrypt diagnostyczny")
+        self.assertTrue(cx_cmd.ok)
+        self.assertIn("OpenAI Codex", cx_cmd.reply)
+
+        wk_cmd = engine.send("/work Projekt Aetheria")
+        self.assertTrue(wk_cmd.ok)
+        self.assertIn("ChatGPT Work", wk_cmd.reply)
+
+        ch_cmd = engine.send("/chroma 364")
+        self.assertTrue(ch_cmd.ok)
+        self.assertIn("000101101100", ch_cmd.reply)
+
+        # 2. Doładowanie wszystkich 23 modułów przyciskiem
         top_turn = engine.send("module:all:topup_all_1000")
         self.assertTrue(top_turn.ok)
         self.assertIn("$1000.00 USD", top_turn.reply)
+        self.assertIn("23000.00", top_turn.reply)
 
-        # 3. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie (bez wymuszonych promptów)
+        # 3. Uniwersalny Terminal obsługujący dowolny rozkaz (np. "Raport z układu słonecznego")
+        shell = JynOSShell(self.cfg)
+        self.assertTrue(shell.execute_universal_terminal_command("Raport z układu słonecznego"))
+
+        # 4. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie (bez wymuszonych promptów)
         reply = {
             "model": "svl364-apex-uncensored:latest",
             "message": {
@@ -460,9 +564,46 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         ):
             jyn_turn = engine.send("Sprawdź biokopuły i kamerę mostka")
         self.assertTrue(jyn_turn.ok)
-        self.assertEqual(len(jyn_turn.ai_channels), 15)
+        self.assertEqual(len(jyn_turn.ai_channels), 23)
         self.assertGreaterEqual(len(jyn_turn.invoked_modules), 2)
+        self.assertGreaterEqual(len(jyn_turn.inline_tags), 3)
+
+    def test_avatar_catalog_for_ai_and_lucy_fallout_for_operator(self):
+        from JYN_OS.avatar_client import (
+            AI_AVATAR_CATALOG,
+            OPERATOR_AVATAR_LUCY_FALLOUT,
+            select_ai_avatar,
+            set_operator_lucy_fallout_avatar,
+        )
+        from JYN_OS.google_services_hub import GoogleServicesHub
+
+        self.assertGreaterEqual(len(AI_AVATAR_CATALOG), 5)
+        self.assertIn("Lucy MacLean", OPERATOR_AVATAR_LUCY_FALLOUT["title"])
+        self.assertIn("Fallout", OPERATOR_AVATAR_LUCY_FALLOUT["character"])
+
+        op_res = set_operator_lucy_fallout_avatar(self.cfg)
+        self.assertTrue(op_res["ok"])
+        self.assertEqual(op_res["profile"], "Operator")
+        self.assertIn("Lucy MacLean", op_res["summary"])
+
+        ai_res = select_ai_avatar("jyn_neural_core", self.cfg)
+        self.assertTrue(ai_res["ok"])
+        self.assertEqual(ai_res["selected_avatar"]["avatar_id"], "jyn_neural_core")
+
+        hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
+        engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
+        av_turn = engine.send("/avatar")
+        self.assertTrue(av_turn.ok)
+        self.assertIn("Lucy MacLean", av_turn.reply)
+        self.assertIn("jyn_neural_core", av_turn.reply)
+
+        btn_av = engine.click_button("module:avatar_selector:operator_lucy_fallout")
+        self.assertTrue(btn_av.ok)
+        self.assertIn("Lucy MacLean", btn_av.reply)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+

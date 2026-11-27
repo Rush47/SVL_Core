@@ -42,7 +42,7 @@ const PROFILE_META: Record<
     textClass: 'text-emerald-200',
   },
   Operator: {
-    label: 'Mateusz Mitek (Operator)',
+    label: 'Mateusz Mitek (Operator · Lucy MacLean — Fallout Vault 33)',
     short: 'MM',
     ringClass: 'border-violet-400/60',
     bgClass: 'bg-violet-950/70',
@@ -54,7 +54,7 @@ const PROFILE_LIST: Array<{ key: AvatarProfileKey; label: string }> = [
   { key: 'Jyn', label: 'Jyn Mitek (Infrastruktura · ROOT)' },
   { key: 'SI_Sphere', label: 'SI_Sphere (Rdzeń Floty SVL-465 · ROOT)' },
   { key: 'JEDI_Omni_OS', label: 'JEDI Omni-OS v12 (VM + AI Generatywne)' },
-  { key: 'Operator', label: 'Mateusz Mitek (Operator)' },
+  { key: 'Operator', label: 'Mateusz Mitek (Operator · Lucy MacLean — Fallout Vault 33)' },
 ];
 
 export const SvlAvatar: React.FC<{

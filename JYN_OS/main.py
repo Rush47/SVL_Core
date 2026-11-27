@@ -94,13 +94,45 @@ def build_parser() -> argparse.ArgumentParser:
     call_p = mcp_sub.add_parser("call", help="Wywołanie narzędzia MCP")
     call_p.add_argument("tool", help="Nazwa narzędzia MCP")
 
-    google_p = subparsers.add_parser("google", help="Zarządzanie Google Services & AI Hub ($1000.00 USD)")
+    google_p = subparsers.add_parser("google", help="Zarządzanie Google Services & AI Hub ($15000.00 USD)")
     google_p.add_argument(
         "google_args",
         nargs="*",
         default=[],
         help="Podpolecenie Google Hub: status, buy, topup [kwota], set-key <klucz>, gemini <tekst>, translate <tekst>, tts <tekst>, search <tekst>, workspace, maps, sync, ledger",
     )
+
+    avatar_p = subparsers.add_parser("avatar", help="Zarządzanie awatarami AI (Jyn Mitek) i Operatora (Lucy MacLean - Fallout Vault 33)")
+    avatar_p.add_argument(
+        "avatar_args",
+        nargs="*",
+        default=[],
+        help="Podpolecenie awatarów: status, lucy, jyn_neural_core, jyn_quantum_valkyrie, jyn_orbital_sentinel, jyn_aetheria_android, jyn_vault_overseer",
+    )
+
+    openai_p = subparsers.add_parser("openai", help="Zarządzanie ChatGPT Business, Codex, ChatGPT Work i Dodatkowym OpenAI API ($1000.00 USD)")
+    openai_p.add_argument("openai_args", nargs="*", default=[], help="status, chatgpt <tekst>, codex <tekst>, work <tekst>, api <tekst>")
+
+    chatgpt_p = subparsers.add_parser("chatgpt", help="Bezpośrednie wywołanie ChatGPT Business Enterprise (gpt-4.1 / o3-pro)")
+    chatgpt_p.add_argument("prompt_args", nargs="*", default=[])
+
+    codex_p = subparsers.add_parser("codex", help="Bezpośrednie wywołanie silnika inżynieryjnego OpenAI Codex (codex-1)")
+    codex_p.add_argument("prompt_args", nargs="*", default=[])
+
+    work_p = subparsers.add_parser("work", help="Bezpośrednie wywołanie przestrzeni ChatGPT Work (Enterprise Workspace & Canvas)")
+    work_p.add_argument("prompt_args", nargs="*", default=[])
+
+    api_p = subparsers.add_parser("api", help="Zunifikowany Selektor Wszystkich API i Węzłów Ollama")
+    api_p.add_argument("api_args", nargs="*", default=[])
+
+    chroma_p = subparsers.add_parser("chroma", help="ChromaText Pro 24-bit TrueColor, Karta Transmisji Ring-0, Kodek W. Głockiego (CUBE 364)")
+    chroma_p.add_argument("chroma_args", nargs="*", default=[])
+
+    vision_p = subparsers.add_parser("vision", help="Analiza prawdziwego obrazu przez Real Vision Inspector")
+    vision_p.add_argument("vision_args", nargs="*", default=[])
+
+    image_p = subparsers.add_parser("image", help="Generowanie prawdziwego obrazu PNG (Imagen 3 / DALL-E 3)")
+    image_p.add_argument("image_args", nargs="*", default=[])
 
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
@@ -111,7 +143,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+KNOWN_SUBCOMMANDS = {
+    "shell", "status", "telemetry", "chat", "ssh", "exec", "ollama", "mcp",
+    "google", "avatar", "openai", "chatgpt", "codex", "work", "api",
+    "chroma", "vision", "image", "reset", "factory-reset", "purge-buffer", "clean",
+    "-h", "--help", "-t", "--target", "-k", "--key",
+}
+
+
 def main() -> int:
+    raw_argv = sys.argv[1:]
+    if raw_argv and raw_argv[0] not in KNOWN_SUBCOMMANDS:
+        cfg = JynOSConfig.load_from_env()
+        shell = JynOSShell(cfg)
+        free_cmd = " ".join(raw_argv).strip()
+        return 0 if shell.execute_universal_terminal_command(free_cmd) else 1
+
     parser = build_parser()
     args = parser.parse_args()
 
@@ -145,7 +192,10 @@ def main() -> int:
         return 0 if shell._run_complete_chat(args.prompt, model=args.model) else 1
 
     if args.command in ("ssh", "exec"):
-        shell.do_ssh(getattr(args, "cmd", ""))
+        cmd_str = getattr(args, "cmd", "").strip()
+        if args.command == "exec" and any(k in cmd_str.lower() for k in ("układ", "słoneczn", "sloneczn", "raport")):
+            return 0 if shell.execute_universal_terminal_command(cmd_str) else 1
+        shell.do_ssh(cmd_str)
         return 0
 
     if args.command == "ollama":
@@ -178,6 +228,51 @@ def main() -> int:
         shell.do_google(g_args or "status")
         return 0
 
+    if args.command == "avatar":
+        a_args = " ".join(getattr(args, "avatar_args", []) or []).strip()
+        shell.do_avatar(a_args or "status")
+        return 0
+
+    if args.command == "openai":
+        oa_args = " ".join(getattr(args, "openai_args", []) or []).strip()
+        shell.do_openai(oa_args or "status")
+        return 0
+
+    if args.command == "chatgpt":
+        p_args = " ".join(getattr(args, "prompt_args", []) or []).strip()
+        shell.do_chatgpt(p_args or "Zamelduj status ChatGPT Business Enterprise")
+        return 0
+
+    if args.command == "codex":
+        p_args = " ".join(getattr(args, "prompt_args", []) or []).strip()
+        shell.do_codex(p_args or "Zamelduj status silnika OpenAI Codex")
+        return 0
+
+    if args.command == "work":
+        p_args = " ".join(getattr(args, "prompt_args", []) or []).strip()
+        shell.do_work(p_args or "Zamelduj status przestrzeni ChatGPT Work")
+        return 0
+
+    if args.command == "api":
+        ap_args = " ".join(getattr(args, "api_args", []) or []).strip()
+        shell.do_api(ap_args)
+        return 0
+
+    if args.command == "chroma":
+        ch_args = " ".join(getattr(args, "chroma_args", []) or []).strip()
+        shell.do_chroma(ch_args or "364")
+        return 0
+
+    if args.command == "vision":
+        v_args = " ".join(getattr(args, "vision_args", []) or []).strip()
+        shell.do_vision(v_args)
+        return 0
+
+    if args.command == "image":
+        im_args = " ".join(getattr(args, "image_args", []) or []).strip()
+        shell.do_image(im_args)
+        return 0
+
     if args.command in ("reset", "factory-reset"):
         shell.do_reset("force" if getattr(args, "force", False) else "")
         return 0
@@ -191,3 +286,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

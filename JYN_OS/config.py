@@ -123,9 +123,9 @@ DEFAULT_CHAT_HISTORY_MAX_CHARS = _env_int("SVL_CHAT_HISTORY_MAX_CHARS", 2000, 25
 DEFAULT_GATEWAY_URL = os.environ.get("SVL_GATEWAY_URL", "http://127.0.0.1:3000")
 DEFAULT_BACKEND_URL = os.environ.get("SVL_BACKEND_URL", "http://127.0.0.1:8085")
 
-# Konfiguracja Google Services & Off-World Enterprise Hub ($1000.00 USD budżetu na KAŻDY z 15 modułów = $15000.00 USD)
+# Konfiguracja Google Services & Off-World Enterprise Hub ($1000.00 USD budżetu na KAŻDY z 23 modułów = $23000.00 USD)
 DEFAULT_MODULE_BUDGET_USD: float = float(os.environ.get("SVL_MODULE_BUDGET_USD", "1000.00"))
-DEFAULT_GOOGLE_BUDGET_USD: float = float(os.environ.get("SVL_GOOGLE_BUDGET_USD", "15000.00"))
+DEFAULT_GOOGLE_BUDGET_USD: float = float(os.environ.get("SVL_GOOGLE_BUDGET_USD", "23000.00"))
 DEFAULT_GOOGLE_PROJECT_ID: str = os.environ.get("SVL_GOOGLE_PROJECT_ID", "svl364-ebon-apex")
 DEFAULT_GOOGLE_REGION: str = os.environ.get("SVL_GOOGLE_REGION", "europe-central2")
 DEFAULT_GOOGLE_MODEL: str = os.environ.get("SVL_GOOGLE_MODEL", "gemini-2.5-flash")
@@ -135,6 +135,17 @@ DEFAULT_GOOGLE_HUB_DB_PATH: Path = Path(
         str(Path(__file__).resolve().parent.parent / "data" / "jyn_google_hub.sqlite3"),
     )
 )
+
+# Stałe Adresy IP Google Cloud (Premium Tier Static External IPv4/IPv6 + Global Anycast + VPC + HA VPN)
+DEFAULT_GOOGLE_STATIC_IP_JYN_OS: str = os.environ.get("SVL_GOOGLE_STATIC_IP_JYN_OS", "34.118.64.100")
+DEFAULT_GOOGLE_STATIC_IP_SHIP: str = os.environ.get("SVL_GOOGLE_STATIC_IP_SHIP", "34.118.64.200")
+DEFAULT_GOOGLE_ANYCAST_IP: str = os.environ.get("SVL_GOOGLE_ANYCAST_IP", "35.190.88.1")
+DEFAULT_GOOGLE_STATIC_IPV6_PREFIX: str = os.environ.get("SVL_GOOGLE_STATIC_IPV6", "2600:1901:0:364::/64")
+DEFAULT_GOOGLE_VPC_CIDR: str = os.environ.get("SVL_GOOGLE_VPC_CIDR", "10.240.0.0/16")
+DEFAULT_GOOGLE_VPN_TUNNEL_JYN_IP: str = os.environ.get("SVL_GOOGLE_VPN_JYN_IP", "10.240.0.1")
+DEFAULT_GOOGLE_VPN_TUNNEL_SHIP_IP: str = os.environ.get("SVL_GOOGLE_VPN_SHIP_IP", "10.240.0.2")
+DEFAULT_GOOGLE_DNS_DOMAIN_JYN: str = "jyn-os.svl364.googlecloud.internal"
+DEFAULT_GOOGLE_DNS_DOMAIN_SHIP: str = "ship.svl364-ebon-apex.googlecloud.internal"
 
 # Kanoniczny katalog 13 modeli pokładowych jednostki obliczeniowej statku SVL-364
 SHIP_MODELS_CATALOG: List[Dict[str, Any]] = [
@@ -319,6 +330,16 @@ class JynOSConfig:
     google_region: str = DEFAULT_GOOGLE_REGION
     google_default_model: str = DEFAULT_GOOGLE_MODEL
     google_hub_db_path: Path = field(default_factory=lambda: DEFAULT_GOOGLE_HUB_DB_PATH)
+
+    google_static_ip_jyn_os: str = DEFAULT_GOOGLE_STATIC_IP_JYN_OS
+    google_static_ip_ship: str = DEFAULT_GOOGLE_STATIC_IP_SHIP
+    google_anycast_ip: str = DEFAULT_GOOGLE_ANYCAST_IP
+    google_static_ipv6_prefix: str = DEFAULT_GOOGLE_STATIC_IPV6_PREFIX
+    google_vpc_cidr: str = DEFAULT_GOOGLE_VPC_CIDR
+    google_vpn_tunnel_jyn_ip: str = DEFAULT_GOOGLE_VPN_TUNNEL_JYN_IP
+    google_vpn_tunnel_ship_ip: str = DEFAULT_GOOGLE_VPN_TUNNEL_SHIP_IP
+    google_dns_domain_jyn: str = DEFAULT_GOOGLE_DNS_DOMAIN_JYN
+    google_dns_domain_ship: str = DEFAULT_GOOGLE_DNS_DOMAIN_SHIP
 
     connect_timeout: float = 3.5
     command_timeout: float = 30.0

@@ -22,7 +22,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from .avatar_client import AVATAR_CAPABILITY, extract_avatar_action, update_own_avatar
+from .avatar_client import (
+    AI_AVATAR_CATALOG,
+    AVATAR_CAPABILITY,
+    OPERATOR_AVATAR_LUCY_FALLOUT,
+    extract_avatar_action,
+    get_avatar_state,
+    select_ai_avatar,
+    set_operator_lucy_fallout_avatar,
+    update_own_avatar,
+)
 from .config import (
     CANONICAL_MODELS_PRIORITY,
     SHIP_MODELS_CATALOG,
@@ -59,7 +68,7 @@ _TRAILING_TURN_RE = re.compile(
 
 @dataclass
 class ChatTurnResult:
-    """Wynik pojedynczej tury rozmowy w module czatu JYN_OS (z kanałami AI, przyciskami i widżetami)."""
+    """Wynik pojedynczej tury rozmowy w module czatu JYN_OS (z kanałami AI, przyciskami, widżetami i tagami inline)."""
 
     ok: bool
     reply: str = ""
@@ -82,6 +91,7 @@ class ChatTurnResult:
     buttons: List[Dict[str, Any]] = field(default_factory=list)
     ai_channels: List[Dict[str, Any]] = field(default_factory=list)
     invoked_modules: List[Dict[str, Any]] = field(default_factory=list)
+    inline_tags: List[str] = field(default_factory=list)
 
 
 def clean_polish_response(raw_text: str) -> str:
@@ -190,11 +200,173 @@ class JynChatEngine:
         cmd = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
 
+        if cmd in ("/avatar", "/awatar", "/avatars", "/awatary"):
+            sub = arg.lower().strip()
+            if sub in ("lucy", "operator", "fallout", "vault33"):
+                op_res = set_operator_lucy_fallout_avatar(self.config)
+                return ChatTurnResult(
+                    ok=True,
+                    reply=op_res["summary"],
+                    model=self.config.get_active_model(),
+                    endpoint="jyn_os_avatar_hub",
+                    local_command=True,
+                )
+            if sub and sub not in ("status", "list", "katalog"):
+                ai_res = select_ai_avatar(arg, self.config)
+                return ChatTurnResult(
+                    ok=True,
+                    reply=ai_res["summary"],
+                    model=self.config.get_active_model(),
+                    endpoint="jyn_os_avatar_hub",
+                    local_command=True,
+                )
+            st = get_avatar_state()
+            jyn_av = st.get("jyn_avatar") or AI_AVATAR_CATALOG[0]
+            op_av = st.get("operator_avatar") or OPERATOR_AVATAR_LUCY_FALLOUT
+            lines = [
+                "=== PROFILE I AWATARY JYN_OS v4.0 (SVL-364) ===",
+                f"• Awatar Operatora (Mateusz Mitek): {op_av['title']} [{op_av['character']} · {op_av['license']}]",
+                f"  Źródło: {op_av['image_url']}",
+                f"• Aktywny Awatar AI (Jyn Mitek)  : {jyn_av['title']} [{jyn_av['style']} · {jyn_av['license']}]",
+                f"  Źródło: {jyn_av['image_url']}",
+                "",
+                "Katalog awatarów AI dostępnych do wyboru dla Jyn Mitek (/avatar <id>):",
+            ]
+            for idx, item in enumerate(AI_AVATAR_CATALOG, 1):
+                mark = "★" if item["avatar_id"] == jyn_av.get("avatar_id") else "•"
+                lines.append(f"  {idx}. {mark} {item['avatar_id']} — {item['title']} ({item['style']})")
+            return ChatTurnResult(
+                ok=True,
+                reply="\n".join(lines),
+                model=self.config.get_active_model(),
+                endpoint="jyn_os_avatar_hub",
+                local_command=True,
+            )
+
+        if cmd in ("/kolory", "/format", "/chroma", "/kodek", "/transmisja"):
+            hub = self._get_google_hub()
+            cube_val = int(arg) if (arg and arg.isdigit()) else 364
+            res = hub.render_chroma_rich_typography(action=cmd.lstrip("/"), cube_number=cube_val)
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/chatgpt", "/codex", "/work", "/chatgpt-work", "/openai"):
+            hub = self._get_google_hub()
+            mode_map = {
+                "/chatgpt": "chatgpt",
+                "/codex": "codex",
+                "/work": "chatgpt_work",
+                "/chatgpt-work": "chatgpt_work",
+                "/openai": "openai_api",
+            }
+            res = hub.invoke_openai_business_service(
+                mode=mode_map[cmd],
+                prompt=arg or f"Wywołanie bezpośrednie {cmd} w JYN_OS v4.0",
+            )
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/api", "/providers", "/oplama", "/selektor"):
+            from .openai_business_hub import OpenAIBusinessHub
+            hub = self._get_google_hub()
+            oa = OpenAIBusinessHub(config=self.config, google_hub=hub)
+            sub = arg.lower().strip()
+            if sub in ("ollama-local", "local", "11434"):
+                self.config.set_active_target("local")
+            elif sub in ("ollama-ship", "ship", "11435", "svl364"):
+                self.config.set_active_target("ship")
+            elif sub in ("google", "google-gemini", "gemini"):
+                self.config.local_model = "gemini-2.5-pro"
+            elif sub in ("openai", "openai-api"):
+                self.config.local_model = "gpt-4o"
+            elif sub in ("chatgpt", "chatgpt-business"):
+                self.config.local_model = "gpt-4.1"
+            elif sub in ("codex", "openai-codex"):
+                self.config.local_model = "codex-1"
+            elif sub in ("work", "chatgpt-work"):
+                self.config.local_model = "chatgpt-work-enterprise"
+            return ChatTurnResult(
+                ok=True,
+                reply=oa.format_unified_api_and_ollama_selector(active_provider=sub or f"ollama-{self.config.active_ollama_target}"),
+                model=self.config.get_active_model(),
+                endpoint="unified_api_ollama_router",
+                local_command=True,
+            )
+
+        if cmd in ("/vision", "/wizja"):
+            hub = self._get_google_hub()
+            vparts = arg.split(maxsplit=1) if arg else []
+            img_path = vparts[0] if vparts else "svl364://camera/bridge-feed-01.png"
+            vprompt = vparts[1] if len(vparts) > 1 else "Przeanalizuj dokładnie ten obraz przez Real Vision."
+            res = hub.analyze_vision(image_path=img_path, prompt=vprompt)
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/obraz", "/image"):
+            hub = self._get_google_hub()
+            res = hub.generate_image_from_services(prompt=arg or "Statek kosmiczny SVL-364 Ebon Apex na orbicie Jowisza")
+            return ChatTurnResult(
+                ok=True,
+                reply=res.output,
+                model=res.model,
+                endpoint=res.provider_mode,
+                local_command=True,
+            )
+
+        if cmd in ("/ip", "/static-ip", "/vpn", "/security", "/bezpieczenstwo"):
+            hub = self._get_google_hub()
+            ip_res = hub.configure_google_static_ip_networking()
+            vpn_res = hub.configure_google_ha_vpn_tunnel()
+            bc_res = hub.configure_google_beyondcorp_zero_trust()
+            ar_res = hub.configure_google_cloud_armor_ids()
+            scc_res = hub.configure_google_scc_kms_hsm()
+            sec_res = hub.audit_security_shield()
+            return ChatTurnResult(
+                ok=True,
+                reply="\n\n".join([ip_res.output, vpn_res.output, bc_res.output, ar_res.output, scc_res.output, sec_res.output]),
+                model=self.config.google_default_model,
+                endpoint="google_services_hub",
+                local_command=True,
+            )
+
         if cmd == "/google":
             hub = self._get_google_hub()
             sub_parts = arg.split(maxsplit=1) if arg else ["status"]
             sub_cmd = sub_parts[0].lower()
             sub_arg = sub_parts[1].strip() if len(sub_parts) > 1 else ""
+            if sub_cmd in ("ip", "static-ip"):
+                r = hub.configure_google_static_ip_networking()
+                return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
+            if sub_cmd == "vpn":
+                r = hub.configure_google_ha_vpn_tunnel()
+                return ChatTurnResult(ok=True, reply=r.output, model=r.model, endpoint=r.provider_mode, local_command=True)
+            if sub_cmd in ("security", "bezpieczenstwo", "beyondcorp", "armor", "kms", "scc"):
+                r1 = hub.configure_google_beyondcorp_zero_trust()
+                r2 = hub.configure_google_cloud_armor_ids()
+                r3 = hub.configure_google_scc_kms_hsm()
+                r4 = hub.audit_security_shield()
+                return ChatTurnResult(
+                    ok=True,
+                    reply="\n\n".join([r1.output, r2.output, r3.output, r4.output]),
+                    model=r1.model,
+                    endpoint=r1.provider_mode,
+                    local_command=True,
+                )
             if sub_cmd in ("status", "stan", "info", ""):
                 return ChatTurnResult(
                     ok=True,
@@ -335,7 +507,7 @@ class JynChatEngine:
         return None
 
     def get_ai_channels(self) -> List[Dict[str, Any]]:
-        """Zwraca 12 aktywnych kanałów modułowych widocznych dla Jyn Mitek na czacie."""
+        """Zwraca 15 aktywnych kanałów modułowych widocznych dla Jyn Mitek na czacie."""
         return self._get_google_hub().get_ai_visible_channels()
 
     def click_button(self, button_or_action: str, payload: Optional[Dict[str, Any]] = None) -> ChatTurnResult:
@@ -377,6 +549,7 @@ class JynChatEngine:
             buttons=bundle["buttons"],
             ai_channels=channels,
             invoked_modules=[{"service_id": res.service_id, "operation": res.operation, "data": res.data, "cost_usd": res.cost_usd}],
+            inline_tags=bundle.get("inline_tags", []),
         )
 
     def _autonomous_jyn_module_orchestration(
@@ -386,10 +559,11 @@ class JynChatEngine:
     ) -> List[Dict[str, Any]]:
         """
         Pozwala samej Jyn Mitek autonomicznie korzystać ze zintegrowanych modułów podczas rozmowy na czacie
-        (Vision, Gemini, Search Grounding, Vector RAG 128D, Maps, Swarm, Security, Workspace, UI Kit).
+        (Vision, Gemini, Search Grounding, Vector RAG 128D, Maps, Swarm, Security, Workspace, UI Kit, Avatar Selector).
         """
         hub = self._get_google_hub()
         invoked: List[Dict[str, Any]] = []
+        low = (prompt or "").lower()
 
         # 1. Jeśli przesłano obrazy lub tag [vision:...] -> Jyn automatycznie odpala moduł Vision
         vision_match = re.search(r"\[(?:vision|obraz|kamera)\s*:\s*([^\]]+)\]", prompt, re.IGNORECASE)
@@ -407,6 +581,46 @@ class JynChatEngine:
             mres = hub.trigger_module_button_action(mid, mact, {"prompt": prompt, "query": prompt})
             invoked.append({"service_id": mres.service_id, "operation": mres.operation, "output": mres.output, "data": mres.data})
 
+        # 3. Autonomiczna reakcja na kontekst rozmowy (awatar, biokopuły, infrastruktura, tarcza, pamięć RAG)
+        if any(k in low for k in ("awatar", "avatar", "lucy", "fallout")):
+            op_av = set_operator_lucy_fallout_avatar(self.config)
+            ai_av = select_ai_avatar("jyn_neural_core", self.config)
+            invoked.append({
+                "service_id": "interactive_ai_ui_kit",
+                "operation": "avatar_sync",
+                "output": f"{op_av['summary']} | {ai_av['summary']}",
+                "data": {"operator": op_av, "jyn": ai_av},
+            })
+        if any(k in low for k in ("biokopuł", "botani", "tlen", "o2")) and not any(m["service_id"] == "exo_botany_biodome" for m in invoked):
+            bres = hub.operate_exo_botany("BIO-DOME-ALPHA")
+            invoked.append({"service_id": bres.service_id, "operation": bres.operation, "output": bres.output, "data": bres.data})
+        if any(k in low for k in ("infrastruktur", "reaktor", "3145")) and not any(m["service_id"] == "exo_infrastructure_grid" for m in invoked):
+            ires = hub.operate_exo_infrastructure("ALL")
+            invoked.append({"service_id": ires.service_id, "operation": ires.operation, "output": ires.output, "data": ires.data})
+        if any(k in low for k in ("stałe ip", "stale ip", "static ip", "anycast", "34.118", "dns", "nat")) and not any(m["service_id"] == "google_static_ip_networking" for m in invoked):
+            ip_r = hub.configure_google_static_ip_networking()
+            invoked.append({"service_id": ip_r.service_id, "operation": ip_r.operation, "output": ip_r.output, "data": ip_r.data})
+        if any(k in low for k in ("vpn", "tunel", "ipsec", "wireguard", "interconnect")) and not any(m["service_id"] == "google_ha_vpn_interconnect" for m in invoked):
+            vpn_r = hub.configure_google_ha_vpn_tunnel()
+            invoked.append({"service_id": vpn_r.service_id, "operation": vpn_r.operation, "output": vpn_r.output, "data": vpn_r.data})
+        if any(k in low for k in ("beyondcorp", "zero-trust", "zero trust", "armor", "ids", "hsm", "kms", "scc", "bezpiecz")) and not any(m["service_id"] == "google_beyondcorp_zero_trust" for m in invoked):
+            bc_r = hub.configure_google_beyondcorp_zero_trust()
+            ar_r = hub.configure_google_cloud_armor_ids()
+            scc_r = hub.configure_google_scc_kms_hsm()
+            invoked.append({"service_id": bc_r.service_id, "operation": bc_r.operation, "output": bc_r.output, "data": bc_r.data})
+            invoked.append({"service_id": ar_r.service_id, "operation": ar_r.operation, "output": ar_r.output, "data": ar_r.data})
+            invoked.append({"service_id": scc_r.service_id, "operation": scc_r.operation, "output": scc_r.output, "data": scc_r.data})
+        if any(k in low for k in ("kolor", "format", "chroma", "kodek", "głock", "glock", "cube", "transmisj", "ring-0", "ring0")) and not any(m["service_id"] == "chroma_rich_typography_suite" for m in invoked):
+            ch_r = hub.render_chroma_rich_typography()
+            invoked.append({"service_id": ch_r.service_id, "operation": ch_r.operation, "output": ch_r.output, "data": ch_r.data})
+        if any(k in low for k in ("chatgpt", "codex", "openai", "gpt-4", "o3-pro")) and not any(m["service_id"] in ("openai_chatgpt_business_suite", "openai_api_secondary_provider") for m in invoked):
+            oa_mode = "codex" if "codex" in low else ("chatgpt_work" if "work" in low else ("openai_api" if "api" in low else "chatgpt"))
+            oa_r = hub.invoke_openai_business_service(mode=oa_mode, prompt=prompt)
+            invoked.append({"service_id": oa_r.service_id, "operation": oa_r.operation, "output": oa_r.output, "data": oa_r.data})
+        if any(k in low for k in ("układu słonecznego", "ukladu slonecznego", "układ słoneczny", "uklad sloneczny", "solar system")):
+            sol_r = hub.generate_solar_system_telemetry_report(prompt)
+            invoked.append({"service_id": sol_r.service_id, "operation": sol_r.operation, "output": sol_r.output, "data": sol_r.data})
+
         return invoked
 
     def send(
@@ -416,7 +630,7 @@ class JynChatEngine:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
     ) -> ChatTurnResult:
-        """Wysyła wiadomość do Jyn Mitek z aktywnymi kanałami 12 modułów, obsługą Vision i interaktywnymi przyciskami UI."""
+        """Wysyła wiadomość do Jyn Mitek z aktywnymi kanałami 23 modułów, obsługą Real Vision, OpenAI Business, ChromaText i przyciskami UI."""
         from .interactive_ui_hub import InteractiveUIEngine
 
         cleaned = (message or "").strip()
@@ -435,6 +649,7 @@ class JynChatEngine:
             slash_res.widgets = bundle["widgets"]
             slash_res.buttons = bundle["buttons"]
             slash_res.ai_channels = hub.get_ai_visible_channels()
+            slash_res.inline_tags = bundle.get("inline_tags", [])
             return slash_res
 
         hub = self._get_google_hub()
@@ -444,6 +659,28 @@ class JynChatEngine:
 
         selected_model = (model or self.config.get_active_model()).strip()
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")
+
+        if selected_model.lower().startswith(("gpt-", "o3-", "o4-", "codex-", "chatgpt-", "openai-")):
+            oa_mode = "codex" if "codex" in selected_model.lower() else ("chatgpt_work" if "work" in selected_model.lower() else "chatgpt")
+            oa_res = hub.invoke_openai_business_service(mode=oa_mode, prompt=cleaned, model=selected_model)
+            reply = clean_polish_response(oa_res.output)
+            self.history.append({"role": "user", "content": cleaned})
+            self.history.append({"role": "assistant", "content": reply})
+            bundle = ui.build_contextual_widgets(cleaned, reply)
+            return ChatTurnResult(
+                ok=True,
+                reply=reply,
+                requested_model=selected_model,
+                model=oa_res.model,
+                routed_model=oa_res.model,
+                endpoint=oa_res.provider_mode,
+                duration_sec=oa_res.duration_sec,
+                widgets=bundle["widgets"],
+                buttons=bundle["buttons"],
+                ai_channels=ai_channels,
+                invoked_modules=invoked_modules + [{"service_id": oa_res.service_id, "operation": oa_res.operation}],
+                inline_tags=bundle.get("inline_tags", []),
+            )
 
         if selected_model.lower().startswith(("gemini-", "vertex-", "imagen-", "veo-")):
             g_res = hub.generate_gemini(prompt=cleaned, model=selected_model)
@@ -472,6 +709,7 @@ class JynChatEngine:
                 buttons=bundle["buttons"],
                 ai_channels=ai_channels,
                 invoked_modules=invoked_modules + [{"service_id": g_res.service_id, "operation": g_res.operation}],
+                inline_tags=bundle.get("inline_tags", []),
             )
 
         t0 = time.monotonic()
@@ -554,6 +792,7 @@ class JynChatEngine:
             buttons=bundle["buttons"],
             ai_channels=ai_channels,
             invoked_modules=invoked_modules,
+            inline_tags=bundle.get("inline_tags", []),
         )
 
 
@@ -566,3 +805,4 @@ __all__ = [
     "clean_polish_response",
     "compute_turn_options",
 ]
+

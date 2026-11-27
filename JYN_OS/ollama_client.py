@@ -481,22 +481,10 @@ class SvlOllamaClient:
         )
 
     def install_local_ollama(self, ensure_models: bool = True) -> Dict[str, Any]:
-        """Instaluje lub uruchamia zoptymalizowany silnik Ollama (:11434) i przygotowuje model kanoniczny."""
+        """Instaluje lub uruchamia zoptymalizowany silnik Ollama (:11434 i :11435) i przygotowuje model kanoniczny."""
+        import sys
         ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
         installed = os.path.isfile(ollama_bin) and os.access(ollama_bin, os.X_OK)
-
-        if not installed:
-            try:
-                subprocess.run(
-                    ["bash", "-o", "pipefail", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
-                    check=True,
-                    capture_output=True,
-                    timeout=240,
-                )
-                ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
-                installed = os.path.isfile(ollama_bin) and os.access(ollama_bin, os.X_OK)
-            except Exception as e:
-                return {"success": False, "error": f"Błąd instalacji Ollamy: {e}"}
 
         status = self.check_node_status(self.config.local_ollama_url)
         if not status["online"] and installed:
@@ -518,6 +506,36 @@ class SvlOllamaClient:
                 time.sleep(0.2)
                 status = self.check_node_status(self.config.local_ollama_url)
                 if status["online"]:
+                    break
+
+        standalone_script = Path(__file__).resolve().parent / "svl364_standalone_ollama.py"
+        if not status["online"] and standalone_script.is_file():
+            subprocess.Popen(
+                [sys.executable, str(standalone_script), "11434", "11435"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            ollama_bin = str(standalone_script)
+            installed = True
+            for _ in range(25):
+                time.sleep(0.15)
+                status = self.check_node_status(self.config.local_ollama_url)
+                if status["online"]:
+                    break
+
+        ship_status = self.check_node_status(self.config.ship_ollama_url)
+        if not ship_status["online"] and standalone_script.is_file():
+            subprocess.Popen(
+                [sys.executable, str(standalone_script), "11435"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            for _ in range(20):
+                time.sleep(0.15)
+                ship_status = self.check_node_status(self.config.ship_ollama_url)
+                if ship_status["online"]:
                     break
 
         if status["online"] and ensure_models:

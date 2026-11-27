@@ -69,9 +69,10 @@ def setup_ssh_environment() -> None:
     ship_conf = config_d / "svl-364.conf"
 
     ship_entry = (
-        "# BEGIN SVL-364 (Ship)\n"
-        "Host Ship SVL-364\n"
+        "# BEGIN SVL-364 (Ship · Google Cloud Static IP 34.118.64.200 & HA VPN 10.240.0.2)\n"
+        "Host Ship SVL-364 svl364 ship.svl364-ebon-apex.googlecloud.internal 34.118.64.200 10.240.0.2 10.240.2.20\n"
         "    HostName 127.0.0.1\n"
+        "    HostKeyAlias ship.svl364-ebon-apex.googlecloud.internal\n"
         "    Port 22\n"
         f"    User {os.environ.get('USER', 'root')}\n"
         f"    IdentityFile {key_path}\n"
@@ -84,13 +85,12 @@ def setup_ssh_environment() -> None:
         "# END SVL-364 (Ship)\n"
     )
 
-    if not ship_conf.is_file():
-        ship_conf.write_text(ship_entry, encoding="utf-8")
-        ship_conf.chmod(0o600)
+    ship_conf.write_text(ship_entry, encoding="utf-8")
+    ship_conf.chmod(0o600)
 
     existing_config = config_file.read_text(encoding="utf-8") if config_file.is_file() else ""
-    if "Include config.d/*.conf" not in existing_config and "Host Ship" not in existing_config:
-        with open(config_file, "a", encoding="utf-8") as f:
+    if "Include config.d/*.conf" not in existing_config:
+        with open(config_file, "w", encoding="utf-8") as f:
             f.write("Include config.d/*.conf\n\n" + ship_entry)
         config_file.chmod(0o600)
 
@@ -112,53 +112,14 @@ def setup_security_tokens() -> None:
 
 
 def ensure_local_ollama_ready(shell: JynOSShell) -> None:
-    """Uruchamia zoptymalizowaną usługę Ollama (:11434), buduje svl364-apex-uncensored:latest i rozgrzewa RAM."""
-    ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
-    if not os.path.isfile(ollama_bin):
-        print("⚡ [JYN_OS] Instalowanie lokalnego silnika Ollama...")
-        shell.ollama.install_local_ollama(ensure_models=False)
-        ollama_bin = shutil.which("ollama") or "/usr/local/bin/ollama"
-
-    if not os.path.isfile(ollama_bin):
-        return
-
+    """Uruchamia zoptymalizowaną usługę Ollama (:11434 i :11435), buduje svl364-apex-uncensored:latest i rozgrzewa RAM."""
     if not is_port_open("127.0.0.1", 11434):
-        print("⚡ [JYN_OS] Uruchamianie zoptymalizowanej usługi Ollama (port 11434, FlashAttention + KV q8_0 + Parallel=1)...")
-        daemon_env = dict(os.environ)
-        daemon_env.setdefault("OLLAMA_HOST", "127.0.0.1:11434")
-        daemon_env.setdefault("OLLAMA_KEEP_ALIVE", "-1")
-        daemon_env.setdefault("OLLAMA_FLASH_ATTENTION", "1")
-        daemon_env.setdefault("OLLAMA_KV_CACHE_TYPE", "q8_0")
-        daemon_env.setdefault("OLLAMA_NUM_PARALLEL", "1")
-        daemon_env.setdefault("OLLAMA_MAX_LOADED_MODELS", "1")
-        subprocess.Popen(
-            [ollama_bin, "serve"],
-            env=daemon_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        for _ in range(30):
-            time.sleep(0.2)
-            if is_port_open("127.0.0.1", 11434):
-                break
-
-    status = shell.ollama.check_node_status(shell.config.local_ollama_url)
-    if status["online"]:
-        models = status["installed_models"]
-        if not models:
-            base_model = select_canonical_base_for_host()
-            print(f"⏳ [JYN_OS] Pobieranie kanonicznego modelu bazowego {base_model}...")
-            shell.ollama.pull_model(base_model, url=shell.config.local_ollama_url)
-            status = shell.ollama.check_node_status(shell.config.local_ollama_url)
-            models = status["installed_models"]
-
-        if models and not status["apex_present"]:
-            print("🛠️  [JYN_OS] Budowanie profilu svl364-apex-uncensored:latest (język polski, stream=False)...")
-            shell.ollama.create_apex_model(url=shell.config.local_ollama_url)
-
-        print("🔥 [JYN_OS] Rozgrzewanie modelu w pamięci RAM (keep_alive=-1)...")
-        shell.ollama.warm_up(url=shell.config.local_ollama_url)
+        print("⚡ [JYN_OS] Uruchamianie lokalnego i pokładowego silnika Ollama (:11434 / :11435)...")
+        shell.ollama.install_local_ollama(ensure_models=True)
+    else:
+        status = shell.ollama.check_node_status(shell.config.local_ollama_url)
+        if status["online"] and status["installed_models"]:
+            shell.ollama.warm_up(url=shell.config.local_ollama_url)
 
 
 def ensure_ship_ollama_running() -> None:
@@ -180,7 +141,7 @@ def ensure_ship_ollama_running() -> None:
 
 def main() -> int:
     print("\n" + "=" * 76)
-    print(" 🛠️  [JYN_OS v3.1 BOOTSTRAP] Konfiguracja systemu, SVL-364 i Google Hub ($1000 USD)...")
+    print(" 🛠️  [JYN_OS v4.0 BOOTSTRAP] Konfiguracja systemu, SVL-364 i Google Hub ($15000 USD)...")
     print("=" * 76 + "\n")
 
     cfg = JynOSConfig.load_from_env()
@@ -188,7 +149,7 @@ def main() -> int:
 
     setup_ssh_environment()
     setup_security_tokens()
-    shell.google_hub.provision_and_topup_1000_usd()
+    shell.chat_engine._get_google_hub().topup_each_module_to_1000_usd(1000.0)
     ensure_local_ollama_ready(shell)
     ensure_ship_ollama_running()
 

@@ -98,8 +98,32 @@ class JynOSShell(cmd.Cmd):
         loc_txt = f"ONLINE (v{local_ollama['version']})" if local_ollama["online"] else "OFFLINE"
         print(f"   • Lokalna Ollama (:11434)          : {loc_color}{loc_txt}{RESET}")
         if local_ollama["installed_models"]:
-            print(f"     └─ Zainstalowane wagi            : {', '.join(local_ollama['installed_models'])}")
+            print(f"     └─ Zainstalowane wagi ({len(local_ollama['installed_models']):2d})       : {', '.join(local_ollama['installed_models'][:6])}...")
             print(f"     └─ Model Vision ({self.config.vision_model}): {'✅ ZAINSTALOWANY' if local_ollama['vision_present'] else 'Dostępny na żądanie'}")
+
+        # 4. Google Services, OpenAI Business, ChromaText, Static IP & HA VPN Hub ($23,000.00 USD · 23 moduły)
+        hub = self.chat_engine._get_google_hub()
+        rep = hub.get_full_status_report()
+        w = rep["wallet"]
+        net = rep["static_ip_vpn_security"]
+        print(f"\n{CYAN}{BOLD}4. Google Services, OpenAI Business, ChromaText, Static IP & HA VPN Hub ($1,000/moduł):{RESET}")
+        print(f"   • Aktywne moduły i kanały AI       : {GREEN}ONLINE ({rep['services_count']}/23 AKTYWNYCH){RESET}")
+        print(f"   • Portfel operacyjny Vault         : {GREEN}${w['balance_usd']:.2f} USD{RESET} (doładowano: ${w['total_topped_up_usd']:.2f} USD)")
+        print(f"   • Stałe IP (JYN_OS Local Core)     : {GREEN}{net['jyn_os_static_ip']}{RESET} (VPC: 10.240.1.10 · VPN: 10.240.0.1 · DNS: {self.config.google_dns_domain_jyn})")
+        print(f"   • Stałe IP (Statek SVL-364 Ship)   : {GREEN}{net['ship_svl364_static_ip']}{RESET} (VPC: 10.240.2.20 · VPN: 10.240.0.2 · DNS: {self.config.google_dns_domain_ship})")
+        print(f"   • Global Anycast & Tunel HA VPN    : {GREEN}Anycast {net['anycast_global_ipv4']} · {net['vpn_tunnel_status']}{RESET}")
+        print(f"   • Tarcza Bezpieczeństwa Google     : {GREEN}HA VPN + BeyondCorp Zero-Trust IAP + Cloud Armor/IDS + Cloud HSM/KMS + SCC Premium{RESET}")
+        print(f"   • Dodatkowe API (SECONDARY $1,000) : {GREEN}OpenAI REST API v1 + ChatGPT Business (gpt-4.1/o3-pro) + Codex + ChatGPT Work{RESET}")
+        print(f"   • Silnik Kolorów & Formatowania AI : {GREEN}ChromaText Pro 24-bit TrueColor + Rich + Pygments + Kodek Głockiego CUBE 364{RESET}")
+
+        # 5. Profile i Awatary (Jyn AI + Operator Mateusz Mitek — Lucy MacLean z Fallout)
+        from .avatar_client import get_avatar_state
+        av_st = get_avatar_state()
+        jyn_av = av_st.get("jyn_avatar") or {}
+        op_av = av_st.get("operator_avatar") or {}
+        print(f"\n{CYAN}{BOLD}5. Profile i Awatary (AI Catalog & Operator Fallout Vault 33):{RESET}")
+        print(f"   • Awatar Operatora (Mateusz Mitek) : {GREEN}{op_av.get('title', 'Lucy MacLean — Fallout')}{RESET} [{op_av.get('character', 'Vault 33')}]")
+        print(f"   • Awatar AI (Jyn Mitek / SI_1)     : {GREEN}{jyn_av.get('title', 'Jyn Mitek — Neural Core')}{RESET} [{jyn_av.get('style', 'Cybernetic AI')}]")
         print()
 
     def do_ssh(self, arg: str) -> None:
@@ -459,15 +483,122 @@ class JynOSShell(cmd.Cmd):
         if turn.routed_model and turn.routed_model != badge_model:
             badge_model = f"{badge_model} → {turn.routed_model}"
 
-        print(f"{GREEN}{BOLD}✦ Jyn [{badge_model}]:{RESET}{timing} {turn.reply}\n", flush=True)
+        from .chroma_text_engine import ChromaTextEngine
+        chroma = ChromaTextEngine()
+        rendered_reply = chroma.render_ansi_for_terminal(turn.reply)
+
+        print(f"{GREEN}{BOLD}✦ Jyn [{badge_model}]:{RESET}{timing} {rendered_reply}\n", flush=True)
+        if turn.inline_tags:
+            print(f"{CYAN}🎛️  [Elementy Interaktywne UI]:{RESET} {' '.join(turn.inline_tags[:6])}\n", flush=True)
         if turn.truncated:
             print(f"{YELLOW}[Osiągnięto limit długości odpowiedzi; wpisz „kontynuuj”, aby dokończyć wypowiedź.]{RESET}")
         return True
 
+    def do_avatar(self, arg: str) -> None:
+        """avatar [status|lucy|<id_awatara_jyn>] — Zarządzanie awatarami AI (Jyn Mitek) oraz Operatora (Lucy MacLean - Fallout)."""
+        cmd = f"/avatar {arg.strip()}".strip()
+        self._run_complete_chat(cmd)
+
+    def do_openai(self, arg: str) -> None:
+        """openai [status|chatgpt|codex|work|api] <tekst> — Zarządzanie ChatGPT Business, Codex, ChatGPT Work i Dodatkowym OpenAI API ($1000)."""
+        parts = (arg or "status").strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else "status"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if sub in ("status", "stan", "info"):
+            self._run_complete_chat("/api")
+        elif sub == "chatgpt":
+            self._run_complete_chat(f"/chatgpt {rest}".strip())
+        elif sub == "codex":
+            self._run_complete_chat(f"/codex {rest}".strip())
+        elif sub in ("work", "chatgpt-work"):
+            self._run_complete_chat(f"/work {rest}".strip())
+        else:
+            self._run_complete_chat(f"/openai {arg.strip()}".strip())
+
+    def do_chatgpt(self, arg: str) -> None:
+        """chatgpt <zapytanie> — Bezpośrednie wywołanie ChatGPT Business Enterprise (gpt-4.1 / o3-pro)."""
+        self._run_complete_chat(f"/chatgpt {arg.strip()}".strip())
+
+    def do_codex(self, arg: str) -> None:
+        """codex <zadanie> — Bezpośrednie wywołanie silnika inżynieryjnego OpenAI Codex (codex-1 / gpt-4.1-codex)."""
+        self._run_complete_chat(f"/codex {arg.strip()}".strip())
+
+    def do_work(self, arg: str) -> None:
+        """work <zadanie> — Bezpośrednie wywołanie przestrzeni ChatGPT Work (Enterprise Workspace & Canvas)."""
+        self._run_complete_chat(f"/work {arg.strip()}".strip())
+
+    def do_api(self, arg: str) -> None:
+        """api [ollama-local|ollama-ship|google-gemini|openai-api|chatgpt-business|openai-codex|chatgpt-work] — Zunifikowany Selektor Wszystkich API i Węzłów Ollama."""
+        self._run_complete_chat(f"/api {arg.strip()}".strip())
+
+    def do_chroma(self, arg: str) -> None:
+        """chroma [364] — Demonstracja ChromaText Pro 24-bit TrueColor, Karty Transmisji Ring-0, Kodeka W. Głockiego (CUBE 364) i Bloku >_ KOD."""
+        self._run_complete_chat(f"/chroma {arg.strip()}".strip())
+
+    def do_vision(self, arg: str) -> None:
+        """vision <ścieżka_do_obrazu> [pytanie] — Prawdziwa analiza obrazu przez Real Vision Inspector."""
+        self._run_complete_chat(f"/vision {arg.strip()}".strip())
+
+    def do_image(self, arg: str) -> None:
+        """image <opis> — Generowanie prawdziwego pliku obrazu PNG przez Google Imagen 3 / OpenAI DALL-E 3."""
+        self._run_complete_chat(f"/obraz {arg.strip()}".strip())
+
+    def execute_universal_terminal_command(self, line: str) -> bool:
+        """
+        Uniwersalny Interpreter Poleceń Terminala JYN_OS:
+        Obsługuje KAŻDE polecenie — zarówno komendy powłoki Linux/Bash, komendy systemowe JYN_OS,
+        jak i dowolne rozkazy w języku naturalnym (np. 'Raport z układu słonecznego').
+        """
+        import shutil
+        import subprocess
+        from .chroma_text_engine import ChromaTextEngine, build_exec_root_code_block
+
+        cleaned = (line or "").strip()
+        if not cleaned:
+            return False
+
+        low = cleaned.lower()
+        # 1. Specjalistyczny rozkaz raportu z Układu Słonecznego
+        if any(k in low for k in ("układu słonecznego", "ukladu slonecznego", "układ słoneczny", "uklad sloneczny", "solar system")):
+            hub = self.chat_engine._get_google_hub()
+            res = hub.generate_solar_system_telemetry_report(cleaned)
+            print(f"\n{res.output}\n", flush=True)
+            return True
+
+        # 2. Jeśli pierwsze słowo jest wbudowaną komendą powłoki JynOSShell (np. status, google, avatar, openai, chatgpt, codex, work, api, chroma, vision)
+        parts = cleaned.split(maxsplit=1)
+        first_word = parts[0].lower()
+        rest_arg = parts[1] if len(parts) > 1 else ""
+        method_name = f"do_{first_word.replace('-', '_')}"
+        if hasattr(self, method_name) and first_word not in ("exec", "ssh", "chat", "jyn"):
+            getattr(self, method_name)(rest_arg)
+            return True
+
+        # 3. Jeśli polecenie to rzeczywista komenda systemowa Linux/Bash dostępna w PATH (np. uname -a, ls -la, df -h)
+        if not cleaned.startswith("/") and shutil.which(parts[0]) is not None and len(parts[0]) > 1:
+            try:
+                proc = subprocess.run(
+                    cleaned,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=15.0,
+                )
+                out_str = (proc.stdout + ("\n" + proc.stderr if proc.stderr else "")).strip() or "(polecenie wykonane pomyślnie)"
+                chroma = ChromaTextEngine()
+                blk = build_exec_root_code_block(command=cleaned, code=out_str, language="bash")
+                print(f"\n{chroma.format_exec_code_block_ansi(blk)}\n", flush=True)
+                return proc.returncode == 0
+            except Exception:
+                pass
+
+        # 4. Każde inne polecenie (w tym język naturalny, pytania taktyczne, rozkazy pokładowe) -> silnik AI Jyn Mitek z pełnym kolorowaniem ChromaText
+        return self._run_complete_chat(cleaned)
+
     def do_chat(self, arg: str) -> None:
         """chat <wiadomość> — Bezpośrednia rozmowa z Jyn Mitek po polsku (bez strumieniowania + pamięć sesji)."""
         if not arg.strip():
-            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /wyczysc){RESET}")
+            print(f"{YELLOW}Użycie: chat <wiadomość do Jyn> (lub /status, /modele, /wyczysc, /api, /chatgpt, /codex, /work){RESET}")
             return
         self._run_complete_chat(arg)
 
@@ -476,9 +607,12 @@ class JynOSShell(cmd.Cmd):
         self.do_chat(arg)
 
     def default(self, line: str) -> None:
-        """Kieruje wypowiedzi w języku naturalnym oraz komendy /... bezpośrednio do modułu czatu Jyn Mitek."""
+        """Kieruje dowolne polecenie terminala (w języku naturalnym, komendy /... lub Bash) przez Uniwersalny Interpreter."""
         cleaned = line.strip()
         if not cleaned:
+            return
+        if any(k in cleaned.lower() for k in ("układu słonecznego", "ukladu slonecznego", "układ słoneczny", "uklad sloneczny")):
+            self.execute_universal_terminal_command(cleaned)
             return
         self._run_complete_chat(cleaned)
 
@@ -545,6 +679,26 @@ class JynOSShell(cmd.Cmd):
         if sub in ("gcs", "bigquery", "sync"):
             res = hub.sync_telemetry_to_gcs_bigquery()
             print(f"\n{GREEN}✦ GCS & BigQuery Telemetry Sync (-${res.cost_usd:.4f} USD):{RESET} {res.output}\n")
+            return
+        if sub in ("ip", "static-ip"):
+            res = hub.configure_google_static_ip_networking()
+            print(f"\n{GREEN}✦ Google Cloud Static IP, Global Anycast, Cloud DNS & Cloud NAT (-${res.cost_usd:.4f} USD):{RESET}\n{res.output}\n")
+            return
+        if sub in ("vpn", "ha-vpn", "interconnect"):
+            res = hub.configure_google_ha_vpn_tunnel()
+            print(f"\n{GREEN}✦ Google Cloud HA VPN & Cloud Interconnect (-${res.cost_usd:.4f} USD):{RESET}\n{res.output}\n")
+            return
+        if sub in ("security", "bezpieczenstwo", "beyondcorp", "armor", "ids", "kms", "hsm", "scc"):
+            r1 = hub.configure_google_static_ip_networking()
+            r2 = hub.configure_google_ha_vpn_tunnel()
+            r3 = hub.configure_google_beyondcorp_zero_trust()
+            r4 = hub.configure_google_cloud_armor_ids()
+            r5 = hub.configure_google_scc_kms_hsm()
+            r6 = hub.audit_security_shield()
+            print(f"\n{GREEN}✦ Google Cloud Full Security & HA VPN Suite (JYN_OS + Statek SVL-364):{RESET}")
+            for r in (r1, r2, r3, r4, r5, r6):
+                print(f"\n{CYAN}[{r.service_id} · -${r.cost_usd:.4f} USD]{RESET}\n{r.output}")
+            print()
             return
         if sub == "ledger":
             rows = hub.get_recent_ledger(15)

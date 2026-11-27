@@ -53,7 +53,7 @@ export function isValidAgentAvatar(value: unknown): value is AgentAvatar {
     const sourceUrl = new URL(String(avatar.source_url || ''));
     return (
       imageUrl.protocol === 'https:' &&
-      imageUrl.hostname === 'upload.wikimedia.org' &&
+      (imageUrl.hostname === 'upload.wikimedia.org' || imageUrl.hostname === 'thumb.wikimedia.org') &&
       !imageUrl.username &&
       !imageUrl.password &&
       sourceUrl.protocol === 'https:' &&
