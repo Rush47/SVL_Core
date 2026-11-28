@@ -56,6 +56,8 @@ def _catalog_entry_to_ollama_tag(entry: Dict[str, Any]) -> Dict[str, Any]:
         byte_size = 26_400_000_000
     elif "30B" in size_str:
         byte_size = 18_400_000_000
+    elif "14B" in size_str:
+        byte_size = 9_000_000_000
     elif "11B" in size_str:
         byte_size = 7_900_000_000
     elif "q2_k" in entry["name"].lower():
@@ -448,13 +450,20 @@ class Svl364OllamaHandler(BaseHTTPRequestHandler):
                         return
                 except Exception:
                     pass
+            param_size = "14B" if "14b" in req_model.lower() else "70B"
+            family = "qwen2" if ("14b" in req_model.lower() or "qwen" in req_model.lower()) else "llama"
+            modelfile_14b = Path(__file__).resolve().parent / "Modelfile.14b"
+            if "14b" in req_model.lower() and modelfile_14b.is_file():
+                mf_text = modelfile_14b.read_text(encoding="utf-8")
+            else:
+                mf_text = f"FROM {req_model}\nPARAMETER num_ctx {DEFAULT_CHAT_NUM_CTX}\n"
             self._send_json(
                 200,
                 {
-                    "modelfile": f"FROM {req_model}\nPARAMETER num_ctx {DEFAULT_CHAT_NUM_CTX}\n",
+                    "modelfile": mf_text,
                     "parameters": f"num_ctx {DEFAULT_CHAT_NUM_CTX}",
                     "template": "{{ .Prompt }}",
-                    "details": {"family": "llama", "parameter_size": "70B", "quantization_level": "Q4_K_M"},
+                    "details": {"family": family, "parameter_size": param_size, "quantization_level": "Q4_K_M"},
                 },
             )
             return

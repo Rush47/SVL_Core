@@ -252,6 +252,50 @@ class SvlOllamaClient:
             err_msg = str(exc)
         return {"success": False, "model": target_name, "base_model": chosen_base, "error": err_msg}
 
+    def create_14b_model(
+        self,
+        base_model: str = "qwen2.5:14b",
+        target_name: str = "svl364-14b:latest",
+        url: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Tworzy lokalny profil 14B na podstawie pliku JYN_OS/Modelfile.14b."""
+        from .config import MODELFILE_14B_PATH
+
+        target_url = (url or self.config.local_ollama_url).rstrip("/")
+        modelfile_content = (
+            MODELFILE_14B_PATH.read_text(encoding="utf-8")
+            if MODELFILE_14B_PATH.is_file()
+            else f"FROM {base_model}\nPARAMETER num_ctx 4096\n"
+        )
+        payload = {
+            "model": target_name,
+            "from": base_model,
+            "modelfile": modelfile_content,
+            "stream": False,
+        }
+        req = urllib.request.Request(
+            f"{target_url}/api/create",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        try:
+            with _urlopen_direct(req, timeout=120.0) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if isinstance(body, dict) and body.get("status") == "success":
+                    self.invalidate_cache(target_url)
+                    return {
+                        "success": True,
+                        "model": target_name,
+                        "base_model": base_model,
+                        "modelfile_path": str(MODELFILE_14B_PATH),
+                        "endpoint": target_url,
+                    }
+                err_msg = str(body.get("error") or body)
+        except Exception as exc:
+            err_msg = str(exc)
+        return {"success": False, "model": target_name, "base_model": base_model, "error": err_msg}
+
     def warm_up(self, model: Optional[str] = None, url: Optional[str] = None) -> Dict[str, Any]:
         """Ładuje aktywny model do pamięci RAM z keep_alive=-1 i rozgrzewa polski prefiks KV-cache."""
         target_url = (url or self.config.get_active_ollama_url()).rstrip("/")

@@ -1,0 +1,11 @@
+# Modelfile profilu 14B dla lokalnej jednostki obliczeniowej Ollama (JYN_OS / SVL-364)
+FROM qwen2.5:14b
+
+PARAMETER num_ctx 4096
+PARAMETER num_predict 768
+PARAMETER temperature 0.3
+PARAMETER top_p 0.85
+PARAMETER top_k 40
+PARAMETER repeat_penalty 1.1
+
+SYSTEM """"""

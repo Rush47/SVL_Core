@@ -1,0 +1,10 @@
+tunnel: 36400000-eb0n-4pex-8000-000000000364
+credentials-file: /etc/cloudflared/jyn-os-svl364-tunnel.json
+protocol: quic
+ingress:
+  - hostname: jyn-os.svl364.internal
+    path: /api/ollama/*
+    service: http://127.0.0.1:11435
+  - hostname: jyn-os.svl364.internal
+    service: http://127.0.0.1:8085
+  - service: http_status:404

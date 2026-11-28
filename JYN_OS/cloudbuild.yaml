@@ -1,0 +1,21 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/svl364-ebon-apex/jyn-os-core:latest', '-f', 'JYN_OS/Dockerfile', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/svl364-ebon-apex/jyn-os-core:latest']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'jyn-os-core'
+      - '--image=gcr.io/svl364-ebon-apex/jyn-os-core:latest'
+      - '--region=europe-central2'
+      - '--platform=managed'
+      - '--cpu=4'
+      - '--memory=16Gi'
+      - '--min-instances=1'
+      - '--max-instances=10'
+      - '--allow-unauthenticated'
+images:
+  - 'gcr.io/svl364-ebon-apex/jyn-os-core:latest'

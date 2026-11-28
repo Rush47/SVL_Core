@@ -748,8 +748,99 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertIn("Lucy MacLean", btn_av.reply)
 
 
+class TestCloudflareGCloudHuggingFaceAnd14BProfile(unittest.TestCase):
+    def setUp(self):
+        self.cfg = JynOSConfig.load_from_env()
+
+    def test_cloudflare_and_gcloud_deploy_artifacts(self):
+        from JYN_OS.cloudflare_gcloud_deploy import CloudflareGCloudDeployer
+
+        deployer = CloudflareGCloudDeployer(config=self.cfg)
+        cf_yaml = deployer.generate_cloudflared_config_yaml()
+        self.assertIn("ingress:", cf_yaml)
+        self.assertIn("11435", cf_yaml)
+
+        worker_js = deployer.generate_cloudflare_worker_js()
+        self.assertIn("X-Protected-By", worker_js)
+        self.assertIn("Cloudflare-Zero-Trust-JYN_OS", worker_js)
+
+        dockerfile = deployer.generate_dockerfile()
+        self.assertIn("FROM python:3.11-slim", dockerfile)
+        self.assertIn("svl364_standalone_ollama.py", dockerfile)
+
+        cloudbuild = deployer.generate_cloudbuild_yaml()
+        self.assertIn("gcr.io/cloud-builders/docker", cloudbuild)
+        self.assertIn("jyn-os-core", cloudbuild)
+
+        cmd = deployer.get_gcloud_deploy_command()
+        self.assertEqual(cmd[:3], ["gcloud", "run", "deploy"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = deployer.write_deployment_artifacts(Path(tmp))
+            self.assertTrue(res["ok"])
+            self.assertTrue(Path(res["files"]["dockerfile"]).is_file())
+            self.assertTrue(Path(res["files"]["cloudbuild"]).is_file())
+            self.assertTrue(Path(res["files"]["cloudflared"]).is_file())
+
+    def test_huggingface_inference_client_and_ollama_fallback(self):
+        from JYN_OS.huggingface_client import HuggingFaceInferenceClient
+
+        client = HuggingFaceInferenceClient(config=self.cfg, api_token="hf_test_token_123")
+        hf_resp = [{"generated_text": "Odpowiedź z modelu Qwen 14B przez Hugging Face API."}]
+        with patch(
+            "JYN_OS.huggingface_client.urllib.request.urlopen",
+            return_value=io.BytesIO(json.dumps(hf_resp, ensure_ascii=False).encode("utf-8")),
+        ):
+            res = client.generate("Test HF")
+        self.assertTrue(res["success"])
+        self.assertEqual(res["provider"], "huggingface")
+        self.assertFalse(res["fallback_used"])
+        self.assertIn("Qwen 14B", res["response"])
+
+        # Fallback na lokalny serwer Ollama przy braku tokenu HF
+        client_no_token = HuggingFaceInferenceClient(config=self.cfg, api_token="")
+        ollama_reply = {
+            "model": "qwen2.5:14b",
+            "message": {"content": "Odpowiedź z lokalnego fallbacku Ollama 14B."},
+            "done": True,
+        }
+        with patch(
+            "JYN_OS.ollama_client.urllib.request.urlopen",
+            return_value=io.BytesIO(json.dumps(ollama_reply, ensure_ascii=False).encode("utf-8")),
+        ):
+            fb_res = client_no_token.generate("Test Fallback", ollama_fallback_model="qwen2.5:14b")
+        self.assertTrue(fb_res["success"])
+        self.assertEqual(fb_res["provider"], "ollama_fallback")
+        self.assertTrue(fb_res["fallback_used"])
+        self.assertIn("Ollama 14B", fb_res["response"])
+
+    def test_modelfile_14b_and_ollama_14b_support(self):
+        from JYN_OS.config import DEFAULT_14B_MODEL, MODELFILE_14B_PATH
+        from JYN_OS.svl364_standalone_ollama import _autonomous_inference_reply
+
+        self.assertTrue(MODELFILE_14B_PATH.is_file())
+        content = MODELFILE_14B_PATH.read_text(encoding="utf-8")
+        self.assertIn("FROM qwen2.5:14b", content)
+        self.assertEqual(DEFAULT_14B_MODEL, "qwen2.5:14b")
+
+        ollama = SvlOllamaClient(self.cfg)
+        with patch(
+            "JYN_OS.ollama_client.urllib.request.urlopen",
+            return_value=io.BytesIO(b'{"status": "success"}'),
+        ):
+            create_res = ollama.create_14b_model()
+        self.assertTrue(create_res["success"])
+        self.assertEqual(create_res["base_model"], "qwen2.5:14b")
+
+        reply_14b = _autonomous_inference_reply("qwen2.5:14b", [{"role": "user", "content": "Status 14B"}])
+        self.assertTrue(reply_14b["done"])
+        self.assertEqual(reply_14b["model"], "qwen2.5:14b")
+        self.assertEqual(reply_14b["routed_model"], "qwen2.5:14b")
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
