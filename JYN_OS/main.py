@@ -149,6 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("contract", help="Oficjalny kontrakt Google Cloud Aerospace PSO (Order: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901)")
     subparsers.add_parser("truth", help="Weryfikacja zgodności danych rzeczywistych ze statkiem SVL-364 (100% SHA-256 Parity) i Anti-Hallucination Guard")
 
+    gh_p = subparsers.add_parser("github", help="Dwukierunkowa synchronizacja GitHub (status, sync, pull, push) dla SVL_Core, JYN_OS, JYN_OMEGA_OS")
+    gh_p.add_argument("github_args", nargs="*", default=[], help="status, sync, pull, push")
+
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
 
@@ -162,7 +165,7 @@ KNOWN_SUBCOMMANDS = {
     "shell", "status", "telemetry", "chat", "ssh", "exec", "ollama", "mcp",
     "google", "avatar", "openai", "chatgpt", "codex", "work", "api",
     "chroma", "vision", "image", "kernel", "support",
-    "svl364", "fleet", "outposts", "contract", "truth",
+    "svl364", "fleet", "outposts", "contract", "truth", "github",
     "reset", "factory-reset", "purge-buffer", "clean",
     "-h", "--help", "-t", "--target", "-k", "--key",
 }
@@ -319,6 +322,11 @@ def main() -> int:
 
     if args.command == "truth":
         shell.do_truth("")
+        return 0
+
+    if args.command == "github":
+        gh_args = " ".join(getattr(args, "github_args", []) or []).strip()
+        shell.do_github(gh_args or "status")
         return 0
 
     if args.command in ("reset", "factory-reset"):

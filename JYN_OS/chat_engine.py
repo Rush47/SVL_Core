@@ -671,6 +671,46 @@ class JynChatEngine:
                 local_command=True,
             )
 
+        if cmd in ("/github", "/git", "/gh"):
+            from .github_sync_client import GitHubBiDirectionalSync
+
+            gh_client = GitHubBiDirectionalSync(config=self.config)
+            sub = arg.lower().strip()
+            if sub == "pull":
+                res = gh_client.pull_all()
+                return ChatTurnResult(
+                    ok=res["ok"],
+                    reply=f"GitHub Pull (origin/main): {'OK' if res['ok'] else 'BŁĄD'}\n{gh_client.format_status_report_pl()}",
+                    model="github-bidirectional-sync",
+                    endpoint="github_origin_main",
+                    local_command=True,
+                )
+            if sub == "push":
+                res = gh_client.push_all()
+                return ChatTurnResult(
+                    ok=res["ok"],
+                    reply=f"GitHub Push (origin/main): {'OK' if res['ok'] else 'BŁĄD'}\n{gh_client.format_status_report_pl()}",
+                    model="github-bidirectional-sync",
+                    endpoint="github_origin_main",
+                    local_command=True,
+                )
+            if sub in ("sync", "synchronizuj"):
+                res = gh_client.sync_all()
+                return ChatTurnResult(
+                    ok=res["ok"],
+                    reply=f"Dwukierunkowa synchronizacja GitHub (fetch + pull --rebase + push): {'OK' if res['ok'] else 'BŁĄD'}\n{gh_client.format_status_report_pl()}",
+                    model="github-bidirectional-sync",
+                    endpoint="github_origin_main",
+                    local_command=True,
+                )
+            return ChatTurnResult(
+                ok=True,
+                reply=gh_client.format_status_report_pl(),
+                model="github-bidirectional-sync",
+                endpoint="github_origin_main",
+                local_command=True,
+            )
+
         return None
 
     def get_ai_channels(self) -> List[Dict[str, Any]]:

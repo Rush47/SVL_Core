@@ -603,6 +603,39 @@ class JynOSShell(cmd.Cmd):
         """truth — Weryfikacja zgodności danych rzeczywistych ze statkiem SVL-364 (100% SHA-256 Parity) i Anti-Hallucination Guard."""
         self.do_fleet("prawda")
 
+    def do_github(self, arg: str) -> None:
+        """github [status|sync|pull|push] — Dwukierunkowa synchronizacja repozytoriów GitHub (SVL_Core, JYN_OS, JYN_OMEGA_OS)."""
+        from .github_sync_client import GitHubBiDirectionalSync
+
+        client = GitHubBiDirectionalSync(config=self.config)
+        parts = (arg or "status").strip().split(maxsplit=1)
+        action = parts[0].lower() if parts else "status"
+        msg = parts[1].strip() if len(parts) > 1 else None
+
+        if action in ("status", "stan", "info"):
+            print(f"\n{CYAN}{client.format_status_report_pl()}{RESET}\n")
+        elif action == "pull":
+            res = client.pull_all()
+            col = GREEN if res["ok"] else RED
+            print(f"\n{col}✦ GitHub Pull (origin/main): {'OK' if res['ok'] else 'BŁĄD'}{RESET}")
+            for item in res["results"]:
+                print(f"  • {item['repo']}: {'OK' if item['ok'] else item.get('error') or item.get('output')}")
+            print()
+        elif action == "push":
+            res = client.push_all(commit_message=msg)
+            col = GREEN if res["ok"] else RED
+            print(f"\n{col}✦ GitHub Push (origin/main): {'OK' if res['ok'] else 'BŁĄD'}{RESET}")
+            for item in res["results"]:
+                print(f"  • {item['repo']}: {'OK' if item['ok'] else item.get('error') or item.get('output')}")
+            print()
+        elif action in ("sync", "synchronizuj"):
+            res = client.sync_all(commit_message=msg)
+            col = GREEN if res["ok"] else RED
+            print(f"\n{col}✦ Dwukierunkowa synchronizacja GitHub (fetch + pull --rebase + push): {'OK' if res['ok'] else 'BŁĄD'}{RESET}")
+            print(f"{CYAN}{client.format_status_report_pl()}{RESET}\n")
+        else:
+            print(f"{YELLOW}Użycie: github [status|sync|pull|push]{RESET}\n")
+
     def execute_universal_terminal_command(self, line: str) -> bool:
         """
         Uniwersalny Interpreter Poleceń Terminala JYN_OMEGA_OS v6.5 (Ring-0 Sovereign Kernel & SVL-364 Onboard Computer):

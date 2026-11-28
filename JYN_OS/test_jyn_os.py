@@ -837,6 +837,28 @@ class TestCloudflareGCloudHuggingFaceAnd14BProfile(unittest.TestCase):
         self.assertEqual(reply_14b["model"], "qwen2.5:14b")
         self.assertEqual(reply_14b["routed_model"], "qwen2.5:14b")
 
+    def test_github_bidirectional_sync_client(self):
+        from JYN_OS.github_sync_client import GitHubBiDirectionalSync
+
+        sync_client = GitHubBiDirectionalSync(config=self.cfg)
+        st = sync_client.get_all_status()
+        self.assertTrue(st["ok"])
+        self.assertEqual(len(st["repositories"]), 3)
+        repo_names = {r["name"] for r in st["repositories"]}
+        self.assertIn("Rush47/SVL_Core", repo_names)
+        self.assertIn("Rush47/JYN_OS", repo_names)
+        self.assertIn("Rush47/JYN_OMEGA_OS", repo_names)
+
+        report_pl = sync_client.format_status_report_pl()
+        self.assertIn("DWUKIERUNKOWA SYNCHRONIZACJA GITHUB", report_pl)
+        self.assertIn("Rush47/SVL_Core", report_pl)
+
+        engine = JynChatEngine(config=self.cfg, ollama=SvlOllamaClient(self.cfg))
+        gh_turn = engine.send("/github status")
+        self.assertTrue(gh_turn.ok)
+        self.assertTrue(gh_turn.local_command)
+        self.assertIn("Rush47/SVL_Core", gh_turn.reply)
+
 
 if __name__ == "__main__":
     unittest.main()
