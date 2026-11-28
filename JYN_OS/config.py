@@ -64,21 +64,22 @@ def resolve_auth_token(endpoint_url: str = "") -> str:
 
 
 def _load_project_dotenv() -> None:
-    env_file = Path(__file__).resolve().parent.parent / ".env"
-    if not env_file.is_file():
-        return
-    try:
-        for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            key = k.strip()
-            val = v.strip().strip('"').strip("'")
-            if key and key not in os.environ and val:
-                os.environ[key] = val
-    except Exception:
-        pass
+    here = Path(__file__).resolve().parent
+    for env_file in (here / ".env", here.parent / ".env"):
+        if not env_file.is_file():
+            continue
+        try:
+            for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                key = k.strip()
+                val = v.strip().strip('"').strip("'")
+                if key and key not in os.environ and val:
+                    os.environ[key] = val
+        except Exception:
+            pass
 
 
 _load_project_dotenv()
