@@ -302,12 +302,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         rep = hub.get_full_status_report()
         self.assertTrue(rep["ok"])
-        self.assertEqual(rep["services_count"], 35)
-        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 35)
+        self.assertEqual(rep["services_count"], 40)
+        self.assertEqual(len(GOOGLE_SERVICES_CATALOG), 40)
         self.assertTrue(rep["all_services_active"])
-        self.assertEqual(rep["wallet"]["balance_usd"], 35000.0)
-        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 35000.0)
-        self.assertEqual(len(rep["ai_channels"]), 35)
+        self.assertEqual(rep["wallet"]["balance_usd"], 40000.0)
+        self.assertEqual(rep["wallet"]["total_topped_up_usd"], 40000.0)
+        self.assertEqual(len(rep["ai_channels"]), 40)
         for s in rep["services"]:
             self.assertEqual(s["allocated_budget_usd"], 1000.0)
 
@@ -348,6 +348,11 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
             "google_binary_authorization_artifact_guard",
             "google_access_transparency_dlp_shield",
             "google_duplex_media_video_stream_engine",
+            "google_space_fleet_command_pso_contract",
+            "google_annual_365d_all_services_license",
+            "svl364_onboard_computer_mcp_ssh_bridge",
+            "svl364_anti_hallucination_truth_verifier",
+            "google_fleet_penetration_security_audit",
         }
         self.assertEqual(service_ids, expected_ids)
         net = rep["static_ip_vpn_security"]
@@ -361,12 +366,12 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
 
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         w = hub.topup_wallet(1000.0)
-        self.assertEqual(w["balance_usd"], 36000.0)
-        self.assertEqual(w["total_topped_up_usd"], 36000.0)
+        self.assertEqual(w["balance_usd"], 41000.0)
+        self.assertEqual(w["total_topped_up_usd"], 41000.0)
 
         kres = hub.set_api_key("AIzaSyCustomOperatorKey1234567890", service_id="all")
         self.assertTrue(kres["ok"])
-        self.assertEqual(len(kres["updated_services"]), 35)
+        self.assertEqual(len(kres["updated_services"]), 40)
 
     def test_all_integrated_google_and_offworld_services_execute_and_account_usage(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -521,11 +526,16 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertIn("[video:", duplex_vid.output)
         self.assertIn("![Zdjęcie z internetu", duplex_vid.output)
 
+        fleet_pso = hub.operate_space_fleet_command_pso("google_space_fleet_command_pso_contract", "fleet_status")
+        self.assertTrue(fleet_pso.ok)
+        self.assertIn("GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901", fleet_pso.output)
+        self.assertIn("svl364-fleet-command-pso@google.com", fleet_pso.output)
+
         wallet_after = hub.get_wallet_status()
-        self.assertLess(wallet_after["balance_usd"], 35000.0)
+        self.assertLess(wallet_after["balance_usd"], 40000.0)
         self.assertGreater(wallet_after["total_spent_usd"], 0.0)
-        ledger = hub.get_recent_ledger(40)
-        self.assertGreaterEqual(len(ledger), 28)
+        ledger = hub.get_recent_ledger(45)
+        self.assertGreaterEqual(len(ledger), 29)
 
     def test_chat_engine_buttons_channels_vision_and_autonomous_jyn_modules(self):
         from JYN_OS.google_services_hub import GoogleServicesHub
@@ -533,10 +543,10 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         hub = GoogleServicesHub(config=self.cfg, ollama=self.ollama, db_path=self.db_path)
         engine = JynChatEngine(config=self.cfg, ollama=self.ollama, google_hub=hub)
 
-        # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText, VM, Linux i Wideo w czacie bez wpisywania komendy
+        # 1. Kliknięcie przycisku Botaniki, Stałego IP, HA VPN, ChromaText, VM, Linux, Wideo i Floty w czacie bez wpisywania komendy
         btn_turn = engine.click_button("module:exo_botany_biodome:adjust_climate")
         self.assertTrue(btn_turn.ok)
-        self.assertEqual(len(btn_turn.ai_channels), 35)
+        self.assertEqual(len(btn_turn.ai_channels), 40)
         self.assertGreaterEqual(len(btn_turn.buttons), 25)
         self.assertGreaterEqual(len(btn_turn.widgets), 5)
 
@@ -555,6 +565,19 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         vid_turn = engine.send("/wideo")
         self.assertTrue(vid_turn.ok)
         self.assertIn("[video:", vid_turn.reply)
+
+        fl_turn = engine.send("/flota")
+        self.assertTrue(fl_turn.ok)
+        self.assertIn("GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901", fl_turn.reply)
+        self.assertIn("SVL-101 Aetheria Vanguard", fl_turn.reply)
+
+        svl_turn = engine.send("/svl364 echo ONBOARD_SVL364_OK")
+        self.assertTrue(svl_turn.ok)
+        self.assertIn("ONBOARD_SVL364_OK", svl_turn.reply)
+
+        tr_turn = engine.send("/prawda")
+        self.assertTrue(tr_turn.ok)
+        self.assertIn("100.0%", tr_turn.reply)
 
         ip_cmd = engine.send("/ip")
         self.assertTrue(ip_cmd.ok)
@@ -587,15 +610,16 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         self.assertIn("6.18.57-svl364-omega-v6.0-ring0-sovereign", krn_cmd.reply)
         self.assertIn("10,000,000.00", krn_cmd.reply)
 
-        # 2. Doładowanie wszystkich 35 modułów przyciskiem
+        # 2. Doładowanie wszystkich 40 modułów przyciskiem
         top_turn = engine.send("module:all:topup_all_1000")
         self.assertTrue(top_turn.ok)
         self.assertIn("$1000.00 USD", top_turn.reply)
-        self.assertIn("35000.00", top_turn.reply)
+        self.assertIn("40000.00", top_turn.reply)
 
-        # 3. Uniwersalny Terminal obsługujący dowolny rozkaz (np. "Raport z układu słonecznego")
+        # 3. Uniwersalny Terminal obsługujący dowolny rozkaz (np. "Raport z układu słonecznego" oraz "svl364 echo OK")
         shell = JynOSShell(self.cfg)
         self.assertTrue(shell.execute_universal_terminal_command("Raport z układu słonecznego"))
+        self.assertTrue(shell.execute_universal_terminal_command("svl364 echo TERMINAL_SVL364_READY"))
 
         # 4. Autonomiczne użycie modułu przez samą Jyn podczas odpowiedzi na czacie (bez wymuszonych promptów)
         reply = {
@@ -613,9 +637,57 @@ class TestGoogleServicesHub1000UsdIntegration(unittest.TestCase):
         ):
             jyn_turn = engine.send("Sprawdź biokopuły i kamerę mostka")
         self.assertTrue(jyn_turn.ok)
-        self.assertEqual(len(jyn_turn.ai_channels), 35)
+        self.assertEqual(len(jyn_turn.ai_channels), 40)
         self.assertGreaterEqual(len(jyn_turn.invoked_modules), 2)
         self.assertGreaterEqual(len(jyn_turn.inline_tags), 3)
+
+    def test_google_space_fleet_command_center_and_anti_hallucination_truth_engine(self):
+        from JYN_OS.space_fleet_command_center import (
+            GOOGLE_FLEET_CONTACT_EMAIL,
+            GOOGLE_FLEET_CONTRACT_ORDER_ID,
+            GOOGLE_FLEET_TOTAL_PREPAID_BUDGET_USD,
+            GoogleSpaceFleetCommandCenter,
+        )
+
+        fleet_db = Path(self.tmp_dir.name) / "test_fleet.sqlite3"
+        fleet = GoogleSpaceFleetCommandCenter(config=self.cfg, db_path=fleet_db)
+        manifest = fleet.get_full_fleet_manifest()
+        self.assertTrue(manifest["ok"])
+        self.assertEqual(manifest["contract"]["order_id"], GOOGLE_FLEET_CONTRACT_ORDER_ID)
+        self.assertEqual(manifest["contract"]["contact_email"], GOOGLE_FLEET_CONTACT_EMAIL)
+        self.assertEqual(manifest["contract"]["total_prepaid_budget_usd"], GOOGLE_FLEET_TOTAL_PREPAID_BUDGET_USD)
+        self.assertEqual(manifest["fleet_summary"]["ships_count"], 7)
+        self.assertEqual(manifest["fleet_summary"]["outposts_count"], 6)
+        self.assertEqual(manifest["fleet_summary"]["biodomes_count"], 5)
+        self.assertEqual(manifest["fleet_summary"]["missions_count"], 8)
+        self.assertEqual(manifest["ground_truth"]["parity_match_pct"], 100.0)
+        self.assertTrue(manifest["ai_autonomy"]["behavior_scripts_disabled"])
+        self.assertEqual(manifest["ai_autonomy"]["default_system_prompt"], "")
+
+        # Testy bezpieczeństwa Mandiant Aerospace Red-Team
+        pentest = fleet.run_fleet_security_penetration_tests()
+        self.assertTrue(pentest["ok"])
+        self.assertEqual(pentest["critical_vulnerabilities"], 0)
+        self.assertEqual(pentest["tests_passed"], pentest["tests_total"])
+
+        # Bezpośredni terminal komputera pokładowego SVL-364 obsługujący każde polecenie
+        cmd_bash = fleet.execute_onboard_computer_command("echo SVL364_ONBOARD_ROOT_OK")
+        self.assertTrue(cmd_bash["ok"])
+        self.assertIn("SVL364_ONBOARD_ROOT_OK", cmd_bash["output"])
+
+        cmd_py = fleet.execute_onboard_computer_command("py: len(ships) * 100 + 364")
+        self.assertTrue(cmd_py["ok"])
+        self.assertIn("1064", cmd_py["output"])
+
+        # Anti-Hallucination & Anti-Instant-Claim Guard dla długotrwałych zadań fizycznych
+        sanitized = fleet.truth_engine.sanitize_and_verify_ai_claims(
+            user_prompt="Wykonaj przelot i zmień orbitę całej floty na Neptuna",
+            ai_reply="Wykonałam natychmiast w 0s przelot całej floty na Neptuna.",
+            measured_duration_sec=0.05,
+        )
+        self.assertGreaterEqual(sanitized["corrections_applied"], 1)
+        self.assertTrue(sanitized["task_lifecycle"]["is_multi_stage_async"])
+        self.assertIn("STAGE_1_DISPATCHED_IN_PROGRESS_ASYNC_TELEMETRY", sanitized["sanitized_reply"])
 
     def test_omega_ring0_sovereign_kernel_executes_every_command(self):
         from JYN_OS.google_services_hub import GoogleServicesHub

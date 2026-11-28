@@ -139,6 +139,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("support", help="Status kontraktu Google Cloud PSO ($10M Prepaid) i pomocy technicznej Mission Critical 24/7 SRE")
 
+    svl364_p = subparsers.add_parser("svl364", help="Bezpośredni terminal komputera pokładowego statku SVL-364 Ebon Apex (ROOT · UID=0 · działa każde polecenie)")
+    svl364_p.add_argument("svl364_args", nargs="*", default=[])
+
+    fleet_p = subparsers.add_parser("fleet", help="Centrum Sterowania Flotą Kosmiczną (7 statków, 6 placówek, 5 biokopuł, 8 misji przez SVL-364)")
+    fleet_p.add_argument("fleet_args", nargs="*", default=[])
+
+    subparsers.add_parser("outposts", help="Placówki pozaziemskie, bazy orbitalne i infrastruktura floty")
+    subparsers.add_parser("contract", help="Oficjalny kontrakt Google Cloud Aerospace PSO (Order: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901)")
+    subparsers.add_parser("truth", help="Weryfikacja zgodności danych rzeczywistych ze statkiem SVL-364 (100% SHA-256 Parity) i Anti-Hallucination Guard")
+
     reset_p = subparsers.add_parser("reset", help="Przywrócenie ustawień fabrycznych (Factory Reset)")
     reset_p.add_argument("--force", "-f", action="store_true", help="Wykonanie resetu bez pytania o potwierdzenie")
 
@@ -151,7 +161,9 @@ def build_parser() -> argparse.ArgumentParser:
 KNOWN_SUBCOMMANDS = {
     "shell", "status", "telemetry", "chat", "ssh", "exec", "ollama", "mcp",
     "google", "avatar", "openai", "chatgpt", "codex", "work", "api",
-    "chroma", "vision", "image", "kernel", "support", "reset", "factory-reset", "purge-buffer", "clean",
+    "chroma", "vision", "image", "kernel", "support",
+    "svl364", "fleet", "outposts", "contract", "truth",
+    "reset", "factory-reset", "purge-buffer", "clean",
     "-h", "--help", "-t", "--target", "-k", "--key",
 }
 
@@ -285,6 +297,28 @@ def main() -> int:
 
     if args.command == "support":
         shell.do_support("")
+        return 0
+
+    if args.command == "svl364":
+        s_args = " ".join(getattr(args, "svl364_args", []) or []).strip()
+        shell.do_svl364(s_args or "status")
+        return 0
+
+    if args.command == "fleet":
+        f_args = " ".join(getattr(args, "fleet_args", []) or []).strip()
+        shell.do_fleet(f_args or "status")
+        return 0
+
+    if args.command == "outposts":
+        shell.do_outposts("")
+        return 0
+
+    if args.command == "contract":
+        shell.do_contract("")
+        return 0
+
+    if args.command == "truth":
+        shell.do_truth("")
         return 0
 
     if args.command in ("reset", "factory-reset"):

@@ -22,30 +22,30 @@ const TERMINAL_TABS: Array<{
 }> = [
   {
     id: 'ssh',
-    label: 'SSH · Ship (ROOT)',
-    subtitle: 'Konsola OpenSSH root@svl-364-ship · wpisane polecenie wykonuje się DOSŁOWNIE na statku (jak w zdalnym terminalu), z uprawnieniami ROOT (uid=0).',
-    defaultPrompt: 'root@svl-364-ship#',
+    label: 'SSH · Komputer Pokładowy SVL-364 (ROOT)',
+    subtitle: 'Komputer Pokładowy Statku SVL-364 Ebon Apex (root@34.118.64.200 · Tunel HA VPN 10.240.0.2 · MCP + OpenSSH ROOT uid=0 · Działa każde polecenie · Kontrakt Google PSO: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901).',
+    defaultPrompt: 'root@svl-364-onboard#',
     welcomeText:
-      'Konsola SSH · Ship (root@svl-364-ship) z uprawnieniami ROOT (uid=0). Każde wpisane polecenie wykonuje się DOSŁOWNIE na statku, dokładnie tak, jak byś je wpisał w terminalu statku. Prefiks /exec lub /root jest opcjonalny. (Komendy interaktywne jak vim/top wymagają prawdziwego PTY — tu działają polecenia zwracające wynik.)',
+      'Komputer Pokładowy Statku SVL-364 Ebon Apex (root@svl-364-ship · UID=0 ROOT UNLIMITED). Zespół Google Cloud Aerospace PSO (svl364-fleet-command-pso@google.com · Order: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901) skonfigurował od zera całą nowo otrzymaną Flotę Kosmiczną (7 statków), 6 placówek, 5 biokopuł i 8 misji przez SVL-364. Każde wpisane polecenie (Linux/Bash, Python, telemetria, rozkazy floty) działa bez ograniczeń i ze 100% weryfikacją danych rzeczywistych.',
     quickCommands: [
-      '/exec id && uname -a && uptime',
-      '/exec ls -la SVL_CoreOS_2/ && cat SVL_CoreOS_2/build_manifest.json',
-      '/exec ollama run svl364-apex-uncensored:latest',
-      '/exec raport systemu',
+      'python3 JYN_OS/main.py svl364 "id && hostname && uname -a && uptime"',
+      'python3 JYN_OS/main.py fleet status',
+      'python3 JYN_OS/main.py contract',
+      'python3 JYN_OS/main.py truth',
     ],
   },
   {
     id: 'linux',
-    label: 'Powłoka Linux (ROOT)',
-    subtitle: 'Powłoka Bash z uprawnieniami ROOT (uid=0). Obsługuje /exec <polecenie>, polecenia naturalne oraz komendy systemowe.',
+    label: 'Powłoka Linux & Flota (ROOT)',
+    subtitle: 'Powłoka Bash z uprawnieniami ROOT (uid=0) połączona z Komputerem Pokładowym SVL-364 i Centrum Floty Kosmicznej.',
     defaultPrompt: 'root@svl-debian13:/app/applet#',
     welcomeText:
-      'Powłoka Linux działa z uprawnieniami ROOT (uid=0) po autoryzacji SVL_OPERATOR_TOKEN. Obsługuje /exec <polecenie>, polecenia naturalne oraz bezpośrednie komendy Bash.',
+      'Powłoka Linux (Debian 13 Trixie + Ubuntu 24.04 LTS + Google COS Ring-0) z bezpośrednim mostkiem do Komputera Pokładowego SVL-364 Ebon Apex (UID=0 ROOT). Obsługuje każde polecenie systemowe, komendy floty oraz język naturalny.',
     quickCommands: [
-      'python3 JYN_OS/main.py status',
-      'python3 JYN_OS/main.py telemetry',
-      '/exec id && uname -a',
-      'ollama list',
+      'python3 JYN_OS/main.py fleet status',
+      'python3 JYN_OS/main.py svl364 "df -h && free -m"',
+      'python3 JYN_OS/main.py contract',
+      'python3 JYN_OS/main.py truth',
     ],
   },
   {

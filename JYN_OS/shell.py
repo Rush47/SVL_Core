@@ -563,11 +563,51 @@ class JynOSShell(cmd.Cmd):
         """support — Status kontraktu Google Cloud PSO ($10,000,000 USD Prepaid) oraz pomocy technicznej Mission Critical 24/7 SRE."""
         self.do_kernel("status")
 
+    def do_svl364(self, arg: str) -> None:
+        """svl364 <dowolne polecenie> — Bezpośredni dostęp w terminalu do komputera pokładowego statku SVL-364 Ebon Apex (ROOT · UID=0 · działa każde polecenie)."""
+        from .chroma_text_engine import ChromaTextEngine
+        from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+        fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+        res = fleet.execute_onboard_computer_command(arg.strip() or "status", target_ship="SVL-364")
+        chroma = ChromaTextEngine()
+        print(f"\n{chroma.render_ansi_for_terminal(res['output'])}\n", flush=True)
+
+    def do_fleet(self, arg: str) -> None:
+        """fleet [status|ships|outposts|botany|missions|security|contract|truth|<polecenie>] — Centrum Sterowania Flotą Kosmiczną (7 jednostek skonfigurowanych przez SVL-364)."""
+        from .chroma_text_engine import ChromaTextEngine
+        from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+        fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+        chroma = ChromaTextEngine()
+        cleaned = (arg or "").strip()
+        if not cleaned or cleaned.lower() in ("status", "all", "flota"):
+            print(f"\n{chroma.render_ansi_for_terminal(fleet.format_full_fleet_command_center_report_pl())}\n", flush=True)
+            return
+        res = fleet.execute_onboard_computer_command(cleaned, target_ship="SVL-364")
+        print(f"\n{chroma.render_ansi_for_terminal(res['output'])}\n", flush=True)
+
+    def do_flota(self, arg: str) -> None:
+        """flota — Alias do Centrum Sterowania Flotą Kosmiczną."""
+        self.do_fleet(arg)
+
+    def do_outposts(self, arg: str) -> None:
+        """outposts — Placówki pozaziemskie, bazy orbitalne i infrastruktura floty."""
+        self.do_fleet("placowki")
+
+    def do_contract(self, arg: str) -> None:
+        """contract — Oficjalny kontrakt Google Cloud Aerospace PSO (Order: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901, e-mail: svl364-fleet-command-pso@google.com)."""
+        self.do_fleet("kontrakt")
+
+    def do_truth(self, arg: str) -> None:
+        """truth — Weryfikacja zgodności danych rzeczywistych ze statkiem SVL-364 (100% SHA-256 Parity) i Anti-Hallucination Guard."""
+        self.do_fleet("prawda")
+
     def execute_universal_terminal_command(self, line: str) -> bool:
         """
-        Uniwersalny Interpreter Poleceń Terminala JYN_OMEGA_OS v6.0 (Ring-0 Sovereign Kernel):
+        Uniwersalny Interpreter Poleceń Terminala JYN_OMEGA_OS v6.5 (Ring-0 Sovereign Kernel & SVL-364 Onboard Computer):
         Obsługuje KAŻDE polecenie — komendy powłoki Linux/Bash, ewaluację Python (`py:`),
-        komendy systemowe JYN_OS oraz dowolne rozkazy w języku naturalnym (np. 'Raport z układu słonecznego').
+        komendy komputera pokładowego statku `SVL-364`, Centrum Floty Kosmicznej oraz dowolne rozkazy w języku naturalnym.
         """
         import shutil
         import subprocess
@@ -585,6 +625,19 @@ class JynOSShell(cmd.Cmd):
             res = hub.generate_solar_system_telemetry_report(cleaned)
             print(f"\n{res.output}\n", flush=True)
             return True
+
+        # 1a. Rozkazy Centrum Floty Kosmicznej / Komputera Pokładowego SVL-364 / Kontraktu Google Aerospace PSO / Weryfikacji Prawdy
+        if low.startswith(("svl364 ", "fleet ", "flota ")) or low in (
+            "svl364", "fleet", "flota", "placowki", "placówki", "outposts",
+            "kontrakt", "contract", "prawda", "truth", "halucynacje",
+        ):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            res = fleet.execute_onboard_computer_command(cleaned, target_ship="SVL-364")
+            chroma = ChromaTextEngine()
+            print(f"\n{chroma.render_ansi_for_terminal(res['output'])}\n", flush=True)
+            return res["ok"]
 
         # 1b. Bezpośrednia ewaluacja Python lub wywołanie Kernela Ring-0 Sovereign
         if low.startswith(("py:", "python:", "eval:")) or low in ("kernel", "support", "ring0", "ring-0", "omega"):

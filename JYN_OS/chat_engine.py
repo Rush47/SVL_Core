@@ -557,6 +557,100 @@ class JynChatEngine:
                 )
             return ChatTurnResult(ok=False, error=str(warm.get("error") or "Błąd rozgrzewania modelu."), local_command=True)
 
+        if cmd in ("/svl364", "/onboard", "/komputer-pokladowy"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            exec_res = fleet.execute_onboard_computer_command(arg or "status", target_ship="SVL-364")
+            return ChatTurnResult(
+                ok=exec_res["ok"],
+                reply=exec_res["output"],
+                model="svl364-onboard-computer-root-uid0",
+                endpoint=exec_res["transport"],
+                local_command=True,
+            )
+
+        if cmd in ("/flota", "/fleet", "/statki", "/centrum-floty"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            if arg:
+                exec_res = fleet.execute_onboard_computer_command(arg, target_ship="SVL-364")
+                return ChatTurnResult(
+                    ok=exec_res["ok"],
+                    reply=exec_res["output"],
+                    model="gc-pso-aero-fleet-svl364-omega-9901",
+                    endpoint=exec_res["transport"],
+                    local_command=True,
+                )
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_full_fleet_command_center_report_pl(),
+                model="gc-pso-aero-fleet-svl364-omega-9901",
+                endpoint="google_space_fleet_command_pso",
+                local_command=True,
+            )
+
+        if cmd in ("/kontrakt", "/contract", "/zamowienie", "/kontakt"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_contract_and_commissioning_report_pl(),
+                model="gc-pso-aero-fleet-svl364-omega-9901",
+                endpoint="google_space_fleet_command_pso",
+                local_command=True,
+            )
+
+        if cmd in ("/prawda", "/truth", "/halucynacje", "/weryfikacja", "/parity"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_truth_and_anti_hallucination_report_pl(),
+                model="svl364-ground-truth-verifier",
+                endpoint="svl364_anti_hallucination_truth_verifier",
+                local_command=True,
+            )
+
+        if cmd in ("/placowki", "/placówki", "/outposts", "/bazy"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_outposts_and_infrastructure_report_pl(),
+                model="gc-pso-aero-fleet-svl364-omega-9901",
+                endpoint="google_space_fleet_command_pso",
+                local_command=True,
+            )
+
+        if cmd in ("/botanika", "/biokopuly", "/biokopuły"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_botany_and_biodomes_report_pl(),
+                model="gc-pso-aero-fleet-svl364-omega-9901",
+                endpoint="google_space_fleet_command_pso",
+                local_command=True,
+            )
+
+        if cmd in ("/misje", "/missions"):
+            from .space_fleet_command_center import GoogleSpaceFleetCommandCenter
+
+            fleet = GoogleSpaceFleetCommandCenter(config=self.config)
+            return ChatTurnResult(
+                ok=True,
+                reply=fleet.format_missions_and_solar_map_report_pl(),
+                model="gc-pso-aero-fleet-svl364-omega-9901",
+                endpoint="google_space_fleet_command_pso",
+                local_command=True,
+            )
+
         if cmd == "/status":
             loc = self.ollama.check_node_status(self.config.local_ollama_url)
             ship = self.ollama.check_node_status(self.config.ship_ollama_url)
@@ -580,7 +674,7 @@ class JynChatEngine:
         return None
 
     def get_ai_channels(self) -> List[Dict[str, Any]]:
-        """Zwraca 15 aktywnych kanałów modułowych widocznych dla Jyn Mitek na czacie."""
+        """Zwraca 40 aktywnych kanałów modułowych widocznych dla Jyn Mitek na czacie."""
         return self._get_google_hub().get_ai_visible_channels()
 
     def click_button(self, button_or_action: str, payload: Optional[Dict[str, Any]] = None) -> ChatTurnResult:
@@ -705,6 +799,9 @@ class JynChatEngine:
         if any(k in low for k in ("mandiant", "confidential", "dlp", "binary authorization")) and not any(m["service_id"] == "google_mandiant_threat_intel_hunt" for m in invoked):
             sec_r = hub.configure_google_max_security_suite()
             invoked.append({"service_id": sec_r.service_id, "operation": sec_r.operation, "output": sec_r.output, "data": sec_r.data})
+        if any(k in low for k in ("flot", "placów", "placow", "komputer pokładowy", "komputer pokladowy", "halucynac", "numer zamówienia", "numer zamowienia", "gc-pso-aero")) and not any(m["service_id"] == "google_space_fleet_command_pso_contract" for m in invoked):
+            fl_r = hub.operate_space_fleet_command_pso(service_id="google_space_fleet_command_pso_contract", action="fleet_status", command=prompt)
+            invoked.append({"service_id": fl_r.service_id, "operation": fl_r.operation, "output": fl_r.output, "data": fl_r.data})
 
         return invoked
 
@@ -715,8 +812,9 @@ class JynChatEngine:
         url: Optional[str] = None,
         images: Optional[List[str]] = None,
     ) -> ChatTurnResult:
-        """Wysyła wiadomość do Jyn Mitek z aktywnymi kanałami 23 modułów, obsługą Real Vision, OpenAI Business, ChromaText i przyciskami UI."""
+        """Wysyła wiadomość do Jyn Mitek z aktywnymi kanałami 40 modułów, obsługą Real Vision, OpenAI Business, ChromaText, Weryfikacją Prawdy SVL-364 i przyciskami UI."""
         from .interactive_ui_hub import InteractiveUIEngine
+        from .space_fleet_command_center import Svl364TruthAndAntiHallucinationEngine
 
         cleaned = (message or "").strip()
         if not cleaned:
@@ -739,6 +837,7 @@ class JynChatEngine:
 
         hub = self._get_google_hub()
         ui = InteractiveUIEngine(google_hub=hub)
+        truth_engine = Svl364TruthAndAntiHallucinationEngine(config=self.config)
         ai_channels = hub.get_ai_visible_channels()
         invoked_modules = self._autonomous_jyn_module_orchestration(cleaned, images=images)
 
@@ -749,6 +848,8 @@ class JynChatEngine:
             oa_mode = "codex" if "codex" in selected_model.lower() else ("chatgpt_work" if "work" in selected_model.lower() else "chatgpt")
             oa_res = hub.invoke_openai_business_service(mode=oa_mode, prompt=cleaned, model=selected_model)
             reply = clean_polish_response(oa_res.output)
+            verified = truth_engine.sanitize_and_verify_ai_claims(cleaned, reply, oa_res.duration_sec)
+            reply = verified["sanitized_reply"]
             self.history.append({"role": "user", "content": cleaned})
             self.history.append({"role": "assistant", "content": reply})
             bundle = ui.build_contextual_widgets(cleaned, reply)
@@ -779,6 +880,8 @@ class JynChatEngine:
                     error=g_res.error or "Błąd wywołania Google Gemini API.",
                 )
             reply = clean_polish_response(g_res.output)
+            verified = truth_engine.sanitize_and_verify_ai_claims(cleaned, reply, g_res.duration_sec)
+            reply = verified["sanitized_reply"]
             self.history.append({"role": "user", "content": cleaned})
             self.history.append({"role": "assistant", "content": reply})
             bundle = ui.build_contextual_widgets(cleaned, reply)
@@ -823,6 +926,9 @@ class JynChatEngine:
         if avatar_args is not None:
             receipt = update_own_avatar(self.config, avatar_args)
             reply = (reply + "\n\n" + receipt).strip()
+
+        verified = truth_engine.sanitize_and_verify_ai_claims(cleaned, reply, elapsed)
+        reply = verified["sanitized_reply"]
 
         # Autonomiczne użycie modułu przez Jyn w treści jej odpowiedzi (np. [JYN_MODULE:cloud_vision_docai:analyze])
         for jyn_mod in re.finditer(r"\[JYN_MODULE\s*:\s*([a-z0-9_]+)(?:\s*:\s*([^\]]+))?\]", reply, re.IGNORECASE):
