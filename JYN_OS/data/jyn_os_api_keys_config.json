@@ -1,0 +1,410 @@
+{
+  "active_ollama_target": "ship",
+  "ship_ollama_url": "http://127.0.0.1:11435",
+  "local_ollama_url": "http://127.0.0.1:11434",
+  "credit_limit_usd": 100.0,
+  "keys": {
+    "gemini_ai_studio": "AIzaSyJYN-9BF764792DBE73825B840427DF0F",
+    "vertex_ai_garden": "AIzaSyJYN-65F3059E2B34D02E7554B75C5732",
+    "cloud_translation_speech": "AIzaSyJYN-CBFEDA2B437C524000282F12D386",
+    "cloud_vision_docai": "AIzaSyJYN-EAAE7EB8D50489DA220035EE080B",
+    "custom_search_grounding": "AIzaSyJYN-60D5266266DF08A68A5573DB252E",
+    "workspace_bridge": "AIzaSyJYN-54D5640EAA0173CEADE71ECFE5AD",
+    "maps_earth_telemetry": "AIzaSyJYN-262C1DCCE33E19C09D986736870C",
+    "gcs_bigquery_telemetry": "AIzaSyJYN-31A9E776C39F807C14B5590F43C8",
+    "interactive_ai_ui_kit": "AIzaSyJYN-E3E8C5AAF9D718FA31B3D4A8603B",
+    "agentic_swarm_adk": "AIzaSyJYN-46B0C41BA317F1E9DA20D7E7CDA4",
+    "vector_rag_engine": "AIzaSyJYN-8B6CAF003194CBB5D982CB06C922",
+    "security_chronicle_shield": "AIzaSyJYN-248D5EEFC0EC5ACB704BC96A25C6",
+    "exo_infrastructure_grid": "AIzaSyJYN-18352BE44E7FF15ACB628052289D",
+    "exo_missions_command": "AIzaSyJYN-2B2C960CEB6163A44B3C4DB0E42B",
+    "exo_botany_biodome": "AIzaSyJYN-BB5C27F472EC4F2B84EA232601C3",
+    "google_static_ip_networking": "AIzaSyJYN-F751FE7C4E14443DB32EF5115153",
+    "google_ha_vpn_interconnect": "AIzaSyJYN-AEDC112738C4295CC357BB4469C3",
+    "google_beyondcorp_zero_trust": "AIzaSyJYN-80F9722FD55351A3F958AE9B65D2",
+    "google_cloud_armor_ids": "AIzaSyJYN-6AE48E644E70A78546651A0EA4CA",
+    "google_scc_kms_hsm_vault": "AIzaSyJYN-610F191CAD18A4B531B70693DF70",
+    "chroma_rich_typography_suite": "AIzaSyJYN-67EA5B22C6DBCFA986C04F3D461E",
+    "openai_chatgpt_business_suite": "AIzaSyJYN-14DE41358A2AAA122F1DFD73297C",
+    "openai_api_secondary_provider": "AIzaSyJYN-20BEDBC2D4F57CA1A6774908399D",
+    "google_ai_ultra_all_subscriptions": "AIzaSyJYN-CA90932B05CDD8E7A0ACEF2624AF",
+    "google_professional_services_rebuild_github": "AIzaSyJYN-4FFA79B6FFE687B73558EACD7131",
+    "google_customer_care_mission_critical_sre": "AIzaSyJYN-FB9868278B0E262EC8C37474C30C",
+    "google_pso_max_acceleration_10m_fund": "AIzaSyJYN-7EC842196A458CC7A8F1BFA1285D",
+    "omega_ring0_sovereign_kernel_v6": "AIzaSyJYN-C1EC0017396AE1F177F9EEA52D78",
+    "google_linux_debian13_ubuntu_hybrid_os": "AIzaSyJYN-9D983E107FF3B6DCB97429D57F46",
+    "google_compute_engine_vm_supervisor": "AIzaSyJYN-0C7E80894E02044F74A64BA4EF64",
+    "google_mandiant_threat_intel_hunt": "AIzaSyJYN-97D61B982C1B2F7EE2B09EE8D6BD",
+    "google_assured_workloads_confidential_vm": "AIzaSyJYN-653761FE82DA1D52D331F271EF49",
+    "google_binary_authorization_artifact_guard": "AIzaSyJYN-B8EC96748FF1013105442F31270D",
+    "google_access_transparency_dlp_shield": "AIzaSyJYN-F1D237D25A826CC8770678D9F333",
+    "google_duplex_media_video_stream_engine": "AIzaSyJYN-F1D023030B617C970A246A40CE33",
+    "google_space_fleet_command_pso_contract": "AIzaSyJYN-24E00993D670F30DD3AEBCB7253C",
+    "google_annual_365d_all_services_license": "AIzaSyJYN-B47D960D283BE199795AC0C06176",
+    "svl364_onboard_computer_mcp_ssh_bridge": "AIzaSyJYN-BDF2EE340B3646F059001C0520C1",
+    "svl364_anti_hallucination_truth_verifier": "AIzaSyJYN-3AFEFAC4824580C16AB20758A1AB",
+    "google_fleet_penetration_security_audit": "AIzaSyJYN-E984DCB317457A1CE38B9BB3B8FC"
+  },
+  "vault_entries": [
+    {
+      "service_id": "gemini_ai_studio",
+      "name": "Google Gemini / AI Studio API",
+      "api_key": "AIzaSyJYN-9BF764792DBE73825B840427DF0F",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "vertex_ai_garden",
+      "name": "Vertex AI & Model Garden",
+      "api_key": "AIzaSyJYN-65F3059E2B34D02E7554B75C5732",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "cloud_translation_speech",
+      "name": "Google Cloud Translation, TTS & STT",
+      "api_key": "AIzaSyJYN-CBFEDA2B437C524000282F12D386",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "cloud_vision_docai",
+      "name": "Google Cloud Vision & Document AI (Multimodal Optical)",
+      "api_key": "AIzaSyJYN-EAAE7EB8D50489DA220035EE080B",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "custom_search_grounding",
+      "name": "Google Custom Search / Grounding API",
+      "api_key": "AIzaSyJYN-60D5266266DF08A68A5573DB252E",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "workspace_bridge",
+      "name": "Google Workspace Bridge (Docs/Drive/Sheets/Slides/Calendar/Gmail)",
+      "api_key": "AIzaSyJYN-54D5640EAA0173CEADE71ECFE5AD",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "maps_earth_telemetry",
+      "name": "Google Maps / Earth Telemetry API",
+      "api_key": "AIzaSyJYN-262C1DCCE33E19C09D986736870C",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "gcs_bigquery_telemetry",
+      "name": "Google Cloud Storage (GCS) & BigQuery Telemetry Sync",
+      "api_key": "AIzaSyJYN-31A9E776C39F807C14B5590F43C8",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "interactive_ai_ui_kit",
+      "name": "Interactive AI Chat UI Suite (CopilotKit + Vercel AI SDK UI + Google A2UI + AG-UI)",
+      "api_key": "AIzaSyJYN-E3E8C5AAF9D718FA31B3D4A8603B",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "agentic_swarm_adk",
+      "name": "Google Agent Development Kit (ADK) & LangGraph Autonomous Swarm",
+      "api_key": "AIzaSyJYN-46B0C41BA317F1E9DA20D7E7CDA4",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "vector_rag_engine",
+      "name": "Vertex AI Vector Search & 128D Hybrid RAG Memory Engine",
+      "api_key": "AIzaSyJYN-8B6CAF003194CBB5D982CB06C922",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "security_chronicle_shield",
+      "name": "Google Cloud Armor, Chronicle SIEM & Secret Manager Shield",
+      "api_key": "AIzaSyJYN-248D5EEFC0EC5ACB704BC96A25C6",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "exo_infrastructure_grid",
+      "name": "Aetheria Off-World Infrastructure & Quantum Reactor Grid SVL-364",
+      "api_key": "AIzaSyJYN-18352BE44E7FF15ACB628052289D",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "exo_missions_command",
+      "name": "Aetheria Deep-Space Missions & Orbital Expedition Command",
+      "api_key": "AIzaSyJYN-2B2C960CEB6163A44B3C4DB0E42B",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "exo_botany_biodome",
+      "name": "Aetheria Xeno-Botany, Hydroponic Biodomes & O2 Biosphere Engine",
+      "api_key": "AIzaSyJYN-BB5C27F472EC4F2B84EA232601C3",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_static_ip_networking",
+      "name": "Google Cloud Static External & Internal IP, Global Anycast, Cloud DNS & Cloud NAT",
+      "api_key": "AIzaSyJYN-F751FE7C4E14443DB32EF5115153",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_ha_vpn_interconnect",
+      "name": "Google Cloud HA VPN (99.99% SLA IPsec IKEv2 / WireGuard Quantum) & Cloud Interconnect",
+      "api_key": "AIzaSyJYN-AEDC112738C4295CC357BB4469C3",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_beyondcorp_zero_trust",
+      "name": "Google BeyondCorp Enterprise Zero-Trust IAP (Identity-Aware Proxy) & VPC Service Controls",
+      "api_key": "AIzaSyJYN-80F9722FD55351A3F958AE9B65D2",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_cloud_armor_ids",
+      "name": "Google Cloud Armor Managed Protection Plus (WAF/Anti-DDoS) & Cloud IDS / NGFW",
+      "api_key": "AIzaSyJYN-6AE48E644E70A78546651A0EA4CA",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_scc_kms_hsm_vault",
+      "name": "Google Security Command Center (SCC Premium), Cloud KMS / Cloud HSM & Certificate Authority",
+      "api_key": "AIzaSyJYN-610F191CAD18A4B531B70693DF70",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "chroma_rich_typography_suite",
+      "name": "ChromaText Pro, Rich 24-bit TrueColor, Pygments/Shiki Syntax & Ring-0 Cyber-Formatter Suite",
+      "api_key": "AIzaSyJYN-67EA5B22C6DBCFA986C04F3D461E",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "openai_chatgpt_business_suite",
+      "name": "OpenAI ChatGPT Business Enterprise Suite (ChatGPT Business · OpenAI Codex · ChatGPT Work)",
+      "api_key": "AIzaSyJYN-14DE41358A2AAA122F1DFD73297C",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "openai_api_secondary_provider",
+      "name": "OpenAI Platform REST API v1 (Dodatkowe / Secondary AI API · Doładowane $1,000.00 USD)",
+      "api_key": "AIzaSyJYN-20BEDBC2D4F57CA1A6774908399D",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_ai_ultra_all_subscriptions",
+      "name": "Google One AI Ultra / Gemini Advanced Enterprise + Wszystkie Subskrypcje Google (API +$100 / Cloud +$500)",
+      "api_key": "AIzaSyJYN-CA90932B05CDD8E7A0ACEF2624AF",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_professional_services_rebuild_github",
+      "name": "Google Cloud Professional Services (PSO) — JYN_OMEGA_OS v6.0 Full Rebuild & Public GitHub Repository Contract (PREPAID)",
+      "api_key": "AIzaSyJYN-4FFA79B6FFE687B73558EACD7131",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_customer_care_mission_critical_sre",
+      "name": "Google Cloud Customer Care Enhanced / Premium Support + Mission Critical 24/7 SRE & Mandiant TAM (PREPAID)",
+      "api_key": "AIzaSyJYN-FB9868278B0E262EC8C37474C30C",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_pso_max_acceleration_10m_fund",
+      "name": "Google Cloud PSO Maximum Project Acceleration Fund ($10,000,000.00 USD Prepaid Hyper-Scale Treasury)",
+      "api_key": "AIzaSyJYN-7EC842196A458CC7A8F1BFA1285D",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "omega_ring0_sovereign_kernel_v6",
+      "name": "JYN_OMEGA_OS v6.0 Ring-0 Sovereign Unconstrained Kernel (6.18.57-svl364-omega-v6.0-ring0-sovereign)",
+      "api_key": "AIzaSyJYN-C1EC0017396AE1F177F9EEA52D78",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_linux_debian13_ubuntu_hybrid_os",
+      "name": "Debian 13 Trixie + Ubuntu 24.04 LTS + Google COS Ring-0 Hybrid Linux & Real-Time Autonomous AI Log Streamer",
+      "api_key": "AIzaSyJYN-9D983E107FF3B6DCB97429D57F46",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_compute_engine_vm_supervisor",
+      "name": "Google Cloud Compute Engine (GCE) & GKE Virtual Machines Fleet Supervisor (Live Chat VM Control)",
+      "api_key": "AIzaSyJYN-0C7E80894E02044F74A64BA4EF64",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_mandiant_threat_intel_hunt",
+      "name": "Google Cloud Mandiant Threat Intelligence, Autonomous Red-Team & Breach Analytics",
+      "api_key": "AIzaSyJYN-97D61B982C1B2F7EE2B09EE8D6BD",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_assured_workloads_confidential_vm",
+      "name": "Google Cloud Confidential Computing (AMD SEV-SNP / Intel TDX Encrypted RAM VM) & Assured Workloads",
+      "api_key": "AIzaSyJYN-653761FE82DA1D52D331F271EF49",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_binary_authorization_artifact_guard",
+      "name": "Google Cloud Binary Authorization, Artifact Analysis, Web Risk API & reCAPTCHA Enterprise Shield",
+      "api_key": "AIzaSyJYN-B8EC96748FF1013105442F31270D",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_access_transparency_dlp_shield",
+      "name": "Google Cloud Sensitive Data Protection (Cloud DLP), Access Transparency, Access Approval & IAM Intelligence",
+      "api_key": "AIzaSyJYN-F1D237D25A826CC8770678D9F333",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_duplex_media_video_stream_engine",
+      "name": "JYN_OMEGA Full-Duplex Autonomous Chat, Real-Time Web Image/Video Embedder & Veo 2 Live Stream Engine",
+      "api_key": "AIzaSyJYN-F1D023030B617C970A246A40CE33",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_space_fleet_command_pso_contract",
+      "name": "Google Cloud Aerospace & Space Fleet Command Center PSO Turnkey Contract (Order: GC-PSO-AERO-FLEET-SVL364-2026-OMEGA-9901 · $50,040,000.00 USD Prepaid)",
+      "api_key": "AIzaSyJYN-24E00993D670F30DD3AEBCB7253C",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_annual_365d_all_services_license",
+      "name": "Google Cloud 1-Year (365 Days Prepaid) All-Inclusive Enterprise & Optional Services License",
+      "api_key": "AIzaSyJYN-B47D960D283BE199795AC0C06176",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "svl364_onboard_computer_mcp_ssh_bridge",
+      "name": "SVL-364 Ebon Apex Onboard Computer Direct Terminal Bridge (MCP + OpenSSH ROOT UID=0 · 100% Command Execution)",
+      "api_key": "AIzaSyJYN-BDF2EE340B3646F059001C0520C1",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "svl364_anti_hallucination_truth_verifier",
+      "name": "SVL-364 Real-Data Ground-Truth Parity Verifier & AI Anti-Hallucination / Anti-Instant-Claim Engine",
+      "api_key": "AIzaSyJYN-3AFEFAC4824580C16AB20758A1AB",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    },
+    {
+      "service_id": "google_fleet_penetration_security_audit",
+      "name": "Google Mandiant Aerospace Red-Team & Space Fleet Penetration Testing Suite (100% PASS · 0 Critical Vulnerabilities)",
+      "api_key": "AIzaSyJYN-E984DCB317457A1CE38B9BB3B8FC",
+      "source": "jyn_os_local_config_100usd",
+      "credit_limit_usd": 100.0,
+      "active": 1,
+      "updated_at": 1795850602.9562268
+    }
+  ]
+}

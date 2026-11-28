@@ -214,18 +214,26 @@ class InteractiveUIEngine:
         invoked_modules: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
-        Zapewnia, że odpowiedź AI (Jyn Mitek) aktywnie zawiera i prezentuje elementy interaktywne
-        (`[btn: ...]`, `[chart:telemetry]`, `[chart:models]`), jeśli model nie dołączył ich sam.
+        Zapewnia, że odpowiedź AI (Jyn Mitek) aktywnie zawiera i prezentuje elementy interaktywne:
+        powiadomienia statusowe (`[badge:...|ok]`), wykresy (`[chart:telemetry]`, `[chart:models]`),
+        klikalne przyciski (`[btn: ...]`) oraz poprawne znaczniki obrazów (`[image:url|opis]`),
+        jeśli model lub zapytanie tego dotyczy.
         """
         cleaned = (reply_text or "").strip()
         if not cleaned:
             return cleaned
 
+        lower_q = f"{user_text} {cleaned}".lower()
         ctx_buttons = self.select_contextual_buttons(user_text, cleaned)
+        has_badge = "[badge:" in cleaned.lower()
         has_btn = "[btn:" in cleaned.lower()
         has_chart = "[chart:" in cleaned.lower()
+        has_image = "[image:" in cleaned.lower()
 
         append_lines: List[str] = []
+        if not has_badge:
+            append_lines.append("[badge:STATUS: ONLINE|ok] [badge:UI HUB: ACTIVE|info]")
+
         if invoked_modules:
             mod_summaries = [
                 f"⚡ **[{m.get('service_id')} · {m.get('operation')}]**: {m.get('output')}"
@@ -234,6 +242,9 @@ class InteractiveUIEngine:
             ]
             if mod_summaries:
                 append_lines.append("\n".join(mod_summaries))
+
+        if not has_image and any(k in lower_q for k in ("obraz", "zdjęci", "zdjeci", "grafik", "foto", "image", "awatar", "avatar")):
+            append_lines.append("[image:/assets/avatar_jyn_default.svg|Podgląd graficzny modułu czatu JYN_OS]")
 
         if not has_chart:
             append_lines.append("[chart:telemetry] [chart:models]")
@@ -440,7 +451,16 @@ class InteractiveUIEngine:
             "buttons": [b.to_dict() for b in buttons],
             "contextual_buttons": [b.to_dict() for b in ctx_buttons],
             "quick_pills": QUICK_MEDIA_ACTION_PILLS,
-            "inline_tags": [b.to_tag() for b in ctx_buttons] + pill_tags + ["[chart:telemetry]", "[chart:models]"],
+            "inline_tags": (
+                [b.to_tag() for b in ctx_buttons]
+                + pill_tags
+                + [
+                    "[badge:STATUS: ONLINE|ok]",
+                    "[chart:telemetry]",
+                    "[chart:models]",
+                    "[image:/assets/avatar_jyn_default.svg|Podgląd graficzny modułu czatu JYN_OS]",
+                ]
+            ),
         }
 
 

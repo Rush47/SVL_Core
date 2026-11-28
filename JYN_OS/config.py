@@ -88,7 +88,7 @@ DEFAULT_LOCAL_OLLAMA_URL = os.environ.get("SVL_LOCAL_OLLAMA_URL", "http://127.0.
 DEFAULT_SHIP_MODEL = os.environ.get("SVL_SHIP_MODEL", "svl364-apex-uncensored:latest")
 DEFAULT_VISION_MODEL = os.environ.get("SVL_VISION_MODEL", "llama3.2-vision:11b")
 DEFAULT_LOCAL_MODEL = os.environ.get("SVL_LOCAL_MODEL", "svl364-apex-uncensored:latest")
-DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "local")
+DEFAULT_OLLAMA_TARGET = os.environ.get("SVL_OLLAMA_TARGET", "ship")
 APEX_MODELFILE_PATH = Path(__file__).resolve().parent.parent / "SVL_CoreOS_2" / "ai_core" / "Modelfile.apex-uncensored"
 
 # Całkowite wyłączenie strumieniowania odpowiedzi czatu (zawsze jedna kompletna odpowiedź JSON)

@@ -793,7 +793,7 @@ class JynChatEngine:
         if any(k in low for k in ("linux", "debian", "ubuntu", "trixie", "pracy autonomicznej", "logi")) and not any(m["service_id"] == "google_linux_debian13_ubuntu_hybrid_os" for m in invoked):
             lx_r = hub.supervise_hybrid_linux_autonomous_ai(custom_task=prompt)
             invoked.append({"service_id": lx_r.service_id, "operation": lx_r.operation, "output": lx_r.output, "data": lx_r.data})
-        if any(k in low for k in ("wideo", "video", "veo", "film", "zdjęcie z internetu", "zdjęcia z internetu", "wklej")) and not any(m["service_id"] == "google_duplex_media_video_stream_engine" for m in invoked):
+        if any(k in low for k in ("wideo", "video", "veo", "film", "zdjęcie z internetu", "zdjęcia z internetu", "obraz z sieci", "obrazy z sieci", "wklej", "[image:")) and not any(m["service_id"] == "google_duplex_media_video_stream_engine" for m in invoked):
             vid_r = hub.render_duplex_video_and_web_media(prompt=prompt)
             invoked.append({"service_id": vid_r.service_id, "operation": vid_r.operation, "output": vid_r.output, "data": vid_r.data})
         if any(k in low for k in ("mandiant", "confidential", "dlp", "binary authorization")) and not any(m["service_id"] == "google_mandiant_threat_intel_hunt" for m in invoked):
